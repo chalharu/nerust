@@ -1,0 +1,11 @@
+[package]
+name = "nes"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+
+[dependencies]
+log = { version = ">=0.0.0", default-features = false }
+serde = { version = ">=0.0.0", default-features = false }
+serde_derive = { version = ">=0.0.0", default-features = false }
+serde_bytes = { version = ">=0.0.0" }
+failure = { version = ">=0.0.0" }
