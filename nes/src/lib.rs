@@ -29,29 +29,22 @@ use cartridge::Cartridge;
 use cpu::Core as Cpu;
 use failure::Error;
 use ppu::Core as Ppu;
+use controller::Controller;
 
-pub trait Bus {
-    fn read(&mut self, address: u32) -> u8;
-    fn write(&mut self, address: u32, value: u8);
-}
-
-pub trait IRQ {
-    fn set(&mut self, address: u8);
-    fn reset(&mut self, address: u8);
-}
-
-pub struct Console {
-    cpu: Option<Cpu>,
+pub struct Console<'a> {
+    cpu: Option<Cpu<'a>>,
     ppu: Option<Ppu>,
     cartridge: Box<Cartridge>,
+    wram: Option<[u8; 2048]>,
 }
 
-impl Console {
+impl<'a> Console<'a> {
     pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
         Ok(Self {
             cpu: Some(Cpu::new()),
             ppu: Some(Ppu::new()),
             cartridge: try!(cartridge::try_from(input)),
+            wram: Some([0; 2048]),
         })
     }
     pub fn step(&mut self) {}
