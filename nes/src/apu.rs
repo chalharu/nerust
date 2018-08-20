@@ -7,3 +7,19 @@
 pub struct Core {
 
 }
+
+impl Core {
+    pub fn new() -> Self {
+        Self {
+            // TODO:
+        }
+    }
+    pub fn read_register(&mut self, address: usize) -> u8 {
+        0
+        // TODO:
+    }
+
+    pub fn write_register(&mut self, address: usize, value: u8) {
+        // TODO:
+    }
+}
