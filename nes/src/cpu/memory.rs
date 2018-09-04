@@ -37,8 +37,8 @@ impl<'a> Memory<'a> {
     pub fn read(&mut self, address: usize) -> u8 {
         match address {
             0...0x1FFF => self.wram[address & 0x07FF],
-            0x2000...0x3FFF => self.ppu.read_register(0x2000 + address & 7),
-            0x4014 => self.ppu.read_register(address),
+            0x2000...0x3FFF => self.ppu.read_register(0x2000 + address & 7, self.cartridge),
+            0x4014 => self.ppu.read_register(address, self.cartridge),
             0x4015 => self.apu.read_register(address),
             0x4016 | 0x4017 => self.controller.read(address & 1),
             0x4000...0x5FFF => 0, // TODO: I/O registers
@@ -62,18 +62,50 @@ impl<'a> Memory<'a> {
         (high << 8) | low
     }
 
-    pub fn write(&mut self, address: usize, value: u8) {
+    pub fn write(&mut self, address: usize, value: u8) -> usize {
         match address {
-            0...0x1FFF => self.wram[address & 0x07FF] = value,
-            0x2000...0x3FFF => self.ppu.write_register(0x2000 + address & 7, value),
-            0x4000...0x4013 => self.apu.write_register(address, value),
-            0x4014 => self.ppu.write_register(address, value),
-            0x4015 => self.apu.write_register(address, value),
-            0x4016 => self.controller.write(value),
-            0x4017 => self.apu.write_register(address, value),
-            0x4018...0x5FFF => {} // TODO: I/O registers
-            0x6000...0xFFFF => self.cartridge.write(address, value),
-            _ => error!("unhandled cpu memory write at address: 0x{:04X}", address),
+            0...0x1FFF => {
+                self.wram[address & 0x07FF] = value;
+                0
+            }
+            0x2000...0x3FFF => {
+                self.ppu
+                    .write_register(0x2000 + address & 7, value, self.cartridge);
+                0
+            }
+            0x4000...0x4013 => {
+                self.apu.write_register(address, value);
+                0
+            }
+            0x4014 => {
+                let v = (0..256)
+                    .map(|i| self.read((usize::from(value) << 8) | i))
+                    .collect::<Vec<_>>();
+                self.ppu.write_dma(&v);
+                // TODO: もしCPUサイクルが奇数だったら、本当はもう１サイクル追加する必要がある。
+                513
+            }
+            0x4015 => {
+                self.apu.write_register(address, value);
+                0
+            }
+            0x4016 => {
+                self.controller.write(value);
+                0
+            }
+            0x4017 => {
+                self.apu.write_register(address, value);
+                0
+            }
+            0x4018...0x5FFF => 0, // TODO: I/O registers
+            0x6000...0xFFFF => {
+                self.cartridge.write(address, value);
+                0
+            }
+            _ => {
+                error!("unhandled cpu memory write at address: 0x{:04X}", address);
+                0
+            }
         }
     }
 }

@@ -184,4 +184,8 @@ impl Cartridge for Mapper1 {
     }
 
     fn step(&mut self) {}
+
+    fn mirror_mode(&self) -> MirrorMode {
+        self.cartridge_data.get_mirror_mode()
+    }
 }

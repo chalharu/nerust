@@ -4,9 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub struct Core {
-
-}
+pub struct Core {}
 
 impl Core {
     pub fn new() -> Self {
@@ -14,12 +12,14 @@ impl Core {
             // TODO:
         }
     }
-    pub fn read_register(&mut self, address: usize) -> u8 {
+    pub fn read_register(&mut self, _address: usize) -> u8 {
         0
         // TODO:
     }
 
-    pub fn write_register(&mut self, address: usize, value: u8) {
+    pub fn write_register(&mut self, _address: usize, _value: u8) {
         // TODO:
     }
+
+    pub fn step(&mut self) {}
 }

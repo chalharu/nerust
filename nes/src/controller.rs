@@ -12,12 +12,12 @@ impl Controller {
             // TODO:
         }
     }
-    pub fn read(&mut self, address: usize) -> u8 {
+    pub fn read(&mut self, _address: usize) -> u8 {
         0
         // TODO:
     }
 
-    pub fn write(&mut self, value: u8) {
+    pub fn write(&mut self, _value: u8) {
         // TODO:
     }
 }
