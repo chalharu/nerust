@@ -22,52 +22,74 @@ mod apu;
 mod cartridge;
 mod controller;
 mod cpu;
+mod mirror_mode;
 mod ppu;
 
 use apu::Core as Apu;
 use cartridge::Cartridge;
+use controller::Controller;
 use cpu::Core as Cpu;
 use failure::Error;
+use mirror_mode::MirrorMode;
 use ppu::Core as Ppu;
-use controller::Controller;
 
-pub struct Console<'a> {
-    cpu: Option<Cpu<'a>>,
-    ppu: Option<Ppu>,
-    cartridge: Box<Cartridge>,
-    wram: Option<[u8; 2048]>,
+pub struct RGB {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
 }
 
-impl<'a> Console<'a> {
+impl From<u32> for RGB {
+    fn from(value: u32) -> RGB {
+        RGB {
+            red: ((value >> 16) & 0xFF) as u8,
+            green: ((value >> 8) & 0xFF) as u8,
+            blue: (value & 0xFF) as u8,
+        }
+    }
+}
+
+pub trait Screen {
+    fn set_rgb(&mut self, x: u16, y: u16, color: RGB);
+}
+
+pub struct Console {
+    cpu: Cpu,
+    ppu: Ppu,
+    apu: Apu,
+    cartridge: Box<Cartridge>,
+    wram: [u8; 2048],
+    controller: Controller,
+}
+
+impl Console {
     pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
         Ok(Self {
-            cpu: Some(Cpu::new()),
-            ppu: Some(Ppu::new()),
+            cpu: Cpu::new(),
+            ppu: Ppu::new(),
+            apu: Apu::new(),
             cartridge: try!(cartridge::try_from(input)),
-            wram: Some([0; 2048]),
+            wram: [0; 2048],
+            controller: Controller::new(),
         })
     }
-    pub fn step(&mut self) {}
-}
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
-pub enum MirrorMode {
-    Horizontal,
-    Vertical,
-    Single0,
-    Single1,
-    Four,
-}
-
-impl MirrorMode {
-    fn try_from<'a>(mode: u8) -> Result<MirrorMode, &'a str> {
-        match mode {
-            0 => Ok(MirrorMode::Horizontal),
-            1 => Ok(MirrorMode::Vertical),
-            2 => Ok(MirrorMode::Single0),
-            3 => Ok(MirrorMode::Single1),
-            4 => Ok(MirrorMode::Four),
-            _ => Err("parse error"),
+    pub fn step<S: Screen>(&mut self, screen: &mut S) -> bool {
+        let mut result = false;
+        self.cpu.step(
+            &mut self.ppu,
+            &mut self.cartridge,
+            &mut self.controller,
+            &mut self.apu,
+            &mut self.wram,
+        );
+        for _ in 0..3 {
+            if self.ppu.step(screen, &mut self.cartridge, &mut self.cpu) {
+                result = true;
+            }
+            self.cartridge.step();
         }
+        self.apu.step();
+        result
     }
 }

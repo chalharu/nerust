@@ -14,7 +14,7 @@ fn compare(a: u8, state: &mut State, memory: &mut Memory, address: usize) {
 
 fn push(state: &mut State, memory: &mut Memory, value: u8) {
     let sp = state.register().get_sp();
-    memory.write(0x100 | usize::from(sp), value);
+    state.stall += memory.write(0x100 | usize::from(sp), value);
     state.register().set_sp(sp.wrapping_sub(1));
 }
 
@@ -116,7 +116,7 @@ impl OpCode for AslMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = asl(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         3
     }
     fn name(&self) -> &'static str {
@@ -322,7 +322,7 @@ impl OpCode for Dec {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = decrement(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         1
     }
     fn name(&self) -> &'static str {
@@ -381,7 +381,7 @@ impl OpCode for Inc {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = increment(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         1
     }
     fn name(&self) -> &'static str {
@@ -503,7 +503,7 @@ impl OpCode for LsrMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = lsr(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         3
     }
     fn name(&self) -> &'static str {
@@ -610,7 +610,7 @@ impl OpCode for RolMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = rol(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         3
     }
     fn name(&self) -> &'static str {
@@ -644,7 +644,7 @@ impl OpCode for RorMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address);
         let result = ror(state, data);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         3
     }
     fn name(&self) -> &'static str {
@@ -735,7 +735,7 @@ impl OpCode for Sei {
 pub(crate) struct Sta;
 impl OpCode for Sta {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        memory.write(address, state.register().get_a());
+        state.stall += memory.write(address, state.register().get_a());
         1
     }
     fn name(&self) -> &'static str {
@@ -746,7 +746,7 @@ impl OpCode for Sta {
 pub(crate) struct Stx;
 impl OpCode for Stx {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        memory.write(address, state.register().get_x());
+        state.stall += memory.write(address, state.register().get_x());
         1
     }
     fn name(&self) -> &'static str {
@@ -756,7 +756,7 @@ impl OpCode for Stx {
 pub(crate) struct Sty;
 impl OpCode for Sty {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        memory.write(address, state.register().get_y());
+        state.stall += memory.write(address, state.register().get_y());
         1
     }
     fn name(&self) -> &'static str {
@@ -881,7 +881,7 @@ pub(crate) struct Sax;
 impl OpCode for Sax {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = state.register().get_a() & state.register().get_x();
-        memory.write(address, data);
+        state.stall += memory.write(address, data);
         1
     }
     fn name(&self) -> &'static str {
@@ -894,7 +894,7 @@ impl OpCode for Dcp {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address).wrapping_sub(1);
         state.register().set_nz_from_value(data);
-        memory.write(address, data);
+        state.stall += memory.write(address, data);
         1
     }
     fn name(&self) -> &'static str {
@@ -919,7 +919,7 @@ impl OpCode for Isb {
             .register()
             .set_v((a ^ usize::from(data)) & 0x80 == 0 && (a ^ d) & 0x80 != 0);
 
-        memory.write(address, data);
+        state.stall += memory.write(address, data);
         1
     }
     fn name(&self) -> &'static str {
@@ -936,7 +936,7 @@ impl OpCode for Slo {
         let result = data << 1;
         state.register().set_a(a | result);
         state.register().set_nz_from_value(a | result);
-        memory.write(address, result);
+        state.stall += memory.write(address, result);
         1
     }
     fn name(&self) -> &'static str {
@@ -953,7 +953,7 @@ impl OpCode for Rla {
         let value = (data << 1 | c) & state.register().get_a();
         state.register().set_a(value);
         state.register().set_nz_from_value(value);
-        memory.write(address, data);
+        state.stall += memory.write(address, data);
         1
     }
     fn name(&self) -> &'static str {
@@ -970,7 +970,7 @@ impl OpCode for Sre {
         let value = state.register().get_a() ^ data;
         state.register().set_a(value);
         state.register().set_nz_from_value(value);
-        memory.write(address, data);
+        state.stall += memory.write(address, data);
         1
     }
     fn name(&self) -> &'static str {

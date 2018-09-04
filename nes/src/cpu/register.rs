@@ -66,15 +66,6 @@ impl Register {
     pub fn get_i(&self) -> bool {
         self.i
     }
-    pub fn get_d(&self) -> bool {
-        self.d
-    }
-    pub fn get_b(&self) -> bool {
-        self.b
-    }
-    pub fn get_r(&self) -> bool {
-        self.r
-    }
     pub fn get_v(&self) -> bool {
         self.v
     }
@@ -110,26 +101,14 @@ impl Register {
     pub fn set_c(&mut self, value: bool) {
         self.c = value;
     }
-    pub fn set_z(&mut self, value: bool) {
-        self.z = value;
-    }
     pub fn set_i(&mut self, value: bool) {
         self.i = value;
     }
     pub fn set_d(&mut self, value: bool) {
         self.d = value;
     }
-    pub fn set_b(&mut self, value: bool) {
-        self.b = value;
-    }
-    pub fn set_r(&mut self, value: bool) {
-        self.r = value;
-    }
     pub fn set_v(&mut self, value: bool) {
         self.v = value;
-    }
-    pub fn set_n(&mut self, value: bool) {
-        self.n = value;
     }
     pub fn set_p(&mut self, value: u8) {
         self.c = value & 0x01 == 0x01;

@@ -1,0 +1,181 @@
+// Copyright (c) 2018 Mitsuharu Seki
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+#[macro_use]
+extern crate glium;
+#[macro_use]
+extern crate log;
+extern crate simple_logger;
+#[macro_use]
+extern crate failure;
+
+use glium::glutin::dpi::*;
+use glium::glutin::*;
+use glium::texture::RawImage2d;
+use glium::{glutin, index, texture, vertex};
+use glium::{Display, Program, Rect, Surface, VertexBuffer};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+struct Fps {
+    instants: VecDeque<Instant>,
+}
+
+impl Fps {
+    pub fn new() -> Self {
+        let mut instants = VecDeque::new();
+        for _ in 0..64 {
+            instants.push_back(Instant::now());
+        }
+        Self { instants }
+    }
+
+    pub fn to_fps(&mut self) -> f32 {
+        let new_now = Instant::now();
+        let duration = new_now.duration_since(self.instants.pop_front().unwrap());
+        self.instants.push_back(new_now);
+        (1_000_000_f64
+            / f64::from(duration.as_secs() as u32 * 1_000_000 + duration.subsec_micros())
+            * 64.0) as f32
+    }
+}
+
+fn update(screen_buffer: &mut [u8]) {
+    for (i, s) in screen_buffer.iter_mut().enumerate() {
+        match i & 3 {
+            0 | 1 | 2 => *s = (*s).wrapping_add(1),
+            _ => {}
+        }
+    }
+}
+
+fn create_window(events_loop: &EventsLoop) -> Display {
+    let window = glutin::WindowBuilder::new()
+        .with_dimensions(LogicalSize::new(320.0, 240.0))
+        .with_title(format!("Nes"));
+
+    let context = glutin::ContextBuilder::new()
+        .with_double_buffer(Some(true))
+        .with_gl_profile(GlProfile::Compatibility)
+        // .with_vsync(true)
+        .with_gl(GlRequest::Specific(Api::OpenGlEs, (2, 0)));
+
+    glium::Display::new(window, context, events_loop).unwrap()
+}
+
+#[derive(Copy, Clone)]
+struct VertexData {
+    pub position: (f32, f32, f32),
+    pub uv: (f32, f32),
+}
+
+impl VertexData {
+    pub fn new(position: (f32, f32, f32), uv: (f32, f32)) -> Self {
+        Self { position, uv }
+    }
+}
+
+implement_vertex!(VertexData, position, uv);
+
+fn init_screen_buffer() -> Vec<u8> {
+    let mut screen_buffer = vec![0; 320 * 240 * 4];
+    for (i, s) in screen_buffer.iter_mut().enumerate() {
+        let p = i & 3;
+        let x = (i >> 2) % 320;
+        let y = (i >> 2) / 320;
+        let r = ((x * 0xFF) / 320) as u8;
+        *s = match p {
+            0 => r,
+            1 => ((y * 0xFF) / 240) as u8,
+            2 => !r,
+            _ => 0,
+        };
+    }
+    screen_buffer
+}
+
+fn main() {
+    // log initialize
+    simple_logger::init().unwrap();
+
+    // glutin initialize
+    let mut events_loop = EventsLoop::new();
+
+    // create opengl window
+    let window = create_window(&events_loop);
+
+    let shader = Program::from_source(
+        &window,
+        include_str!("shader.vert"),
+        include_str!("shader.flag"),
+        None,
+    ).unwrap();
+
+    let mut screen_buffer = init_screen_buffer();
+
+    let image = texture::RawImage2d::from_raw_rgba(screen_buffer.clone(), (320, 240));
+    let texture = texture::Texture2d::new(&window, image).unwrap();
+
+    // vbo
+    let vertex_data: [VertexData; 4] = [
+        VertexData::new((-1.0, 1.0, 0.0), (0.0, 0.0)),
+        VertexData::new((1.0, 1.0, 0.0), (1.0, 0.0)),
+        VertexData::new((-1.0, -1.0, 0.0), (0.0, 1.0)),
+        VertexData::new((1.0, -1.0, 0.0), (1.0, 1.0)),
+    ];
+
+    let vertex_buffer = VertexBuffer::new(&window, &vertex_data).unwrap();
+    let indices = index::NoIndices(index::PrimitiveType::TriangleStrip);
+
+    let uniforms = uniform! {
+        tex: &texture,
+    };
+
+    let mut running = true;
+    let mut fps = Fps::new();
+    while running {
+        update(&mut screen_buffer);
+        texture.write(
+            Rect {
+                left: 0,
+                width: 320,
+                bottom: 0,
+                height: 240,
+            },
+            RawImage2d::from_raw_rgba(screen_buffer.clone(), (320, 240)),
+        );
+
+        let mut target = window.draw();
+        target.clear_color(0.0, 0.0, 1.0, 1.0);
+
+        target
+            .draw(
+                &vertex_buffer,
+                &indices,
+                &shader,
+                &uniforms,
+                &Default::default(),
+            ).unwrap();
+        target.finish().unwrap();
+
+        let title = format!("Nes -- FPS: {:.2}", fps.to_fps());
+        window.gl_window().set_title(title.as_str());
+
+        events_loop.poll_events(|event| match event {
+            glutin::Event::WindowEvent { event, .. } => match event {
+                glutin::WindowEvent::CloseRequested => {
+                    running = false;
+                }
+                // glutin::WindowEvent::Resized(logical_size) => {
+                //     let dpi_factor = window.get_hidpi_factor();
+                //     window.resize(logical_size.to_physical(dpi_factor));
+                // }
+                _ => (),
+            },
+            _ => (),
+        });
+    }
+}
