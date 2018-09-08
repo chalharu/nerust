@@ -192,7 +192,7 @@ pub(crate) struct Relative;
 impl AddressingMode for Relative {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let offset = memory.read_u16(pc as usize);
+        let offset = u16::from(memory.read(pc as usize));
         let address = pc
             .wrapping_add(1)
             .wrapping_add(offset)

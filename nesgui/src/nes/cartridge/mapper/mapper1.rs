@@ -6,7 +6,7 @@
 
 use super::super::Cartridge;
 use super::CartridgeData;
-use MirrorMode;
+use nes::MirrorMode;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Mapper1 {
@@ -57,10 +57,10 @@ impl Mapper1 {
 
     fn write_register(&mut self, address: usize, value: u8) {
         match address {
-            0...0xa000 => self.write_control(value),
-            0xa000...0xc000 => self.write_char_bank_0(value),
-            0xc000...0xe000 => self.write_char_bank_1(value),
-            0xe000...0x10000 => self.write_prog_bank(value),
+            0...0x9FFF => self.write_control(value),
+            0xA000...0xBFFF => self.write_char_bank_0(value),
+            0xC000...0xdFFF => self.write_char_bank_1(value),
+            0xE000...0xFFFF => self.write_prog_bank(value),
             _ => {}
         }
     }
@@ -144,13 +144,13 @@ impl Mapper1 {
 impl Cartridge for Mapper1 {
     fn read(&self, mut address: usize) -> u8 {
         match address {
-            0...0x2000 => {
+            0...0x1FFF => {
                 let bank = address / 0x1000;
                 let offset = address & 0xFFF;
                 self.cartridge_data
                     .read_char_rom(self.chr_offsets[bank] + offset)
             }
-            0x6000...0x8000 => self.cartridge_data.read_sram(address - 0x6000),
+            0x6000...0x7FFF => self.cartridge_data.read_sram(address - 0x6000),
             n if n >= 0x8000 => {
                 address -= 0x8000;
                 let bank = address / 0x4000;
@@ -167,13 +167,13 @@ impl Cartridge for Mapper1 {
 
     fn write(&mut self, address: usize, value: u8) {
         match address {
-            0...0x2000 => {
+            0...0x1FFF => {
                 let bank = address / 0x1000;
                 let offset = address & 0xFFF;
                 self.cartridge_data
                     .write_char_rom(self.chr_offsets[bank] + offset, value);
             }
-            0x6000...0x8000 => self.cartridge_data.write_sram(address - 0x6000, value),
+            0x6000...0x7FFF => self.cartridge_data.write_sram(address - 0x6000, value),
             n if n >= 0x8000 => {
                 self.load_register(address, value);
             }
