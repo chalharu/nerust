@@ -8,5 +8,6 @@
 pub(crate) enum Interrupt {
     None,
     Irq,
+    Reset,
     Nmi,
 }

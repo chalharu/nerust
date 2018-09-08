@@ -16,8 +16,9 @@ use self::memory::Memory;
 use self::opcodes::*;
 use self::register::Register;
 use super::*;
+use std::ops;
 
-fn page_crossed<T: std::ops::Shr<usize>>(a: T, b: T) -> bool
+fn page_crossed<T: ops::Shr<usize>>(a: T, b: T) -> bool
 where
     T::Output: PartialEq,
 {
@@ -35,7 +36,7 @@ impl State {
     pub fn new() -> Self {
         Self {
             register: Register::new(),
-            interrupt: Interrupt::None,
+            interrupt: Interrupt::Reset,
             stall: 0,
         }
     }
@@ -58,11 +59,11 @@ impl State {
         self.stall += value;
     }
 
-    pub fn step(
+    pub fn step<C: Controller>(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
+        controller: &mut C,
         apu: &mut Apu,
         wram: &mut [u8; 2048],
         opcode_tables: &[Box<OpCode>; 256],
@@ -84,10 +85,33 @@ impl State {
                 self.interrupt = Interrupt::None;
                 Irq.execute(self, &mut memory, 0)
             }
+            Interrupt::Reset => {
+                let pc = memory.read_u16(0xFFFC);
+                self.interrupt = Interrupt::None;
+                self.register().set_pc(pc);
+                self.register().set_sp(0xFD);
+                self.register().set_p(0x24);
+                0
+            }
             Interrupt::None => {
                 let pc = self.register().get_pc();
                 let code = memory.read(pc as usize) as usize;
+                // info!(
+                //     "CPU Oprand: {} {} {}",
+                //     opcode_tables[code].name(),
+                //     addressing_tables[code].name(),
+                //     match addressing_tables[code].opcode_length() {
+                //         1 => String::new(),
+                //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
+                //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
+                //         _ => {
+                //             unreachable!();
+                //         }
+                //     }
+                // );
                 let addressing = addressing_tables[code].execute(self, &mut memory);
+                self.register()
+                    .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
                 let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
                 addressing.cycles + cycles
             }
@@ -103,11 +127,11 @@ pub(crate) struct Core {
 }
 
 impl Core {
-    pub fn step(
+    pub fn step<C: Controller>(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
+        controller: &mut C,
         apu: &mut Apu,
         wram: &mut [u8; 2048],
     ) {

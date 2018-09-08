@@ -4,10 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use Apu;
-use Cartridge;
-use Controller;
-use Ppu;
+use nes::{Apu, Cartridge, Controller, Ppu};
 
 pub(crate) struct Memory<'a> {
     wram: &'a mut [u8; 2048],
@@ -18,11 +15,11 @@ pub(crate) struct Memory<'a> {
 }
 
 impl<'a> Memory<'a> {
-    pub fn new(
+    pub fn new<C: Controller>(
         wram: &'a mut [u8; 2048],
         ppu: &'a mut Ppu,
         apu: &'a mut Apu,
-        controller: &'a mut Controller,
+        controller: &'a mut C,
         cartridge: &'a mut Box<Cartridge>,
     ) -> Self {
         Self {
@@ -37,7 +34,9 @@ impl<'a> Memory<'a> {
     pub fn read(&mut self, address: usize) -> u8 {
         match address {
             0...0x1FFF => self.wram[address & 0x07FF],
-            0x2000...0x3FFF => self.ppu.read_register(0x2000 + address & 7, self.cartridge),
+            0x2000...0x3FFF => self
+                .ppu
+                .read_register(0x2000 + (address & 7), self.cartridge),
             0x4014 => self.ppu.read_register(address, self.cartridge),
             0x4015 => self.apu.read_register(address),
             0x4016 | 0x4017 => self.controller.read(address & 1),
@@ -70,7 +69,7 @@ impl<'a> Memory<'a> {
             }
             0x2000...0x3FFF => {
                 self.ppu
-                    .write_register(0x2000 + address & 7, value, self.cartridge);
+                    .write_register(0x2000 + (address & 7), value, self.cartridge);
                 0
             }
             0x4000...0x4013 => {

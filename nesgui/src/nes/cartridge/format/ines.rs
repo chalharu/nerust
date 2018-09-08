@@ -6,6 +6,7 @@
 
 use super::super::error::CartridgeError;
 use super::CartridgeData;
+use nes::MirrorMode;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(
     input: &mut I,
@@ -21,7 +22,7 @@ pub(crate) fn read_ines<I: Iterator<Item = u8>>(
     let ram_length = usize::from(headers[4]) * 0x2000;
 
     let mapper_type = (flags1 >> 4) | (flags2 & 0xf0);
-    let mirror_type = flags1 & 1 | ((flags1 >> 2) & 2);
+    let mirror_type = (flags1 & 1) | ((flags1 >> 2) & 2);
     let has_battery = (flags1 & 2) == 2;
     let has_trainer = (flags1 & 4) == 4;
     let _trainer = if has_trainer {
@@ -47,7 +48,7 @@ pub(crate) fn read_ines<I: Iterator<Item = u8>>(
         vec![0; 8192]
     };
     let mirror_mode =
-        try!(::MirrorMode::try_from(mirror_type).map_err(|_| CartridgeError::DataError));
+        try!(MirrorMode::try_from(mirror_type).map_err(|_| CartridgeError::DataError));
     Ok(CartridgeData {
         prog_rom,
         char_rom,

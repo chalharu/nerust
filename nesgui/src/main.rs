@@ -11,16 +11,30 @@ extern crate glutin;
 extern crate simple_logger;
 #[macro_use]
 extern crate failure;
+// extern crate nes;
+#[macro_use]
+extern crate bitflags;
+
+extern crate std as core;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_bytes;
+#[macro_use]
+extern crate log;
 
 mod glwrap;
+mod nes;
 
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;
 use glutin::{
-    Api, ContextBuilder, Event, EventsLoop, GlContext, GlProfile, GlRequest, GlWindow,
-    WindowBuilder, WindowEvent,
+    Api, ContextBuilder, DeviceEvent, DeviceId, ElementState, Event, EventsLoop, GlContext,
+    GlProfile, GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
 };
 use glwrap::*;
+use nes::controller::{Buttons, StandardController};
+use nes::{Console, Screen, RGB};
 use std::collections::VecDeque;
 use std::time::Instant;
 use std::{f64, mem};
@@ -59,7 +73,7 @@ fn update(screen_buffer: &mut [u8]) {
 
 fn create_window(events_loop: &EventsLoop) -> GlWindow {
     let window = WindowBuilder::new()
-        .with_dimensions(LogicalSize::new(320.0, 240.0))
+        .with_dimensions(LogicalSize::new(256.0, 240.0))
         .with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
@@ -140,13 +154,13 @@ impl VertexData {
     }
 }
 
-fn init_screen_buffer() -> [u8; 320 * 240 * 4] {
-    let mut screen_buffer = [0_u8; 320 * 240 * 4];
+fn init_screen_buffer() -> [u8; 256 * 240 * 4] {
+    let mut screen_buffer = [0_u8; 256 * 240 * 4];
     for (i, s) in screen_buffer.iter_mut().enumerate() {
         let p = i & 3;
-        let x = (i >> 2) % 320;
-        let y = (i >> 2) / 320;
-        let r = ((x * 0xFF) / 320) as u8;
+        let x = (i >> 2) % 256;
+        let y = (i >> 2) / 256;
+        let r = ((x * 0xFF) / 256) as u8;
         *s = match p {
             0 => r,
             1 => ((y * 0xFF) / 240) as u8,
@@ -157,19 +171,44 @@ fn init_screen_buffer() -> [u8; 320 * 240 * 4] {
     screen_buffer
 }
 
+struct ScreenBuffer([u8; 256 * 240 * 4]);
+
+impl ScreenBuffer {
+    pub fn new() -> Self {
+        //ScreenBuffer([0_u8; 256 * 240 * 4])
+        ScreenBuffer(init_screen_buffer())
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        &self.0 as *const [u8; 256 * 240 * 4] as *const u8
+    }
+}
+
+impl Screen for ScreenBuffer {
+    fn set_rgb(&mut self, x: u16, y: u16, color: RGB) {
+        let pos = (usize::from(y) * 256 + usize::from(x)) << 2;
+        self.0[pos] = color.red;
+        self.0[pos + 1] = color.green;
+        self.0[pos + 2] = color.blue;
+    }
+}
+
 struct Window {
     window: GlWindow,
     events_loop: Option<EventsLoop>,
     running: bool,
     fps: Fps,
     tex_name: u32,
-    screen_buffer: [u8; 320 * 240 * 4],
+    screen_buffer: ScreenBuffer,
     vertex_vbo: u32,
     shader: Option<Shader>,
+    console: Console,
+    controller: StandardController,
+    keys: Buttons,
 }
 
 impl Window {
-    fn new() -> Self {
+    fn new(console: Console) -> Self {
         // glutin initialize
         let events_loop = EventsLoop::new();
         // create opengl window
@@ -181,9 +220,12 @@ impl Window {
             running: true,
             fps: Fps::new(),
             tex_name: 0,
-            screen_buffer: init_screen_buffer(),
+            screen_buffer: ScreenBuffer::new(),
             vertex_vbo: 0,
             shader: None,
+            console,
+            controller: StandardController::new(),
+            keys: Buttons::empty(),
         }
     }
 
@@ -200,8 +242,17 @@ impl Window {
                     WindowEvent::Resized(logical_size) => {
                         self.on_resize(logical_size);
                     }
+                    WindowEvent::KeyboardInput { device_id, input } => {
+                        self.on_keyboard_input(device_id, input);
+                    }
                     _ => (),
                 },
+                // Event::DeviceEvent { device_id, event } => match event {
+                //     DeviceEvent::Key(input) => {
+                //         self.on_keyboard_input(device_id, input);
+                //     }
+                //     _ => (),
+                // },
                 _ => (),
             });
             mem::replace(&mut self.events_loop, el);
@@ -221,12 +272,12 @@ impl Window {
             gl::TEXTURE_2D,
             0,
             gl::RGBA as GLint,
-            512,
+            256,
             256,
             0,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            unsafe { mem::transmute([0_u8; 256 * 512 * 4].as_ptr()) },
+            unsafe { mem::transmute([0_u8; 256 * 256 * 4].as_ptr()) },
         ).unwrap();
 
         tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
@@ -238,10 +289,10 @@ impl Window {
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
             VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 240.0 / 256.0)),
-            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(320.0 / 512.0, 0.0)),
+            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(256.0 / 256.0, 0.0)),
             VertexData::new(
                 Vec2D::new(1.0, -1.0),
-                Vec2D::new(320.0 / 512.0, 240.0 / 256.0),
+                Vec2D::new(256.0 / 256.0, 240.0 / 256.0),
             ),
         ];
 
@@ -289,7 +340,10 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        update(&mut self.screen_buffer);
+        while !self
+            .console
+            .step(&mut self.screen_buffer, &mut self.controller)
+        {}
 
         // clear_color(0.0, 0.0, 0.0, 0.0).unwrap();
         // clear_depth(1.0).unwrap();
@@ -303,7 +357,7 @@ impl Window {
             0,
             0,
             0,
-            320,
+            256,
             240,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
@@ -320,7 +374,7 @@ impl Window {
         let dpi_factor = self.window.get_hidpi_factor();
         self.window.resize(logical_size.to_physical(dpi_factor));
 
-        let rate_x = logical_size.width / 320.0;
+        let rate_x = logical_size.width / 256.0;
         let rate_y = logical_size.height / 240.0;
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
@@ -342,12 +396,52 @@ impl Window {
         delete_buffers(1, &self.vertex_vbo).unwrap();
         delete_textures(1, &self.tex_name).unwrap();
     }
+
+    fn on_keyboard_input(&mut self, _device_id: DeviceId, input: KeyboardInput) {
+        // とりあえず、pad1のみ次の通りとする。
+        // A      -> Z
+        // B      -> X
+        // Select -> C
+        // Start  -> V
+        // Up     -> Up
+        // Down   -> Down
+        // Left   -> Left
+        // Right  -> Right
+        let code = match input.virtual_keycode {
+            Some(VirtualKeyCode::Z) => Buttons::A,
+            Some(VirtualKeyCode::X) => Buttons::B,
+            Some(VirtualKeyCode::C) => Buttons::Select,
+            Some(VirtualKeyCode::V) => Buttons::Start,
+            Some(VirtualKeyCode::Up) => Buttons::Up,
+            Some(VirtualKeyCode::Down) => Buttons::Down,
+            Some(VirtualKeyCode::Left) => Buttons::Left,
+            Some(VirtualKeyCode::Right) => Buttons::Right,
+            _ => Buttons::empty(),
+        };
+        self.keys = match input.state {
+            ElementState::Pressed => self.keys | code,
+            ElementState::Released => self.keys & !code,
+        };
+        self.controller.set_pad1(self.keys);
+    }
 }
 
 fn main() {
     // log initialize
     simple_logger::init().unwrap();
 
-    let mut window = Window::new();
+    let console = nes::Console::new(
+        // &mut include_bytes!("../../sample_roms/sample1.nes")
+        // &mut include_bytes!("../../sample_roms/giko005.nes")
+        // &mut include_bytes!("../../sample_roms/giko008.nes")
+        // &mut include_bytes!("../../sample_roms/giko009.nes")
+        // &mut include_bytes!("../../sample_roms/giko010.nes")
+        // &mut include_bytes!("../../sample_roms/giko010b.nes")
+        &mut include_bytes!("../../sample_roms/giko011.nes")
+            .into_iter()
+            .cloned(),
+    ).unwrap();
+
+    let mut window = Window::new(console);
     window.run();
 }

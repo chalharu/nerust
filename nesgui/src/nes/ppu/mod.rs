@@ -7,11 +7,9 @@
 mod memory;
 
 use self::memory::Memory;
-use super::Cpu;
-use cartridge::Cartridge;
+use nes::cartridge::Cartridge;
+use nes::{Cpu, Screen, RGB};
 use std::mem;
-use Screen;
-use RGB;
 // use serde_bytes;
 
 const PALETTE: [u32; 64] = [
@@ -151,13 +149,13 @@ impl State {
             self.v &= 0xFFE0;
             self.v ^= 0x0400;
         } else {
-            self.v.wrapping_add(1);
+            self.v = self.v.wrapping_add(1);
         }
     }
 
     fn increment_y(&mut self) {
         if self.v & 0x7000 != 0x7000 {
-            self.v.wrapping_add(0x1000);
+            self.v = self.v.wrapping_add(0x1000);
         } else {
             self.v &= 0x8FFF;
             let x = match (self.v & 0x03E0) >> 5 {
@@ -225,7 +223,7 @@ impl State {
         self.nmi_change();
 
         // 画面の書き換え場所を変更
-        self.t = self.t & 0xF3FF | (u16::from(value & 0x03) << 10);
+        self.t = (self.t & 0xF3FF) | (u16::from(value & 0x03) << 10);
     }
 
     fn write_mask(&mut self, value: u8) {
@@ -245,7 +243,7 @@ impl State {
 
     fn write_oam_data(&mut self, value: u8) {
         self.oam[usize::from(self.oam_address)] = value;
-        self.oam_address.wrapping_add(1);
+        self.oam_address = self.oam_address.wrapping_add(1);
     }
 
     fn write_scroll(&mut self, value: u8) {
@@ -288,6 +286,9 @@ impl State {
                     ) << (i << 2)
                 }).sum::<u32>(),
         );
+        // if self.attribute_table_byte != 0 || self.low_tile_byte != 0 || self.high_tile_byte != 0 {
+        //     info!("store_tile_data: attribute_table_byte = 0x{:02X}, low_tile_byte = 0x{:02X}, high_tile_byte = 0x{:02X}, tile_data = 0x{:016X}", self.attribute_table_byte, self.low_tile_byte, self.high_tile_byte, self.tile_data);
+        // }
     }
 
     fn fetch_tile_data(&self) -> u32 {
@@ -308,6 +309,7 @@ impl State {
                 .iter()
                 .zip(self.sprite_patterns.iter())
                 .enumerate()
+                .take(usize::from(self.sprite_count))
                 .filter(|(_, (&s, _))| u16::from(s) < self.cycle && self.cycle < u16::from(s) + 9)
                 .map(|(i, (&s, &p))| {
                     (
@@ -457,7 +459,9 @@ impl Core {
     fn fetch_attribute_table_byte(&mut self, cartridge: &mut Box<Cartridge>) {
         let v = self.state.v as usize;
         let address = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
-        self.state.attribute_table_byte = Memory::new(&mut self.state, cartridge).read(address);
+        let shift = ((v >> 4) & 4) | (v & 2);
+        self.state.attribute_table_byte =
+            ((Memory::new(&mut self.state, cartridge).read(address) >> shift) & 3) << 2;
     }
 
     fn fetch_low_tile_byte(&mut self, cartridge: &mut Box<Cartridge>) {
@@ -467,7 +471,7 @@ impl Core {
 
     fn fetch_high_tile_byte(&mut self, cartridge: &mut Box<Cartridge>) {
         let address = self.state.tile_address() + 8;
-        self.state.low_tile_byte = Memory::new(&mut self.state, cartridge).read(address);
+        self.state.high_tile_byte = Memory::new(&mut self.state, cartridge).read(address);
     }
 
     fn fetch_sprite_pattern(
@@ -506,7 +510,7 @@ impl Core {
                     } else {
                         ((low_tile_byte >> j) & 1) | (((high_tile_byte >> j) & 1) << 1)
                     },
-                ) << (i << 2)
+                ) << (j << 2)
             }).sum::<u32>()
     }
 

@@ -6,8 +6,8 @@
 
 pub mod ines;
 use super::error::CartridgeError;
+use nes::MirrorMode;
 use serde_bytes;
-use MirrorMode;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CartridgeData {
@@ -58,6 +58,10 @@ impl CartridgeData {
             offset += self.prog_rom.len() as isize;
         }
         offset as usize
+    }
+
+    pub(crate) fn program_bank_len(&self) -> usize {
+        self.prog_rom.len() / 0x4000
     }
 
     pub(crate) fn char_bank_offset(&self, mut index: isize) -> usize {

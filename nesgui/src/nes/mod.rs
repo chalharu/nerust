@@ -4,34 +4,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate std as core;
-
-#[macro_use]
-extern crate serde_derive;
-
-extern crate serde;
-extern crate serde_bytes;
-
-#[macro_use]
-extern crate log;
-
-#[macro_use]
-extern crate failure;
-
 mod apu;
 mod cartridge;
-mod controller;
+pub mod controller;
 mod cpu;
 mod mirror_mode;
 mod ppu;
 
-use apu::Core as Apu;
-use cartridge::Cartridge;
-use controller::Controller;
-use cpu::Core as Cpu;
+use self::apu::Core as Apu;
+use self::cartridge::Cartridge;
+use self::controller::Controller;
+use self::cpu::Core as Cpu;
+use self::mirror_mode::MirrorMode;
+use self::ppu::Core as Ppu;
 use failure::Error;
-use mirror_mode::MirrorMode;
-use ppu::Core as Ppu;
 
 pub struct RGB {
     pub red: u8,
@@ -59,7 +45,6 @@ pub struct Console {
     apu: Apu,
     cartridge: Box<Cartridge>,
     wram: [u8; 2048],
-    controller: Controller,
 }
 
 impl Console {
@@ -70,16 +55,15 @@ impl Console {
             apu: Apu::new(),
             cartridge: try!(cartridge::try_from(input)),
             wram: [0; 2048],
-            controller: Controller::new(),
         })
     }
 
-    pub fn step<S: Screen>(&mut self, screen: &mut S) -> bool {
+    pub fn step<S: Screen, C: Controller>(&mut self, screen: &mut S, controller: &mut C) -> bool {
         let mut result = false;
         self.cpu.step(
             &mut self.ppu,
             &mut self.cartridge,
-            &mut self.controller,
+            controller,
             &mut self.apu,
             &mut self.wram,
         );
