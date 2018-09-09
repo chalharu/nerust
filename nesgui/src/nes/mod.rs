@@ -39,6 +39,10 @@ pub trait Screen {
     fn set_rgb(&mut self, x: u16, y: u16, color: RGB);
 }
 
+pub trait Speaker {
+    fn push(&mut self, data: i16);
+}
+
 pub struct Console {
     cpu: Cpu,
     ppu: Ppu,
@@ -48,17 +52,25 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
+    pub fn new<I: Iterator<Item = u8>>(
+        input: &mut I,
+        sound_sample_rate: f32,
+    ) -> Result<Console, Error> {
         Ok(Self {
             cpu: Cpu::new(),
             ppu: Ppu::new(),
-            apu: Apu::new(),
+            apu: Apu::new(sound_sample_rate),
             cartridge: try!(cartridge::try_from(input)),
             wram: [0; 2048],
         })
     }
 
-    pub fn step<S: Screen, C: Controller>(&mut self, screen: &mut S, controller: &mut C) -> bool {
+    pub fn step<S: Screen, C: Controller, SP: Speaker>(
+        &mut self,
+        screen: &mut S,
+        controller: &mut C,
+        speaker: &mut SP,
+    ) -> bool {
         let mut result = false;
         self.cpu.step(
             &mut self.ppu,
@@ -73,7 +85,7 @@ impl Console {
             }
             self.cartridge.step();
         }
-        self.apu.step();
+        self.apu.step(&mut self.cpu, &mut self.cartridge, speaker);
         result
     }
 }

@@ -6,38 +6,38 @@
 
 // #[macro_use]
 // extern crate log;
-extern crate gl;
-extern crate glutin;
-extern crate simple_logger;
 #[macro_use]
 extern crate failure;
-// extern crate nes;
 #[macro_use]
 extern crate bitflags;
-
-extern crate std as core;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
-extern crate serde_bytes;
 #[macro_use]
 extern crate log;
+extern crate alto;
+extern crate gl;
+extern crate glutin;
+extern crate serde;
+extern crate serde_bytes;
+extern crate simple_logger;
+extern crate std as core;
 
 mod glwrap;
 mod nes;
 
+use alto::*;
+use core::collections::VecDeque;
+use core::time::Instant;
+use core::{f64, iter, mem};
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;
 use glutin::{
-    Api, ContextBuilder, DeviceEvent, DeviceId, ElementState, Event, EventsLoop, GlContext,
-    GlProfile, GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
+    Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
+    GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
 };
 use glwrap::*;
 use nes::controller::{Buttons, StandardController};
-use nes::{Console, Screen, RGB};
-use std::collections::VecDeque;
-use std::time::Instant;
-use std::{f64, mem};
+use nes::{Console, Screen, Speaker, RGB};
 
 struct Fps {
     instants: VecDeque<Instant>,
@@ -59,15 +59,6 @@ impl Fps {
         (1_000_000_f64
             / f64::from(duration.as_secs() as u32 * 1_000_000 + duration.subsec_micros())
             * 64.0) as f32
-    }
-}
-
-fn update(screen_buffer: &mut [u8]) {
-    for (i, s) in screen_buffer.iter_mut().enumerate() {
-        match i & 3 {
-            0 | 1 | 2 => *s = (*s).wrapping_add(1),
-            _ => {}
-        }
     }
 }
 
@@ -205,10 +196,11 @@ struct Window {
     console: Console,
     controller: StandardController,
     keys: Buttons,
+    speaker: AlSpeaker,
 }
 
 impl Window {
-    fn new(console: Console) -> Self {
+    fn new(console: Console, speaker: AlSpeaker) -> Self {
         // glutin initialize
         let events_loop = EventsLoop::new();
         // create opengl window
@@ -226,6 +218,7 @@ impl Window {
             console,
             controller: StandardController::new(),
             keys: Buttons::empty(),
+            speaker,
         }
     }
 
@@ -340,10 +333,11 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        while !self
-            .console
-            .step(&mut self.screen_buffer, &mut self.controller)
-        {}
+        while !self.console.step(
+            &mut self.screen_buffer,
+            &mut self.controller,
+            &mut self.speaker,
+        ) {}
 
         // clear_color(0.0, 0.0, 0.0, 0.0).unwrap();
         // clear_depth(1.0).unwrap();
@@ -426,6 +420,73 @@ impl Window {
     }
 }
 
+struct AlSpeaker {
+    alto: Option<Alto>,
+    dev: Option<OutputDevice>,
+    ctx: Option<Context>,
+    src: Option<StreamingSource>,
+    buf: Vec<Mono<i16>>,
+}
+
+impl AlSpeaker {
+    pub fn new() -> Self {
+        let (alto, dev, ctx, src) = if let Ok((alto, dev, ctx, src)) = Alto::load_default()
+            .and_then(|alto| alto.open(None).map(|dev| (alto, dev)))
+            .and_then(|(alto, dev)| dev.new_context(None).map(|ctx| (alto, dev, ctx)))
+            .and_then(|(alto, dev, ctx)| {
+                ctx.new_streaming_source().map(|mut src| {
+                    for _ in 0..4 {
+                        let buf = ctx
+                            .new_buffer(
+                                iter::repeat(0_i16)
+                                    .take(44_100 / 120)
+                                    .map(|x| Mono { center: x })
+                                    .collect::<Vec<Mono<i16>>>(),
+                                44_000,
+                            ).unwrap();
+                        src.queue_buffer(buf).unwrap();
+                    }
+                    (alto, dev, ctx, src)
+                })
+            }) {
+            (Some(alto), Some(dev), Some(ctx), Some(src))
+        } else {
+            error!("No OpenAL implementation present!");
+            (None, None, None, None)
+        };
+
+        Self {
+            alto,
+            ctx,
+            dev,
+            src,
+            buf: Vec::new(),
+        }
+    }
+}
+
+impl Speaker for AlSpeaker {
+    fn push(&mut self, data: i16) {
+        if let Some(ref mut src) = self.src.as_mut() {
+            if self.buf.len() < (44_100 / 120) {
+                self.buf.push(Mono { center: data });
+            }
+            if self.buf.len() >= (44_100 / 120) {
+                if src.buffers_processed() != 0 {
+                    let mut buf = src.unqueue_buffer().unwrap();
+                    buf.set_data(&mut self.buf, 44_100).unwrap();
+                    src.queue_buffer(buf).unwrap();
+                    self.buf.clear();
+                }
+            }
+            match src.state() {
+                SourceState::Playing => (),
+                _ => src.play(),
+            }
+        }
+    }
+}
+
 fn main() {
     // log initialize
     simple_logger::init().unwrap();
@@ -437,11 +498,14 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko009.nes")
         // &mut include_bytes!("../../sample_roms/giko010.nes")
         // &mut include_bytes!("../../sample_roms/giko010b.nes")
-        &mut include_bytes!("../../sample_roms/giko011.nes")
+        // &mut include_bytes!("../../sample_roms/giko011.nes")
+        &mut include_bytes!("../../sample_roms/giko012.nes")
             .into_iter()
             .cloned(),
+        44_100.0,
     ).unwrap();
+    let speaker = AlSpeaker::new();
 
-    let mut window = Window::new(console);
+    let mut window = Window::new(console, speaker);
     window.run();
 }
