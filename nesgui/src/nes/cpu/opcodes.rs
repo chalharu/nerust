@@ -323,7 +323,7 @@ impl OpCode for Dec {
         let data = memory.read(address);
         let result = decrement(state, data);
         state.stall += memory.write(address, result);
-        1
+        3
     }
     fn name(&self) -> &'static str {
         "DEC"
@@ -382,7 +382,7 @@ impl OpCode for Inc {
         let data = memory.read(address);
         let result = increment(state, data);
         state.stall += memory.write(address, result);
-        1
+        3
     }
     fn name(&self) -> &'static str {
         "INC"
