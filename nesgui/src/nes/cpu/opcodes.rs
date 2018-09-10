@@ -893,7 +893,8 @@ pub(crate) struct Dcp;
 impl OpCode for Dcp {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address).wrapping_sub(1);
-        state.register().set_nz_from_value(data);
+        let val = state.register().get_a().wrapping_sub(data);
+        state.register().set_nz_from_value(val);
         state.stall += memory.write(address, data);
         1
     }
