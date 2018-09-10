@@ -6,9 +6,11 @@
 
 mod mapper1;
 mod mapper2;
+mod mapper3;
 
 use self::mapper1::Mapper1;
 use self::mapper2::Mapper2;
+use self::mapper3::Mapper3;
 use super::error::CartridgeError;
 use super::format::CartridgeData;
 use super::Cartridge;
@@ -18,6 +20,7 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<Cartridge>, CartridgeE
         0 => Ok(Box::new(Mapper2::new(data))),
         1 => Ok(Box::new(Mapper1::new(data))),
         2 => Ok(Box::new(Mapper2::new(data))),
+        3 => Ok(Box::new(Mapper3::new(data))),
         n => {
             error!("unknown mapper type : {}", n);
             Err(CartridgeError::DataError)
