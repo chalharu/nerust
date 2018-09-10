@@ -41,7 +41,7 @@ use nes::{Console, Screen, Speaker, RGB};
 
 struct Fps {
     instants: VecDeque<Instant>,
-    wait_instants: VecDeque<Instant>,
+    wait_instants: Instant,
 }
 
 impl Fps {
@@ -50,23 +50,20 @@ impl Fps {
         for _ in 0..64 {
             instants.push_back(Instant::now());
         }
-        let mut wait_instants = VecDeque::new();
-        for _ in 0..15 {
-            wait_instants.push_back(Instant::now());
-        }
+        let wait_instants = Instant::now();
         Self {
             instants,
             wait_instants,
         }
     }
 
-    const FRAME_WAITS: u64 = (1.0 / 60.0 * 15.0 * 1_000_000.0) as u64;
+    const FRAME_WAITS: u64 = 1_000 / 60;
 
     pub fn wait(&mut self) {
         let new_now = Instant::now();
-        let duration = new_now.duration_since(self.wait_instants.pop_front().unwrap());
-        self.wait_instants.push_back(new_now);
-        if let Some(wait) = Duration::from_micros(Self::FRAME_WAITS).checked_sub(duration) {
+        let duration = new_now.duration_since(self.wait_instants);
+        self.wait_instants = new_now;
+        if let Some(wait) = Duration::from_millis(Self::FRAME_WAITS).checked_sub(duration) {
             thread::sleep(wait);
         }
     }
@@ -518,7 +515,15 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko010b.nes")
         // &mut include_bytes!("../../sample_roms/giko011.nes")
         // &mut include_bytes!("../../sample_roms/giko012.nes")
-        &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
+        // &mut include_bytes!("../../sample_roms/giko013.nes")
+        // &mut include_bytes!("../../sample_roms/giko014.nes")
+        // &mut include_bytes!("../../sample_roms/giko014b.nes")
+        // &mut include_bytes!("../../sample_roms/giko015.nes")
+        // &mut include_bytes!("../../sample_roms/giko016.nes")
+        // &mut include_bytes!("../../sample_roms/giko017.nes")
+        // &mut include_bytes!("../../sample_roms/giko018.nes")
+        &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")
+        // &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
             .into_iter()
             .cloned(),
         44_100.0,
