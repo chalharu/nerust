@@ -89,7 +89,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, value: u8) {
         self.length_value = LENGTH_TABLE[usize::from(value >> 3)];
         self.timer_period = (self.timer_period & 0xFF) | (u16::from(value & 7) << 8);
-        self.timer_value = self.timer_period;
+        self.envelope_start = true;
         self.duty_value = 0;
     }
 
