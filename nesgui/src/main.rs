@@ -27,8 +27,8 @@ mod nes;
 
 use alto::*;
 use core::collections::VecDeque;
-use core::time::Instant;
-use core::{f64, iter, mem};
+use core::time::{Duration, Instant};
+use core::{f64, iter, mem, thread};
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;
 use glutin::{
@@ -41,6 +41,7 @@ use nes::{Console, Screen, Speaker, RGB};
 
 struct Fps {
     instants: VecDeque<Instant>,
+    wait_instants: VecDeque<Instant>,
 }
 
 impl Fps {
@@ -49,7 +50,25 @@ impl Fps {
         for _ in 0..64 {
             instants.push_back(Instant::now());
         }
-        Self { instants }
+        let mut wait_instants = VecDeque::new();
+        for _ in 0..15 {
+            wait_instants.push_back(Instant::now());
+        }
+        Self {
+            instants,
+            wait_instants,
+        }
+    }
+
+    const FRAME_WAITS: u64 = (1.0 / 60.0 * 15.0 * 1_000_000.0) as u64;
+
+    pub fn wait(&mut self) {
+        let new_now = Instant::now();
+        let duration = new_now.duration_since(self.wait_instants.pop_front().unwrap());
+        self.wait_instants.push_back(new_now);
+        if let Some(wait) = Duration::from_micros(Self::FRAME_WAITS).checked_sub(duration) {
+            thread::sleep(wait);
+        }
     }
 
     pub fn to_fps(&mut self) -> f32 {
@@ -226,6 +245,7 @@ impl Window {
         self.on_load();
         while self.running {
             self.on_update();
+            self.fps.wait();
             let mut el = mem::replace(&mut self.events_loop, None);
             el.as_mut().unwrap().poll_events(|event| match event {
                 Event::WindowEvent { event, .. } => match event {
@@ -421,44 +441,43 @@ impl Window {
 }
 
 struct AlSpeaker {
-    alto: Option<Alto>,
-    dev: Option<OutputDevice>,
-    ctx: Option<Context>,
+    // alto: Option<Alto>,
+    // dev: Option<OutputDevice>,
+    // ctx: Option<Context>,
     src: Option<StreamingSource>,
     buf: Vec<Mono<i16>>,
 }
 
 impl AlSpeaker {
     pub fn new() -> Self {
-        let (alto, dev, ctx, src) = if let Ok((alto, dev, ctx, src)) = Alto::load_default()
-            .and_then(|alto| alto.open(None).map(|dev| (alto, dev)))
-            .and_then(|(alto, dev)| dev.new_context(None).map(|ctx| (alto, dev, ctx)))
-            .and_then(|(alto, dev, ctx)| {
-                ctx.new_streaming_source().map(|mut src| {
-                    for _ in 0..4 {
-                        let buf = ctx
-                            .new_buffer(
-                                iter::repeat(0_i16)
-                                    .take(44_100 / 120)
-                                    .map(|x| Mono { center: x })
-                                    .collect::<Vec<Mono<i16>>>(),
-                                44_000,
-                            ).unwrap();
-                        src.queue_buffer(buf).unwrap();
-                    }
-                    (alto, dev, ctx, src)
-                })
+        let src = if let Ok(src) = Alto::load_default()
+            .and_then(|alto| alto.open(None))
+            .and_then(|dev| dev.new_context(None))
+            .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
+            .and_then(|(mut src, ctx)| {
+                for _ in 0..10 {
+                    let buf = ctx
+                        .new_buffer(
+                            iter::repeat(0_i16)
+                                .take(44_100 / 120)
+                                .map(|x| Mono { center: x })
+                                .collect::<Vec<Mono<i16>>>(),
+                            44_000,
+                        ).unwrap();
+                    src.queue_buffer(buf).unwrap();
+                }
+                Ok(src)
             }) {
-            (Some(alto), Some(dev), Some(ctx), Some(src))
+            Some(src)
         } else {
             error!("No OpenAL implementation present!");
-            (None, None, None, None)
+            None
         };
 
         Self {
-            alto,
-            ctx,
-            dev,
+            // alto,
+            // ctx,
+            // dev,
             src,
             buf: Vec::new(),
         }
@@ -490,7 +509,7 @@ fn main() {
     simple_logger::init().unwrap();
 
     let console = nes::Console::new(
-        &mut include_bytes!("../../sample_roms/nestest.nes")
+        // &mut include_bytes!("../../sample_roms/nestest.nes")
         // &mut include_bytes!("../../sample_roms/sample1.nes")
         // &mut include_bytes!("../../sample_roms/giko005.nes")
         // &mut include_bytes!("../../sample_roms/giko008.nes")
@@ -499,6 +518,7 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko010b.nes")
         // &mut include_bytes!("../../sample_roms/giko011.nes")
         // &mut include_bytes!("../../sample_roms/giko012.nes")
+        &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
             .into_iter()
             .cloned(),
         44_100.0,
