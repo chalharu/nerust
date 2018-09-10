@@ -468,16 +468,14 @@ impl AlSpeaker {
 impl Speaker for AlSpeaker {
     fn push(&mut self, data: i16) {
         if let Some(ref mut src) = self.src.as_mut() {
-            if self.buf.len() < (44_100 / 120) {
-                self.buf.push(Mono { center: data });
-            }
+            self.buf.push(Mono { center: data });
             if self.buf.len() >= (44_100 / 120) {
-                if src.buffers_processed() != 0 {
+                for _ in 0..src.buffers_processed() {
                     let mut buf = src.unqueue_buffer().unwrap();
-                    buf.set_data(&mut self.buf, 44_100).unwrap();
+                    buf.set_data(&self.buf, 44_100).unwrap();
                     src.queue_buffer(buf).unwrap();
-                    self.buf.clear();
                 }
+                self.buf.clear();
             }
             match src.state() {
                 SourceState::Playing => (),
@@ -492,6 +490,7 @@ fn main() {
     simple_logger::init().unwrap();
 
     let console = nes::Console::new(
+        &mut include_bytes!("../../sample_roms/nestest.nes")
         // &mut include_bytes!("../../sample_roms/sample1.nes")
         // &mut include_bytes!("../../sample_roms/giko005.nes")
         // &mut include_bytes!("../../sample_roms/giko008.nes")
@@ -499,7 +498,7 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko010.nes")
         // &mut include_bytes!("../../sample_roms/giko010b.nes")
         // &mut include_bytes!("../../sample_roms/giko011.nes")
-        &mut include_bytes!("../../sample_roms/giko012.nes")
+        // &mut include_bytes!("../../sample_roms/giko012.nes")
             .into_iter()
             .cloned(),
         44_100.0,
