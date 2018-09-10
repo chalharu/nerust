@@ -951,10 +951,11 @@ impl OpCode for Rla {
         let data = memory.read(address);
         let c = if state.register().get_c() { 1 } else { 0 };
         state.register().set_c(data & 0x80 != 0);
-        let value = (data << 1 | c) & state.register().get_a();
+        let wd = (data << 1) | c;
+        let value = wd & state.register().get_a();
         state.register().set_a(value);
         state.register().set_nz_from_value(value);
-        state.stall += memory.write(address, data);
+        state.stall += memory.write(address, wd);
         1
     }
     fn name(&self) -> &'static str {
