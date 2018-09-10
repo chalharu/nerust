@@ -982,8 +982,19 @@ impl OpCode for Sre {
 
 pub(crate) struct Rra;
 impl OpCode for Rra {
-    fn execute(&self, _state: &mut State, _memory: &mut Memory, _address: usize) -> usize {
-        //
+    fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
+        let data = memory.read(address);
+        let wd = (data >> 1) | (if state.register().get_c() { 0x80 } else { 0 });
+        let a = state.register().get_a();
+        let value = u16::from(wd) + u16::from(a) + u16::from(data & 1);
+        let new_a = (value & 0xFF) as u8;
+        state
+            .register()
+            .set_v((((a ^ wd) & 0x80) == 0) && (((a ^ new_a) & 0x80) != 0));
+        state.register().set_nz_from_value(new_a);
+        state.register().set_c((value & 0x100) != 0);
+        state.register().set_a(new_a);
+        state.stall += memory.write(address, wd);
         1
     }
     fn name(&self) -> &'static str {
