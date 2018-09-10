@@ -451,6 +451,7 @@ impl Core {
                 Box::new(Isb),
             ],
             addressing_tables: [
+                // 0x00
                 Box::new(Implied),
                 Box::new(IndexedIndirect),
                 Box::new(Implied),
@@ -459,6 +460,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0x08
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Accumulator),
@@ -467,6 +469,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0x10
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -475,6 +478,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0x18
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -483,6 +487,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
+                // 0x20
                 Box::new(Absolute),
                 Box::new(IndexedIndirect),
                 Box::new(Implied),
@@ -491,6 +496,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0x28
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Accumulator),
@@ -499,6 +505,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0x30
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -507,6 +514,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0x38
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -515,6 +523,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
+                // 0x40
                 Box::new(Implied),
                 Box::new(IndexedIndirect),
                 Box::new(Implied),
@@ -523,6 +532,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0x48
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Accumulator),
@@ -531,6 +541,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0x50
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -539,6 +550,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0x58
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -547,6 +559,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
+                // 0x60
                 Box::new(Implied),
                 Box::new(IndexedIndirect),
                 Box::new(Implied),
@@ -555,6 +568,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0x68
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Accumulator),
@@ -563,6 +577,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0x70
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -571,6 +586,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0x78
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -579,6 +595,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
+                // 0x80
                 Box::new(Immediate),
                 Box::new(IndexedIndirect),
                 Box::new(Immediate),
@@ -587,6 +604,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0x88
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Implied),
@@ -595,38 +613,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
-                Box::new(Relative),
-                Box::new(IndirectIndexed),
-                Box::new(Implied),
-                Box::new(IndirectIndexed),
-                Box::new(ZeroPageX),
-                Box::new(ZeroPageX),
-                Box::new(ZeroPageY),
-                Box::new(ZeroPageY),
-                Box::new(Implied),
-                Box::new(AbsoluteY),
-                Box::new(Implied),
-                Box::new(AbsoluteY),
-                Box::new(AbsoluteX),
-                Box::new(AbsoluteX),
-                Box::new(AbsoluteY),
-                Box::new(AbsoluteY),
-                Box::new(Immediate),
-                Box::new(IndexedIndirect),
-                Box::new(Immediate),
-                Box::new(IndexedIndirect),
-                Box::new(ZeroPage),
-                Box::new(ZeroPage),
-                Box::new(ZeroPage),
-                Box::new(ZeroPage),
-                Box::new(Implied),
-                Box::new(Immediate),
-                Box::new(Implied),
-                Box::new(Immediate),
-                Box::new(Absolute),
-                Box::new(Absolute),
-                Box::new(Absolute),
-                Box::new(Absolute),
+                // 0x90
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -635,6 +622,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageY),
                 Box::new(ZeroPageY),
+                // 0x98
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -643,6 +631,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteY),
                 Box::new(AbsoluteY),
+                // 0xA0
                 Box::new(Immediate),
                 Box::new(IndexedIndirect),
                 Box::new(Immediate),
@@ -651,6 +640,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0xA8
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Implied),
@@ -659,6 +649,43 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0xB0
+                Box::new(Relative),
+                Box::new(IndirectIndexed),
+                Box::new(Implied),
+                Box::new(IndirectIndexed),
+                Box::new(ZeroPageX),
+                Box::new(ZeroPageX),
+                Box::new(ZeroPageY),
+                Box::new(ZeroPageY),
+                // 0xB8
+                Box::new(Implied),
+                Box::new(AbsoluteY),
+                Box::new(Implied),
+                Box::new(AbsoluteY),
+                Box::new(AbsoluteX),
+                Box::new(AbsoluteX),
+                Box::new(AbsoluteY),
+                Box::new(AbsoluteY),
+                // 0xC0
+                Box::new(Immediate),
+                Box::new(IndexedIndirect),
+                Box::new(Immediate),
+                Box::new(IndexedIndirect),
+                Box::new(ZeroPage),
+                Box::new(ZeroPage),
+                Box::new(ZeroPage),
+                Box::new(ZeroPage),
+                // 0xC8
+                Box::new(Implied),
+                Box::new(Immediate),
+                Box::new(Implied),
+                Box::new(Immediate),
+                Box::new(Absolute),
+                Box::new(Absolute),
+                Box::new(Absolute),
+                Box::new(Absolute),
+                // 0xD0
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -667,6 +694,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0xD8
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),
@@ -675,6 +703,7 @@ impl Core {
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
                 Box::new(AbsoluteX),
+                // 0xE0
                 Box::new(Immediate),
                 Box::new(IndexedIndirect),
                 Box::new(Immediate),
@@ -683,6 +712,7 @@ impl Core {
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
                 Box::new(ZeroPage),
+                // 0xE8
                 Box::new(Implied),
                 Box::new(Immediate),
                 Box::new(Implied),
@@ -691,6 +721,7 @@ impl Core {
                 Box::new(Absolute),
                 Box::new(Absolute),
                 Box::new(Absolute),
+                // 0xF0
                 Box::new(Relative),
                 Box::new(IndirectIndexed),
                 Box::new(Implied),
@@ -699,6 +730,7 @@ impl Core {
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
                 Box::new(ZeroPageX),
+                // 0xF8
                 Box::new(Implied),
                 Box::new(AbsoluteY),
                 Box::new(Implied),

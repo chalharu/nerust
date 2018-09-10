@@ -132,10 +132,10 @@ pub(crate) struct IndexedIndirect;
 impl AddressingMode for IndexedIndirect {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = u16::from(memory.read(pc as usize));
-        let new_address = address.wrapping_add(u16::from(state.register().get_x()));
+        let address = memory.read(pc as usize);
+        let new_address = address.wrapping_add(state.register().get_x());
         Address {
-            address: memory.read_u16_bug(new_address as usize) as usize,
+            address: memory.read_u16_bug(usize::from(new_address)) as usize,
             cycles: 5,
         }
     }
