@@ -89,6 +89,8 @@ pub(crate) struct State {
     low_tile_byte: u8,
     high_tile_byte: u8,
     tile_data: u64,
+
+    register_buffer: u8,
 }
 
 impl State {
@@ -137,6 +139,7 @@ impl State {
             low_tile_byte: 0,
             high_tile_byte: 0,
             tile_data: 0,
+            register_buffer: 0,
         }
     }
 
@@ -404,12 +407,14 @@ impl Core {
     }
 
     pub fn read_register(&mut self, address: usize, cartridge: &mut Box<Cartridge>) -> u8 {
-        match address {
+        let result = match address {
             0x2002 => self.state.read_status(),
             0x2004 => self.state.read_oam(),
             0x2007 => self.read_data(cartridge),
-            _ => 0,
-        }
+            _ => self.state.register_buffer,
+        };
+        self.state.register_buffer = result;
+        result
     }
 
     pub fn write_register(&mut self, address: usize, value: u8, cartridge: &mut Box<Cartridge>) {
@@ -423,6 +428,7 @@ impl Core {
             0x2007 => self.write_data(value, cartridge),
             _ => {}
         }
+        self.state.register_buffer = value;
     }
 
     fn read_data(&mut self, cartridge: &mut Box<Cartridge>) -> u8 {
