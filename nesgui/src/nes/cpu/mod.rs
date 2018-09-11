@@ -12,11 +12,11 @@ mod register;
 
 use self::addressing_mode::*;
 use self::interrupt::Interrupt;
-use self::memory::Memory;
+use self::memory::{Memory, MemoryState};
 use self::opcodes::*;
 use self::register::Register;
 use super::*;
-use std::ops;
+use std::{mem, ops};
 
 fn page_crossed<T: ops::Shr<usize>>(a: T, b: T) -> bool
 where
@@ -30,6 +30,7 @@ pub(crate) struct State {
     register: Register,
     interrupt: Interrupt,
     stall: usize,
+    mem_state: Option<MemoryState>,
 }
 
 impl State {
@@ -38,6 +39,7 @@ impl State {
             register: Register::new(),
             interrupt: Interrupt::Reset,
             stall: 0,
+            mem_state: Some(MemoryState::new()),
         }
     }
 
@@ -74,49 +76,61 @@ impl State {
             return;
         }
 
-        let mut memory = Memory::new(wram, ppu, apu, controller, cartridge);
+        let mut mem_state = mem::replace(&mut self.mem_state, None);
+        {
+            let mut memory = Memory::new(
+                wram,
+                ppu,
+                apu,
+                controller,
+                cartridge,
+                mem_state.as_mut().unwrap(),
+            );
 
-        let stall = match self.interrupt {
-            Interrupt::Nmi => {
-                self.interrupt = Interrupt::None;
-                Nmi.execute(self, &mut memory, 0)
-            }
-            Interrupt::Irq => {
-                self.interrupt = Interrupt::None;
-                Irq.execute(self, &mut memory, 0)
-            }
-            Interrupt::Reset => {
-                let pc = memory.read_u16(0xFFFC);
-                self.interrupt = Interrupt::None;
-                self.register().set_pc(pc);
-                self.register().set_sp(0xFD);
-                self.register().set_p(0x24);
-                7
-            }
-            Interrupt::None => {
-                let pc = self.register().get_pc();
-                let code = memory.read(pc as usize) as usize;
-                let addressing = addressing_tables[code].execute(self, &mut memory);
-                // info!(
-                //     "CPU Oprand: {} {} {}",
-                //     opcode_tables[code].name(),
-                //     addressing_tables[code].name(),
-                //     match addressing_tables[code].opcode_length() {
-                //         1 => String::new(),
-                //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
-                //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
-                //         _ => {
-                //             unreachable!();
-                //         }
-                //     }
-                // );
-                self.register()
-                    .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
-                let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
-                addressing.cycles + cycles
-            }
-        };
-        self.stall += stall - 1;
+            let stall = match self.interrupt {
+                Interrupt::Nmi => {
+                    self.interrupt = Interrupt::None;
+                    Nmi.execute(self, &mut memory, 0)
+                }
+                Interrupt::Irq => {
+                    self.interrupt = Interrupt::None;
+                    Irq.execute(self, &mut memory, 0)
+                }
+                Interrupt::Reset => {
+                    let pc = memory.read_u16(0xFFFC);
+                    self.interrupt = Interrupt::None;
+                    self.register().set_pc(pc);
+                    self.register().set_sp(0xFD);
+                    self.register().set_p(0x24);
+                    7
+                }
+                Interrupt::None => {
+                    let pc = self.register().get_pc();
+                    let code = memory.read(pc as usize) as usize;
+                    let addressing = addressing_tables[code].execute(self, &mut memory);
+                    // info!(
+                    //     "CPU Oprand: {} {} {}",
+                    //     opcode_tables[code].name(),
+                    //     addressing_tables[code].name(),
+                    //     match addressing_tables[code].opcode_length() {
+                    //         1 => String::new(),
+                    //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
+                    //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
+                    //         _ => {
+                    //             unreachable!();
+                    //         }
+                    //     }
+                    // );
+                    self.register()
+                        .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
+                    let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
+                    addressing.cycles + cycles
+                }
+            };
+            self.stall += stall - 1;
+        }
+
+        self.mem_state = mem_state;
     }
 }
 

@@ -116,7 +116,9 @@ impl AddressingMode for Immediate {
 
 pub(crate) struct Implied;
 impl AddressingMode for Implied {
-    fn execute(&self, _state: &mut State, _memory: &mut Memory) -> Address {
+    fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
+        let pc = state.register().get_pc().wrapping_add(1);
+        let _ = memory.read(pc as usize); // dummy fetch
         Address {
             address: 0,
             cycles: 1,

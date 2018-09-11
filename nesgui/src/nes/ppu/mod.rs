@@ -408,7 +408,10 @@ impl Core {
 
     pub fn read_register(&mut self, address: usize, cartridge: &mut Box<Cartridge>) -> u8 {
         let result = match address {
-            0x2002 => self.state.read_status(),
+            0x2002 => {
+                (self.state.read_status() & 0b1110_0000)
+                    | (self.state.register_buffer & 0b0001_1111)
+            }
             0x2004 => self.state.read_oam(),
             0x2007 => self.read_data(cartridge),
             _ => self.state.register_buffer,
