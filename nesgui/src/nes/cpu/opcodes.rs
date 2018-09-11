@@ -203,12 +203,18 @@ impl OpCode for Bpl {
 pub(crate) struct Brk;
 impl OpCode for Brk {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let pc = state.register().get_pc();
-        push_u16(state, memory, pc);
-        Php.execute(state, memory, address);
-        Sei.execute(state, memory, address);
-        state.register().set_pc(0xFFFE);
-        6
+        if !state.register().get_i() {
+            0
+        } else {
+            let pc = state.register().get_pc().wrapping_add(1);
+            state.register().set_b(true);
+            push_u16(state, memory, pc);
+            Php.execute(state, memory, address);
+            state.register().set_i(true);
+            let new_pc = memory.read_u16(0xFFFE);
+            state.register().set_pc(new_pc);
+            6
+        }
     }
     fn name(&self) -> &'static str {
         "BRK"
@@ -1151,6 +1157,7 @@ pub(crate) struct Nmi;
 impl OpCode for Nmi {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let pc = state.register().get_pc();
+        let _ = memory.read(pc as usize); // dummy fetch
         push_u16(state, memory, pc);
         Php.execute(state, memory, address);
         let new_pc = memory.read_u16(0xFFFA);
@@ -1166,13 +1173,19 @@ impl OpCode for Nmi {
 pub(crate) struct Irq;
 impl OpCode for Irq {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let pc = state.register().get_pc();
-        push_u16(state, memory, pc);
-        Php.execute(state, memory, address);
-        let new_pc = memory.read_u16(0xFFFE);
-        state.register().set_pc(new_pc);
-        state.register().set_i(true);
-        7
+        if state.register().get_i() {
+            0
+        } else {
+            let pc = state.register().get_pc();
+            let _ = memory.read(pc as usize); // dummy fetch
+
+            push_u16(state, memory, pc);
+            Php.execute(state, memory, address);
+            state.register().set_i(true);
+            let new_pc = memory.read_u16(0xFFFE);
+            state.register().set_pc(new_pc);
+            7
+        }
     }
     fn name(&self) -> &'static str {
         "IRQ"

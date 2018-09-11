@@ -107,6 +107,9 @@ impl Register {
     pub fn set_d(&mut self, value: bool) {
         self.d = value;
     }
+    pub fn set_b(&mut self, value: bool) {
+        self.b = value;
+    }
     pub fn set_v(&mut self, value: bool) {
         self.v = value;
     }
