@@ -4,6 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use nes::cpu::State;
 use nes::{Apu, Cartridge, Controller, Ppu};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,14 +46,17 @@ impl<'a> Memory<'a> {
         }
     }
 
-    pub fn read(&mut self, address: usize) -> u8 {
+    pub fn read(&mut self, address: usize, cpustate: &mut State) -> u8 {
         let result = match address {
             0...0x1FFF => self.wram[address & 0x07FF],
             0x2000...0x3FFF => self
                 .ppu
                 .read_register(0x2000 + (address & 7), self.cartridge),
             // 0x4014 => self.ppu.read_register(address, self.cartridge),
-            0x4015 => self.apu.read_register(address),
+            0x4015 => {
+                cpustate.disable_irq();
+                self.apu.read_register(address)
+            }
             0x4016 | 0x4017 => {
                 (self.controller.read(address & 1) & 0x1F) | (self.state.lastread & 0xE0)
             }
@@ -67,19 +71,19 @@ impl<'a> Memory<'a> {
         result
     }
 
-    pub fn read_u16(&mut self, address: usize) -> u16 {
-        let low = u16::from(self.read(address));
-        let high = u16::from(self.read(address + 1));
+    pub fn read_u16(&mut self, address: usize, cpustate: &mut State) -> u16 {
+        let low = u16::from(self.read(address, cpustate));
+        let high = u16::from(self.read(address + 1, cpustate));
         (high << 8) | low
     }
 
-    pub fn read_u16_bug(&mut self, address: usize) -> u16 {
-        let low = u16::from(self.read(address));
-        let high = u16::from(self.read((address & 0xFF00) | ((address + 1) & 0xFF)));
+    pub fn read_u16_bug(&mut self, address: usize, cpustate: &mut State) -> u16 {
+        let low = u16::from(self.read(address, cpustate));
+        let high = u16::from(self.read((address & 0xFF00) | ((address + 1) & 0xFF), cpustate));
         (high << 8) | low
     }
 
-    pub fn write(&mut self, address: usize, value: u8) -> usize {
+    pub fn write(&mut self, address: usize, value: u8, cpustate: &mut State) -> usize {
         match address {
             0...0x1FFF => {
                 self.wram[address & 0x07FF] = value;
@@ -96,7 +100,7 @@ impl<'a> Memory<'a> {
             }
             0x4014 => {
                 let v = (0..256)
-                    .map(|i| self.read((usize::from(value) << 8) | i))
+                    .map(|i| self.read((usize::from(value) << 8) | i, cpustate))
                     .collect::<Vec<_>>();
                 self.ppu.write_dma(&v);
                 // TODO: もしCPUサイクルが奇数だったら、本当はもう１サイクル追加する必要がある。
