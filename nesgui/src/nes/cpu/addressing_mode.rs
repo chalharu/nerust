@@ -43,6 +43,7 @@ impl AddressingMode for AbsoluteX {
         Address {
             address: new_address as usize,
             cycles: 3 + if page_crossed(address, new_address) {
+                dummy_read(address, new_address, memory);
                 1
             } else {
                 0
@@ -66,6 +67,7 @@ impl AddressingMode for AbsoluteY {
         Address {
             address: new_address as usize,
             cycles: 3 + if page_crossed(address, new_address) {
+                dummy_read(address, new_address, memory);
                 1
             } else {
                 0
@@ -165,6 +167,10 @@ impl AddressingMode for AbsoluteIndirect {
     }
 }
 
+fn dummy_read(address: u16, new_address: u16, memory: &mut Memory) {
+    let _ = memory.read(((address & 0xFF00) | (new_address & 0xFF)) as usize);
+}
+
 pub(crate) struct IndirectIndexed;
 impl AddressingMode for IndirectIndexed {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
@@ -174,6 +180,7 @@ impl AddressingMode for IndirectIndexed {
         Address {
             address: new_address as usize,
             cycles: 4 + if page_crossed(address, new_address) {
+                dummy_read(address, new_address, memory);
                 1
             } else {
                 0
