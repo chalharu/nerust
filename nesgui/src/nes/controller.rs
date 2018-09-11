@@ -21,12 +21,12 @@ bitflags! {
     pub struct Buttons: u8 {
         const A = 0b00000001;
         const B = 0b00000010;
-        const Select = 0b00000100;
-        const Start = 0b00001000;
-        const Up = 0b00010000;
-        const Down = 0b00100000;
-        const Left = 0b01000000;
-        const Right = 0b10000000;
+        const SELECT = 0b00000100;
+        const START = 0b00001000;
+        const UP = 0b00010000;
+        const DOWN = 0b00100000;
+        const LEFT = 0b01000000;
+        const RIGHT = 0b10000000;
     }
 }
 
