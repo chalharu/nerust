@@ -506,7 +506,6 @@ fn main() {
     simple_logger::init().unwrap();
 
     let console = nes::Console::new(
-        // &mut include_bytes!("../../sample_roms/nestest.nes")
         // &mut include_bytes!("../../sample_roms/sample1.nes")
         // &mut include_bytes!("../../sample_roms/giko005.nes")
         // &mut include_bytes!("../../sample_roms/giko008.nes")
@@ -522,8 +521,11 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko016.nes")
         // &mut include_bytes!("../../sample_roms/giko017.nes")
         // &mut include_bytes!("../../sample_roms/giko018.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")
-        &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
+        // &mut include_bytes!("../../sample_roms/nestest.nes")  // 2018/9/10 Passed
+        // &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")  // 2018/9/11 Passed
+        // &mut include_bytes!("../../sample_roms/branch_timing_tests/2.Backward_Branch.nes")  // 2018/9/11 Passed
+        // &mut include_bytes!("../../sample_roms/branch_timing_tests/3.Forward_Branch.nes")  // 2018/9/11 Passed
+        &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")  // 2018/9/11 Passed
             .into_iter()
             .cloned(),
         44_100.0,
