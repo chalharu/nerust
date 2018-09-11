@@ -91,11 +91,12 @@ impl State {
                 self.register().set_pc(pc);
                 self.register().set_sp(0xFD);
                 self.register().set_p(0x24);
-                0
+                7
             }
             Interrupt::None => {
                 let pc = self.register().get_pc();
                 let code = memory.read(pc as usize) as usize;
+                let addressing = addressing_tables[code].execute(self, &mut memory);
                 // info!(
                 //     "CPU Oprand: {} {} {}",
                 //     opcode_tables[code].name(),
@@ -109,14 +110,13 @@ impl State {
                 //         }
                 //     }
                 // );
-                let addressing = addressing_tables[code].execute(self, &mut memory);
                 self.register()
                     .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
                 let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
                 addressing.cycles + cycles
             }
         };
-        self.stall += stall;
+        self.stall += stall - 1;
     }
 }
 

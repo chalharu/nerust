@@ -62,10 +62,10 @@ impl Fps {
     pub fn wait(&mut self) {
         let new_now = Instant::now();
         let duration = new_now.duration_since(self.wait_instants);
-        self.wait_instants = new_now;
         if let Some(wait) = Duration::from_millis(Self::FRAME_WAITS).checked_sub(duration) {
             thread::sleep(wait);
         }
+        self.wait_instants = Instant::now();
     }
 
     pub fn to_fps(&mut self) -> f32 {
@@ -421,12 +421,12 @@ impl Window {
         let code = match input.virtual_keycode {
             Some(VirtualKeyCode::Z) => Buttons::A,
             Some(VirtualKeyCode::X) => Buttons::B,
-            Some(VirtualKeyCode::C) => Buttons::Select,
-            Some(VirtualKeyCode::V) => Buttons::Start,
-            Some(VirtualKeyCode::Up) => Buttons::Up,
-            Some(VirtualKeyCode::Down) => Buttons::Down,
-            Some(VirtualKeyCode::Left) => Buttons::Left,
-            Some(VirtualKeyCode::Right) => Buttons::Right,
+            Some(VirtualKeyCode::C) => Buttons::SELECT,
+            Some(VirtualKeyCode::V) => Buttons::START,
+            Some(VirtualKeyCode::Up) => Buttons::UP,
+            Some(VirtualKeyCode::Down) => Buttons::DOWN,
+            Some(VirtualKeyCode::Left) => Buttons::LEFT,
+            Some(VirtualKeyCode::Right) => Buttons::RIGHT,
             _ => Buttons::empty(),
         };
         self.keys = match input.state {
@@ -522,8 +522,8 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko016.nes")
         // &mut include_bytes!("../../sample_roms/giko017.nes")
         // &mut include_bytes!("../../sample_roms/giko018.nes")
-        &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")
-        // &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
+        // &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")
+        &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
             .into_iter()
             .cloned(),
         44_100.0,
