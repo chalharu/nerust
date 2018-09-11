@@ -6,6 +6,7 @@
 
 use super::super::error::CartridgeError;
 use super::CartridgeData;
+use core::cmp;
 use nes::MirrorMode;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(
@@ -19,7 +20,7 @@ pub(crate) fn read_ines<I: Iterator<Item = u8>>(
     let crom_length = usize::from(headers[1]) * 0x2000;
     let flags1 = headers[2];
     let flags2 = headers[3];
-    let ram_length = usize::from(headers[4]) * 0x2000;
+    let ram_length = cmp::max(usize::from(headers[4]), 1) * 0x2000;
 
     let mapper_type = (flags1 >> 4) | (flags2 & 0xf0);
     let mirror_type = (flags1 & 1) | ((flags1 >> 2) & 2);
