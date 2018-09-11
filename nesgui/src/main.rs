@@ -525,7 +525,9 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")  // 2018/9/11 Passed
         // &mut include_bytes!("../../sample_roms/branch_timing_tests/2.Backward_Branch.nes")  // 2018/9/11 Passed
         // &mut include_bytes!("../../sample_roms/branch_timing_tests/3.Forward_Branch.nes")  // 2018/9/11 Passed
-        &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")  // 2018/9/11 Passed
+        // &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")  // 2018/9/11 Passed
+        // &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes")  // 2018/9/11 Passed
+        &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes")
             .into_iter()
             .cloned(),
         44_100.0,
