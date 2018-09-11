@@ -37,20 +37,22 @@ impl State {
     pub fn new() -> Self {
         Self {
             register: Register::new(),
-            interrupt: Interrupt::Reset,
+            interrupt: Interrupt::new(),
             stall: 0,
             mem_state: Some(MemoryState::new()),
         }
     }
 
     pub fn trigger_nmi(&mut self) {
-        self.interrupt = Interrupt::Nmi;
+        self.interrupt.set_nmi();
     }
 
     pub fn trigger_irq(&mut self) {
-        if !self.register.get_i() {
-            self.interrupt = Interrupt::Irq;
-        }
+        self.interrupt.set_irq();
+    }
+
+    pub fn disable_irq(&mut self) {
+        self.interrupt.reset_irq();
     }
 
     pub fn register(&mut self) -> &mut Register {
@@ -87,44 +89,46 @@ impl State {
                 mem_state.as_mut().unwrap(),
             );
 
-            let stall = match self.interrupt {
-                Interrupt::Nmi => {
-                    self.interrupt = Interrupt::None;
-                    Nmi.execute(self, &mut memory, 0)
-                }
-                Interrupt::Irq => {
-                    self.interrupt = Interrupt::None;
-                    Irq.execute(self, &mut memory, 0)
-                }
-                Interrupt::Reset => {
-                    let pc = memory.read_u16(0xFFFC);
-                    self.interrupt = Interrupt::None;
+            let stall = match (self.interrupt.reset, self.interrupt.nmi) {
+                (true, _) => {
+                    let pc = memory.read_u16(0xFFFC, self);
+                    self.interrupt.reset_reset();
                     self.register().set_pc(pc);
                     self.register().set_sp(0xFD);
                     self.register().set_p(0x24);
                     7
                 }
-                Interrupt::None => {
-                    let pc = self.register().get_pc();
-                    let code = memory.read(pc as usize) as usize;
-                    let addressing = addressing_tables[code].execute(self, &mut memory);
-                    // info!(
-                    //     "CPU Oprand: {} {} {}",
-                    //     opcode_tables[code].name(),
-                    //     addressing_tables[code].name(),
-                    //     match addressing_tables[code].opcode_length() {
-                    //         1 => String::new(),
-                    //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
-                    //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
-                    //         _ => {
-                    //             unreachable!();
-                    //         }
-                    //     }
-                    // );
-                    self.register()
-                        .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
-                    let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
-                    addressing.cycles + cycles
+                (false, true) => {
+                    self.interrupt.reset_nmi();
+                    Nmi.execute(self, &mut memory, 0)
+                }
+                (false, false) => {
+                    if self.interrupt.irq && !self.register().get_i() {
+                        self.interrupt.reset_irq();
+                        Irq.execute(self, &mut memory, 0)
+                    } else {
+                        let pc = self.register().get_pc();
+                        let code = memory.read(pc as usize, self) as usize;
+                        let addressing = addressing_tables[code].execute(self, &mut memory);
+                        // info!(
+                        //     "CPU Oprand: {} {} {}",
+                        //     opcode_tables[code].name(),
+                        //     addressing_tables[code].name(),
+                        //     match addressing_tables[code].opcode_length() {
+                        //         1 => String::new(),
+                        //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
+                        //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
+                        //         _ => {
+                        //             unreachable!();
+                        //         }
+                        //     }
+                        // );
+                        self.register()
+                            .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
+                        let cycles =
+                            opcode_tables[code].execute(self, &mut memory, addressing.address);
+                        addressing.cycles + cycles
+                    }
                 }
             };
             self.stall += stall - 1;
@@ -166,6 +170,10 @@ impl Core {
 
     pub fn trigger_irq(&mut self) {
         self.state.trigger_irq();
+    }
+
+    pub fn disable_irq(&mut self) {
+        self.state.disable_irq();
     }
 
     pub fn stall_addition(&mut self, value: usize) {

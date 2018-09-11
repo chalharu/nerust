@@ -529,7 +529,8 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes")  // 2018/9/11 Passed
         // &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes")  // 2018/9/11 Passed
         // &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes")  // 2018/9/11 Passed
-        &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_apu.nes")  // 2018/9/11 Passed
+        // &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_apu.nes")  // 2018/9/11 Passed
+        &mut include_bytes!("../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
             .into_iter()
             .cloned(),
         44_100.0,

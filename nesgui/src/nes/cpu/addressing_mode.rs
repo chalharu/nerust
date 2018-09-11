@@ -22,7 +22,7 @@ impl AddressingMode for Absolute {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
         Address {
-            address: memory.read_u16(pc as usize) as usize,
+            address: memory.read_u16(pc as usize, state) as usize,
             cycles: 3,
         }
     }
@@ -38,12 +38,12 @@ pub(crate) struct AbsoluteX;
 impl AddressingMode for AbsoluteX {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = memory.read_u16(pc as usize);
+        let address = memory.read_u16(pc as usize, state);
         let new_address = address.wrapping_add(u16::from(state.register().get_x()));
         Address {
             address: new_address as usize,
             cycles: 3 + if page_crossed(address, new_address) {
-                dummy_read(address, new_address, memory);
+                dummy_read(address, new_address, memory, state);
                 1
             } else {
                 0
@@ -62,12 +62,12 @@ pub(crate) struct AbsoluteY;
 impl AddressingMode for AbsoluteY {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = memory.read_u16(pc as usize);
+        let address = memory.read_u16(pc as usize, state);
         let new_address = address.wrapping_add(u16::from(state.register().get_y()));
         Address {
             address: new_address as usize,
             cycles: 3 + if page_crossed(address, new_address) {
-                dummy_read(address, new_address, memory);
+                dummy_read(address, new_address, memory, state);
                 1
             } else {
                 0
@@ -118,7 +118,7 @@ pub(crate) struct Implied;
 impl AddressingMode for Implied {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let _ = memory.read(pc as usize); // dummy fetch
+        let _ = memory.read(pc as usize, state); // dummy fetch
         Address {
             address: 0,
             cycles: 1,
@@ -136,10 +136,10 @@ pub(crate) struct IndexedIndirect;
 impl AddressingMode for IndexedIndirect {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = memory.read(pc as usize);
+        let address = memory.read(pc as usize, state);
         let new_address = address.wrapping_add(state.register().get_x());
         Address {
-            address: memory.read_u16_bug(usize::from(new_address)) as usize,
+            address: memory.read_u16_bug(usize::from(new_address), state) as usize,
             cycles: 5,
         }
     }
@@ -155,9 +155,9 @@ pub(crate) struct AbsoluteIndirect;
 impl AddressingMode for AbsoluteIndirect {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = memory.read_u16(pc as usize);
+        let address = memory.read_u16(pc as usize, state);
         Address {
-            address: memory.read_u16_bug(address as usize) as usize,
+            address: memory.read_u16_bug(address as usize, state) as usize,
             cycles: 5,
         }
     }
@@ -169,20 +169,20 @@ impl AddressingMode for AbsoluteIndirect {
     }
 }
 
-fn dummy_read(address: u16, new_address: u16, memory: &mut Memory) {
-    let _ = memory.read(((address & 0xFF00) | (new_address & 0xFF)) as usize);
+fn dummy_read(address: u16, new_address: u16, memory: &mut Memory, state: &mut State) {
+    let _ = memory.read(((address & 0xFF00) | (new_address & 0xFF)) as usize, state);
 }
 
 pub(crate) struct IndirectIndexed;
 impl AddressingMode for IndirectIndexed {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
-        let pc = u16::from(memory.read(state.register().get_pc().wrapping_add(1) as usize));
-        let address = memory.read_u16_bug(pc as usize);
+        let pc = u16::from(memory.read(state.register().get_pc().wrapping_add(1) as usize, state));
+        let address = memory.read_u16_bug(pc as usize, state);
         let new_address = address.wrapping_add(u16::from(state.register().get_y()));
         Address {
             address: new_address as usize,
             cycles: 4 + if page_crossed(address, new_address) {
-                dummy_read(address, new_address, memory);
+                dummy_read(address, new_address, memory, state);
                 1
             } else {
                 0
@@ -201,7 +201,7 @@ pub(crate) struct Relative;
 impl AddressingMode for Relative {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let offset = u16::from(memory.read(pc as usize));
+        let offset = u16::from(memory.read(pc as usize, state));
         let address = pc
             .wrapping_add(1)
             .wrapping_add(offset)
@@ -223,7 +223,7 @@ pub(crate) struct ZeroPage;
 impl AddressingMode for ZeroPage {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
-        let address = memory.read(pc as usize);
+        let address = memory.read(pc as usize, state);
         Address {
             address: usize::from(address),
             cycles: 2,
@@ -242,7 +242,7 @@ impl AddressingMode for ZeroPageX {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
         let address = memory
-            .read(pc as usize)
+            .read(pc as usize, state)
             .wrapping_add(state.register().get_x());
         Address {
             address: usize::from(address),
@@ -262,7 +262,7 @@ impl AddressingMode for ZeroPageY {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
         let pc = state.register().get_pc().wrapping_add(1);
         let address = memory
-            .read(pc as usize)
+            .read(pc as usize, state)
             .wrapping_add(state.register().get_y());
         Address {
             address: usize::from(address),

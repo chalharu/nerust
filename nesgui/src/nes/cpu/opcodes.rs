@@ -7,21 +7,21 @@
 use super::*;
 
 fn compare(a: u8, state: &mut State, memory: &mut Memory, address: usize) {
-    let b = memory.read(address);
+    let b = memory.read(address, state);
     state.register().set_nz_from_value(a.wrapping_sub(b));
     state.register().set_c(a >= b);
 }
 
 fn push(state: &mut State, memory: &mut Memory, value: u8) {
     let sp = state.register().get_sp();
-    state.stall += memory.write(0x100 | usize::from(sp), value);
+    state.stall += memory.write(0x100 | usize::from(sp), value, state);
     state.register().set_sp(sp.wrapping_sub(1));
 }
 
 fn pull(state: &mut State, memory: &mut Memory) -> u8 {
     let sp = state.register().get_sp().wrapping_add(1);
     state.register().set_sp(sp);
-    memory.read(usize::from(sp) | 0x100)
+    memory.read(usize::from(sp) | 0x100, state)
 }
 
 fn push_u16(state: &mut State, memory: &mut Memory, value: u16) {
@@ -60,7 +60,7 @@ pub(crate) struct Adc;
 impl OpCode for Adc {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let a = usize::from(state.register().get_a());
-        let b = usize::from(memory.read(address));
+        let b = usize::from(memory.read(address, state));
         let c = if state.register().get_c() { 1 } else { 0 };
         let d = a + b + c;
         let result = (d & 0xFF) as u8;
@@ -80,7 +80,7 @@ impl OpCode for Adc {
 pub(crate) struct And;
 impl OpCode for And {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = state.register().get_a() & data;
         state.register().set_nz_from_value(result);
         state.register().set_a(result);
@@ -114,10 +114,10 @@ impl OpCode for AslAcc {
 pub(crate) struct AslMem;
 impl OpCode for AslMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = asl(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -158,7 +158,7 @@ impl OpCode for Beq {
 pub(crate) struct Bit;
 impl OpCode for Bit {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_v(data & 0x40 != 0);
         let a = data & state.register().get_a();
         state.register().set_z_from_value(a);
@@ -211,7 +211,7 @@ impl OpCode for Brk {
             push_u16(state, memory, pc);
             Php.execute(state, memory, address);
             state.register().set_i(true);
-            let new_pc = memory.read_u16(0xFFFE);
+            let new_pc = memory.read_u16(0xFFFE, state);
             state.register().set_pc(new_pc);
             6
         }
@@ -327,10 +327,10 @@ fn decrement(state: &mut State, data: u8) -> u8 {
 pub(crate) struct Dec;
 impl OpCode for Dec {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = decrement(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -367,7 +367,7 @@ impl OpCode for Dey {
 pub(crate) struct Eor;
 impl OpCode for Eor {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = state.register().get_a() ^ data;
         state.register().set_nz_from_value(result);
         state.register().set_a(result);
@@ -387,10 +387,10 @@ fn increment(state: &mut State, data: u8) -> u8 {
 pub(crate) struct Inc;
 impl OpCode for Inc {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = increment(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -451,7 +451,7 @@ impl OpCode for Jsr {
 pub(crate) struct Lda;
 impl OpCode for Lda {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_a(data);
         state.register().set_nz_from_value(data);
         1
@@ -464,7 +464,7 @@ impl OpCode for Lda {
 pub(crate) struct Ldx;
 impl OpCode for Ldx {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_x(data);
         state.register().set_nz_from_value(data);
         1
@@ -477,7 +477,7 @@ impl OpCode for Ldx {
 pub(crate) struct Ldy;
 impl OpCode for Ldy {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_y(data);
         state.register().set_nz_from_value(data);
         1
@@ -510,10 +510,10 @@ impl OpCode for LsrAcc {
 pub(crate) struct LsrMem;
 impl OpCode for LsrMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = lsr(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -534,7 +534,7 @@ impl OpCode for Nop {
 pub(crate) struct Ora;
 impl OpCode for Ora {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = state.register().get_a() | data;
         state.register().set_nz_from_value(result);
         state.register().set_a(result);
@@ -618,10 +618,10 @@ impl OpCode for RolAcc {
 pub(crate) struct RolMem;
 impl OpCode for RolMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = rol(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -653,10 +653,10 @@ impl OpCode for RorAcc {
 pub(crate) struct RorMem;
 impl OpCode for RorMem {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let result = ror(state, data);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -694,7 +694,7 @@ pub(crate) struct Sbc;
 impl OpCode for Sbc {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let a = u16::from(state.register().get_a());
-        let b = u16::from(memory.read(address));
+        let b = u16::from(memory.read(address, state));
         let c = if state.register().get_c() { 0 } else { 1 };
         let d = a.wrapping_sub(b).wrapping_sub(c);
         let result = (d & 0xFF) as u8;
@@ -747,7 +747,7 @@ impl OpCode for Sei {
 pub(crate) struct Sta;
 impl OpCode for Sta {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        state.stall += memory.write(address, state.register().get_a());
+        state.stall += memory.write(address, state.register().get_a(), state);
         1
     }
     fn name(&self) -> &'static str {
@@ -758,7 +758,7 @@ impl OpCode for Sta {
 pub(crate) struct Stx;
 impl OpCode for Stx {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        state.stall += memory.write(address, state.register().get_x());
+        state.stall += memory.write(address, state.register().get_x(), state);
         1
     }
     fn name(&self) -> &'static str {
@@ -768,7 +768,7 @@ impl OpCode for Stx {
 pub(crate) struct Sty;
 impl OpCode for Sty {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        state.stall += memory.write(address, state.register().get_y());
+        state.stall += memory.write(address, state.register().get_y(), state);
         1
     }
     fn name(&self) -> &'static str {
@@ -878,7 +878,7 @@ impl OpCode for Nopi {
 pub(crate) struct Lax;
 impl OpCode for Lax {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_a(data);
         state.register().set_x(data);
         state.register().set_nz_from_value(data);
@@ -893,7 +893,7 @@ pub(crate) struct Sax;
 impl OpCode for Sax {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = state.register().get_a() & state.register().get_x();
-        state.stall += memory.write(address, data);
+        state.stall += memory.write(address, data, state);
         1
     }
     fn name(&self) -> &'static str {
@@ -904,12 +904,12 @@ impl OpCode for Sax {
 pub(crate) struct Dcp;
 impl OpCode for Dcp {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let memdata = memory.read(address);
+        let memdata = memory.read(address, state);
         let data = memdata.wrapping_sub(1);
         let val = state.register().get_a().wrapping_sub(data);
         state.register().set_nz_from_value(val);
-        memory.write(address, memdata);
-        state.stall += memory.write(address, data);
+        memory.write(address, memdata, state);
+        state.stall += memory.write(address, data, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -920,7 +920,7 @@ impl OpCode for Dcp {
 pub(crate) struct Isb;
 impl OpCode for Isb {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let memdata = memory.read(address);
+        let memdata = memory.read(address, state);
         let data = memdata.wrapping_add(1);
 
         let a = usize::from(state.register().get_a());
@@ -934,8 +934,8 @@ impl OpCode for Isb {
         state
             .register()
             .set_v((a ^ usize::from(data)) & 0x80 == 0 && (a ^ d) & 0x80 != 0);
-        memory.write(address, memdata);
-        state.stall += memory.write(address, data);
+        memory.write(address, memdata, state);
+        state.stall += memory.write(address, data, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -946,14 +946,14 @@ impl OpCode for Isb {
 pub(crate) struct Slo;
 impl OpCode for Slo {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         state.register().set_c(data & 0x80 == 0x80);
         let a = state.register().get_a();
         let result = data << 1;
         state.register().set_a(a | result);
         state.register().set_nz_from_value(a | result);
-        memory.write(address, data);
-        state.stall += memory.write(address, result);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -964,15 +964,15 @@ impl OpCode for Slo {
 pub(crate) struct Rla;
 impl OpCode for Rla {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let c = if state.register().get_c() { 1 } else { 0 };
         state.register().set_c(data & 0x80 != 0);
         let wd = (data << 1) | c;
         let value = wd & state.register().get_a();
         state.register().set_a(value);
         state.register().set_nz_from_value(value);
-        memory.write(address, data);
-        state.stall += memory.write(address, wd);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, wd, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -983,14 +983,14 @@ impl OpCode for Rla {
 pub(crate) struct Sre;
 impl OpCode for Sre {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let memdata = memory.read(address);
+        let memdata = memory.read(address, state);
         state.register().set_c(memdata & 0x01 != 0);
         let data = memdata >> 1;
         let value = state.register().get_a() ^ data;
         state.register().set_a(value);
         state.register().set_nz_from_value(value);
-        memory.write(address, memdata);
-        state.stall += memory.write(address, data);
+        memory.write(address, memdata, state);
+        state.stall += memory.write(address, data, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -1001,7 +1001,7 @@ impl OpCode for Sre {
 pub(crate) struct Rra;
 impl OpCode for Rra {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let data = memory.read(address);
+        let data = memory.read(address, state);
         let wd = (data >> 1) | (if state.register().get_c() { 0x80 } else { 0 });
         let a = state.register().get_a();
         let value = u16::from(wd) + u16::from(a) + u16::from(data & 1);
@@ -1012,8 +1012,8 @@ impl OpCode for Rra {
         state.register().set_nz_from_value(new_a);
         state.register().set_c((value & 0x100) != 0);
         state.register().set_a(new_a);
-        memory.write(address, data);
-        state.stall += memory.write(address, wd);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, wd, state);
         3
     }
     fn name(&self) -> &'static str {
@@ -1155,12 +1155,14 @@ impl OpCode for Axs {
 
 pub(crate) struct Nmi;
 impl OpCode for Nmi {
-    fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
+    fn execute(&self, state: &mut State, memory: &mut Memory, _address: usize) -> usize {
         let pc = state.register().get_pc();
-        let _ = memory.read(pc as usize); // dummy fetch
+        let _ = memory.read(pc as usize, state); // dummy fetch
+        state.register().set_b(false);
         push_u16(state, memory, pc);
-        Php.execute(state, memory, address);
-        let new_pc = memory.read_u16(0xFFFA);
+        let data = state.register().get_p();
+        push(state, memory, data);
+        let new_pc = memory.read_u16(0xFFFA, state);
         state.register().set_pc(new_pc);
         state.register().set_i(true);
         7
@@ -1172,20 +1174,19 @@ impl OpCode for Nmi {
 
 pub(crate) struct Irq;
 impl OpCode for Irq {
-    fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        if state.register().get_i() {
-            0
-        } else {
-            let pc = state.register().get_pc();
-            let _ = memory.read(pc as usize); // dummy fetch
+    fn execute(&self, state: &mut State, memory: &mut Memory, _address: usize) -> usize {
+        let pc = state.register().get_pc();
+        let _ = memory.read(pc as usize, state); // dummy fetch
+        state.register().set_b(false);
 
-            push_u16(state, memory, pc);
-            Php.execute(state, memory, address);
-            state.register().set_i(true);
-            let new_pc = memory.read_u16(0xFFFE);
-            state.register().set_pc(new_pc);
-            7
-        }
+        push_u16(state, memory, pc);
+        let data = state.register().get_p();
+        push(state, memory, data);
+
+        state.register().set_i(true);
+        let new_pc = memory.read_u16(0xFFFE, state);
+        state.register().set_pc(new_pc);
+        7
     }
     fn name(&self) -> &'static str {
         "IRQ"
