@@ -15,6 +15,7 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log;
 extern crate alto;
+extern crate crc;
 extern crate gl;
 extern crate glutin;
 extern crate serde;
@@ -26,11 +27,11 @@ mod glwrap;
 mod nes;
 
 use alto::*;
-use core::collections::hash_map::DefaultHasher;
 use core::collections::VecDeque;
 use core::hash::{Hash, Hasher};
 use core::time::{Duration, Instant};
 use core::{f64, iter, mem, thread};
+use crc::crc64;
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;
 use glutin::{
@@ -451,7 +452,7 @@ impl Window {
                 self.paused = !self.paused;
                 if self.paused {
                     self.speaker.pause();
-                    let mut hasher = DefaultHasher::new();
+                    let mut hasher = crc64::Digest::new(crc64::ECMA);
                     self.screen_buffer.hash(&mut hasher);
                     info!(
                         "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
@@ -575,18 +576,9 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko016.nes")
         // &mut include_bytes!("../../sample_roms/giko017.nes")
         // &mut include_bytes!("../../sample_roms/giko018.nes")
-        // &mut include_bytes!("../../sample_roms/nestest.nes")  // 2018/9/10 Passed
-        // &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/branch_timing_tests/2.Backward_Branch.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/branch_timing_tests/3.Forward_Branch.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes")  // 2018/9/11 Passed
-        // &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_apu.nes")  // 2018/9/11 Passed
         // &mut include_bytes!("../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
-        &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
+        &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
+        // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
             .into_iter()
             .cloned(),
         44_100,
