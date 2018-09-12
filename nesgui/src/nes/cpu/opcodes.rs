@@ -203,18 +203,13 @@ impl OpCode for Bpl {
 pub(crate) struct Brk;
 impl OpCode for Brk {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        if !state.register().get_i() {
-            0
-        } else {
-            let pc = state.register().get_pc().wrapping_add(1);
-            state.register().set_b(true);
-            push_u16(state, memory, pc);
-            Php.execute(state, memory, address);
-            state.register().set_i(true);
-            let new_pc = memory.read_u16(0xFFFE, state);
-            state.register().set_pc(new_pc);
-            6
-        }
+        let pc = state.register().get_pc().wrapping_add(1);
+        // state.register().set_b(true);
+        push_u16(state, memory, pc);
+        Php.execute(state, memory, address);
+        state.register().set_i(true);
+        state.interrupt.started = InterruptStatus::Executing;
+        3
     }
     fn name(&self) -> &'static str {
         "BRK"
@@ -671,6 +666,11 @@ impl OpCode for Rti {
         state.register().set_p((result & 0xEF) | 0x20);
         let result = pull_u16(state, memory);
         state.register().set_pc(result);
+        // 割り込み検出
+        if state.interrupt.get_irq() && !state.register().get_i() {
+            // state.interrupt.irq = false;
+            state.interrupt.started = InterruptStatus::Detected;
+        }
         5
     }
     fn name(&self) -> &'static str {
@@ -1162,10 +1162,9 @@ impl OpCode for Nmi {
         push_u16(state, memory, pc);
         let data = state.register().get_p();
         push(state, memory, data);
-        let new_pc = memory.read_u16(0xFFFA, state);
-        state.register().set_pc(new_pc);
         state.register().set_i(true);
-        7
+        state.interrupt.started = InterruptStatus::Executing;
+        4
     }
     fn name(&self) -> &'static str {
         "NMI"
@@ -1184,11 +1183,23 @@ impl OpCode for Irq {
         push(state, memory, data);
 
         state.register().set_i(true);
-        let new_pc = memory.read_u16(0xFFFE, state);
-        state.register().set_pc(new_pc);
-        7
+        state.interrupt.started = InterruptStatus::Executing;
+        4
     }
     fn name(&self) -> &'static str {
         "IRQ"
+    }
+}
+
+pub(crate) struct InterruptBody;
+impl OpCode for InterruptBody {
+    fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
+        let new_pc = memory.read_u16(address, state);
+        state.register().set_pc(new_pc);
+        state.interrupt.started = InterruptStatus::Polling;
+        3
+    }
+    fn name(&self) -> &'static str {
+        "InterruptBody"
     }
 }

@@ -69,6 +69,9 @@ impl Register {
     pub fn get_v(&self) -> bool {
         self.v
     }
+    pub fn get_b(&self) -> bool {
+        self.b
+    }
     pub fn get_n(&self) -> bool {
         self.n
     }

@@ -185,7 +185,8 @@ impl State {
         let nmi = self.nmi_output && self.nmi_occurred;
         if nmi && !self.nmi_previous {
             // TODO: このdelayはよくわからない
-            self.nmi_delay = 15;
+            // self.nmi_delay = 15;
+            self.nmi_delay = 1;
         }
         self.nmi_previous = nmi;
     }

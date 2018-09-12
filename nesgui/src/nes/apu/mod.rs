@@ -15,11 +15,14 @@ use self::filter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
-use nes::{Cartridge, Cpu, Speaker};
+use nes::cpu::interrupt::IrqReason;
+use nes::cpu::State;
+use nes::{Cartridge, Speaker};
 
-// 240Hz フレームシーケンサ
-const FRAME_COUNTER_RATE: f64 = 7457.0;
-const CLOCK_RATE: f64 = 1_789_773.0;
+// // 240Hz フレームシーケンサ
+// const FRAME_COUNTER_RATE: f64 = 7457.3875;
+// const FRAME_COUNTER_RATE: f64 = 29829.55;
+const CLOCK_RATE: u64 = 1_789_773;
 const LENGTH_TABLE: [u8; 32] = [
     0x0A, 0xFE, 0x14, 0x02, 0x28, 0x04, 0x50, 0x06, 0xA0, 0x08, 0x3C, 0x0A, 0x0E, 0x0C, 0x1A, 0x0E,
     0x0C, 0x10, 0x18, 0x12, 0x30, 0x14, 0x60, 0x16, 0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E,
@@ -29,21 +32,23 @@ pub struct Core {
     pulse_table: Vec<f32>,
     tnd_table: Vec<f32>,
     filter: ChaindFilter<ChaindFilter<PassFilter, PassFilter>, PassFilter>,
-    sample_rate: f64,
+    sample_rate: u32,
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
     dmc: DMC,
-    cycle: u32,
-    frame_period: u8,
-    frame_value: u8,
+    cycle: u16,
+    frame_period: bool,
     frame_irq: bool,
+    sample_cycle: u64,
+    sample_reset_cycle: u64,
 }
 
 impl Core {
-    pub fn new(sample_rate: f32) -> Self {
-        let sample_rate = CLOCK_RATE / f64::from(sample_rate);
+    pub fn new(sample_rate: u32) -> Self {
+        let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
+        let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
         Self {
             // https://wiki.nesdev.com/w/index.php/APU_Mixer
             pulse_table: (0..31)
@@ -52,25 +57,26 @@ impl Core {
             tnd_table: (0..203)
                 .map(|x| 163.67 / (24329.0 / x as f32 + 100.0))
                 .collect::<Vec<_>>(),
-            filter: PassFilter::get_highpass_filter(sample_rate, 90.0)
-                .chain(PassFilter::get_highpass_filter(sample_rate, 440.0))
-                .chain(PassFilter::get_lowpass_filter(sample_rate, 14000.0)),
+            filter: PassFilter::get_highpass_filter(filter_sample_rate, 90.0)
+                .chain(PassFilter::get_highpass_filter(filter_sample_rate, 440.0))
+                .chain(PassFilter::get_lowpass_filter(filter_sample_rate, 14000.0)),
             sample_rate,
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            cycle: 0,
-            frame_period: 4,
-            frame_value: 0,
+            cycle: 2,
+            frame_period: false,
             frame_irq: false,
+            sample_cycle: 0,
+            sample_reset_cycle,
         }
     }
 
-    pub fn read_register(&mut self, address: usize) -> u8 {
+    pub(crate) fn read_register(&mut self, address: usize, state: &mut State) -> u8 {
         match address {
-            0x4015 => self.read_status(),
+            0x4015 => self.read_status(state),
             _ => {
                 error!("unhandled apu register read at address: 0x{:04X}", address);
                 0
@@ -78,7 +84,7 @@ impl Core {
         }
     }
 
-    pub fn write_register(&mut self, address: usize, value: u8) {
+    pub(crate) fn write_register(&mut self, address: usize, value: u8, state: &mut State) {
         match address {
             0x4000 => self.pulse1.write_control(value),
             0x4001 => self.pulse1.write_sweep(value),
@@ -90,7 +96,7 @@ impl Core {
             0x4007 => self.pulse2.write_timer_high(value),
             0x4008 => self.triangle.write_control(value),
             0x4009 => (),
-            0x4010 => self.dmc.write_control(value),
+            0x4010 => self.dmc.write_control(value, state),
             0x4011 => self.dmc.write_value(value),
             0x4012 => self.dmc.write_address(value),
             0x4013 => self.dmc.write_length(value),
@@ -100,29 +106,29 @@ impl Core {
             0x400D => (),
             0x400E => self.noise.write_period(value),
             0x400F => self.noise.write_length(value),
-            0x4015 => self.write_control(value),
-            0x4017 => self.write_frame_counter(value),
+            0x4015 => self.write_control(value, state),
+            0x4017 => self.write_frame_counter(value, state),
             _ => error!("unhandled apu register write at address: 0x{:04X}", address),
         }
     }
 
     pub(crate) fn step<S: Speaker>(
         &mut self,
-        cpu: &mut Cpu,
+        cpu: &mut State,
         cartridge: &mut Box<Cartridge>,
         speaker: &mut S,
     ) {
-        let cycle1 = self.cycle;
-        self.cycle = self.cycle.wrapping_add(1);
-        let cycle2 = self.cycle;
-        self.step_timer(cpu, cartridge);
-        let f1 = (f64::from(cycle1) / FRAME_COUNTER_RATE) as u32;
-        let f2 = (f64::from(cycle2) / FRAME_COUNTER_RATE) as u32;
-        if f1 != f2 {
-            self.step_frame_counter(cpu);
+        self.cycle += 1;
+        let cycle1 = self.sample_cycle;
+        self.sample_cycle += 1;
+        let cycle2 = self.sample_cycle;
+        if self.sample_cycle == self.sample_reset_cycle {
+            self.sample_cycle = 0;
         }
-        let s1 = (f64::from(cycle1) / f64::from(self.sample_rate)) as u32;
-        let s2 = (f64::from(cycle2) / f64::from(self.sample_rate)) as u32;
+        self.step_timer(cpu, cartridge);
+        self.step_frame_counter(cpu);
+        let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
+        let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
         if s1 != s2 {
             self.send_sample(speaker);
         }
@@ -141,47 +147,31 @@ impl Core {
                                  + usize::from(self.dmc.output())]
     }
 
-    pub(crate) fn step_frame_counter(&mut self, cpu: &mut Cpu) {
-        match self.frame_period {
-            4 => {
-                self.frame_value = self.frame_value.wrapping_add(1) & 3;
-                match self.frame_value {
-                    2 => self.step_envelope(),
-                    1 => {
-                        self.step_envelope();
-                        self.step_sweep();
-                        self.step_length();
-                    }
-                    3 => {
-                        self.step_envelope();
-                        self.step_sweep();
-                        self.step_length();
-                        self.fire_irq(cpu);
-                    }
-                    0 => (),
-                    _ => unreachable!(),
-                }
+    pub(crate) fn step_frame_counter(&mut self, cpu: &mut State) {
+        // https://wiki.nesdev.com/w/index.php/APU_Frame_Counter
+        // ここのフレームカウンタをcpuサイクルに合わせて2倍し、4を加えている
+        // $4017書き込みによるリセット時には3~4CPUクロックが必要なため。
+        match self.cycle {
+            7461 | 22375 => self.step_envelope(),
+            14917 | 37285 => {
+                self.step_envelope();
+                self.step_sweep();
+                self.step_length();
             }
-            5 => {
-                self.frame_value = self.frame_value.wrapping_add(1) % 5;
-                match self.frame_value {
-                    1 | 3 => {
-                        self.step_envelope();
-                    }
-                    0 | 2 => {
-                        self.step_envelope();
-                        self.step_sweep();
-                        self.step_length();
-                    }
-                    4 => (),
-                    _ => unreachable!(),
-                }
+            29832 if !self.frame_period => {
+                self.step_envelope();
+                self.step_sweep();
+                self.step_length();
+                self.fire_irq(cpu);
             }
+            29834 if !self.frame_period => self.cycle = 4,
+            37286 => self.cycle = 4,
+            0...37286 => (),
             _ => unreachable!(),
         }
     }
 
-    fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+    fn step_timer(&mut self, cpu: &mut State, cartridge: &mut Box<Cartridge>) {
         if self.cycle & 1 == 0 {
             self.pulse1.step_timer();
             self.pulse2.step_timer();
@@ -210,13 +200,14 @@ impl Core {
         self.triangle.step_length();
     }
 
-    fn fire_irq(&mut self, cpu: &mut Cpu) {
+    fn fire_irq(&mut self, cpu: &mut State) {
         if self.frame_irq {
-            cpu.trigger_irq();
+            cpu.trigger_irq(IrqReason::ApuFrameCounter);
         }
     }
 
-    fn read_status(&mut self) -> u8 {
+    fn read_status(&mut self, state: &mut State) -> u8 {
+        state.acknowledge_irq(IrqReason::ApuFrameCounter);
         (if self.pulse1.length_value > 0 { 1 } else { 0 })
             | (if self.pulse2.length_value > 0 { 2 } else { 0 })
             | (if self.triangle.length_value > 0 { 4 } else { 0 })
@@ -224,7 +215,7 @@ impl Core {
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
     }
 
-    fn write_control(&mut self, value: u8) {
+    fn write_control(&mut self, value: u8, state: &mut State) {
         self.pulse1.enabled = (value & 1) != 0;
         self.pulse2.enabled = (value & 2) != 0;
         self.triangle.enabled = (value & 4) != 0;
@@ -245,14 +236,21 @@ impl Core {
         if !self.dmc.enabled {
             self.dmc.length_value = 0;
         } else if self.dmc.length_value == 0 {
-            self.dmc.restart();
+            self.dmc.restart(state);
         }
     }
 
-    fn write_frame_counter(&mut self, value: u8) {
-        self.frame_period = 4 + ((value >> 7) & 1);
+    fn write_frame_counter(&mut self, value: u8, state: &mut State) {
+        self.frame_period = ((value >> 7) & 1) != 0;
         self.frame_irq = ((value >> 6) & 1) == 0;
-        if self.frame_period == 5 {
+        if self.frame_irq && !self.frame_period {
+            state.enable_irq(IrqReason::ApuFrameCounter);
+            state.acknowledge_irq(IrqReason::ApuFrameCounter);
+        } else {
+            state.disable_irq(IrqReason::ApuFrameCounter);
+        }
+        self.cycle &= 1;
+        if self.frame_period {
             self.step_envelope();
             self.step_sweep();
             self.step_length();
