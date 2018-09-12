@@ -184,10 +184,6 @@ impl Core {
         self.state.trigger_nmi();
     }
 
-    pub fn stall_addition(&mut self, value: usize) {
-        self.state.stall_addition(value);
-    }
-
     pub fn new() -> Self {
         Self {
             opcode_tables: [

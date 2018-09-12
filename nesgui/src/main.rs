@@ -26,7 +26,9 @@ mod glwrap;
 mod nes;
 
 use alto::*;
+use core::collections::hash_map::DefaultHasher;
 use core::collections::VecDeque;
+use core::hash::{Hash, Hasher};
 use core::time::{Duration, Instant};
 use core::{f64, iter, mem, thread};
 use gl::types::GLint;
@@ -200,6 +202,12 @@ impl Screen for ScreenBuffer {
     }
 }
 
+impl Hash for ScreenBuffer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
 struct Window {
     window: GlWindow,
     events_loop: Option<EventsLoop>,
@@ -214,6 +222,7 @@ struct Window {
     keys: Buttons,
     speaker: AlSpeaker,
     paused: bool,
+    frame_counter: u64,
 }
 
 impl Window {
@@ -237,6 +246,7 @@ impl Window {
             keys: Buttons::empty(),
             speaker,
             paused: false,
+            frame_counter: 0,
         }
     }
 
@@ -358,6 +368,7 @@ impl Window {
                 &mut self.controller,
                 &mut self.speaker,
             ) {}
+            self.frame_counter += 1;
         }
 
         // clear_color(0.0, 0.0, 0.0, 0.0).unwrap();
@@ -438,6 +449,18 @@ impl Window {
             Some(VirtualKeyCode::Right) => Buttons::RIGHT,
             Some(VirtualKeyCode::Space) if input.state == ElementState::Pressed => {
                 self.paused = !self.paused;
+                if self.paused {
+                    self.speaker.pause();
+                    let mut hasher = DefaultHasher::new();
+                    self.screen_buffer.hash(&mut hasher);
+                    info!(
+                        "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
+                        self.frame_counter,
+                        hasher.finish()
+                    );
+                } else {
+                    self.speaker.resume();
+                }
                 Buttons::empty()
             }
             _ => Buttons::empty(),
@@ -498,6 +521,15 @@ impl AlSpeaker {
             match src.state() {
                 SourceState::Playing => src.pause(),
                 _ => (),
+            }
+        }
+    }
+
+    pub fn resume(&mut self) {
+        if let Some(ref mut src) = self.src.as_mut() {
+            match src.state() {
+                SourceState::Playing => (),
+                _ => src.play(),
             }
         }
     }
