@@ -213,6 +213,7 @@ struct Window {
     controller: StandardController,
     keys: Buttons,
     speaker: AlSpeaker,
+    paused: bool,
 }
 
 impl Window {
@@ -235,6 +236,7 @@ impl Window {
             controller: StandardController::new(),
             keys: Buttons::empty(),
             speaker,
+            paused: false,
         }
     }
 
@@ -350,11 +352,13 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        while !self.console.step(
-            &mut self.screen_buffer,
-            &mut self.controller,
-            &mut self.speaker,
-        ) {}
+        if !self.paused {
+            while !self.console.step(
+                &mut self.screen_buffer,
+                &mut self.controller,
+                &mut self.speaker,
+            ) {}
+        }
 
         // clear_color(0.0, 0.0, 0.0, 0.0).unwrap();
         // clear_depth(1.0).unwrap();
@@ -377,7 +381,12 @@ impl Window {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
         self.window.swap_buffers().unwrap();
 
-        let title = format!("Nes -- FPS: {:.2}", self.fps.to_fps());
+        let fps = self.fps.to_fps();
+        let title = if self.paused {
+            "Nes -- Paused".to_owned()
+        } else {
+            format!("Nes -- FPS: {:.2}", fps)
+        };
         self.window.set_title(title.as_str());
     }
 
@@ -427,6 +436,10 @@ impl Window {
             Some(VirtualKeyCode::Down) => Buttons::DOWN,
             Some(VirtualKeyCode::Left) => Buttons::LEFT,
             Some(VirtualKeyCode::Right) => Buttons::RIGHT,
+            Some(VirtualKeyCode::Space) if input.state == ElementState::Pressed => {
+                self.paused = !self.paused;
+                Buttons::empty()
+            }
             _ => Buttons::empty(),
         };
         self.keys = match input.state {
@@ -477,6 +490,15 @@ impl AlSpeaker {
             // dev,
             src,
             buf: Vec::new(),
+        }
+    }
+
+    pub fn pause(&mut self) {
+        if let Some(ref mut src) = self.src.as_mut() {
+            match src.state() {
+                SourceState::Playing => src.pause(),
+                _ => (),
+            }
         }
     }
 }
