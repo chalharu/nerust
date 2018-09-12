@@ -5,13 +5,13 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod addressing_mode;
-mod interrupt;
+pub mod interrupt;
 mod memory;
 mod opcodes;
 mod register;
 
 use self::addressing_mode::*;
-use self::interrupt::Interrupt;
+use self::interrupt::{Interrupt, InterruptStatus, IrqReason};
 use self::memory::{Memory, MemoryState};
 use self::opcodes::*;
 use self::register::Register;
@@ -31,6 +31,7 @@ pub(crate) struct State {
     interrupt: Interrupt,
     stall: usize,
     mem_state: Option<MemoryState>,
+    cycles: u64,
 }
 
 impl State {
@@ -40,6 +41,7 @@ impl State {
             interrupt: Interrupt::new(),
             stall: 0,
             mem_state: Some(MemoryState::new()),
+            cycles: 0,
         }
     }
 
@@ -47,12 +49,20 @@ impl State {
         self.interrupt.set_nmi();
     }
 
-    pub fn trigger_irq(&mut self) {
-        self.interrupt.set_irq();
+    pub fn trigger_irq(&mut self, reason: IrqReason) {
+        self.interrupt.set_irq(reason);
     }
 
-    pub fn disable_irq(&mut self) {
-        self.interrupt.reset_irq();
+    pub fn acknowledge_irq(&mut self, reason: IrqReason) {
+        self.interrupt.acknowledge_irq(reason);
+    }
+
+    pub fn enable_irq(&mut self, reason: IrqReason) {
+        self.interrupt.enable_irq(reason);
+    }
+
+    pub fn disable_irq(&mut self, reason: IrqReason) {
+        self.interrupt.disable_irq(reason);
     }
 
     pub fn register(&mut self) -> &mut Register {
@@ -73,6 +83,7 @@ impl State {
         opcode_tables: &[Box<OpCode>; 256],
         addressing_tables: &[Box<AddressingMode>; 256],
     ) {
+        self.cycles = self.cycles.wrapping_add(1);
         if self.stall != 0 {
             self.stall -= 1;
             return;
@@ -89,46 +100,51 @@ impl State {
                 mem_state.as_mut().unwrap(),
             );
 
-            let stall = match (self.interrupt.reset, self.interrupt.nmi) {
-                (true, _) => {
+            let stall = match (
+                self.interrupt.reset,
+                self.interrupt.started,
+                self.interrupt.nmi,
+            ) {
+                (true, _, _) => {
                     let pc = memory.read_u16(0xFFFC, self);
-                    self.interrupt.reset_reset();
+                    self.interrupt.unset_reset();
                     self.register().set_pc(pc);
                     self.register().set_sp(0xFD);
                     self.register().set_p(0x24);
                     7
                 }
-                (false, true) => {
-                    self.interrupt.reset_nmi();
-                    Nmi.execute(self, &mut memory, 0)
+                (false, InterruptStatus::Executing, true) => {
+                    self.interrupt.nmi = false;
+                    InterruptBody.execute(self, &mut memory, 0xFFFA)
                 }
-                (false, false) => {
-                    if self.interrupt.irq && !self.register().get_i() {
-                        self.interrupt.reset_irq();
-                        Irq.execute(self, &mut memory, 0)
-                    } else {
-                        let pc = self.register().get_pc();
-                        let code = memory.read(pc as usize, self) as usize;
-                        let addressing = addressing_tables[code].execute(self, &mut memory);
-                        // info!(
-                        //     "CPU Oprand: {} {} {}",
-                        //     opcode_tables[code].name(),
-                        //     addressing_tables[code].name(),
-                        //     match addressing_tables[code].opcode_length() {
-                        //         1 => String::new(),
-                        //         2 => format!("0x{:02X}", memory.read((pc + 1) as usize)),
-                        //         3 => format!("0x{:04X}", memory.read_u16((pc + 1) as usize)),
-                        //         _ => {
-                        //             unreachable!();
-                        //         }
-                        //     }
-                        // );
-                        self.register()
-                            .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
-                        let cycles =
-                            opcode_tables[code].execute(self, &mut memory, addressing.address);
-                        addressing.cycles + cycles
+                (false, InterruptStatus::Executing, false) => {
+                    InterruptBody.execute(self, &mut memory, 0xFFFE)
+                }
+                (false, InterruptStatus::Detected, true) => Nmi.execute(self, &mut memory, 0),
+                (false, InterruptStatus::Detected, false) => Irq.execute(self, &mut memory, 0),
+                (false, InterruptStatus::Polling, _) => {
+                    // 割り込み検出
+                    if self.interrupt.nmi {
+                        self.interrupt.started = InterruptStatus::Detected;
+                    } else if self.interrupt.get_irq() && !self.register().get_i() {
+                        // self.interrupt.get_irq = false;
+                        self.interrupt.use_irq();
+                        self.interrupt.started = InterruptStatus::Detected;
                     }
+
+                    let pc = self.register().get_pc();
+                    let code = memory.read(pc as usize, self) as usize;
+                    let addressing = addressing_tables[code].execute(self, &mut memory);
+                    // info!(
+                    //     "CPU Oprand: {} {}",
+                    //     opcode_tables[code].name(),
+                    //     addressing_tables[code].name(),
+                    // );
+                    self.register()
+                        .set_pc(pc.wrapping_add(addressing_tables[code].opcode_length()));
+                    let cycles = opcode_tables[code].execute(self, &mut memory, addressing.address);
+
+                    addressing.cycles + cycles
                 }
             };
             self.stall += stall - 1;
@@ -141,7 +157,7 @@ impl State {
 pub(crate) struct Core {
     opcode_tables: [Box<OpCode>; 256],
     addressing_tables: [Box<AddressingMode>; 256],
-    state: State,
+    pub(crate) state: State,
 }
 
 impl Core {
@@ -166,14 +182,6 @@ impl Core {
 
     pub fn trigger_nmi(&mut self) {
         self.state.trigger_nmi();
-    }
-
-    pub fn trigger_irq(&mut self) {
-        self.state.trigger_irq();
-    }
-
-    pub fn disable_irq(&mut self) {
-        self.state.disable_irq();
     }
 
     pub fn stall_addition(&mut self, value: usize) {

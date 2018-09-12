@@ -54,7 +54,7 @@ pub struct Console {
 impl Console {
     pub fn new<I: Iterator<Item = u8>>(
         input: &mut I,
-        sound_sample_rate: f32,
+        sound_sample_rate: u32,
     ) -> Result<Console, Error> {
         Ok(Self {
             cpu: Cpu::new(),
@@ -85,7 +85,8 @@ impl Console {
             }
             self.cartridge.step();
         }
-        self.apu.step(&mut self.cpu, &mut self.cartridge, speaker);
+        self.apu
+            .step(&mut self.cpu.state, &mut self.cartridge, speaker);
         result
     }
 }

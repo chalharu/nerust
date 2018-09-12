@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nes::{Cartridge, Cpu};
+use nes::cpu::interrupt::IrqReason;
+use nes::cpu::State;
+use nes::Cartridge;
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_DMC
@@ -46,10 +48,16 @@ impl DMC {
         }
     }
 
-    pub fn write_control(&mut self, value: u8) {
+    pub fn write_control(&mut self, value: u8, state: &mut State) {
         self.irq = (value & 0x80) != 0;
         self.is_loop = (value & 0x40) != 0;
         self.tick_period = DMC_TABLE[usize::from(value & 0x0f)];
+        if self.irq {
+            state.enable_irq(IrqReason::ApuDmc);
+            state.acknowledge_irq(IrqReason::ApuDmc);
+        } else {
+            state.disable_irq(IrqReason::ApuDmc);
+        }
     }
 
     pub fn write_value(&mut self, value: u8) {
@@ -64,12 +72,13 @@ impl DMC {
         self.sample_length = 1 | (u16::from(value) << 4);
     }
 
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self, state: &mut State) {
         self.current_address = self.sample_address;
         self.length_value = self.sample_length;
+        state.acknowledge_irq(IrqReason::ApuDmc);
     }
 
-    pub fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+    pub fn step_timer(&mut self, cpu: &mut State, cartridge: &mut Box<Cartridge>) {
         if self.enabled {
             self.step_reader(cpu, cartridge);
             if self.tick_value == 0 {
@@ -81,9 +90,9 @@ impl DMC {
         }
     }
 
-    pub fn step_reader(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+    pub fn step_reader(&mut self, cpustate: &mut State, cartridge: &mut Box<Cartridge>) {
         if self.length_value > 0 && self.bit_count == 0 {
-            cpu.stall_addition(4);
+            cpustate.stall_addition(4);
             self.shift_register = cartridge.read(self.current_address as usize);
             self.bit_count = 8;
             self.current_address = self.current_address.wrapping_add(1);
@@ -91,8 +100,12 @@ impl DMC {
                 self.current_address = 0x8000;
             }
             self.length_value -= 1;
-            if self.length_value == 0 && self.is_loop {
-                self.restart();
+            if self.length_value == 0 {
+                if self.is_loop {
+                    self.restart(cpustate);
+                } else if self.irq {
+                    cpustate.trigger_irq(IrqReason::ApuDmc);
+                }
             }
         }
     }

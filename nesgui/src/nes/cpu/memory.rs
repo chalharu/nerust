@@ -53,10 +53,7 @@ impl<'a> Memory<'a> {
                 .ppu
                 .read_register(0x2000 + (address & 7), self.cartridge),
             // 0x4014 => self.ppu.read_register(address, self.cartridge),
-            0x4015 => {
-                cpustate.disable_irq();
-                self.apu.read_register(address)
-            }
+            0x4015 => self.apu.read_register(address, cpustate),
             0x4016 | 0x4017 => {
                 (self.controller.read(address & 1) & 0x1F) | (self.state.lastread & 0xE0)
             }
@@ -95,7 +92,7 @@ impl<'a> Memory<'a> {
                 0
             }
             0x4000...0x4013 => {
-                self.apu.write_register(address, value);
+                self.apu.write_register(address, value, cpustate);
                 0
             }
             0x4014 => {
@@ -103,11 +100,10 @@ impl<'a> Memory<'a> {
                     .map(|i| self.read((usize::from(value) << 8) | i, cpustate))
                     .collect::<Vec<_>>();
                 self.ppu.write_dma(&v);
-                // TODO: もしCPUサイクルが奇数だったら、本当はもう１サイクル追加する必要がある。
-                513
+                513 + ((cpustate.cycles & 1) as usize)
             }
             0x4015 => {
-                self.apu.write_register(address, value);
+                self.apu.write_register(address, value, cpustate);
                 0
             }
             0x4016 => {
@@ -115,7 +111,7 @@ impl<'a> Memory<'a> {
                 0
             }
             0x4017 => {
-                self.apu.write_register(address, value);
+                self.apu.write_register(address, value, cpustate);
                 0
             }
             0x4018...0x5FFF => 0, // TODO: I/O registers
