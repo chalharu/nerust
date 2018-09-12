@@ -16,3 +16,4 @@ serde_derive = { version = ">=0.0.0", default-features = false }
 serde_bytes = { version = ">=0.0.0" }
 bitflags = { version = ">=0.0.0" }
 alto = "*"
+crc="*"
