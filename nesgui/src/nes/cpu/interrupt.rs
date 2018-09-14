@@ -24,6 +24,7 @@ pub(crate) enum IrqStatus {
     Acknowledge,
     Enabled,
     Used,
+    Initialized,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -49,7 +50,7 @@ impl Interrupt {
     }
 
     pub fn enable_irq(&mut self, reason: IrqReason) {
-        self.irq_set.entry(reason).or_insert(IrqStatus::Used);
+        self.irq_set.entry(reason).or_insert(IrqStatus::Initialized);
     }
 
     pub fn set_irq(&mut self, reason: IrqReason) {
@@ -66,7 +67,10 @@ impl Interrupt {
 
     pub fn acknowledge_irq(&mut self, reason: IrqReason) {
         if let Some(entry) = self.irq_set.get_mut(&reason) {
-            if *entry == IrqStatus::Used {
+            if *entry == IrqStatus::Used
+                || *entry == IrqStatus::Enabled
+                || *entry == IrqStatus::Initialized
+            {
                 *entry = IrqStatus::Acknowledge;
             }
         }
@@ -74,6 +78,14 @@ impl Interrupt {
 
     pub fn get_irq(&mut self) -> bool {
         self.irq_set.iter().any(|(_, &v)| v == IrqStatus::Enabled)
+    }
+
+    pub fn get_irq_with_reason(&mut self, reason: IrqReason) -> bool {
+        if let Some(&status) = self.irq_set.get(&reason) {
+            status == IrqStatus::Used || status == IrqStatus::Enabled
+        } else {
+            false
+        }
     }
 
     pub fn use_irq(&mut self) {

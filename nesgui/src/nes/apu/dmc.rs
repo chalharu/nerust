@@ -69,7 +69,9 @@ impl DMC {
     }
 
     pub fn write_length(&mut self, value: u8) {
-        self.sample_length = 1 | (u16::from(value) << 4);
+        if self.enabled {
+            self.sample_length = 1 | (u16::from(value) << 4);
+        }
     }
 
     pub fn restart(&mut self, state: &mut State) {

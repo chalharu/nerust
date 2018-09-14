@@ -65,8 +65,10 @@ impl Noise {
     }
 
     pub fn write_length(&mut self, value: u8) {
-        self.length_value = LENGTH_TABLE[usize::from(value & 0x0F)];
-        self.envelope_start = true;
+        if self.enabled {
+            self.length_value = LENGTH_TABLE[usize::from(value & 0x0F)];
+            self.envelope_start = true;
+        }
     }
 
     pub fn step_timer(&mut self) {

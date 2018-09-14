@@ -43,6 +43,7 @@ pub struct Core {
     frame_irq: bool,
     sample_cycle: u64,
     sample_reset_cycle: u64,
+    mode1_first: bool,
 }
 
 impl Core {
@@ -71,6 +72,7 @@ impl Core {
             frame_irq: false,
             sample_cycle: 0,
             sample_reset_cycle,
+            mode1_first: false,
         }
     }
 
@@ -149,25 +151,46 @@ impl Core {
 
     pub(crate) fn step_frame_counter(&mut self, cpu: &mut State) {
         // https://wiki.nesdev.com/w/index.php/APU_Frame_Counter
-        // ここのフレームカウンタをcpuサイクルに合わせて2倍し、4を加えている
+        // ここのフレームカウンタをcpuサイクルに合わせて2倍し、6を加えている
         // $4017書き込みによるリセット時には3~4CPUクロックが必要なため。
-        match self.cycle {
-            7461 | 22375 => self.step_envelope(),
-            14917 | 37285 => {
-                self.step_envelope();
-                self.step_sweep();
-                self.step_length();
+        if self.frame_period {
+            // mode 1 -- 5step
+            match self.cycle {
+                7462 | 22376 => self.step_envelope(),
+                14918 | 37285 => {
+                    self.step_envelope();
+                    self.step_sweep();
+                    self.step_length();
+                }
+                37288 => self.cycle = 6,
+                0...37288 => (),
+                _ => unreachable!(),
             }
-            29832 if !self.frame_period => {
-                self.step_envelope();
-                self.step_sweep();
-                self.step_length();
-                self.fire_irq(cpu);
+        } else {
+            // mode 0 -- 4step
+            match self.cycle {
+                7462 | 22376 => self.step_envelope(),
+                14917 => {
+                    self.step_envelope();
+                    self.step_sweep();
+                    self.step_length();
+                }
+                29833 => {
+                    self.fire_irq(cpu);
+                }
+                29834 => {
+                    self.step_envelope();
+                    self.step_sweep();
+                    self.step_length();
+                    self.fire_irq(cpu);
+                }
+                29835 => {
+                    self.fire_irq(cpu);
+                }
+                29836 => self.cycle = 6,
+                0...29836 => (),
+                _ => unreachable!(),
             }
-            29834 if !self.frame_period => self.cycle = 4,
-            37286 => self.cycle = 4,
-            0...37286 => (),
-            _ => unreachable!(),
         }
     }
 
@@ -207,12 +230,23 @@ impl Core {
     }
 
     fn read_status(&mut self, state: &mut State) -> u8 {
-        state.acknowledge_irq(IrqReason::ApuFrameCounter);
-        (if self.pulse1.length_value > 0 { 1 } else { 0 })
+        let result = (if self.pulse1.length_value > 0 { 1 } else { 0 })
             | (if self.pulse2.length_value > 0 { 2 } else { 0 })
             | (if self.triangle.length_value > 0 { 4 } else { 0 })
             | (if self.noise.length_value > 0 { 8 } else { 0 })
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
+            | (if state.get_irq_with_reason(IrqReason::ApuFrameCounter) {
+                0x40
+            } else {
+                0
+            })
+            | (if state.get_irq_with_reason(IrqReason::ApuDmc) {
+                0x80
+            } else {
+                0
+            });
+        state.acknowledge_irq(IrqReason::ApuFrameCounter);
+        result
     }
 
     fn write_control(&mut self, value: u8, state: &mut State) {
@@ -243,13 +277,15 @@ impl Core {
     fn write_frame_counter(&mut self, value: u8, state: &mut State) {
         self.frame_period = ((value >> 7) & 1) != 0;
         self.frame_irq = ((value >> 6) & 1) == 0;
-        if self.frame_irq && !self.frame_period {
-            state.enable_irq(IrqReason::ApuFrameCounter);
-            state.acknowledge_irq(IrqReason::ApuFrameCounter);
+        if self.frame_irq {
+            if !state.get_irq_with_reason(IrqReason::ApuFrameCounter) {
+                state.enable_irq(IrqReason::ApuFrameCounter);
+                state.acknowledge_irq(IrqReason::ApuFrameCounter);
+            }
         } else {
             state.disable_irq(IrqReason::ApuFrameCounter);
         }
-        self.cycle &= 1;
+        self.cycle = 1 + (self.cycle & 1);
         if self.frame_period {
             self.step_envelope();
             self.step_sweep();
