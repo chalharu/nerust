@@ -48,10 +48,12 @@ impl Triangle {
     }
 
     pub fn write_timer_high(&mut self, value: u8) {
-        self.length_value = LENGTH_TABLE[usize::from(value >> 3)];
-        self.timer_period = (self.timer_period & 0xFF) | (u16::from(value & 7) << 8);
-        self.timer_value = self.timer_period;
-        self.counter_reload = true;
+        if self.enabled {
+            self.length_value = LENGTH_TABLE[usize::from(value >> 3)];
+            self.timer_period = (self.timer_period & 0xFF) | (u16::from(value & 7) << 8);
+            self.timer_value = self.timer_period;
+            self.counter_reload = true;
+        }
     }
 
     pub fn step_timer(&mut self) {

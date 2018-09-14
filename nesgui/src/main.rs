@@ -577,8 +577,14 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/giko017.nes")
         // &mut include_bytes!("../../sample_roms/giko018.nes")
         // &mut include_bytes!("../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
-        &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
+        // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
         // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/04.clock_jitter.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes")
+        &mut include_bytes!("../../sample_roms/instr_timing/instr_timing.nes")
             .into_iter()
             .cloned(),
         44_100,

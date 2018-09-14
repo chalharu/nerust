@@ -58,6 +58,26 @@ impl AddressingMode for AbsoluteX {
     }
 }
 
+pub(crate) struct AbsoluteXRMW;
+impl AddressingMode for AbsoluteXRMW {
+    fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
+        let pc = state.register().get_pc().wrapping_add(1);
+        let address = memory.read_u16(pc as usize, state);
+        let new_address = address.wrapping_add(u16::from(state.register().get_x()));
+        dummy_read(address, new_address, memory, state);
+        Address {
+            address: new_address as usize,
+            cycles: 4,
+        }
+    }
+    fn name(&self) -> &'static str {
+        "AbsoluteX"
+    }
+    fn opcode_length(&self) -> u16 {
+        3
+    }
+}
+
 pub(crate) struct AbsoluteY;
 impl AddressingMode for AbsoluteY {
     fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
@@ -72,6 +92,26 @@ impl AddressingMode for AbsoluteY {
             } else {
                 0
             },
+        }
+    }
+    fn name(&self) -> &'static str {
+        "AbsoluteY"
+    }
+    fn opcode_length(&self) -> u16 {
+        3
+    }
+}
+
+pub(crate) struct AbsoluteYRMW;
+impl AddressingMode for AbsoluteYRMW {
+    fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
+        let pc = state.register().get_pc().wrapping_add(1);
+        let address = memory.read_u16(pc as usize, state);
+        let new_address = address.wrapping_add(u16::from(state.register().get_y()));
+        dummy_read(address, new_address, memory, state);
+        Address {
+            address: new_address as usize,
+            cycles: 4,
         }
     }
     fn name(&self) -> &'static str {
@@ -187,6 +227,26 @@ impl AddressingMode for IndirectIndexed {
             } else {
                 0
             },
+        }
+    }
+    fn name(&self) -> &'static str {
+        "IndirectIndexed"
+    }
+    fn opcode_length(&self) -> u16 {
+        2
+    }
+}
+
+pub(crate) struct IndirectIndexedRMW;
+impl AddressingMode for IndirectIndexedRMW {
+    fn execute(&self, state: &mut State, memory: &mut Memory) -> Address {
+        let pc = u16::from(memory.read(state.register().get_pc().wrapping_add(1) as usize, state));
+        let address = memory.read_u16_bug(pc as usize, state);
+        let new_address = address.wrapping_add(u16::from(state.register().get_y()));
+        dummy_read(address, new_address, memory, state);
+        Address {
+            address: new_address as usize,
+            cycles: 5,
         }
     }
     fn name(&self) -> &'static str {

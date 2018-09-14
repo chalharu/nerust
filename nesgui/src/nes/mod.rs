@@ -457,4 +457,124 @@ mod tests {
         runner.run(scenario);
     }
 
+    #[test]
+    fn instr_timing() {
+        let mut runner = ScenarioRunner::new(
+            &mut include_bytes!("../../../sample_roms/instr_timing/instr_timing.nes")
+                .iter()
+                .cloned(),
+        );
+        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+            1330,
+            ScenarioOperation::check_screen(0x5E0E057574FF467B),
+        )]);
+        runner.run(scenario);
+    }
+
+    mod blargg_apu_2005_07_30 {
+        use super::*;
+
+        #[test]
+        fn _01_len_ctr() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/blargg_apu_2005.07.30/01.len_ctr.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _02_len_table() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/blargg_apu_2005.07.30/02.len_table.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                15,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _03_irq_flag() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _04_clock_jitter() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/04.clock_jitter.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _05_len_timing_mode0() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _06_len_timing_mode1() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _07_irq_flag_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+    }
+
 }
