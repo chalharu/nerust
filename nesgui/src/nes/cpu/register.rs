@@ -26,7 +26,7 @@ impl Register {
     pub fn new() -> Self {
         Self {
             pc: 0,
-            sp: 0xFD,
+            sp: 0,
             a: 0,
             x: 0,
             y: 0,
@@ -35,7 +35,7 @@ impl Register {
             z: false, // 0x02
             i: true,  // 0x04
             d: false, // 0x08
-            b: false, // 0x10
+            b: true, // 0x10
             r: true,  // 0x20
             v: false, // 0x40
             n: false, // 0x80

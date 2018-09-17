@@ -37,8 +37,10 @@ pub(crate) struct Interrupt {
 
 impl Interrupt {
     pub fn new() -> Self {
+        let mut irq_set = HashMap::new();
+        irq_set.insert(IrqReason::ApuFrameCounter, IrqStatus::Acknowledge);
         Self {
-            irq_set: HashMap::new(),
+            irq_set,
             reset: true,
             nmi: false,
             started: InterruptStatus::Polling,
@@ -67,12 +69,7 @@ impl Interrupt {
 
     pub fn acknowledge_irq(&mut self, reason: IrqReason) {
         if let Some(entry) = self.irq_set.get_mut(&reason) {
-            if *entry == IrqStatus::Used
-                || *entry == IrqStatus::Enabled
-                || *entry == IrqStatus::Initialized
-            {
-                *entry = IrqStatus::Acknowledge;
-            }
+            *entry = IrqStatus::Acknowledge;
         }
     }
 
@@ -99,6 +96,13 @@ impl Interrupt {
     // pub fn reset_irq(&mut self) {
     //     self.irq_set.clear();
     // }
+
+    pub fn set_reset(&mut self) {
+        self.irq_set.clear();
+        self.reset = true;
+        self.started = InterruptStatus::Polling;
+        self.nmi = false;
+    }
 
     pub fn unset_reset(&mut self) {
         self.reset = false;

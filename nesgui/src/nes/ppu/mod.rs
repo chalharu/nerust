@@ -52,6 +52,7 @@ pub(crate) struct State {
     // ppustatus
     sprite_zero_hit: bool,
     sprite_overflow: bool,
+    next_sprite_overflow: bool,
 
     oam_address: u8,
 
@@ -65,6 +66,13 @@ pub(crate) struct State {
     sprite_positions: [u8; 8],
     sprite_priorities: [bool; 8],
     sprite_indexes: [u8; 8],
+
+    // sprite next buffer
+    next_sprite_count: u8,
+    next_sprite_patterns: [u32; 8],
+    next_sprite_positions: [u8; 8],
+    next_sprite_priorities: [bool; 8],
+    next_sprite_indexes: [u8; 8],
 
     //
     v: u16,
@@ -97,7 +105,11 @@ impl State {
     pub fn new() -> Self {
         Self {
             vram: [0; 2048],
-            palette: [0; 32],
+            palette: [
+                0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00,
+                0x04, 0x2C, 0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02,
+                0x00, 0x20, 0x2C, 0x08,
+            ],
             oam: [0; 256],
             name_table: 0,
             increment: false,
@@ -116,6 +128,7 @@ impl State {
             blue_tint: false,
             sprite_zero_hit: false,
             sprite_overflow: false,
+            next_sprite_overflow: false,
             oam_address: 0,
             buffered_data: 0,
             sprite_count: 0,
@@ -123,6 +136,11 @@ impl State {
             sprite_positions: [0; 8],
             sprite_priorities: [false; 8],
             sprite_indexes: [0; 8],
+            next_sprite_count: 0,
+            next_sprite_patterns: [0; 8],
+            next_sprite_positions: [0; 8],
+            next_sprite_priorities: [false; 8],
+            next_sprite_indexes: [0; 8],
             v: 0,
             t: 0,
             x: 0,
@@ -130,7 +148,7 @@ impl State {
             f: false,
             register: 0,
             cycle: 340,
-            scan_line: 240,
+            scan_line: 241,
             nmi_occurred: false,
             nmi_previous: false,
             nmi_delay: 0,
@@ -356,7 +374,7 @@ impl State {
         };
         screen.set_rgb(
             self.cycle - 1,
-            self.scan_line,
+            self.scan_line - 1,
             RGB::from(PALETTE[usize::from(self.read_palette(usize::from(color))) & 0x3F]),
         );
     }
@@ -532,24 +550,24 @@ impl Core {
             let y = usize::from(self.state.oam[i << 2]);
             let a = self.state.oam[(i << 2) + 2];
             let x = self.state.oam[(i << 2) + 3];
-            if scan_line < y || scan_line >= h + y {
+            if scan_line <= y || scan_line > h + y {
                 continue;
             }
 
             if count < 8 {
-                self.state.sprite_patterns[count] =
-                    self.fetch_sprite_pattern(i, scan_line - y, cartridge);
-                self.state.sprite_positions[count] = x;
-                self.state.sprite_priorities[count] = (a >> 5) & 1 == 1;
-                self.state.sprite_indexes[count] = i as u8;
+                self.state.next_sprite_patterns[count] =
+                    self.fetch_sprite_pattern(i, scan_line - y - 1, cartridge);
+                self.state.next_sprite_positions[count] = x;
+                self.state.next_sprite_priorities[count] = (a >> 5) & 1 == 1;
+                self.state.next_sprite_indexes[count] = i as u8;
             }
             count += 1;
         }
         if count > 8 {
             count = 8;
-            self.state.sprite_overflow = true;
+            self.state.next_sprite_overflow = true;
         }
-        self.state.sprite_count = count as u8;
+        self.state.next_sprite_count = count as u8;
     }
 
     pub(crate) fn step<S: Screen>(
@@ -566,8 +584,8 @@ impl Core {
         };
         self.state.tick();
         let rendering_enabled = self.state.show_background || self.state.show_sprites;
-        let pre_line = self.state.scan_line == 261;
-        let visible_line = self.state.scan_line < 240;
+        let pre_line = self.state.scan_line == 0;
+        let visible_line = self.state.scan_line < 241 && !pre_line;
         let render_line = pre_line || visible_line;
         let pre_fetch_cycle = self.state.cycle >= 321 && self.state.cycle <= 336;
         let visible_cycle = self.state.cycle >= 1 && self.state.cycle <= 256;
@@ -602,10 +620,28 @@ impl Core {
                 }
             }
             if self.state.cycle == 257 {
-                if visible_line {
-                    self.evaluate_sprites(cartridge);
-                } else {
+                if !render_line {
                     self.state.sprite_count = 0;
+                }
+            }
+            if self.state.cycle == 120 {
+                if render_line {
+                    self.evaluate_sprites(cartridge);
+                }
+            }
+            if self.state.cycle == 134 {
+                if render_line {
+                    // 127 ~ 138
+                    self.state.sprite_overflow = self.state.next_sprite_overflow;
+                }
+            }
+            if self.state.cycle == 257 {
+                if render_line {
+                    self.state.sprite_count = self.state.next_sprite_count;
+                    self.state.sprite_patterns = self.state.next_sprite_patterns;
+                    self.state.sprite_positions = self.state.next_sprite_positions;
+                    self.state.sprite_priorities = self.state.next_sprite_priorities;
+                    self.state.sprite_indexes = self.state.next_sprite_indexes;
                 }
             }
         }
@@ -613,8 +649,9 @@ impl Core {
             self.state.clear_vertical_blank();
             self.state.sprite_zero_hit = false;
             self.state.sprite_overflow = false;
+            self.state.next_sprite_overflow = false;
         }
-        if self.state.scan_line == 241 && self.state.cycle == 1 {
+        if self.state.scan_line == 242 && self.state.cycle == 1 {
             self.state.set_vertical_blank();
             true
         } else {
