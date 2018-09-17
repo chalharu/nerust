@@ -906,8 +906,11 @@ impl OpCode for Dcp {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let memdata = memory.read(address, state);
         let data = memdata.wrapping_sub(1);
-        let val = state.register().get_a().wrapping_sub(data);
-        state.register().set_nz_from_value(val);
+
+        let a = state.register().get_a();
+        state.register().set_nz_from_value(a.wrapping_sub(data));
+        state.register().set_c(a >= data);
+
         memory.write(address, memdata, state);
         state.stall += memory.write(address, data, state);
         3
@@ -920,22 +923,22 @@ impl OpCode for Dcp {
 pub(crate) struct Isc;
 impl OpCode for Isc {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let memdata = memory.read(address, state);
-        let data = memdata.wrapping_add(1);
+        let data = memory.read(address, state);
+        let result = increment(state, data);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
 
-        let a = usize::from(state.register().get_a());
-        let b = usize::from(!data);
-        let c = if state.register().get_c() { 1 } else { 0 };
-        let d = a + b + c;
+        let a = u16::from(state.register().get_a());
+        let b = u16::from(result);
+        let c = if state.register().get_c() { 0 } else { 1 };
+        let d = a.wrapping_sub(b).wrapping_sub(c);
         let result = (d & 0xFF) as u8;
         state.register().set_nz_from_value(result);
         state.register().set_a(result);
-        state.register().set_c(d > 0xFF);
+        state.register().set_c(d <= 0xFF);
         state
             .register()
-            .set_v((a ^ usize::from(data)) & 0x80 == 0 && (a ^ d) & 0x80 != 0);
-        memory.write(address, memdata, state);
-        state.stall += memory.write(address, data, state);
+            .set_v((a ^ b) & 0x80 != 0 && (a ^ d) & 0x80 != 0);
         3
     }
     fn name(&self) -> &'static str {
@@ -1002,18 +1005,21 @@ pub(crate) struct Rra;
 impl OpCode for Rra {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address, state);
-        let wd = (data >> 1) | (if state.register().get_c() { 0x80 } else { 0 });
-        let a = state.register().get_a();
-        let value = u16::from(wd) + u16::from(a) + u16::from(data & 1);
-        let new_a = (value & 0xFF) as u8;
+        let result = ror(state, data);
+        memory.write(address, data, state);
+        state.stall += memory.write(address, result, state);
+
+        let a = usize::from(state.register().get_a());
+        let b = usize::from(result);
+        let c = if state.register().get_c() { 1 } else { 0 };
+        let d = a + b + c;
+        let result = (d & 0xFF) as u8;
+        state.register().set_nz_from_value(result);
+        state.register().set_a(result);
+        state.register().set_c(d > 0xFF);
         state
             .register()
-            .set_v((((a ^ wd) & 0x80) == 0) && (((a ^ new_a) & 0x80) != 0));
-        state.register().set_nz_from_value(new_a);
-        state.register().set_c((value & 0x100) != 0);
-        state.register().set_a(new_a);
-        memory.write(address, data, state);
-        state.stall += memory.write(address, wd, state);
+            .set_v((a ^ b) & 0x80 == 0 && (a ^ d) & 0x80 != 0);
         3
     }
     fn name(&self) -> &'static str {
@@ -1066,8 +1072,8 @@ impl OpCode for Alr {
 pub(crate) struct Ahx;
 impl OpCode for Ahx {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let pc_high = ((state.register().get_pc() >> 8) as u8).wrapping_add(1);
-        let value = state.register().get_a() & state.register().get_x() & pc_high;
+        let high = ((address >> 8) as u8).wrapping_add(1);
+        let value = state.register().get_a() & state.register().get_x() & high;
         state.stall += memory.write(address, value, state);
         1
     }
@@ -1080,10 +1086,14 @@ pub(crate) struct Arr;
 impl OpCode for Arr {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
         let data = memory.read(address, state);
-        let result = state.register().get_a() & data;
+        let a = state.register().get_a();
+        let result = a & data;
         let c = if state.register().get_c() { 0x80 } else { 0 };
-        state.register().set_c(result & 0x01 != 0);
+        state.register().set_c(result & 0x80 != 0);
         let value = result >> 1 | c;
+        state
+            .register()
+            .set_v((((value >> 6) & 1) != 0) ^ (((value >> 5) & 1) != 0));
         state.register().set_nz_from_value(value);
         state.register().set_a(value);
         1
@@ -1124,9 +1134,10 @@ impl OpCode for Tas {
 pub(crate) struct Shx;
 impl OpCode for Shx {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let pc_high = ((state.register().get_pc() >> 8) as u8).wrapping_add(1);
-        let value = state.register().get_x() & pc_high;
-        state.stall += memory.write(address, value, state);
+        let high = (address >> 8) as u8;
+        let value = state.register().get_x() & high.wrapping_add(1);
+        let new_addr = (usize::from(value) << 8) | (address & 0xFF);
+        state.stall += memory.write(new_addr, value, state);
         1
     }
     fn name(&self) -> &'static str {
@@ -1137,8 +1148,10 @@ impl OpCode for Shx {
 pub(crate) struct Shy;
 impl OpCode for Shy {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let pc_high = ((state.register().get_pc() >> 8) as u8).wrapping_add(1);
-        state.stall += memory.write(address, state.register().get_y() & pc_high, state);
+        let high = (address >> 8) as u8;
+        let value = state.register().get_y() & high.wrapping_add(1);
+        let new_addr = (usize::from(value) << 8) | (address & 0xFF);
+        state.stall += memory.write(new_addr, value, state);
         1
     }
     fn name(&self) -> &'static str {
@@ -1165,8 +1178,15 @@ impl OpCode for Las {
 pub(crate) struct Axs;
 impl OpCode for Axs {
     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-        let value = state.register().get_a() & state.register().get_x();
-        state.stall += memory.write(address, value, state);
+        let a = u16::from(state.register().get_a() & state.register().get_x());
+        let b = u16::from(memory.read(address, state));
+        let d = a.wrapping_sub(b);
+
+        let result = (d & 0xFF) as u8;
+        state.register().set_nz_from_value(result);
+        state.register().set_x(result);
+        state.register().set_c(d <= 0xFF);
+
         1
     }
     fn name(&self) -> &'static str {

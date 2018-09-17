@@ -77,6 +77,10 @@ impl State {
         self.stall += value;
     }
 
+    pub fn reset(&mut self) {
+        self.interrupt.set_reset();
+    }
+
     pub fn step<C: Controller>(
         &mut self,
         ppu: &mut Ppu,
@@ -113,8 +117,9 @@ impl State {
                     let pc = memory.read_u16(0xFFFC, self);
                     self.interrupt.unset_reset();
                     self.register().set_pc(pc);
-                    self.register().set_sp(0xFD);
-                    self.register().set_p(0x24);
+                    self.register().set_i(true);
+                    let sp = self.register().get_sp().wrapping_sub(3);
+                    self.register().set_sp(sp);
                     7
                 }
                 (false, InterruptStatus::Executing, true) => {
@@ -186,6 +191,10 @@ impl Core {
 
     pub fn trigger_nmi(&mut self) {
         self.state.trigger_nmi();
+    }
+
+    pub fn reset(&mut self) {
+        self.state.reset();
     }
 
     pub fn new() -> Self {

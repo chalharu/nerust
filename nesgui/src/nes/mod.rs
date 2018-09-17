@@ -65,6 +65,10 @@ impl Console {
         })
     }
 
+    pub fn reset(&mut self) {
+        self.cpu.reset();
+    }
+
     pub fn step<S: Screen, C: Controller, SP: Speaker>(
         &mut self,
         screen: &mut S,
@@ -471,6 +475,48 @@ mod tests {
         runner.run(scenario);
     }
 
+    #[test]
+    fn instr_misc() {
+        let mut runner = ScenarioRunner::new(
+            &mut include_bytes!("../../../sample_roms/instr_misc/instr_misc.nes")
+                .iter()
+                .cloned(),
+        );
+        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+            344,
+            ScenarioOperation::check_screen(0xE00704F6A0376CBE),
+        )]);
+        runner.run(scenario);
+    }
+
+    #[test]
+    fn instr_test_v5() {
+        let mut runner = ScenarioRunner::new(
+            &mut include_bytes!("../../../sample_roms/instr_test-v5/all_instrs.nes")
+                .iter()
+                .cloned(),
+        );
+        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+            2400,
+            ScenarioOperation::check_screen(0x0D3D1CD1F7F9EC0B),
+        )]);
+        runner.run(scenario);
+    }
+
+    #[test]
+    fn cpu_timing_test6() {
+        let mut runner = ScenarioRunner::new(
+            &mut include_bytes!("../../../sample_roms/cpu_timing_test6/cpu_timing_test.nes")
+                .iter()
+                .cloned(),
+        );
+        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+            639,
+            ScenarioOperation::check_screen(0x475DE2E673F715D4),
+        )]);
+        runner.run(scenario);
+    }
+
     mod blargg_apu_2005_07_30 {
         use super::*;
 
@@ -575,6 +621,496 @@ mod tests {
             )]);
             runner.run(scenario);
         }
+
+        #[test]
+        fn _08_irq_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/blargg_apu_2005.07.30/08.irq_timing.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _09_reset_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/09.reset_timing.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _10_len_halt_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/10.len_halt_timing.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _11_len_reload_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_apu_2005.07.30/11.len_reload_timing.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
     }
 
+    mod cpu_reset {
+        use super::*;
+
+        #[test]
+        fn ram_after_reset() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/cpu_reset/ram_after_reset.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                45,
+                ScenarioOperation::check_screen(0xB1866B91E4771BAB),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn registers() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/cpu_reset/registers.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                295,
+                ScenarioOperation::check_screen(0x28EE2FAC59284B74),
+            )]);
+            runner.run(scenario);
+        }
+    }
+
+    mod blargg_ppu_tests_2005_09_15b {
+        use super::*;
+
+        #[test]
+        fn palette_ram() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn power_up_palette() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn sprite_ram() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn vbl_clear_time() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn vram_access() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/blargg_ppu_tests_2005.09.15b/vram_access.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+    }
+
+    mod full_palette {
+        use super::*;
+
+        #[test]
+        fn flowing_palette() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/full_palette/flowing_palette.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn full_palette_smooth() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/full_palette/full_palette_smooth.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn full_palette() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/full_palette/full_palette.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+    }
+
+    mod nmi_sync {
+        use super::*;
+
+        #[test]
+        fn demo_ntsc() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/nmi_sync/demo_ntsc.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn demo_pal() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/nmi_sync/demo_pal.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                30,
+                ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
+            )]);
+            runner.run(scenario);
+        }
+    }
+
+    mod sprite_hit_tests_2005_10_05 {
+        use super::*;
+
+        #[test]
+        fn _01_basics() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/01.basics.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x89392E806F5682F4),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _02_alignment() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x75D8550D59B6F72B),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _03_corners() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/03.corners.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x2983264967F6A253),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _04_flip() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_hit_tests_2005.10.05/04.flip.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x9BAF184F5F15E8A7),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _05_left_clip() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/05.left_clip.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x14DE22738C3636C0),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _06_right_edge() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/06.right_edge.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x2270DD899C0E1480),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _07_screen_bottom() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0x5571EB62B8928090),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _08_double_height() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/08.double_height.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                34,
+                ScenarioOperation::check_screen(0xC5EE8DB0ABBD48ED),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _09_timing_basics() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                60,
+                ScenarioOperation::check_screen(0x8CED0595749BE2DA),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _10_timing_order() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/10.timing_order.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                60,
+                ScenarioOperation::check_screen(0xBDE510E7036C02DD),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _11_edge_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!(
+                    "../../../sample_roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes"
+                ).iter()
+                .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                60,
+                ScenarioOperation::check_screen(0xB3C59FBA25A122C8),
+            )]);
+            runner.run(scenario);
+        }
+    }
+
+    mod sprite_overflow_tests {
+        use super::*;
+
+        #[test]
+        fn _1_basics() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/1.Basics.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x64673F9E8279B5DA),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _2_details() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/2.Details.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x6857729005806691),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _3_timing() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/3.Timing.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x89392E806F5682F4),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _4_obscure() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x89392E806F5682F4),
+            )]);
+            runner.run(scenario);
+        }
+
+        #[test]
+        fn _5_emulator() {
+            let mut runner = ScenarioRunner::new(
+                &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/5.Emulator.nes")
+                    .iter()
+                    .cloned(),
+            );
+            let scenario = Scenario::new(&vec![ScenarioLeaf::new(
+                36,
+                ScenarioOperation::check_screen(0x0F70D5EEDE382586),
+            )]);
+            runner.run(scenario);
+        }
+    }
 }

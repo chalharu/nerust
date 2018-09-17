@@ -464,6 +464,10 @@ impl Window {
                 }
                 Buttons::empty()
             }
+            Some(VirtualKeyCode::Escape) => {
+                self.console.reset();
+                Buttons::empty()
+            }
             _ => Buttons::empty(),
         };
         self.keys = match input.state {
@@ -584,7 +588,20 @@ fn main() {
         // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes")
         // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes")
         // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes")
-        &mut include_bytes!("../../sample_roms/instr_timing/instr_timing.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/08.irq_timing.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/09.reset_timing.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/10.len_halt_timing.nes")
+        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/11.len_reload_timing.nes")
+        // &mut include_bytes!("../../sample_roms/cpu_reset/ram_after_reset.nes")
+        // &mut include_bytes!("../../sample_roms/cpu_reset/registers.nes")
+        // &mut include_bytes!("../../sample_roms/full_palette/full_palette.nes")
+        // &mut include_bytes!("../../sample_roms/full_palette/full_palette_smooth.nes")
+        // &mut include_bytes!("../../sample_roms/full_palette/flowing_palette.nes")
+        // &mut include_bytes!("../../sample_roms/nmi_sync/demo_ntsc.nes")
+        // &mut include_bytes!("../../sample_roms/ntsc_torture.nes")
+        // &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes")
+        &mut include_bytes!("../../sample_roms/sprite_overflow_tests/3.Timing.nes")
+        // &mut include_bytes!("../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
             .into_iter()
             .cloned(),
         44_100,

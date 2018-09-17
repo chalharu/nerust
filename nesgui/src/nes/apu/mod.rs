@@ -43,7 +43,6 @@ pub struct Core {
     frame_irq: bool,
     sample_cycle: u64,
     sample_reset_cycle: u64,
-    mode1_first: bool,
 }
 
 impl Core {
@@ -67,12 +66,11 @@ impl Core {
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            cycle: 2,
+            cycle: 10,
             frame_period: false,
-            frame_irq: false,
+            frame_irq: true,
             sample_cycle: 0,
             sample_reset_cycle,
-            mode1_first: false,
         }
     }
 
