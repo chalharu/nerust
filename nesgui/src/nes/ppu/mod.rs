@@ -23,6 +23,9 @@ const PALETTE: [u32; 64] = [
     0x000000,
 ];
 
+const NMI_SCAN_LINE: usize = 241;
+const TOTAL_SCAN_LINE: usize = 260;
+
 // #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct State {
     // #[serde(with = "serde_bytes")]
@@ -76,10 +79,10 @@ pub(crate) struct State {
 
     //
     v: u16,
-    t: u16,
+    temp_vram_addr: u16,
     x: u8,
-    w: bool,
-    f: bool,
+    write_latch: bool,
+    odd_frame: bool, // even/odd frame
 
     //
     cycle: u16,
@@ -142,10 +145,10 @@ impl State {
             next_sprite_priorities: [false; 8],
             next_sprite_indexes: [0; 8],
             v: 0,
-            t: 0,
+            temp_vram_addr: 0,
             x: 0,
-            w: false,
-            f: false,
+            write_latch: false,
+            odd_frame: false,
             register: 0,
             cycle: 340,
             scan_line: 241,
@@ -159,6 +162,30 @@ impl State {
             tile_data: 0,
             register_buffer: 0,
         }
+    }
+
+    fn reset(&mut self) {
+        self.name_table = 0;
+        self.increment = false;
+        self.sprite_table = false;
+        self.background_table =false;
+        self.sprite_size =false;
+        self.master_slave = false;
+        self.nmi_output = false;
+
+        self.grayscale = false;
+        self.show_left_background = false;
+        self.show_left_sprites = false;
+        self.show_background = false;
+        self.show_sprites = false;
+        self.red_tint = false;
+        self.green_tint = false;
+        self.blue_tint = false;
+
+        self.write_latch = false;
+        self.odd_frame = false;
+
+        self.temp_vram_addr = 0;
     }
 
     fn increment_address(&mut self) {
@@ -192,11 +219,11 @@ impl State {
     }
 
     fn copy_x(&mut self) {
-        self.v = (self.v & 0xFBE0) | (self.t & 0x041F);
+        self.v = (self.v & 0xFBE0) | (self.temp_vram_addr & 0x041F);
     }
 
     fn copy_y(&mut self) {
-        self.v = (self.v & 0x841F) | (self.t & 0x7BE0);
+        self.v = (self.v & 0x841F) | (self.temp_vram_addr & 0x7BE0);
     }
 
     fn nmi_change(&mut self) {
@@ -226,7 +253,7 @@ impl State {
             | if self.nmi_occurred { 0x80 } else { 0 };
         self.nmi_occurred = false;
         self.nmi_change();
-        self.w = false;
+        self.write_latch = false;
         result
     }
 
@@ -245,7 +272,7 @@ impl State {
         self.nmi_change();
 
         // 画面の書き換え場所を変更
-        self.t = (self.t & 0xF3FF) | (u16::from(value & 0x03) << 10);
+        self.temp_vram_addr = (self.temp_vram_addr & 0xF3FF) | (u16::from(value & 0x03) << 10);
     }
 
     fn write_mask(&mut self, value: u8) {
@@ -269,26 +296,25 @@ impl State {
     }
 
     fn write_scroll(&mut self, value: u8) {
-        if self.w {
-            self.t = (self.t & 0x8FFF) | (u16::from(value & 0x07) << 12);
-            self.t = (self.t & 0xFC1F) | (u16::from(value & 0xF8) << 2);
-            self.w = false;
+        if self.write_latch {
+            self.temp_vram_addr = (self.temp_vram_addr & !0x73E0) | (u16::from(value & 0x07) << 12)| (u16::from(value & 0xF8) << 2);
         } else {
-            self.t = (self.t & 0xFFE0) | u16::from(value >> 3);
+            self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | u16::from(value >> 3);
             self.x = value & 0x07;
-            self.w = true;
         }
+        self.write_latch = !self.write_latch;
     }
 
     fn write_address(&mut self, value: u8) {
-        if self.w {
-            self.t = (self.t & 0xFF00) | u16::from(value);
-            self.v = self.t;
-            self.w = false;
+        if self.write_latch {
+            self.temp_vram_addr = (self.temp_vram_addr & 0xFF00) | u16::from(value);
+            self.v = self.temp_vram_addr;
+
+            // TODO: delayが必要？？
         } else {
-            self.t = (self.t & 0x80FF) | (u16::from(value & 0x3F) << 8);
-            self.w = true;
+            self.temp_vram_addr = (self.temp_vram_addr & 0x80FF) | (u16::from(value & 0x3F) << 8);
         }
+        self.write_latch = !self.write_latch;
     }
 
     fn tile_address(&self) -> usize {
@@ -388,18 +414,18 @@ impl State {
     }
 
     fn write_palette(&mut self, address: usize, value: u8) {
-        self.palette[Self::palette_address(address)] = value;
+        self.palette[Self::palette_address(address)] = value & 0x3F;
     }
 
     fn tick(&mut self) {
         if (self.show_background || self.show_sprites)
-            && self.f
+            && self.odd_frame
             && self.scan_line == 261
             && self.cycle == 339
         {
             self.cycle = 0;
             self.scan_line = 0;
-            self.f = false;
+            self.odd_frame = false;
         } else {
             self.cycle += 1;
             if self.cycle > 340 {
@@ -407,7 +433,7 @@ impl State {
                 self.scan_line += 1;
                 if self.scan_line > 261 {
                     self.scan_line = 0;
-                    self.f = !self.f;
+                    self.odd_frame = !self.odd_frame;
                 }
             }
         }
@@ -423,6 +449,10 @@ impl Core {
         Self {
             state: State::new(),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.state.reset();
     }
 
     pub fn read_register(&mut self, address: usize, cartridge: &mut Box<Cartridge>) -> u8 {
@@ -590,6 +620,7 @@ impl Core {
         let pre_fetch_cycle = self.state.cycle >= 321 && self.state.cycle <= 336;
         let visible_cycle = self.state.cycle >= 1 && self.state.cycle <= 256;
         let fetch_cycle = pre_fetch_cycle || visible_cycle;
+
         if rendering_enabled {
             if visible_line && visible_cycle {
                 self.state.render_pixel(screen);

@@ -4,9 +4,6 @@
 			"path": "nes"
 		},
 		{
-			"path": "."
-		},
-		{
 			"path": "nesgui"
 		}
 	],

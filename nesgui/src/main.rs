@@ -27,10 +27,10 @@ mod glwrap;
 mod nes;
 
 use alto::*;
-use core::collections::VecDeque;
-use core::hash::{Hash, Hasher};
-use core::time::{Duration, Instant};
-use core::{f64, iter, mem, thread};
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::time::{Duration, Instant};
+use std::{f64, iter, mem, thread};
 use crc::crc64;
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;

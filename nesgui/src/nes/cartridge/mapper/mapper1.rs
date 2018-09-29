@@ -6,7 +6,7 @@
 
 use super::super::Cartridge;
 use super::CartridgeData;
-use nes::MirrorMode;
+use nes::status::MirrorMode;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Mapper1 {
