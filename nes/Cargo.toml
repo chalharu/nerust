@@ -2,10 +2,18 @@
 name = "nes"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = '2018'
 
 [dependencies]
+glutin = { version = ">=0.0.0" }
+gl = { version = ">=0.0.0" }
+simple_logger = { version = ">=0.0.0" }
+failure = { version = ">=0.0.0" }
 log = { version = ">=0.0.0", default-features = false }
 serde = { version = ">=0.0.0", default-features = false }
 serde_derive = { version = ">=0.0.0", default-features = false }
 serde_bytes = { version = ">=0.0.0" }
-failure = { version = ">=0.0.0" }
+bitflags = { version = ">=0.0.0" }
+alto =  { version = ">=0.0.0" }
+crc = { version = ">=0.0.0" }
+futures = { version = ">=0.0.0" }

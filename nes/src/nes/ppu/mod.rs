@@ -7,8 +7,8 @@
 mod memory;
 
 use self::memory::Memory;
-use nes::cartridge::Cartridge;
-use nes::{Cpu, Screen, RGB};
+use crate::nes::cartridge::Cartridge;
+use crate::nes::{Cpu, Screen, RGB};
 use std::mem;
 // use serde_bytes;
 
@@ -168,8 +168,8 @@ impl State {
         self.name_table = 0;
         self.increment = false;
         self.sprite_table = false;
-        self.background_table =false;
-        self.sprite_size =false;
+        self.background_table = false;
+        self.sprite_size = false;
         self.master_slave = false;
         self.nmi_output = false;
 
@@ -297,7 +297,9 @@ impl State {
 
     fn write_scroll(&mut self, value: u8) {
         if self.write_latch {
-            self.temp_vram_addr = (self.temp_vram_addr & !0x73E0) | (u16::from(value & 0x07) << 12)| (u16::from(value & 0xF8) << 2);
+            self.temp_vram_addr = (self.temp_vram_addr & !0x73E0)
+                | (u16::from(value & 0x07) << 12)
+                | (u16::from(value & 0xF8) << 2);
         } else {
             self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | u16::from(value >> 3);
             self.x = value & 0x07;
@@ -310,7 +312,7 @@ impl State {
             self.temp_vram_addr = (self.temp_vram_addr & 0xFF00) | u16::from(value);
             self.v = self.temp_vram_addr;
 
-            // TODO: delayが必要？？
+        // TODO: delayが必要？？
         } else {
             self.temp_vram_addr = (self.temp_vram_addr & 0x80FF) | (u16::from(value & 0x3F) << 8);
         }
@@ -609,7 +611,7 @@ impl Core {
         if self.state.nmi_delay > 0 {
             self.state.nmi_delay -= 1;
             if self.state.nmi_delay == 0 && self.state.nmi_output && self.state.nmi_occurred {
-                cpu.trigger_nmi();
+                // cpu.trigger_nmi();
             }
         };
         self.state.tick();

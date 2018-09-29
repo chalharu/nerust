@@ -4,43 +4,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// #[macro_use]
-// extern crate log;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate log;
-extern crate alto;
-extern crate crc;
-extern crate gl;
-extern crate glutin;
-extern crate serde;
-extern crate serde_bytes;
-extern crate simple_logger;
-extern crate std as core;
-
-mod glwrap;
-mod nes;
-
 use alto::*;
-use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
-use std::time::{Duration, Instant};
-use std::{f64, iter, mem, thread};
+use crate::glwrap::*;
+use crate::nes::controller::standard_controller::{Buttons, StandardController};
+use crate::nes::{Console, Screen, Speaker, RGB};
 use crc::crc64;
+use gl;
 use gl::types::GLint;
 use glutin::dpi::LogicalSize;
 use glutin::{
     Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
     GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
 };
-use glwrap::*;
-use nes::controller::{Buttons, StandardController};
-use nes::{Console, Screen, Speaker, RGB};
+
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::os::raw::c_void;
+use std::time::{Duration, Instant};
+use std::{f64, iter, mem, thread};
 
 struct Fps {
     instants: VecDeque<Instant>,
@@ -181,7 +162,7 @@ fn init_screen_buffer() -> [u8; 256 * 240 * 4] {
     screen_buffer
 }
 
-struct ScreenBuffer([u8; 256 * 240 * 4]);
+pub struct ScreenBuffer([u8; 256 * 240 * 4]);
 
 impl ScreenBuffer {
     pub fn new() -> Self {
@@ -348,7 +329,7 @@ impl Window {
             gl::FLOAT,
             gl::FALSE,
             16,
-            0 as *const std::os::raw::c_void,
+            0 as *const c_void,
         ).unwrap();
         vertex_attrib_pointer(
             shader.get_attribute("uv"),
@@ -356,7 +337,7 @@ impl Window {
             gl::FLOAT,
             gl::FALSE,
             16,
-            8 as *const std::os::raw::c_void,
+            8 as *const c_void,
         ).unwrap();
         bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
@@ -388,7 +369,7 @@ impl Window {
             240,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            self.screen_buffer.as_ptr() as *const std::os::raw::c_void,
+            self.screen_buffer.as_ptr() as *const c_void,
         ).unwrap();
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
         self.window.swap_buffers().unwrap();
@@ -560,54 +541,16 @@ impl Speaker for AlSpeaker {
     }
 }
 
-fn main() {
-    // log initialize
-    simple_logger::init().unwrap();
+pub struct Gui {
+    console: Console,
+}
 
-    let console = nes::Console::new(
-        // &mut include_bytes!("../../sample_roms/sample1.nes")
-        // &mut include_bytes!("../../sample_roms/giko005.nes")
-        // &mut include_bytes!("../../sample_roms/giko008.nes")
-        // &mut include_bytes!("../../sample_roms/giko009.nes")
-        // &mut include_bytes!("../../sample_roms/giko010.nes")
-        // &mut include_bytes!("../../sample_roms/giko010b.nes")
-        // &mut include_bytes!("../../sample_roms/giko011.nes")
-        // &mut include_bytes!("../../sample_roms/giko012.nes")
-        // &mut include_bytes!("../../sample_roms/giko013.nes")
-        // &mut include_bytes!("../../sample_roms/giko014.nes")
-        // &mut include_bytes!("../../sample_roms/giko014b.nes")
-        // &mut include_bytes!("../../sample_roms/giko015.nes")
-        // &mut include_bytes!("../../sample_roms/giko016.nes")
-        // &mut include_bytes!("../../sample_roms/giko017.nes")
-        // &mut include_bytes!("../../sample_roms/giko018.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/04.clock_jitter.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/08.irq_timing.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/09.reset_timing.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/10.len_halt_timing.nes")
-        // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/11.len_reload_timing.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_reset/ram_after_reset.nes")
-        // &mut include_bytes!("../../sample_roms/cpu_reset/registers.nes")
-        // &mut include_bytes!("../../sample_roms/full_palette/full_palette.nes")
-        // &mut include_bytes!("../../sample_roms/full_palette/full_palette_smooth.nes")
-        // &mut include_bytes!("../../sample_roms/full_palette/flowing_palette.nes")
-        // &mut include_bytes!("../../sample_roms/nmi_sync/demo_ntsc.nes")
-        // &mut include_bytes!("../../sample_roms/ntsc_torture.nes")
-        // &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes")
-        &mut include_bytes!("../../sample_roms/sprite_overflow_tests/3.Timing.nes")
-        // &mut include_bytes!("../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
-            .into_iter()
-            .cloned(),
-        44_100,
-    ).unwrap();
-    let speaker = AlSpeaker::new();
+impl Gui {
+    pub fn new(console: Console) -> Self {
+        Self { console }
+    }
 
-    let mut window = Window::new(console, speaker);
-    window.run();
+    pub fn run(self) {
+        Window::new(self.console, AlSpeaker::new()).run();
+    }
 }
