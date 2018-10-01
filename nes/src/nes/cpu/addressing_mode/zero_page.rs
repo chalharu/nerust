@@ -13,6 +13,7 @@ impl AddressingMode for ZeroPage {
         code: usize,
         _register: &mut Register,
         _opcodes: &mut Opcodes,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(code))
     }
@@ -44,11 +45,13 @@ impl CpuStepState for Step1 {
         let zeropage_address =
             usize::from(
                 core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu),
+                    .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt),
             );
 
-        core.opcode_tables
-            .get(self.code)
-            .next_func(zeropage_address, &mut core.register)
+        core.opcode_tables.get(self.code).next_func(
+            zeropage_address,
+            &mut core.register,
+            &mut core.interrupt,
+        )
     }
 }

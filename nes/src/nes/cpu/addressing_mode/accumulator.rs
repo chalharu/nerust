@@ -13,8 +13,9 @@ impl AddressingMode for Accumulator {
         code: usize,
         register: &mut Register,
         opcodes: &mut Opcodes,
+        interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        opcodes.get(code).next_func(0, register)
+        opcodes.get(code).next_func(0, register, interrupt)
     }
 
     fn name(&self) -> &'static str {

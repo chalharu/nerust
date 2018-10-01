@@ -13,6 +13,7 @@ impl AddressingMode for Relative {
         code: usize,
         _register: &mut Register,
         _opcodes: &mut Opcodes,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(code))
     }
@@ -44,16 +45,18 @@ impl CpuStepState for Step1 {
         let offset =
             u16::from(
                 core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu),
+                    .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt),
             );
         let pc = u16::from(core.register.get_pc());
         let address = pc
             .wrapping_add(offset)
             .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 });
 
-        core.opcode_tables
-            .get(self.code)
-            .next_func(address as usize, &mut core.register)
+        core.opcode_tables.get(self.code).next_func(
+            address as usize,
+            &mut core.register,
+            &mut core.interrupt,
+        )
         // if page_crossed(pc, address) {
         //     Box::new(Step2::new(self.code, pc, address))
         // } else {

@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Lax;
 impl OpCode for Lax {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             r.set_a(v);
             r.set_x(v);
@@ -22,7 +27,12 @@ impl OpCode for Lax {
 
 pub(crate) struct Anc;
 impl OpCode for Anc {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let result = r.get_a() & v;
             r.set_nz_from_value(result);
@@ -37,7 +47,12 @@ impl OpCode for Anc {
 
 pub(crate) struct Alr;
 impl OpCode for Alr {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let result = r.get_a() & v;
             r.set_c(result & 0x01 != 0);
@@ -53,7 +68,12 @@ impl OpCode for Alr {
 
 pub(crate) struct Arr;
 impl OpCode for Arr {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let result = r.get_a() & v;
             let value = result >> 1 | if r.get_c() { 0x80 } else { 0 };
@@ -70,7 +90,12 @@ impl OpCode for Arr {
 
 pub(crate) struct Xaa;
 impl OpCode for Xaa {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let result = r.get_x() & v;
             r.set_nz_from_value(result);
@@ -84,7 +109,12 @@ impl OpCode for Xaa {
 
 pub(crate) struct Las;
 impl OpCode for Las {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let result = r.get_sp() & v;
             r.set_nz_from_value(result);
@@ -100,7 +130,12 @@ impl OpCode for Las {
 
 pub(crate) struct Axs;
 impl OpCode for Axs {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(ReadStep1::new(address, |r, v| {
             let a = u16::from(r.get_a() & r.get_x());
             let b = u16::from(v);
@@ -119,7 +154,12 @@ impl OpCode for Axs {
 
 pub(crate) struct Sax;
 impl OpCode for Sax {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(WriteStep1::new(address, |r| r.get_a() & r.get_x()))
     }
     fn name(&self) -> &'static str {
@@ -129,7 +169,12 @@ impl OpCode for Sax {
 
 pub(crate) struct Ahx;
 impl OpCode for Ahx {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         let high = ((address >> 8) as u8).wrapping_add(1);
         Box::new(WriteStep1::new(address, move |r| {
             r.get_a() & r.get_x() & high
@@ -142,7 +187,12 @@ impl OpCode for Ahx {
 
 pub(crate) struct Tas;
 impl OpCode for Tas {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(WriteStep1::new(address, |r| {
             let sp = r.get_a() & r.get_x();
             r.set_sp(sp);
@@ -156,7 +206,12 @@ impl OpCode for Tas {
 
 pub(crate) struct Shx;
 impl OpCode for Shx {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         let high = ((address >> 8) as u8).wrapping_add(1);
         let low = address & 0xFF;
         Box::new(WriteNewAddrStep1::new(address, move |r| {
@@ -172,7 +227,12 @@ impl OpCode for Shx {
 
 pub(crate) struct Shy;
 impl OpCode for Shy {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         let high = ((address >> 8) as u8).wrapping_add(1);
         let low = address & 0xFF;
         Box::new(WriteNewAddrStep1::new(address, move |r| {
@@ -208,9 +268,9 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for ReadStep1<F> {
     ) -> Box<dyn CpuStepState> {
         let data = core
             .memory
-            .read(self.address, ppu, cartridge, controller, apu);
+            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
         (self.func)(&mut core.register, data);
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }
 
@@ -236,8 +296,8 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for WriteStep1<F> {
     ) -> Box<dyn CpuStepState> {
         let data = (self.func)(&mut core.register);
         core.memory
-            .write(self.address, data, ppu, cartridge, controller, apu);
-        Box::new(FetchOpCode::new())
+            .write(self.address, data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        FetchOpCode::new(&core.interrupt)
     }
 }
 
@@ -263,7 +323,7 @@ impl<F: Fn(&mut Register) -> (u8, usize)> CpuStepState for WriteNewAddrStep1<F> 
     ) -> Box<dyn CpuStepState> {
         let (data, address) = (self.func)(&mut core.register);
         core.memory
-            .write(address, data, ppu, cartridge, controller, apu);
-        Box::new(FetchOpCode::new())
+            .write(address, data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        FetchOpCode::new(&core.interrupt)
     }
 }

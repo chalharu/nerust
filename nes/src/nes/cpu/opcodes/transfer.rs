@@ -13,7 +13,12 @@ fn set_nz_from_value(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct Tax;
 impl OpCode for Tax {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |r| r.get_a(),
             |r, v| r.set_x(v),
@@ -27,7 +32,12 @@ impl OpCode for Tax {
 
 pub(crate) struct Tay;
 impl OpCode for Tay {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |r| r.get_a(),
             |r, v| r.set_y(v),
@@ -41,7 +51,12 @@ impl OpCode for Tay {
 
 pub(crate) struct Tsx;
 impl OpCode for Tsx {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |r| r.get_sp(),
             |r, v| r.set_x(v),
@@ -55,7 +70,12 @@ impl OpCode for Tsx {
 
 pub(crate) struct Txa;
 impl OpCode for Txa {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |r| r.get_x(),
             |r, v| r.set_a(v),
@@ -69,7 +89,12 @@ impl OpCode for Txa {
 
 pub(crate) struct Tya;
 impl OpCode for Tya {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |r| r.get_y(),
             |r, v| r.set_a(v),
@@ -83,7 +108,12 @@ impl OpCode for Tya {
 
 pub(crate) struct Txs;
 impl OpCode for Txs {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(|r| r.get_x(), |r, v| r.set_sp(v), |_, v| v))
     }
     fn name(&self) -> &'static str {

@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Bit;
 impl OpCode for Bit {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address))
     }
     fn name(&self) -> &'static str {
@@ -37,11 +42,11 @@ impl CpuStepState for Step1 {
     ) -> Box<dyn CpuStepState> {
         let data = core
             .memory
-            .read(self.address, ppu, cartridge, controller, apu);
+            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
         let a = data & core.register.get_a();
         core.register.set_z_from_value(a);
         core.register.set_n_from_value(data);
 
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }

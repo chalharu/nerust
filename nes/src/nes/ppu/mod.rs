@@ -8,6 +8,7 @@ mod memory;
 
 use self::memory::Memory;
 use crate::nes::cartridge::Cartridge;
+use crate::nes::cpu::interrupt::Interrupt;
 use crate::nes::{Cpu, Screen, RGB};
 use std::mem;
 // use serde_bytes;
@@ -61,7 +62,6 @@ pub(crate) struct State {
 
     // buffer
     buffered_data: u8,
-    register: u8,
 
     // sprite buffer
     sprite_count: u8,
@@ -149,7 +149,6 @@ impl State {
             x: 0,
             write_latch: false,
             odd_frame: false,
-            register: 0,
             cycle: 340,
             scan_line: 241,
             nmi_occurred: false,
@@ -226,33 +225,44 @@ impl State {
         self.v = (self.v & 0x841F) | (self.temp_vram_addr & 0x7BE0);
     }
 
-    fn nmi_change(&mut self) {
-        let nmi = self.nmi_output && self.nmi_occurred;
-        if nmi && !self.nmi_previous {
-            // TODO: このdelayはよくわからない
-            // self.nmi_delay = 15;
-            self.nmi_delay = 1;
-        }
-        self.nmi_previous = nmi;
-    }
+    // fn nmi_change(&mut self) {
+    //     let nmi = self.nmi_output && self.nmi_occurred;
+    //     if nmi && !self.nmi_previous {
+    //         // TODO: このdelayはよくわからない
+    //         // self.nmi_delay = 15;
+    //         self.nmi_delay = 1;
+    //     }
+    //     self.nmi_previous = nmi;
+    // }
 
-    fn set_vertical_blank(&mut self) {
+    fn set_vertical_blank(&mut self, cpu: &mut Cpu) {
         self.nmi_occurred = true;
-        self.nmi_change();
+        // self.nmi_change();
+        if self.nmi_output {
+            cpu.interrupt.nmi = true;
+        }
     }
 
-    fn clear_vertical_blank(&mut self) {
-        self.nmi_occurred = false;
-        self.nmi_change();
-    }
+    // fn clear_vertical_blank(&mut self, cpu: &mut Cpu) {
+    //     self.nmi_occurred = false;
+    //     // self.nmi_change();
+    // }
 
-    fn read_status(&mut self) -> u8 {
-        let result = self.register & 0x1F
-            | if self.sprite_overflow { 0x20 } else { 0 }
+    fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
+        let mut result = if self.sprite_overflow { 0x20 } else { 0 }
             | if self.sprite_zero_hit { 0x40 } else { 0 }
             | if self.nmi_occurred { 0x80 } else { 0 };
         self.nmi_occurred = false;
-        self.nmi_change();
+
+        if self.scan_line == 242 && self.cycle < 4 {
+            interrupt.nmi = false;
+
+            if self.cycle == 1 {
+                result = if self.sprite_overflow { 0x20 } else { 0 }
+                    | if self.sprite_zero_hit { 0x40 } else { 0 };
+            }
+        }
+
         self.write_latch = false;
         result
     }
@@ -261,7 +271,18 @@ impl State {
         self.oam[usize::from(self.oam_address)]
     }
 
-    fn write_control(&mut self, value: u8) {
+    fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
+        if !self.nmi_output
+            && (value & 0x80 != 0)
+            && self.nmi_occurred
+            && (self.scan_line != 0 || self.cycle != 1)
+        {
+            interrupt.nmi = true;
+        }
+        if self.scan_line == 242 && self.cycle < 4 && (value & 0x80 == 0) {
+            interrupt.nmi = false;
+        }
+
         self.name_table = value & 3;
         self.increment = value & 4 != 0;
         self.sprite_table = value & 8 != 0;
@@ -269,7 +290,6 @@ impl State {
         self.sprite_size = value & 0x20 != 0;
         self.master_slave = value & 0x40 != 0;
         self.nmi_output = value & 0x80 != 0;
-        self.nmi_change();
 
         // 画面の書き換え場所を変更
         self.temp_vram_addr = (self.temp_vram_addr & 0xF3FF) | (u16::from(value & 0x03) << 10);
@@ -457,10 +477,15 @@ impl Core {
         self.state.reset();
     }
 
-    pub fn read_register(&mut self, address: usize, cartridge: &mut Box<Cartridge>) -> u8 {
+    pub(crate) fn read_register(
+        &mut self,
+        address: usize,
+        cartridge: &mut Box<Cartridge>,
+        interrupt: &mut Interrupt,
+    ) -> u8 {
         let result = match address {
             0x2002 => {
-                (self.state.read_status() & 0b1110_0000)
+                (self.state.read_status(interrupt) & 0b1110_0000)
                     | (self.state.register_buffer & 0b0001_1111)
             }
             0x2004 => self.state.read_oam(),
@@ -471,9 +496,15 @@ impl Core {
         result
     }
 
-    pub fn write_register(&mut self, address: usize, value: u8, cartridge: &mut Box<Cartridge>) {
+    pub(crate) fn write_register(
+        &mut self,
+        address: usize,
+        value: u8,
+        cartridge: &mut Box<Cartridge>,
+        interrupt: &mut Interrupt,
+    ) {
         match address {
-            0x2000 => self.state.write_control(value),
+            0x2000 => self.state.write_control(value, interrupt),
             0x2001 => self.state.write_mask(value),
             0x2003 => self.state.write_oam_address(value),
             0x2004 => self.state.write_oam_data(value),
@@ -679,13 +710,12 @@ impl Core {
             }
         }
         if pre_line && self.state.cycle == 1 {
-            self.state.clear_vertical_blank();
             self.state.sprite_zero_hit = false;
             self.state.sprite_overflow = false;
             self.state.next_sprite_overflow = false;
         }
         if self.state.scan_line == 242 && self.state.cycle == 1 {
-            self.state.set_vertical_blank();
+            self.state.set_vertical_blank(cpu);
             true
         } else {
             false

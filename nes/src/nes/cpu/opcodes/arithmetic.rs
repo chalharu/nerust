@@ -31,20 +31,25 @@ impl<FCalc: Fn(&mut Register, u8, u8) -> u8> CpuStepState for Step1<FCalc> {
     ) -> Box<dyn CpuStepState> {
         let data = core
             .memory
-            .read(self.address, ppu, cartridge, controller, apu);
+            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
         let a = core.register.get_a();
         let result = (self.calculator)(&mut core.register, a, data);
 
         core.register.set_nz_from_value(result);
         core.register.set_a(result);
 
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }
 
 pub(crate) struct And;
 impl OpCode for And {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |_register, a, data| a & data))
     }
     fn name(&self) -> &'static str {
@@ -54,7 +59,12 @@ impl OpCode for And {
 
 pub(crate) struct Eor;
 impl OpCode for Eor {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |_register, a, data| a ^ data))
     }
     fn name(&self) -> &'static str {
@@ -64,7 +74,12 @@ impl OpCode for Eor {
 
 pub(crate) struct Ora;
 impl OpCode for Ora {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |_register, a, data| a | data))
     }
     fn name(&self) -> &'static str {
@@ -74,7 +89,12 @@ impl OpCode for Ora {
 
 pub(crate) struct Adc;
 impl OpCode for Adc {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |register, a_u8, b_u8| {
             let a = u16::from(a_u8);
             let b = u16::from(b_u8);
@@ -92,7 +112,12 @@ impl OpCode for Adc {
 
 pub(crate) struct Sbc;
 impl OpCode for Sbc {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |register, a_u8, b_u8| {
             let a = u16::from(a_u8);
             let b = u16::from(b_u8);

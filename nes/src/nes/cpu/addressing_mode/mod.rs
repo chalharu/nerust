@@ -45,6 +45,7 @@ pub(crate) trait AddressingMode {
         code: usize,
         register: &mut Register,
         opcodes: &mut Opcodes,
+        interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState>;
     fn name(&self) -> &'static str;
     // fn opcode_length(&self) -> u16;

@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Cmp;
 impl OpCode for Cmp {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |r| r.get_a()))
     }
     fn name(&self) -> &'static str {
@@ -18,7 +23,12 @@ impl OpCode for Cmp {
 
 pub(crate) struct Cpx;
 impl OpCode for Cpx {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |r| r.get_x()))
     }
     fn name(&self) -> &'static str {
@@ -28,7 +38,12 @@ impl OpCode for Cpx {
 
 pub(crate) struct Cpy;
 impl OpCode for Cpy {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(address, |r| r.get_y()))
     }
     fn name(&self) -> &'static str {
@@ -59,11 +74,11 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for Step1<F> {
         let a = (self.func)(&mut core.register);
         let b = core
             .memory
-            .read(self.address, ppu, cartridge, controller, apu);
+            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         core.register.set_nz_from_value(a.wrapping_sub(b));
         core.register.set_c(a >= b);
 
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }

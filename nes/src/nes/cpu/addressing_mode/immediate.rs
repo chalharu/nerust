@@ -13,9 +13,13 @@ impl AddressingMode for Immediate {
         code: usize,
         register: &mut Register,
         opcodes: &mut Opcodes,
+        interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        let pc = register.get_pc() as usize;
-        opcodes.get(code).next_func(pc, register)
+        let pc = register.get_pc();
+        register.set_pc(pc.wrapping_add(1));
+        opcodes
+            .get(code)
+            .next_func(pc as usize, register, interrupt)
     }
 
     fn name(&self) -> &'static str {

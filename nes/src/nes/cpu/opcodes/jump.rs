@@ -8,9 +8,14 @@ use super::*;
 
 pub(crate) struct Jmp;
 impl OpCode for Jmp {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         register.set_pc(address as u16);
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(interrupt)
     }
     fn name(&self) -> &'static str {
         "JMP"
@@ -19,7 +24,12 @@ impl OpCode for Jmp {
 
 pub(crate) struct Jsr;
 impl OpCode for Jsr {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(JsrStep1::new(address))
     }
     fn name(&self) -> &'static str {
@@ -50,7 +60,7 @@ impl CpuStepState for JsrStep1 {
         let sp = usize::from(core.register.get_sp());
         let _ = core
             .memory
-            .read(0x100 | sp, ppu, cartridge, controller, apu);
+            .read(0x100 | sp, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         let pc = core.register.get_pc().wrapping_sub(1);
         Box::new(JsrStep2::new(self.address, pc))
@@ -82,7 +92,7 @@ impl CpuStepState for JsrStep2 {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
         core.memory
-            .write(0x100 | sp, hi, ppu, cartridge, controller, apu);
+            .write(0x100 | sp, hi, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(JsrStep3::new(self.address, low))
     }
 }
@@ -110,15 +120,20 @@ impl CpuStepState for JsrStep3 {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
         core.memory
-            .write(0x100 | sp, self.low, ppu, cartridge, controller, apu);
+            .write(0x100 | sp, self.low, ppu, cartridge, controller, apu, &mut core.interrupt);
         core.register.set_pc(self.address as u16);
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }
 
 pub(crate) struct Rts;
 impl OpCode for Rts {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(RtsStep1::new())
     }
     fn name(&self) -> &'static str {
@@ -145,7 +160,7 @@ impl CpuStepState for RtsStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = usize::from(core.register.get_pc());
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(RtsStep2::new())
     }
 }
@@ -171,7 +186,7 @@ impl CpuStepState for RtsStep2 {
         let sp = usize::from(core.register.get_sp());
         let _ = core
             .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -199,7 +214,7 @@ impl CpuStepState for RtsStep3 {
         let sp = usize::from(core.register.get_sp());
         let low = core
             .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -229,7 +244,7 @@ impl CpuStepState for RtsStep4 {
         let sp = usize::from(core.register.get_sp());
         let high = core
             .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         Box::new(RtsStep5::new(u16::from(self.low) | (u16::from(high) << 8)))
     }
@@ -256,7 +271,7 @@ impl CpuStepState for RtsStep5 {
     ) -> Box<dyn CpuStepState> {
         core.register.set_pc(self.address);
         core.memory
-            .read_next(&mut core.register, ppu, cartridge, controller, apu);
-        Box::new(FetchOpCode::new())
+            .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        FetchOpCode::new(&core.interrupt)
     }
 }

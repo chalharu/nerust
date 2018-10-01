@@ -8,8 +8,13 @@ use super::*;
 
 pub(crate) struct Bcc;
 impl OpCode for Bcc {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_c(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(!register.get_c(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BCC"
@@ -18,8 +23,13 @@ impl OpCode for Bcc {
 
 pub(crate) struct Bcs;
 impl OpCode for Bcs {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_c(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(register.get_c(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BCS"
@@ -28,8 +38,13 @@ impl OpCode for Bcs {
 
 pub(crate) struct Beq;
 impl OpCode for Beq {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_z(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(register.get_z(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BEQ"
@@ -38,8 +53,13 @@ impl OpCode for Beq {
 
 pub(crate) struct Bmi;
 impl OpCode for Bmi {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_n(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(register.get_n(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BMI"
@@ -48,8 +68,13 @@ impl OpCode for Bmi {
 
 pub(crate) struct Bne;
 impl OpCode for Bne {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_z(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(!register.get_z(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BNE"
@@ -58,8 +83,13 @@ impl OpCode for Bne {
 
 pub(crate) struct Bpl;
 impl OpCode for Bpl {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_n(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(!register.get_n(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BPL"
@@ -68,8 +98,13 @@ impl OpCode for Bpl {
 
 pub(crate) struct Bvc;
 impl OpCode for Bvc {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_v(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(!register.get_v(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BVC"
@@ -78,8 +113,13 @@ impl OpCode for Bvc {
 
 pub(crate) struct Bvs;
 impl OpCode for Bvs {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_v(), address, register)
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
+        condition_jump(register.get_v(), address, register, interrupt)
     }
     fn name(&self) -> &'static str {
         "BVS"
@@ -90,11 +130,15 @@ fn condition_jump(
     condition: bool,
     address: usize,
     register: &mut Register,
+    interrupt: &mut Interrupt,
 ) -> Box<dyn CpuStepState> {
     if condition {
+        if interrupt.executing && !interrupt.detected {
+            interrupt.executing = false;
+        }
         Box::new(Step1::new(address))
     } else {
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(interrupt)
     }
 }
 
@@ -120,13 +164,13 @@ impl CpuStepState for Step1 {
         let pc = core.register.get_pc() as usize;
 
         // dummy read
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         if page_crossed(self.address, pc) {
             Box::new(Step2::new(self.address))
         } else {
             core.register.set_pc(self.address as u16);
-            Box::new(FetchOpCode::new())
+            FetchOpCode::new(&core.interrupt)
         }
     }
 }
@@ -152,9 +196,9 @@ impl CpuStepState for Step2 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         core.register.set_pc(self.address as u16);
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }

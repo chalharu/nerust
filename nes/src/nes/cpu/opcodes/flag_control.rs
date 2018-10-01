@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Clc;
 impl OpCode for Clc {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_c(false)))
     }
     fn name(&self) -> &'static str {
@@ -18,7 +23,12 @@ impl OpCode for Clc {
 
 pub(crate) struct Cld;
 impl OpCode for Cld {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_d(false)))
     }
     fn name(&self) -> &'static str {
@@ -28,7 +38,12 @@ impl OpCode for Cld {
 
 pub(crate) struct Cli;
 impl OpCode for Cli {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_i(false)))
     }
     fn name(&self) -> &'static str {
@@ -38,7 +53,12 @@ impl OpCode for Cli {
 
 pub(crate) struct Clv;
 impl OpCode for Clv {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_v(false)))
     }
     fn name(&self) -> &'static str {
@@ -48,7 +68,12 @@ impl OpCode for Clv {
 
 pub(crate) struct Sec;
 impl OpCode for Sec {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_c(true)))
     }
     fn name(&self) -> &'static str {
@@ -58,7 +83,12 @@ impl OpCode for Sec {
 
 pub(crate) struct Sed;
 impl OpCode for Sed {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_d(true)))
     }
     fn name(&self) -> &'static str {
@@ -68,7 +98,12 @@ impl OpCode for Sed {
 
 pub(crate) struct Sei;
 impl OpCode for Sei {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_i(true)))
     }
     fn name(&self) -> &'static str {
@@ -97,9 +132,9 @@ impl<F: Fn(&mut Register) -> ()> CpuStepState for Step1<F> {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         (self.func)(&mut core.register);
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }

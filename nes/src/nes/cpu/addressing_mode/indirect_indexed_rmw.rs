@@ -13,6 +13,7 @@ impl AddressingMode for IndirectIndexedRMW {
         code: usize,
         _register: &mut Register,
         _opcodes: &mut Opcodes,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(code))
     }
@@ -43,7 +44,7 @@ impl CpuStepState for Step1 {
     ) -> Box<dyn CpuStepState> {
         let zeropage_address =
             core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu);
+                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step2::new(self.code, usize::from(zeropage_address)))
     }
 }
@@ -73,7 +74,7 @@ impl CpuStepState for Step2 {
     ) -> Box<dyn CpuStepState> {
         let address_low = core
             .memory
-            .read(self.zeropage_address, ppu, cartridge, controller, apu);
+            .read(self.zeropage_address, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step3::new(self.code, self.zeropage_address, address_low))
     }
 }
@@ -108,7 +109,7 @@ impl CpuStepState for Step3 {
             ppu,
             cartridge,
             controller,
-            apu,
+            apu, &mut core.interrupt,
         ));
         let address = (address_high << 8) | usize::from(self.address_low);
         let new_address = address.wrapping_add(usize::from(core.register.get_y())) & 0xFFFF;
@@ -149,10 +150,12 @@ impl CpuStepState for Step4 {
             ppu,
             cartridge,
             controller,
-            apu,
+            apu, &mut core.interrupt,
         );
-        core.opcode_tables
-            .get(self.code)
-            .next_func(self.new_address, &mut core.register)
+        core.opcode_tables.get(self.code).next_func(
+            self.new_address,
+            &mut core.register,
+            &mut core.interrupt,
+        )
     }
 }
