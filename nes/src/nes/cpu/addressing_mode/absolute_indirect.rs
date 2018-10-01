@@ -13,6 +13,7 @@ impl AddressingMode for AbsoluteIndirect {
         code: usize,
         _register: &mut Register,
         _opcodes: &mut Opcodes,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(code))
     }
@@ -41,9 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_low =
-            core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu);
+        let address_low = core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step2::new(self.code, address_low))
     }
 }
@@ -68,11 +74,14 @@ impl CpuStepState for Step2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_high =
-            usize::from(
-                core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu),
-            );
+        let address_high = usize::from(core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
         let ind_address = (address_high << 8) | usize::from(self.address_low);
         Box::new(Step3::new(self.code, ind_address))
         // core.opcode_tables.get(self.code).next_func(ind_address)
@@ -99,9 +108,14 @@ impl CpuStepState for Step3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_low = core
-            .memory
-            .read(self.ind_address, ppu, cartridge, controller, apu);
+        let address_low = core.memory.read(
+            self.ind_address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step4::new(self.code, self.ind_address, address_low))
     }
 }
@@ -137,8 +151,13 @@ impl CpuStepState for Step4 {
             cartridge,
             controller,
             apu,
+            &mut core.interrupt,
         ));
         let new_address = (address_high << 8) | usize::from(self.address_low);
-        core.opcode_tables.get(self.code).next_func(new_address, &mut core.register)
+        core.opcode_tables.get(self.code).next_func(
+            new_address,
+            &mut core.register,
+            &mut core.interrupt,
+        )
     }
 }

@@ -46,9 +46,9 @@ impl Register {
 
             c: false, // 0x01
             z: false, // 0x02
-            i: true,  // 0x04
+            i: false,  // 0x04
             d: false, // 0x08
-            b: true,  // 0x10
+            b: false,  // 0x10
             r: true,  // 0x20
             v: false, // 0x40
             n: false, // 0x80

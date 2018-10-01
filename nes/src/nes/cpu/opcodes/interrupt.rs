@@ -8,29 +8,18 @@ use super::*;
 
 pub(crate) struct Brk;
 impl OpCode for Brk {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(BrkStep1::new())
     }
     fn name(&self) -> &'static str {
         "BRK"
     }
 }
-
-// struct Brk;
-// impl OpCode for Brk {
-//     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-//         let pc = state.register().get_pc().wrapping_add(1);
-//         // state.register().set_b(true);
-//         push_u16(state, memory, pc);
-//         Php.execute(state, memory, address);
-//         state.register().set_i(true);
-//         state.interrupt.started = InterruptStatus::Executing;
-//         3
-//     }
-//     fn name(&self) -> &'static str {
-//         "BRK"
-//     }
-// }
 
 struct BrkStep1 {}
 
@@ -50,15 +39,21 @@ impl CpuStepState for BrkStep1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        core.memory
-            .read_next(&mut core.register, ppu, cartridge, controller, apu);
+        core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
-        if core.register.get_i() {
-            Box::new(FetchOpCode::new())
-        } else {
-            core.register.set_b(true);
-            Box::new(BrkStep2::new())
-        }
+        // if core.register.get_i() {
+        //     FetchOpCode::new(&core.interrupt)
+        // } else {
+        core.register.set_b(true);
+        Box::new(BrkStep2::new())
+        // }
     }
 }
 
@@ -84,8 +79,15 @@ impl CpuStepState for BrkStep2 {
         let low = (pc & 0xFF) as u8;
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory
-            .write(0x100 | sp, hi, ppu, cartridge, controller, apu);
+        core.memory.write(
+            0x100 | sp,
+            hi,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(BrkStep3::new(low))
     }
 }
@@ -111,8 +113,15 @@ impl CpuStepState for BrkStep3 {
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory
-            .write(0x100 | sp, self.low, ppu, cartridge, controller, apu);
+        core.memory.write(
+            0x100 | sp,
+            self.low,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         Box::new(BrkStep4::new())
     }
@@ -138,18 +147,31 @@ impl CpuStepState for BrkStep4 {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
         let p = core.register.get_p() | 0x10;
-        core.memory
-            .write(0x100 | sp, p, ppu, cartridge, controller, apu);
+        core.memory.write(
+            0x100 | sp,
+            p,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
-        Box::new(BrkStep5::new())
+        Box::new(BrkStep5::new(if core.interrupt.nmi {
+            NMI_VECTOR
+        } else {
+            IRQ_VECTOR
+        }))
     }
 }
 
-struct BrkStep5 {}
+struct BrkStep5 {
+    vector: usize,
+}
 
 impl BrkStep5 {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(vector: usize) -> Self {
+        Self { vector }
     }
 }
 
@@ -163,18 +185,26 @@ impl CpuStepState for BrkStep5 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         core.register.set_i(true);
-        let low = core.memory.read(0xFFFE, ppu, cartridge, controller, apu);
-        Box::new(BrkStep6::new(low))
+        let low = core.memory.read(
+            self.vector,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Box::new(BrkStep6::new(self.vector, low))
     }
 }
 
 struct BrkStep6 {
+    vector: usize,
     low: u8,
 }
 
 impl BrkStep6 {
-    pub fn new(low: u8) -> Self {
-        Self { low }
+    pub fn new(vector: usize, low: u8) -> Self {
+        Self { vector, low }
     }
 }
 
@@ -187,14 +217,28 @@ impl CpuStepState for BrkStep6 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let hi = u16::from(core.memory.read(0xFFFF, ppu, cartridge, controller, apu));
+        let hi = u16::from(core.memory.read(
+            self.vector + 1,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
         core.register.set_pc((hi << 8) | u16::from(self.low));
-        Box::new(FetchOpCode::new())
+        core.interrupt.executing = false;
+        FetchOpCode::new(&core.interrupt)
     }
 }
+
 pub(crate) struct Rti;
 impl OpCode for Rti {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(RtiStep1::new())
     }
     fn name(&self) -> &'static str {
@@ -240,7 +284,9 @@ impl CpuStepState for RtiStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = usize::from(core.register.get_pc());
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(RtiStep2::new())
     }
 }
@@ -264,9 +310,14 @@ impl CpuStepState for RtiStep2 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let sp = usize::from(core.register.get_sp());
-        let _ = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -292,9 +343,14 @@ impl CpuStepState for RtiStep3 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
-        let p = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+        let p = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_p((p & 0xEF) | 0x20);
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
@@ -321,9 +377,14 @@ impl CpuStepState for RtiStep4 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
-        let low = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+        let low = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -351,12 +412,461 @@ impl CpuStepState for RtiStep5 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
-        let high = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu);
+        let high = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register
             .set_pc(u16::from(self.low) | (u16::from(high) << 8));
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
+    }
+}
+
+pub(crate) struct Irq {}
+
+impl Irq {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for Irq {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        // dummy read
+        let pc = core.register.get_pc() as usize;
+        core.memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+
+        Box::new(IrqStep2::new())
+    }
+}
+
+struct IrqStep2 {}
+
+impl IrqStep2 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for IrqStep2 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        // dummy read
+        let pc = core.register.get_pc() as usize;
+        core.memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+
+        Box::new(IrqStep3::new())
+    }
+}
+
+struct IrqStep3 {}
+
+impl IrqStep3 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for IrqStep3 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let pc = core.register.get_pc();
+        let hi = (pc >> 8) as u8;
+        let low = (pc & 0xFF) as u8;
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        core.memory.write(
+            0x100 | sp,
+            hi,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Box::new(IrqStep4::new(low))
+    }
+}
+
+struct IrqStep4 {
+    low: u8,
+}
+
+impl IrqStep4 {
+    pub fn new(low: u8) -> Self {
+        Self { low }
+    }
+}
+
+impl CpuStepState for IrqStep4 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        core.memory.write(
+            0x100 | sp,
+            self.low,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+
+        Box::new(IrqStep5::new())
+    }
+}
+
+struct IrqStep5 {}
+
+impl IrqStep5 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for IrqStep5 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        let p = core.register.get_p() | 0x10;
+        core.memory.write(
+            0x100 | sp,
+            p,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+
+        Box::new(IrqStep6::new(if core.interrupt.nmi {
+            NMI_VECTOR
+        } else {
+            IRQ_VECTOR
+        }))
+    }
+}
+
+struct IrqStep6 {
+    vector: usize,
+}
+
+impl IrqStep6 {
+    pub fn new(vector: usize) -> Self {
+        Self { vector }
+    }
+}
+
+impl CpuStepState for IrqStep6 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        core.register.set_i(true);
+        let low = core.memory.read(
+            self.vector,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Box::new(IrqStep7::new(self.vector, low))
+    }
+}
+
+struct IrqStep7 {
+    vector: usize,
+    low: u8,
+}
+
+impl IrqStep7 {
+    pub fn new(vector: usize, low: u8) -> Self {
+        Self { vector, low }
+    }
+}
+
+impl CpuStepState for IrqStep7 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let hi = u16::from(core.memory.read(
+            self.vector + 1,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
+        core.register.set_pc((hi << 8) | u16::from(self.low));
+        core.interrupt.executing = false;
+        FetchOpCode::new(&core.interrupt)
+    }
+}
+
+pub(crate) struct Reset {}
+
+impl Reset {
+    pub fn new() -> Box<dyn CpuStepState> {
+        Box::new(Self {})
+    }
+}
+
+impl CpuStepState for Reset {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        // dummy read
+        let pc = core.register.get_pc() as usize;
+        core.memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+
+        core.interrupt.irq_flag = 0;
+        core.interrupt.irq_mask = 0xFF;
+        core.interrupt.nmi = false;
+
+        Box::new(ResetStep2::new())
+    }
+}
+
+struct ResetStep2 {}
+
+impl ResetStep2 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for ResetStep2 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        // dummy read
+        let pc = core.register.get_pc() as usize;
+        core.memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+
+        Box::new(ResetStep3::new())
+    }
+}
+
+struct ResetStep3 {}
+
+impl ResetStep3 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for ResetStep3 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        core.memory.read(
+            0x100 | sp,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Box::new(ResetStep4::new())
+    }
+}
+
+struct ResetStep4 {}
+
+impl ResetStep4 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for ResetStep4 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        core.memory.read(
+            0x100 | sp,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+
+        Box::new(ResetStep5::new())
+    }
+}
+
+struct ResetStep5 {}
+
+impl ResetStep5 {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for ResetStep5 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let sp = usize::from(core.register.get_sp());
+        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+        let p = core.register.get_p() | 0x10;
+        core.memory.read(
+            0x100 | sp,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+
+        Box::new(ResetStep6::new(RESET_VECTOR))
+    }
+}
+
+struct ResetStep6 {
+    vector: usize,
+}
+
+impl ResetStep6 {
+    pub fn new(vector: usize) -> Self {
+        Self { vector }
+    }
+}
+
+impl CpuStepState for ResetStep6 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        core.register.set_i(true);
+        let low = core.memory.read(
+            self.vector,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Box::new(ResetStep7::new(self.vector, low))
+    }
+}
+
+struct ResetStep7 {
+    vector: usize,
+    low: u8,
+}
+
+impl ResetStep7 {
+    pub fn new(vector: usize, low: u8) -> Self {
+        Self { vector, low }
+    }
+}
+
+impl CpuStepState for ResetStep7 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        let hi = u16::from(core.memory.read(
+            self.vector + 1,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
+        core.register.set_pc((hi << 8) | u16::from(self.low));
+        core.interrupt.executing = false;
+        FetchOpCode::new(&core.interrupt)
     }
 }

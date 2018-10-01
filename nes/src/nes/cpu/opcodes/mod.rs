@@ -12,7 +12,7 @@ mod condition_jump;
 mod decrement;
 mod flag_control;
 mod increment;
-mod interrupt;
+pub mod interrupt;
 mod jump;
 mod load;
 mod nop;
@@ -67,7 +67,12 @@ use super::*;
 // }
 
 pub(crate) trait OpCode {
-    fn next_func(&self, address: usize, register: &mut Register) -> Box<dyn CpuStepState>;
+    fn next_func(
+        &self,
+        address: usize,
+        register: &mut Register,
+        interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState>;
     fn name(&self) -> &'static str;
 }
 
@@ -163,13 +168,13 @@ impl<
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         let data = (self.getter)(&mut core.register);
         let result = (self.calculator)(&mut core.register, data);
         (self.setter)(&mut core.register, result);
 
-        Box::new(FetchOpCode::new())
+        FetchOpCode::new(&core.interrupt)
     }
 }
 
@@ -198,7 +203,7 @@ impl<FCalc: 'static + Fn(&mut Register, u8) -> u8> CpuStepState for MemStep1<FCa
     ) -> Box<dyn CpuStepState> {
         let data = core
             .memory
-            .read(self.address, ppu, cartridge, controller, apu);
+            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(MemStep2::new(
             self.address,
             std::mem::replace(&mut self.calculator, None).unwrap(),
@@ -235,7 +240,7 @@ impl<FCalc: Fn(&mut Register, u8) -> u8> CpuStepState for MemStep2<FCalc> {
         let result = (self.calculator)(&mut core.register, self.data);
         // dummy write
         core.memory
-            .write(self.address, self.data, ppu, cartridge, controller, apu);
+            .write(self.address, self.data, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(MemStep3::new(self.address, result))
     }
 }
@@ -261,8 +266,8 @@ impl CpuStepState for MemStep3 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         core.memory
-            .write(self.address, self.data, ppu, cartridge, controller, apu);
-        Box::new(FetchOpCode::new())
+            .write(self.address, self.data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        FetchOpCode::new(&core.interrupt)
     }
 }
 

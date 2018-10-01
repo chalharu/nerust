@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Nop;
 impl OpCode for Nop {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step2::new())
     }
     fn name(&self) -> &'static str {
@@ -18,7 +23,12 @@ impl OpCode for Nop {
 
 pub(crate) struct Kil;
 impl OpCode for Kil {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new())
     }
     fn name(&self) -> &'static str {
@@ -44,7 +54,7 @@ impl CpuStepState for Step1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step2::new())
     }
 }
@@ -67,7 +77,7 @@ impl CpuStepState for Step2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu);
-        Box::new(FetchOpCode::new())
+        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        FetchOpCode::new(&core.interrupt)
     }
 }

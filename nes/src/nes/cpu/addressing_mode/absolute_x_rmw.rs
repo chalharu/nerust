@@ -13,6 +13,7 @@ impl AddressingMode for AbsoluteXRMW {
         code: usize,
         _register: &mut Register,
         _opcodes: &mut Opcodes,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(code))
     }
@@ -43,7 +44,7 @@ impl CpuStepState for Step1 {
     ) -> Box<dyn CpuStepState> {
         let address_low =
             core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu);
+                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step2::new(self.code, address_low))
     }
 }
@@ -70,7 +71,7 @@ impl CpuStepState for Step2 {
     ) -> Box<dyn CpuStepState> {
         let address_high =
             core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu);
+                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
         let address = (usize::from(address_high) << 8) | usize::from(self.address_low);
         let new_address = address.wrapping_add(usize::from(core.register.get_x())) & 0xFFFF;
         Box::new(Step3::new(self.code, address, new_address))
@@ -109,10 +110,12 @@ impl CpuStepState for Step3 {
             ppu,
             cartridge,
             controller,
-            apu,
+            apu, &mut core.interrupt,
         );
-        core.opcode_tables
-            .get(self.code)
-            .next_func(self.new_address, &mut core.register)
+        core.opcode_tables.get(self.code).next_func(
+            self.new_address,
+            &mut core.register,
+            &mut core.interrupt,
+        )
     }
 }

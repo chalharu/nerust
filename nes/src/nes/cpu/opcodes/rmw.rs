@@ -8,7 +8,12 @@ use super::*;
 
 pub(crate) struct Isc;
 impl OpCode for Isc {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             let result = v.wrapping_add(1);
             let a = u16::from(r.get_a());
@@ -30,7 +35,12 @@ impl OpCode for Isc {
 
 pub(crate) struct Dcp;
 impl OpCode for Dcp {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             let data = v.wrapping_sub(1);
             let a = r.get_a();
@@ -46,7 +56,12 @@ impl OpCode for Dcp {
 
 pub(crate) struct Slo;
 impl OpCode for Slo {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             r.set_c(v & 0x80 == 0x80);
             let a = r.get_a();
@@ -63,7 +78,12 @@ impl OpCode for Slo {
 
 pub(crate) struct Rla;
 impl OpCode for Rla {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             let c = if r.get_c() { 1 } else { 0 };
             r.set_c(v & 0x80 != 0);
@@ -81,7 +101,12 @@ impl OpCode for Rla {
 
 pub(crate) struct Sre;
 impl OpCode for Sre {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             r.set_c(v & 0x01 != 0);
             let data = v >> 1;
@@ -98,7 +123,12 @@ impl OpCode for Sre {
 
 pub(crate) struct Rra;
 impl OpCode for Rra {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, |r, v| {
             let value = v >> 1 | if r.get_c() { 0x80 } else { 0 };
 

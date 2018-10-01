@@ -11,9 +11,12 @@ mod opcodes;
 mod register;
 
 use self::addressing_mode::*;
-use self::interrupt::{Interrupt, InterruptStatus, IrqReason};
+use self::interrupt::Interrupt;
 use self::memory::Memory;
-use self::opcodes::*;
+use self::opcodes::{
+    interrupt::{Irq, Reset},
+    *,
+};
 use self::register::Register;
 use super::*;
 use std::ops::Shr;
@@ -24,6 +27,10 @@ where
 {
     a >> 8 != b >> 8
 }
+
+const NMI_VECTOR: usize = 0xFFFA;
+const RESET_VECTOR: usize = 0xFFFC;
+const IRQ_VECTOR: usize = 0xFFFE;
 
 // #[derive(Serialize, Deserialize, Debug)]
 // pub(crate) struct State {
@@ -214,7 +221,7 @@ pub(crate) struct Core {
     addressing_tables: AddressingModeLut,
     memory: Memory,
     register: Register,
-    interrupt: Interrupt,
+    pub(crate) interrupt: Interrupt,
     cycles: u64,
     next_func: Box<dyn CpuStepState>,
 }
@@ -228,7 +235,7 @@ impl Core {
             interrupt: Interrupt::new(),
             memory: Memory::new(),
             cycles: 0,
-            next_func: Box::new(FetchOpCode::new()),
+            next_func: Reset::new(),
         }
     }
 
@@ -241,8 +248,15 @@ impl Core {
     ) {
         self.cycles = self.cycles.wrapping_add(1);
 
-        // 身代わりパターンなので、Box::new(FetchOpCode::new())でなくてもよい。
-        self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(FetchOpCode::new())))
+        if !self.interrupt.running_dma {
+            self.interrupt.executing = self.interrupt.detected;
+            self.interrupt.detected = self.interrupt.nmi
+                || ((self.interrupt.irq_flag & self.interrupt.irq_mask) != 0
+                    && !self.register.get_i());
+        }
+
+        // 身代わりパターン
+        self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
             .next(self, ppu, cartridge, controller, apu);
 
         // let addressing = addressing_tables.get(code).execute(self, &mut memory);
@@ -251,6 +265,20 @@ impl Core {
         // let cycles = opcode_tables
         //     .get(code)
         //     .execute(self, &mut memory, addressing.address);
+    }
+}
+
+struct Dummy;
+impl CpuStepState for Dummy {
+    fn next(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Box<Cartridge>,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> Box<dyn CpuStepState> {
+        Box::new(Dummy)
     }
 }
 
@@ -268,8 +296,12 @@ pub(crate) trait CpuStepState {
 struct FetchOpCode {}
 
 impl FetchOpCode {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(interrupt: &Interrupt) -> Box<dyn CpuStepState> {
+        if interrupt.executing {
+            Box::new(Irq::new())
+        } else {
+            Box::new(Self {})
+        }
     }
 }
 
@@ -282,15 +314,19 @@ impl CpuStepState for FetchOpCode {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let code =
-            usize::from(
-                core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu),
-            );
+        let code = usize::from(core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
         core.addressing_tables.get(code).next_func(
             code,
             &mut core.register,
             &mut core.opcode_tables,
+            &mut core.interrupt,
         )
     }
 }

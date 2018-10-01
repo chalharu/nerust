@@ -14,7 +14,12 @@ fn increment(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct Inx;
 impl OpCode for Inx {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |register| register.get_x(),
             |register, data| register.set_x(data),
@@ -28,7 +33,12 @@ impl OpCode for Inx {
 
 pub(crate) struct Iny;
 impl OpCode for Iny {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
             |register| register.get_y(),
             |register, data| register.set_y(data),
@@ -42,7 +52,12 @@ impl OpCode for Iny {
 
 pub(crate) struct Inc;
 impl OpCode for Inc {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, increment))
     }
     fn name(&self) -> &'static str {

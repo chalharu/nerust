@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::nes::cpu::Register;
+use crate::nes::cpu::{Register, Interrupt};
 use crate::nes::{Apu, Cartridge, Controller, Ppu};
 
 pub(crate) struct Memory {
@@ -27,10 +27,11 @@ impl Memory {
         cartridge: &mut Box<Cartridge>,
         controller: &mut Controller,
         apu: &mut Apu,
+        interrupt: &mut Interrupt,
     ) -> u8 {
         let pc = register.get_pc();
         register.set_pc(pc.wrapping_add(1));
-        self.read(pc as usize, ppu, cartridge, controller, apu)
+        self.read(pc as usize, ppu, cartridge, controller, apu, interrupt)
     }
 
     pub fn read(
@@ -40,10 +41,11 @@ impl Memory {
         cartridge: &mut Box<Cartridge>,
         controller: &mut Controller,
         apu: &mut Apu,
+        interrupt: &mut Interrupt,
     ) -> u8 {
         let result = match address {
             0...0x1FFF => self.wram[address & 0x07FF],
-            0x2000...0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge),
+            0x2000...0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
             0x4015 => apu.read_register(address),
             0x4016 | 0x4017 => (controller.read(address & 1) & 0x1F) | (self.lastread & 0xE0),
             0x4000...0x5FFF => self.lastread, // TODO: I/O registers
@@ -65,6 +67,7 @@ impl Memory {
         cartridge: &mut Box<Cartridge>,
         controller: &mut Controller,
         apu: &mut Apu,
+        interrupt: &mut Interrupt,
     ) {
         let _ = self.read(
             (address & 0xFF00) | (new_address & 0xFF),
@@ -72,6 +75,7 @@ impl Memory {
             cartridge,
             controller,
             apu,
+            interrupt,
         );
     }
 
@@ -109,10 +113,13 @@ impl Memory {
         cartridge: &mut Box<Cartridge>,
         controller: &mut Controller,
         apu: &mut Apu,
+        interrupt: &mut Interrupt,
     ) {
         match address {
             0...0x1FFF => self.wram[address & 0x07FF] = value,
-            0x2000...0x3FFF => ppu.write_register(0x2000 + (address & 7), value, cartridge),
+            0x2000...0x3FFF => {
+                ppu.write_register(0x2000 + (address & 7), value, cartridge, interrupt)
+            }
             0x4000...0x4013 => apu.write_register(address, value),
             0x4014 => {
                 // let v = (0..256)

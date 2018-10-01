@@ -15,7 +15,6 @@ use self::filter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
-use crate::nes::cpu::interrupt::IrqReason;
 use crate::nes::Cpu;
 use crate::nes::{Cartridge, Speaker};
 

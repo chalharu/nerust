@@ -23,7 +23,12 @@ fn asl(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct AslAcc;
 impl OpCode for AslAcc {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(get_reg_a, set_reg_a, asl))
     }
     fn name(&self) -> &'static str {
@@ -33,7 +38,12 @@ impl OpCode for AslAcc {
 
 pub(crate) struct AslMem;
 impl OpCode for AslMem {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, asl))
     }
     fn name(&self) -> &'static str {
@@ -50,7 +60,12 @@ fn lsr(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct LsrAcc;
 impl OpCode for LsrAcc {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(get_reg_a, set_reg_a, lsr))
     }
     fn name(&self) -> &'static str {
@@ -60,7 +75,12 @@ impl OpCode for LsrAcc {
 
 pub(crate) struct LsrMem;
 impl OpCode for LsrMem {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, lsr))
     }
     fn name(&self) -> &'static str {
@@ -78,7 +98,12 @@ fn rol(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct RolAcc;
 impl OpCode for RolAcc {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(get_reg_a, set_reg_a, rol))
     }
     fn name(&self) -> &'static str {
@@ -88,7 +113,12 @@ impl OpCode for RolAcc {
 
 pub(crate) struct RolMem;
 impl OpCode for RolMem {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, rol))
     }
     fn name(&self) -> &'static str {
@@ -106,7 +136,12 @@ fn ror(register: &mut Register, data: u8) -> u8 {
 
 pub(crate) struct RorAcc;
 impl OpCode for RorAcc {
-    fn next_func(&self, _address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        _address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(get_reg_a, set_reg_a, ror))
     }
     fn name(&self) -> &'static str {
@@ -116,7 +151,12 @@ impl OpCode for RorAcc {
 
 pub(crate) struct RorMem;
 impl OpCode for RorMem {
-    fn next_func(&self, address: usize, _register: &mut Register) -> Box<dyn CpuStepState> {
+    fn next_func(
+        &self,
+        address: usize,
+        _register: &mut Register,
+        _interrupt: &mut Interrupt,
+    ) -> Box<dyn CpuStepState> {
         Box::new(MemStep1::new(address, ror))
     }
     fn name(&self) -> &'static str {
