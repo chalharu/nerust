@@ -15,10 +15,10 @@ fn main() {
     simple_logger::init().unwrap();
 
     let console = Console::new(
-        &mut include_bytes!("../../../sample_roms/sample1.nes")
-            // &mut include_bytes!("../../sample_roms/giko005.nes")
-            // &mut include_bytes!("../../sample_roms/giko008.nes")
-            // &mut include_bytes!("../../sample_roms/giko009.nes")
+        // &mut include_bytes!("../../../sample_roms/sample1.nes")
+            // &mut include_bytes!("../../../sample_roms/giko005.nes")
+            // &mut include_bytes!("../../../sample_roms/giko008.nes")
+            // &mut include_bytes!("../../../sample_roms/giko009.nes")
             // &mut include_bytes!("../../sample_roms/giko010.nes")
             // &mut include_bytes!("../../sample_roms/giko010b.nes")
             // &mut include_bytes!("../../sample_roms/giko011.nes")
@@ -30,7 +30,7 @@ fn main() {
             // &mut include_bytes!("../../sample_roms/giko016.nes")
             // &mut include_bytes!("../../sample_roms/giko017.nes")
             // &mut include_bytes!("../../sample_roms/giko018.nes")
-            // &mut include_bytes!("../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
+            // &mut include_bytes!("../../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
             // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
             // &mut include_bytes!("../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
             // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
@@ -44,7 +44,7 @@ fn main() {
             // &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/11.len_reload_timing.nes")
             // &mut include_bytes!("../../sample_roms/cpu_reset/ram_after_reset.nes")
             // &mut include_bytes!("../../sample_roms/cpu_reset/registers.nes")
-            // &mut include_bytes!("../../sample_roms/full_palette/full_palette.nes")
+            // &mut include_bytes!("../../../sample_roms/full_palette/full_palette.nes")
             // &mut include_bytes!("../../sample_roms/full_palette/full_palette_smooth.nes")
             // &mut include_bytes!("../../sample_roms/full_palette/flowing_palette.nes")
             // &mut include_bytes!("../../sample_roms/nmi_sync/demo_ntsc.nes")
@@ -52,6 +52,7 @@ fn main() {
             // &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes")
             // &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/3.Timing.nes")
             // &mut include_bytes!("../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
+            &mut include_bytes!("../../../sample_roms/instr_test-v5/all_instrs.nes")
             .into_iter()
             .cloned(),
         44_100,

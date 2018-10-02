@@ -91,8 +91,6 @@ pub(crate) struct State {
     // NMI flags
     nmi_occurred: bool,
     nmi_output: bool,
-    nmi_previous: bool,
-    nmi_delay: u8,
 
     // background temporary variables
     name_table_byte: u8,
@@ -152,8 +150,6 @@ impl State {
             cycle: 340,
             scan_line: 241,
             nmi_occurred: false,
-            nmi_previous: false,
-            nmi_delay: 0,
             name_table_byte: 0,
             attribute_table_byte: 0,
             low_tile_byte: 0,
@@ -639,12 +635,12 @@ impl Core {
         cartridge: &mut Box<Cartridge>,
         cpu: &mut Cpu,
     ) -> bool {
-        if self.state.nmi_delay > 0 {
-            self.state.nmi_delay -= 1;
-            if self.state.nmi_delay == 0 && self.state.nmi_output && self.state.nmi_occurred {
-                // cpu.trigger_nmi();
-            }
-        };
+        // if self.state.nmi_delay > 0 {
+        //     self.state.nmi_delay -= 1;
+        //     if self.state.nmi_delay == 0 && self.state.nmi_output && self.state.nmi_occurred {
+        //         // cpu.trigger_nmi();
+        //     }
+        // };
         self.state.tick();
         let rendering_enabled = self.state.show_background || self.state.show_sprites;
         let pre_line = self.state.scan_line == 0;
