@@ -6,8 +6,7 @@
 
 pub mod standard_controller;
 
-pub trait Controller
-{
+pub trait Controller {
     fn read(&mut self, _address: usize) -> u8;
     fn write(&mut self, _value: u8);
 }

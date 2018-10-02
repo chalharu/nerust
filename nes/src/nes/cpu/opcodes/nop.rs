@@ -54,7 +54,9 @@ impl CpuStepState for Step1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step2::new())
     }
 }
@@ -77,7 +79,9 @@ impl CpuStepState for Step2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = core.register.get_pc() as usize;
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         FetchOpCode::new(&core.interrupt)
     }
 }

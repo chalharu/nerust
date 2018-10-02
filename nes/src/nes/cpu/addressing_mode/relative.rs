@@ -42,11 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let offset =
-            u16::from(
-                core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt),
-            );
+        let offset = u16::from(core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
         let pc = u16::from(core.register.get_pc());
         let address = pc
             .wrapping_add(offset)

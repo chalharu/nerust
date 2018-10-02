@@ -18,7 +18,7 @@ fn main() {
         // &mut include_bytes!("../../../sample_roms/sample1.nes")
             // &mut include_bytes!("../../../sample_roms/giko005.nes")
             // &mut include_bytes!("../../../sample_roms/giko008.nes")
-            // &mut include_bytes!("../../../sample_roms/giko009.nes")
+            &mut include_bytes!("../../../sample_roms/giko009.nes")
             // &mut include_bytes!("../../sample_roms/giko010.nes")
             // &mut include_bytes!("../../sample_roms/giko010b.nes")
             // &mut include_bytes!("../../sample_roms/giko011.nes")
@@ -52,7 +52,9 @@ fn main() {
             // &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes")
             // &mut include_bytes!("../../../sample_roms/sprite_overflow_tests/3.Timing.nes")
             // &mut include_bytes!("../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
-            &mut include_bytes!("../../../sample_roms/instr_test-v5/all_instrs.nes")
+
+            // &mut include_bytes!("../../../sample_roms/instr_test-v5/all_instrs.nes")
+            // &mut include_bytes!("../../../sample_roms/instr_misc/instr_misc.nes")
             .into_iter()
             .cloned(),
         44_100,

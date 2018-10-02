@@ -42,11 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let zeropage_address =
-            usize::from(
-                core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt),
-            );
+        let zeropage_address = usize::from(core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
 
         core.opcode_tables.get(self.code).next_func(
             zeropage_address,

@@ -42,11 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let zeropage_address =
-            usize::from(
-                core.memory
-                    .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt),
-            );
+        let zeropage_address = usize::from(core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        ));
 
         Box::new(Step2::new(self.code, zeropage_address))
     }
@@ -76,8 +79,15 @@ impl CpuStepState for Step2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = usize::from(core.register.get_pc());
-        core.memory
-            .read_dummy(pc, self.zeropage_address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.read_dummy(
+            pc,
+            self.zeropage_address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         let address = (self
             .zeropage_address
             .wrapping_add(usize::from(core.register.get_y())))
