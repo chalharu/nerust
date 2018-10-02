@@ -42,9 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_low =
-            core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let address_low = core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step2::new(self.code, address_low))
     }
 }
@@ -69,9 +74,14 @@ impl CpuStepState for Step2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_high =
-            core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let address_high = core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         let address = (usize::from(address_high) << 8) | usize::from(self.address_low);
         let new_address = address.wrapping_add(usize::from(core.register.get_x())) & 0xFFFF;
         if page_crossed(address, new_address) {
@@ -118,7 +128,8 @@ impl CpuStepState for Step3 {
             ppu,
             cartridge,
             controller,
-            apu, &mut core.interrupt,
+            apu,
+            &mut core.interrupt,
         );
         core.opcode_tables.get(self.code).next_func(
             self.new_address,

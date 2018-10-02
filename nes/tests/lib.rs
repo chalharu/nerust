@@ -402,7 +402,7 @@ fn instr_test_v5() {
             .cloned(),
     );
     let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        2400,
+        2450,
         ScenarioOperation::check_screen(0x0D3D1CD1F7F9EC0B),
     )]);
     runner.run(scenario);

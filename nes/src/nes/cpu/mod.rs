@@ -224,6 +224,7 @@ pub(crate) struct Core {
     pub(crate) interrupt: Interrupt,
     cycles: u64,
     next_func: Box<dyn CpuStepState>,
+    oam_dma: Option<Box<dyn OamDmaStepState>>,
 }
 
 impl Core {
@@ -236,6 +237,7 @@ impl Core {
             memory: Memory::new(),
             cycles: 0,
             next_func: Reset::new(),
+            oam_dma: None,
         }
     }
 
@@ -248,16 +250,24 @@ impl Core {
     ) {
         self.cycles = self.cycles.wrapping_add(1);
 
-        if !self.interrupt.running_dma {
-            self.interrupt.executing = self.interrupt.detected;
-            self.interrupt.detected = self.interrupt.nmi
-                || ((self.interrupt.irq_flag & self.interrupt.irq_mask) != 0
-                    && !self.register.get_i());
+        if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
+            self.oam_dma = Some(OamDma::new(offset));
         }
 
-        // 身代わりパターン
-        self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
-            .next(self, ppu, cartridge, controller, apu);
+        if let Some(mut oam_dma) = ::std::mem::replace(&mut self.oam_dma, None) {
+            self.oam_dma = oam_dma.next(self, ppu, cartridge, controller, apu);
+        } else {
+            if !self.interrupt.running_dma {
+                self.interrupt.executing = self.interrupt.detected;
+                self.interrupt.detected = self.interrupt.nmi
+                    || ((self.interrupt.irq_flag & self.interrupt.irq_mask) != 0
+                        && !self.register.get_i());
+            }
+
+            // 身代わりパターン
+            self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
+                .next(self, ppu, cartridge, controller, apu);
+        }
 
         // let addressing = addressing_tables.get(code).execute(self, &mut memory);
         // self.register()
@@ -328,5 +338,122 @@ impl CpuStepState for FetchOpCode {
             &mut core.opcode_tables,
             &mut core.interrupt,
         )
+    }
+}
+
+pub(crate) trait OamDmaStepState {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Option<Box<dyn OamDmaStepState>>;
+}
+
+struct OamDma {
+    offset: u8,
+}
+
+impl OamDma {
+    pub fn new(offset: u8) -> Box<dyn OamDmaStepState> {
+        Box::new(Self { offset })
+    }
+}
+
+impl OamDmaStepState for OamDma {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Option<Box<dyn OamDmaStepState>> {
+        // dummy read
+        let pc = usize::from(core.register.get_pc());
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        if core.cycles & 1 != 0 {
+            Some(OamDma::new(self.offset))
+        } else {
+            Some(OamDmaStep1::new(self.offset, 255))
+        }
+    }
+}
+
+struct OamDmaStep1 {
+    offset: u8,
+    count: u8,
+}
+
+impl OamDmaStep1 {
+    pub fn new(offset: u8, count: u8) -> Box<dyn OamDmaStepState> {
+        Box::new(Self { offset, count })
+    }
+}
+
+impl OamDmaStepState for OamDmaStep1 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Option<Box<dyn OamDmaStepState>> {
+        let value = core.memory.read(
+            usize::from(self.offset) * 0x100 + usize::from(255 - self.count),
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        Some(OamDmaStep2::new(self.offset, self.count, value))
+    }
+}
+
+struct OamDmaStep2 {
+    offset: u8,
+    count: u8,
+    value: u8,
+}
+
+impl OamDmaStep2 {
+    pub fn new(offset: u8, count: u8, value: u8) -> Box<dyn OamDmaStepState> {
+        Box::new(Self {
+            offset,
+            count,
+            value,
+        })
+    }
+}
+
+impl OamDmaStepState for OamDmaStep2 {
+    fn next(
+        &mut self,
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Box<Cartridge>,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> Option<Box<dyn OamDmaStepState>> {
+        core.memory.write(
+            0x2004,
+            self.value,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
+        if self.count == 0 {
+            None
+        } else {
+            Some(OamDmaStep1::new(self.offset, self.count - 1))
+        }
     }
 }

@@ -42,9 +42,14 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let zeropage_address =
-            core.memory
-                .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let zeropage_address = core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step2::new(self.code, usize::from(zeropage_address)))
     }
 }
@@ -72,9 +77,14 @@ impl CpuStepState for Step2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_low = core
-            .memory
-            .read(self.zeropage_address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let address_low = core.memory.read(
+            self.zeropage_address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step3::new(self.code, self.zeropage_address, address_low))
     }
 }
@@ -109,7 +119,8 @@ impl CpuStepState for Step3 {
             ppu,
             cartridge,
             controller,
-            apu, &mut core.interrupt,
+            apu,
+            &mut core.interrupt,
         ));
         let address = (address_high << 8) | usize::from(self.address_low);
         let new_address = address.wrapping_add(usize::from(core.register.get_y())) & 0xFFFF;
@@ -158,7 +169,8 @@ impl CpuStepState for Step4 {
             ppu,
             cartridge,
             controller,
-            apu, &mut core.interrupt,
+            apu,
+            &mut core.interrupt,
         );
         core.opcode_tables.get(self.code).next_func(
             self.new_address,

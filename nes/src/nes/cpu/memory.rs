@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::nes::cpu::{Register, Interrupt};
+use crate::nes::cpu::{Interrupt, Register};
 use crate::nes::{Apu, Cartridge, Controller, Ppu};
 
 pub(crate) struct Memory {
@@ -79,32 +79,6 @@ impl Memory {
         );
     }
 
-    // pub fn read_u16<C: Controller>(
-    //     &mut self,
-    //     address: usize,
-    //     ppu: &mut Ppu,
-    //     cartridge: &mut Box<Cartridge>,
-    //     controller: &mut C,
-    //     apu: &mut Apu,
-    // ) -> u16 {
-    //     let low = u16::from(self.read(address, ppu, cartridge, controller, apu));
-    //     let high = u16::from(self.read(address + 1, ppu, cartridge, controller, apu));
-    //     (high << 8) | low
-    // }
-
-    // pub fn read_u16_bug<C: Controller>(
-    //     &mut self,
-    //     address: usize,
-    //     ppu: &mut Ppu,
-    //     cartridge: &mut Box<Cartridge>,
-    //     controller: &mut C,
-    //     apu: &mut Apu,
-    // ) -> u16 {
-    //     let low = u16::from(self.read(address));
-    //     let high = u16::from(self.read((address & 0xFF00) | ((address + 1) & 0xFF)));
-    //     (high << 8) | low
-    // }
-
     pub fn write(
         &mut self,
         address: usize,
@@ -121,12 +95,7 @@ impl Memory {
                 ppu.write_register(0x2000 + (address & 7), value, cartridge, interrupt)
             }
             0x4000...0x4013 => apu.write_register(address, value),
-            0x4014 => {
-                // let v = (0..256)
-                //     .map(|i| self.read((usize::from(value) << 8) | i))
-                //     .collect::<Vec<_>>();
-                // ppu.write_dma(&v);
-            }
+            0x4014 => interrupt.oam_dma = Some(value),
             0x4015 => apu.write_register(address, value),
 
             0x4016 => controller.write(value),

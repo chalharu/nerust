@@ -29,9 +29,14 @@ impl<FCalc: Fn(&mut Register, u8, u8) -> u8> CpuStepState for Step1<FCalc> {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let data = core
-            .memory
-            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let data = core.memory.read(
+            self.address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         let a = core.register.get_a();
         let result = (self.calculator)(&mut core.register, a, data);
 

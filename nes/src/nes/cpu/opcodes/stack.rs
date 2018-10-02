@@ -27,7 +27,9 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep1<F> {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = usize::from(core.register.get_pc());
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         let sp = usize::from(core.register.get_sp().wrapping_add(1));
 
         Box::new(PullStep2::new(
@@ -61,9 +63,14 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep2<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let _ = core
-            .memory
-            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core.memory.read(
+            self.address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         core.register.set_sp((self.address & 0xFF) as u8);
 
         Box::new(PullStep3::new(
@@ -93,9 +100,14 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for PullStep3<F> {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let value = core
-            .memory
-            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let value = core.memory.read(
+            self.address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         (self.func)(&mut core.register, value);
         FetchOpCode::new(&core.interrupt)
     }
@@ -154,7 +166,9 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for PushStep1<F> {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = usize::from(core.register.get_pc());
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
@@ -184,8 +198,15 @@ impl CpuStepState for PushStep2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        core.memory
-            .write(self.address, self.data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.write(
+            self.address,
+            self.data,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         FetchOpCode::new(&core.interrupt)
     }
 }

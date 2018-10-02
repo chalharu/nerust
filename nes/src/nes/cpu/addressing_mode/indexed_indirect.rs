@@ -43,7 +43,9 @@ impl CpuStepState for Step1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = core.register.get_pc() as usize;
-        let address_low = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let address_low =
+            core.memory
+                .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(Step2::new(self.code, address_low))
     }
 }
@@ -68,9 +70,14 @@ impl CpuStepState for Step2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let _ = core
-            .memory
-            .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         let zeropage_address = self.address_low.wrapping_add(core.register.get_x());
         Box::new(Step3::new(self.code, usize::from(zeropage_address)))
     }
@@ -99,9 +106,14 @@ impl CpuStepState for Step3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let address_low = core
-            .memory
-            .read(self.zeropage_address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let address_low = core.memory.read(
+            self.zeropage_address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(Step4::new(self.code, self.zeropage_address, address_low))
     }
 }
@@ -136,7 +148,8 @@ impl CpuStepState for Step4 {
             ppu,
             cartridge,
             controller,
-            apu, &mut core.interrupt,
+            apu,
+            &mut core.interrupt,
         ));
         let new_address = (address_high << 8) | usize::from(self.address_low);
         core.opcode_tables.get(self.code).next_func(

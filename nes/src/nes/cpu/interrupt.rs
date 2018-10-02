@@ -6,44 +6,26 @@
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Interrupt {
-    pub reset: bool,
-
     pub nmi: bool,
     pub executing: bool,
     pub detected: bool,
     pub running_dma: bool,
     pub irq_mask: u8,
     pub irq_flag: u8,
+
+    pub oam_dma: Option<u8>,
 }
 
 impl Interrupt {
     pub fn new() -> Self {
         Self {
-            reset: true,
             nmi: false,
             executing: false,
             detected: false,
             running_dma: false,
             irq_mask: 0,
             irq_flag: 0,
+            oam_dma: None,
         }
-    }
-
-    // pub fn reset_irq(&mut self) {
-    //     self.irq_set.clear();
-    // }
-
-    pub fn set_reset(&mut self) {
-        self.reset = true;
-        self.executing = false;
-        self.detected = false;
-        self.nmi = false;
-        self.running_dma = false;
-        self.irq_flag = 0;
-        self.irq_mask = 0xFF;
-    }
-
-    pub fn unset_reset(&mut self) {
-        self.reset = false;
     }
 }

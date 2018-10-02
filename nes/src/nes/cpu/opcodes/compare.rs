@@ -72,9 +72,14 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for Step1<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let a = (self.func)(&mut core.register);
-        let b = core
-            .memory
-            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let b = core.memory.read(
+            self.address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_nz_from_value(a.wrapping_sub(b));
         core.register.set_c(a >= b);

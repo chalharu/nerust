@@ -266,9 +266,14 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for ReadStep1<F> {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let data = core
-            .memory
-            .read(self.address, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let data = core.memory.read(
+            self.address,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         (self.func)(&mut core.register, data);
         FetchOpCode::new(&core.interrupt)
     }
@@ -295,8 +300,15 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for WriteStep1<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let data = (self.func)(&mut core.register);
-        core.memory
-            .write(self.address, data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.write(
+            self.address,
+            data,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         FetchOpCode::new(&core.interrupt)
     }
 }
@@ -322,8 +334,15 @@ impl<F: Fn(&mut Register) -> (u8, usize)> CpuStepState for WriteNewAddrStep1<F> 
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let (data, address) = (self.func)(&mut core.register);
-        core.memory
-            .write(address, data, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.write(
+            address,
+            data,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         FetchOpCode::new(&core.interrupt)
     }
 }

@@ -58,9 +58,14 @@ impl CpuStepState for JsrStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let sp = usize::from(core.register.get_sp());
-        let _ = core
-            .memory
-            .read(0x100 | sp, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core.memory.read(
+            0x100 | sp,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         let pc = core.register.get_pc().wrapping_sub(1);
         Box::new(JsrStep2::new(self.address, pc))
@@ -91,8 +96,15 @@ impl CpuStepState for JsrStep2 {
         let low = (self.pc & 0xFF) as u8;
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory
-            .write(0x100 | sp, hi, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.write(
+            0x100 | sp,
+            hi,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         Box::new(JsrStep3::new(self.address, low))
     }
 }
@@ -119,8 +131,15 @@ impl CpuStepState for JsrStep3 {
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory
-            .write(0x100 | sp, self.low, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.write(
+            0x100 | sp,
+            self.low,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         core.register.set_pc(self.address as u16);
         FetchOpCode::new(&core.interrupt)
     }
@@ -160,7 +179,9 @@ impl CpuStepState for RtsStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let pc = usize::from(core.register.get_pc());
-        let _ = core.memory.read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core
+            .memory
+            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
         Box::new(RtsStep2::new())
     }
 }
@@ -184,9 +205,14 @@ impl CpuStepState for RtsStep2 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         let sp = usize::from(core.register.get_sp());
-        let _ = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let _ = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -212,9 +238,14 @@ impl CpuStepState for RtsStep3 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
-        let low = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let low = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
@@ -242,9 +273,14 @@ impl CpuStepState for RtsStep4 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
-        let high = core
-            .memory
-            .read(sp | 0x100, ppu, cartridge, controller, apu, &mut core.interrupt);
+        let high = core.memory.read(
+            sp | 0x100,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
 
         Box::new(RtsStep5::new(u16::from(self.low) | (u16::from(high) << 8)))
     }
@@ -270,8 +306,14 @@ impl CpuStepState for RtsStep5 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         core.register.set_pc(self.address);
-        core.memory
-            .read_next(&mut core.register, ppu, cartridge, controller, apu, &mut core.interrupt);
+        core.memory.read_next(
+            &mut core.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut core.interrupt,
+        );
         FetchOpCode::new(&core.interrupt)
     }
 }
