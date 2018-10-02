@@ -46,7 +46,7 @@ impl Memory {
         let result = match address {
             0...0x1FFF => self.wram[address & 0x07FF],
             0x2000...0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
-            0x4015 => apu.read_register(address),
+            0x4015 => apu.read_register(address, interrupt),
             0x4016 | 0x4017 => (controller.read(address & 1) & 0x1F) | (self.lastread & 0xE0),
             0x4000...0x5FFF => self.lastread, // TODO: I/O registers
             0x6000...0x10000 => cartridge.read(address),
@@ -56,6 +56,7 @@ impl Memory {
             }
         };
         self.lastread = result;
+        interrupt.write = false;
         result
     }
 
@@ -94,18 +95,17 @@ impl Memory {
             0x2000...0x3FFF => {
                 ppu.write_register(0x2000 + (address & 7), value, cartridge, interrupt)
             }
-            0x4000...0x4013 => apu.write_register(address, value),
+            0x4000...0x4013 => apu.write_register(address, value, interrupt),
             0x4014 => interrupt.oam_dma = Some(value),
-            0x4015 => apu.write_register(address, value),
-
+            0x4015 => apu.write_register(address, value, interrupt),
             0x4016 => controller.write(value),
-
-            0x4017 => apu.write_register(address, value),
+            0x4017 => apu.write_register(address, value, interrupt),
             0x4018...0x5FFF => (), // TODO: I/O registers
             0x6000...0xFFFF => cartridge.write(address, value),
             _ => {
                 error!("unhandled cpu memory write at address: 0x{:04X}", address);
             }
         }
+        interrupt.write = true;
     }
 }

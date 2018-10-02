@@ -4,6 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::nes::cpu::interrupt::*;
 use crate::nes::Cartridge;
 use crate::nes::Cpu;
 
@@ -27,6 +28,7 @@ pub(crate) struct DMC {
     tick_value: u8,
     is_loop: bool,
     irq: bool,
+    read_buffer: u8,
 }
 
 impl DMC {
@@ -44,19 +46,17 @@ impl DMC {
             tick_value: 0,
             is_loop: false,
             irq: false,
+            read_buffer: 0,
         }
     }
 
-    pub fn write_control(&mut self, value: u8) {
+    pub fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = (value & 0x80) != 0;
         self.is_loop = (value & 0x40) != 0;
         self.tick_period = DMC_TABLE[usize::from(value & 0x0f)];
-        // if self.irq {
-        //     state.enable_irq(IrqReason::ApuDmc);
-        //     state.acknowledge_irq(IrqReason::ApuDmc);
-        // } else {
-        //     state.disable_irq(IrqReason::ApuDmc);
-        // }
+        if self.irq {
+            interrupt.clear_irq(IrqSource::DMC);
+        }
     }
 
     pub fn write_value(&mut self, value: u8) {
@@ -76,7 +76,6 @@ impl DMC {
     pub fn restart(&mut self) {
         self.current_address = self.sample_address;
         self.length_value = self.sample_length;
-        // state.acknowledge_irq(IrqReason::ApuDmc);
     }
 
     pub fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
@@ -91,11 +90,13 @@ impl DMC {
         }
     }
 
-    pub fn step_reader(&mut self, cpustate: &mut Cpu, cartridge: &mut Box<Cartridge>) {
-        if self.length_value > 0 && self.bit_count == 0 {
-            // cpustate.stall_addition(4);
-            self.shift_register = cartridge.read(self.current_address as usize);
-            self.bit_count = 8;
+    pub fn fill_address(&mut self) -> usize {
+        self.current_address as usize
+    }
+
+    pub fn fill(&mut self, value: u8, interrupt: &mut Interrupt) {
+        if self.length_value > 0 {
+            self.read_buffer = value;
             self.current_address = self.current_address.wrapping_add(1);
             if self.current_address == 0 {
                 self.current_address = 0x8000;
@@ -105,9 +106,16 @@ impl DMC {
                 if self.is_loop {
                     self.restart();
                 } else if self.irq {
-                    // cpustate.trigger_irq(IrqReason::ApuDmc);
+                    interrupt.set_irq(IrqSource::DMC);
                 }
             }
+        }
+    }
+
+    pub fn step_reader(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+        if self.length_value > 0 && self.bit_count == 0 {
+            self.shift_register = self.read_buffer;
+            self.bit_count = 8;
         }
     }
 
