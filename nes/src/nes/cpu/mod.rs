@@ -17,7 +17,7 @@ use self::opcodes::{
     interrupt::{Irq, Reset},
     *,
 };
-use self::register::Register;
+use self::register::{Register, RegisterP};
 use super::*;
 use std::ops::Shr;
 

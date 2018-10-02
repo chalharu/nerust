@@ -48,12 +48,7 @@ impl CpuStepState for BrkStep1 {
             &mut core.interrupt,
         );
 
-        // if core.register.get_i() {
-        //     FetchOpCode::new(&core.interrupt)
-        // } else {
-        core.register.set_b(true);
         Box::new(BrkStep2::new())
-        // }
     }
 }
 
@@ -74,7 +69,7 @@ impl CpuStepState for BrkStep2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let pc = core.register.get_pc().wrapping_add(1);
+        let pc = core.register.get_pc();
         let hi = (pc >> 8) as u8;
         let low = (pc & 0xFF) as u8;
         let sp = usize::from(core.register.get_sp());
@@ -146,7 +141,7 @@ impl CpuStepState for BrkStep4 {
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        let p = core.register.get_p() | 0x10;
+        let p = core.register.get_p() | (RegisterP::Break | RegisterP::Reserved).bits();
         core.memory.write(
             0x100 | sp,
             p,
@@ -352,7 +347,8 @@ impl CpuStepState for RtiStep3 {
             &mut core.interrupt,
         );
 
-        core.register.set_p((p & 0xEF) | 0x20);
+        core.register
+            .set_p((p & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits());
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
         Box::new(RtiStep4::new())
