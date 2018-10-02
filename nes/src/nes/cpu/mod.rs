@@ -11,7 +11,7 @@ mod opcodes;
 mod register;
 
 use self::addressing_mode::*;
-use self::interrupt::Interrupt;
+use self::interrupt::{Interrupt, IrqSource};
 use self::memory::Memory;
 use self::opcodes::{
     interrupt::{Irq, Reset},
@@ -31,189 +31,6 @@ where
 const NMI_VECTOR: usize = 0xFFFA;
 const RESET_VECTOR: usize = 0xFFFC;
 const IRQ_VECTOR: usize = 0xFFFE;
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub(crate) struct State {
-//     register: Register,
-//     interrupt: Interrupt,
-//     stall: usize,
-//     mem_state: Option<MemoryState>,
-//     cycles: u64,
-// }
-
-// impl State {
-//     pub fn new() -> Self {
-//         Self {
-//             register: Register::new(),
-//             interrupt: Interrupt::new(),
-//             stall: 0,
-//             mem_state: Some(MemoryState::new()),
-//             cycles: 0,
-//         }
-//     }
-
-//     pub fn trigger_nmi(&mut self) {
-//         self.interrupt.set_nmi();
-//     }
-
-//     pub fn trigger_irq(&mut self, reason: IrqReason) {
-//         self.interrupt.set_irq(reason);
-//     }
-
-//     pub fn acknowledge_irq(&mut self, reason: IrqReason) {
-//         self.interrupt.acknowledge_irq(reason);
-//     }
-
-//     pub fn enable_irq(&mut self, reason: IrqReason) {
-//         self.interrupt.enable_irq(reason);
-//     }
-
-//     pub fn disable_irq(&mut self, reason: IrqReason) {
-//         self.interrupt.disable_irq(reason);
-//     }
-
-//     pub fn get_irq_with_reason(&mut self, reason: IrqReason) -> bool {
-//         self.interrupt.get_irq_with_reason(reason)
-//     }
-
-//     pub fn register(&mut self) -> &mut Register {
-//         &mut self.register
-//     }
-
-//     pub fn stall_addition(&mut self, value: usize) {
-//         self.stall += value;
-//     }
-
-//     pub fn reset(&mut self) {
-//         self.interrupt.set_reset();
-//     }
-
-//     pub fn step<C: Controller>(
-//         &mut self,
-//         ppu: &mut Ppu,
-//         cartridge: &mut Box<Cartridge>,
-//         controller: &mut C,
-//         apu: &mut Apu,
-//         wram: &mut [u8; 2048],
-//         opcode_tables: &Opcodes,
-//         addressing_tables: &AddressingModeLut,
-//     ) {
-//         self.cycles = self.cycles.wrapping_add(1);
-//         if self.stall != 0 {
-//             self.stall -= 1;
-//             return;
-//         }
-
-//         let mut mem_state = mem::replace(&mut self.mem_state, None);
-//         {
-//             let mut memory = Memory::new(
-//                 wram,
-//                 ppu,
-//                 apu,
-//                 controller,
-//                 cartridge,
-//                 mem_state.as_mut().unwrap(),
-//             );
-
-//             let stall = match (
-//                 self.interrupt.reset,
-//                 self.interrupt.started,
-//                 self.interrupt.nmi,
-//             ) {
-//                 (true, _, _) => {
-//                     let pc = memory.read_u16(0xFFFC, self);
-//                     self.interrupt.unset_reset();
-//                     self.register().set_pc(pc);
-//                     self.register().set_i(true);
-//                     let sp = self.register().get_sp().wrapping_sub(3);
-//                     self.register().set_sp(sp);
-//                     7
-//                 }
-//                 (false, InterruptStatus::Executing, true) => {
-//                     self.interrupt.nmi = false;
-//                     InterruptBody.execute(self, &mut memory, 0xFFFA)
-//                 }
-//                 (false, InterruptStatus::Executing, false) => {
-//                     InterruptBody.execute(self, &mut memory, 0xFFFE)
-//                 }
-//                 (false, InterruptStatus::Detected, true) => Nmi.execute(self, &mut memory, 0),
-//                 (false, InterruptStatus::Detected, false) => Irq.execute(self, &mut memory, 0),
-//                 (false, InterruptStatus::Polling, _) => {
-//                     // 割り込み検出
-//                     if self.interrupt.nmi {
-//                         self.interrupt.started = InterruptStatus::Detected;
-//                     } else if self.interrupt.get_irq() && !self.register().get_i() {
-//                         self.interrupt.use_irq();
-//                         self.interrupt.started = InterruptStatus::Detected;
-//                     }
-
-//                     let pc = self.register().get_pc();
-//                     let code = memory.read(pc as usize, self);
-//                     let addressing = addressing_tables.get(code).execute(self, &mut memory);
-//                     // info!(
-//                     //     "CPU Oprand: {} {}",
-//                     //     opcode_tables[code].name(),
-//                     //     addressing_tables[code].name(),
-//                     // );
-//                     self.register()
-//                         .set_pc(pc.wrapping_add(addressing_tables.get(code).opcode_length()));
-//                     let cycles =
-//                         opcode_tables
-//                             .get(code)
-//                             .execute(self, &mut memory, addressing.address);
-
-//                     addressing.cycles + cycles
-//                 }
-//             };
-//             self.stall += stall - 1;
-//         }
-
-//         self.mem_state = mem_state;
-//     }
-// }
-
-// pub(crate) struct Core {
-//     opcode_tables: Opcodes,
-//     addressing_tables: AddressingModeLut,
-//     pub(crate) state: State,
-// }
-
-// impl Core {
-//     pub fn step<C: Controller>(
-//         &mut self,
-//         ppu: &mut Ppu,
-//         cartridge: &mut Box<Cartridge>,
-//         controller: &mut C,
-//         apu: &mut Apu,
-//         wram: &mut [u8; 2048],
-//     ) {
-//         self.state.step(
-//             ppu,
-//             cartridge,
-//             controller,
-//             apu,
-//             wram,
-//             &self.opcode_tables,
-//             &self.addressing_tables,
-//         )
-//     }
-
-//     pub fn trigger_nmi(&mut self) {
-//         self.state.trigger_nmi();
-//     }
-
-//     pub fn reset(&mut self) {
-//         self.state.reset();
-//     }
-
-//     pub fn new() -> Self {
-//         Self {
-//             opcode_tables: Opcodes::new(),
-//             addressing_tables: AddressingModeLut::new(),
-//             state: State::new(),
-//         }
-//     }
-// }
 
 // #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Core {
@@ -250,31 +67,46 @@ impl Core {
     ) {
         self.cycles = self.cycles.wrapping_add(1);
 
-        if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
-            self.oam_dma = Some(OamDma::new(offset));
+        if self.interrupt.dmc_start {
+            self.interrupt.dmc_start = false;
+            self.interrupt.dmc_count = if let Some(oam_dma) = &self.oam_dma {
+                match oam_dma.count() {
+                    0 => 3,
+                    1 => 1,
+                    _ => 2,
+                }
+            } else {
+                4
+            };
         }
 
-        if let Some(mut oam_dma) = ::std::mem::replace(&mut self.oam_dma, None) {
-            self.oam_dma = oam_dma.next(self, ppu, cartridge, controller, apu);
+        if self.interrupt.dmc_count > 0 && (self.cycles & 1 == 0) {
+            self.interrupt.dmc_count -= 1;
+            if self.interrupt.dmc_count == 0 {
+                let addr = apu.dmc_fill_address();
+                let value =
+                    self.memory
+                        .read(addr, ppu, cartridge, controller, apu, &mut self.interrupt);
+                apu.dmc_fill(value, &mut self.interrupt);
+            }
         } else {
-            if !self.interrupt.running_dma {
-                self.interrupt.executing = self.interrupt.detected;
-                self.interrupt.detected = self.interrupt.nmi
-                    || ((self.interrupt.irq_flag & self.interrupt.irq_mask) != 0
-                        && !self.register.get_i());
+            if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
+                self.oam_dma = Some(OamDma::new(offset));
             }
 
-            // 身代わりパターン
-            self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
-                .next(self, ppu, cartridge, controller, apu);
-        }
+            if let Some(mut oam_dma) = ::std::mem::replace(&mut self.oam_dma, None) {
+                self.oam_dma = oam_dma.next(self, ppu, cartridge, controller, apu);
+            } else {
+                self.interrupt.executing = self.interrupt.detected;
+                self.interrupt.detected = self.interrupt.nmi
+                    || (!(self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty()
+                        && !self.register.get_i());
 
-        // let addressing = addressing_tables.get(code).execute(self, &mut memory);
-        // self.register()
-        //     .set_pc(pc.wrapping_add(addressing_tables.get(code).opcode_length()));
-        // let cycles = opcode_tables
-        //     .get(code)
-        //     .execute(self, &mut memory, addressing.address);
+                // 身代わりパターン
+                self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
+                    .next(self, ppu, cartridge, controller, apu);
+            }
+        }
     }
 }
 
@@ -350,6 +182,8 @@ pub(crate) trait OamDmaStepState {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Option<Box<dyn OamDmaStepState>>;
+
+    fn count(&self) -> u8;
 }
 
 struct OamDma {
@@ -382,6 +216,10 @@ impl OamDmaStepState for OamDma {
             Some(OamDmaStep1::new(self.offset, 255))
         }
     }
+
+    fn count(&self) -> u8 {
+        255
+    }
 }
 
 struct OamDmaStep1 {
@@ -413,6 +251,10 @@ impl OamDmaStepState for OamDmaStep1 {
             &mut core.interrupt,
         );
         Some(OamDmaStep2::new(self.offset, self.count, value))
+    }
+
+    fn count(&self) -> u8 {
+        self.count
     }
 }
 
@@ -455,5 +297,9 @@ impl OamDmaStepState for OamDmaStep2 {
         } else {
             Some(OamDmaStep1::new(self.offset, self.count - 1))
         }
+    }
+
+    fn count(&self) -> u8 {
+        self.count
     }
 }

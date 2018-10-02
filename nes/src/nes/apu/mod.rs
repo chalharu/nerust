@@ -15,6 +15,7 @@ use self::filter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
+use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
 use crate::nes::Cpu;
 use crate::nes::{Cartridge, Speaker};
 
@@ -42,6 +43,10 @@ pub struct Core {
     frame_irq: bool,
     sample_cycle: u64,
     sample_reset_cycle: u64,
+    new_frame_value: u8,
+    frame_write_counter: u8,
+    clock_cycle: u64,
+    frame_block: u8,
 }
 
 impl Core {
@@ -65,17 +70,21 @@ impl Core {
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            cycle: 10,
+            cycle: 0,
             frame_period: false,
             frame_irq: true,
             sample_cycle: 0,
             sample_reset_cycle,
+            new_frame_value: 0,
+            frame_write_counter: 0,
+            clock_cycle: 0,
+            frame_block: 2,
         }
     }
 
-    pub(crate) fn read_register(&mut self, address: usize) -> u8 {
+    pub(crate) fn read_register(&mut self, address: usize, interrupt: &mut Interrupt) -> u8 {
         match address {
-            0x4015 => self.read_status(),
+            0x4015 => self.read_status(interrupt),
             _ => {
                 error!("unhandled apu register read at address: 0x{:04X}", address);
                 0
@@ -83,7 +92,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn write_register(&mut self, address: usize, value: u8) {
+    pub(crate) fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         match address {
             0x4000 => self.pulse1.write_control(value),
             0x4001 => self.pulse1.write_sweep(value),
@@ -95,7 +104,7 @@ impl Core {
             0x4007 => self.pulse2.write_timer_high(value),
             0x4008 => self.triangle.write_control(value),
             0x4009 => (),
-            0x4010 => self.dmc.write_control(value),
+            0x4010 => self.dmc.write_control(value, interrupt),
             0x4011 => self.dmc.write_value(value),
             0x4012 => self.dmc.write_address(value),
             0x4013 => self.dmc.write_length(value),
@@ -106,9 +115,17 @@ impl Core {
             0x400E => self.noise.write_period(value),
             0x400F => self.noise.write_length(value),
             0x4015 => self.write_control(value),
-            0x4017 => self.write_frame_counter(value),
+            0x4017 => self.write_frame_counter(value, interrupt),
             _ => error!("unhandled apu register write at address: 0x{:04X}", address),
         }
+    }
+
+    pub(crate) fn dmc_fill(&mut self, value: u8, interrupt: &mut Interrupt) {
+        self.dmc.fill(value, interrupt);
+    }
+
+    pub(crate) fn dmc_fill_address(&mut self) -> usize {
+        self.dmc.fill_address()
     }
 
     pub(crate) fn step<S: Speaker>(
@@ -117,6 +134,7 @@ impl Core {
         cartridge: &mut Box<Cartridge>,
         speaker: &mut S,
     ) {
+        self.clock_cycle = self.clock_cycle.wrapping_add(1);
         self.cycle += 1;
         let cycle1 = self.sample_cycle;
         self.sample_cycle += 1;
@@ -126,6 +144,19 @@ impl Core {
         }
         self.step_timer(cpu, cartridge);
         self.step_frame_counter(cpu);
+        if self.frame_write_counter > 0 {
+            self.frame_write_counter -= 1;
+            if self.frame_write_counter == 0 {
+                self.frame_period = ((self.new_frame_value >> 7) & 1) != 0;
+                self.cycle = 0;
+                if self.frame_period {
+                    self.half_frame(cpu);
+                }
+            }
+        }
+        if self.frame_block > 0 {
+            self.frame_block -= 1;
+        }
         let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
         let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
         if s1 != s2 {
@@ -146,53 +177,54 @@ impl Core {
                                  + usize::from(self.dmc.output())]
     }
 
+    fn quarter_frame(&mut self, cpu: &mut Cpu) {
+        if self.frame_block != 0 {
+            self.step_envelope();
+            self.frame_block = 2;
+        }
+    }
+
+    fn half_frame(&mut self, cpu: &mut Cpu) {
+        if self.frame_block != 0 {
+            self.quarter_frame(cpu);
+            self.step_sweep();
+            self.step_length();
+        }
+    }
+
     pub(crate) fn step_frame_counter(&mut self, cpu: &mut Cpu) {
         // https://wiki.nesdev.com/w/index.php/APU_Frame_Counter
-        // ここのフレームカウンタをcpuサイクルに合わせて2倍し、6を加えている
-        // $4017書き込みによるリセット時には3~4CPUクロックが必要なため。
         if self.frame_period {
             // mode 1 -- 5step
             match self.cycle {
-                7462 | 22376 => self.step_envelope(),
-                14918 | 37285 => {
-                    self.step_envelope();
-                    self.step_sweep();
-                    self.step_length();
-                }
-                37288 => self.cycle = 6,
-                0...37288 => (),
+                7457 | 22371 => self.quarter_frame(cpu),
+                14913 | 37281 => self.half_frame(cpu),
+                37282 => self.cycle = 0,
+                0...37282 => (),
                 _ => unreachable!(),
             }
         } else {
             // mode 0 -- 4step
             match self.cycle {
-                7462 | 22376 => self.step_envelope(),
-                14917 => {
-                    self.step_envelope();
-                    self.step_sweep();
-                    self.step_length();
-                }
-                29833 => {
+                7457 | 22371 => self.quarter_frame(cpu),
+                14913 => self.half_frame(cpu),
+                29828 => self.fire_irq(cpu),
+                29829 => {
+                    self.half_frame(cpu);
                     self.fire_irq(cpu);
                 }
-                29834 => {
-                    self.step_envelope();
-                    self.step_sweep();
-                    self.step_length();
+                29830 => {
                     self.fire_irq(cpu);
+                    self.cycle = 0;
                 }
-                29835 => {
-                    self.fire_irq(cpu);
-                }
-                29836 => self.cycle = 6,
-                0...29836 => (),
+                0...29830 => (),
                 _ => unreachable!(),
             }
         }
     }
 
     fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
-        if self.cycle & 1 == 0 {
+        if self.clock_cycle & 1 == 0 {
             self.pulse1.step_timer();
             self.pulse2.step_timer();
             self.noise.step_timer();
@@ -222,28 +254,27 @@ impl Core {
 
     fn fire_irq(&mut self, cpu: &mut Cpu) {
         if self.frame_irq {
-            // cpu.trigger_irq(IrqReason::ApuFrameCounter);
+            cpu.interrupt.set_irq(IrqSource::FrameCounter);
         }
     }
 
-    fn read_status(&mut self) -> u8 {
+    fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
         let result = (if self.pulse1.length_value > 0 { 1 } else { 0 })
             | (if self.pulse2.length_value > 0 { 2 } else { 0 })
             | (if self.triangle.length_value > 0 { 4 } else { 0 })
             | (if self.noise.length_value > 0 { 8 } else { 0 })
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
-            // | (if state.get_irq_with_reason(IrqReason::ApuFrameCounter) {
-            //     0x40
-            // } else {
-            //     0
-            // })
-            // | (if state.get_irq_with_reason(IrqReason::ApuDmc) {
-            //     0x80
-            // } else {
-            //     0
-            // })
-            ;
-        // state.acknowledge_irq(IrqReason::ApuFrameCounter);
+            | (if interrupt.get_irq(IrqSource::FrameCounter) {
+                0x40
+            } else {
+                0
+            })
+            | (if interrupt.get_irq(IrqSource::DMC) {
+                0x80
+            } else {
+                0
+            });
+        interrupt.clear_irq(IrqSource::FrameCounter);
         result
     }
 
@@ -272,22 +303,15 @@ impl Core {
         }
     }
 
-    fn write_frame_counter(&mut self, value: u8) {
-        self.frame_period = ((value >> 7) & 1) != 0;
+    fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.frame_irq = ((value >> 6) & 1) == 0;
-        if self.frame_irq {
-            // if !state.get_irq_with_reason(IrqReason::ApuFrameCounter) {
-            //     state.enable_irq(IrqReason::ApuFrameCounter);
-            //     state.acknowledge_irq(IrqReason::ApuFrameCounter);
-            // }
+        if (self.clock_cycle & 1) != 0 {
+            self.frame_write_counter = 3;
         } else {
-            // state.disable_irq(IrqReason::ApuFrameCounter);
+            self.frame_write_counter = 4;
         }
-        self.cycle = 1 + (self.cycle & 1);
-        if self.frame_period {
-            self.step_envelope();
-            self.step_sweep();
-            self.step_length();
+        if !self.frame_irq {
+            interrupt.clear_irq(IrqSource::FrameCounter);
         }
     }
 }

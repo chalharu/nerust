@@ -153,6 +153,7 @@ impl CpuStepState for BrkStep4 {
         );
 
         Box::new(BrkStep5::new(if core.interrupt.nmi {
+            core.interrupt.nmi = false;
             NMI_VECTOR
         } else {
             IRQ_VECTOR
@@ -576,6 +577,7 @@ impl CpuStepState for IrqStep5 {
         );
 
         Box::new(IrqStep6::new(if core.interrupt.nmi {
+            core.interrupt.nmi = false;
             NMI_VECTOR
         } else {
             IRQ_VECTOR
@@ -644,7 +646,7 @@ impl CpuStepState for IrqStep7 {
             &mut core.interrupt,
         ));
         core.register.set_pc((hi << 8) | u16::from(self.low));
-        core.interrupt.executing = false;
+        // core.interrupt.executing = false;
         FetchOpCode::new(&core.interrupt)
     }
 }
@@ -671,8 +673,8 @@ impl CpuStepState for Reset {
         core.memory
             .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
-        core.interrupt.irq_flag = 0;
-        core.interrupt.irq_mask = 0xFF;
+        core.interrupt.irq_flag = IrqSource::empty();
+        core.interrupt.irq_mask = IrqSource::All;
         core.interrupt.nmi = false;
 
         Box::new(ResetStep2::new())
