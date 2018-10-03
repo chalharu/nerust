@@ -131,10 +131,7 @@ impl<F: Fn(&mut Register) -> ()> CpuStepState for Step1<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
         (self.func)(&mut core.register);
         FetchOpCode::new(&core.interrupt)

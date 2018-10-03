@@ -161,13 +161,10 @@ impl CpuStepState for Step1 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let pc = core.register.get_pc() as usize;
-
         // dummy read
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
+        let pc = core.register.get_pc() as usize;
         if page_crossed(self.address, pc) {
             Box::new(Step2::new(self.address))
         } else {
@@ -197,10 +194,7 @@ impl CpuStepState for Step2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
         core.register.set_pc(self.address as u16);
         FetchOpCode::new(&core.interrupt)

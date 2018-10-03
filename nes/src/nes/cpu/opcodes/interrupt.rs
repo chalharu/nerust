@@ -73,16 +73,7 @@ impl CpuStepState for BrkStep2 {
         let hi = (pc >> 8) as u8;
         let low = (pc & 0xFF) as u8;
 
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            hi,
-        );
+        push(core, ppu, cartridge, controller, apu, hi);
 
         Box::new(BrkStep3::new(low))
     }
@@ -107,16 +98,7 @@ impl CpuStepState for BrkStep3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            self.low,
-        );
+        push(core, ppu, cartridge, controller, apu, self.low);
 
         Box::new(BrkStep4::new())
     }
@@ -140,16 +122,7 @@ impl CpuStepState for BrkStep4 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let p = core.register.get_p() | (RegisterP::Break | RegisterP::Reserved).bits();
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            p,
-        );
+        push(core, ppu, cartridge, controller, apu, p);
 
         Box::new(BrkStep5::new(if core.interrupt.nmi {
             core.interrupt.nmi = false;
@@ -241,25 +214,6 @@ impl OpCode for Rti {
     }
 }
 
-// struct Rti;
-// impl OpCode for Rti {
-//     fn execute(&self, state: &mut State, memory: &mut Memory, _address: usize) -> usize {
-//         let result = pull(state, memory);
-//         state.register().set_p((result & 0xEF) | 0x20);
-//         let result = pull_u16(state, memory);
-//         state.register().set_pc(result);
-//         // 割り込み検出
-//         if state.interrupt.get_irq() && !state.register().get_i() {
-//             // state.interrupt.irq = false;
-//             state.interrupt.started = InterruptStatus::Detected;
-//         }
-//         5
-//     }
-//     fn name(&self) -> &'static str {
-//         "RTI"
-//     }
-// }
-
 struct RtiStep1 {}
 
 impl RtiStep1 {
@@ -278,10 +232,7 @@ impl CpuStepState for RtiStep1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = usize::from(core.register.get_pc());
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         Box::new(RtiStep2::new())
     }
 }
@@ -335,15 +286,7 @@ impl CpuStepState for RtiStep3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let p = pull(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+        let p = pull(core, ppu, cartridge, controller, apu);
         core.register
             .set_p((p & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits());
 
@@ -368,15 +311,7 @@ impl CpuStepState for RtiStep4 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let low = pull(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+        let low = pull(core, ppu, cartridge, controller, apu);
 
         Box::new(RtiStep5::new(low))
     }
@@ -401,15 +336,7 @@ impl CpuStepState for RtiStep5 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let high = pull(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+        let high = pull(core, ppu, cartridge, controller, apu);
 
         core.register
             .set_pc(u16::from(self.low) | (u16::from(high) << 8));
@@ -435,9 +362,7 @@ impl CpuStepState for Irq {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        core.memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
         Box::new(IrqStep2::new())
     }
@@ -461,9 +386,7 @@ impl CpuStepState for IrqStep2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        core.memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
         Box::new(IrqStep3::new())
     }
@@ -489,16 +412,7 @@ impl CpuStepState for IrqStep3 {
         let pc = core.register.get_pc();
         let hi = (pc >> 8) as u8;
         let low = (pc & 0xFF) as u8;
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            hi,
-        );
+        push(core, ppu, cartridge, controller, apu, hi);
         Box::new(IrqStep4::new(low))
     }
 }
@@ -522,16 +436,7 @@ impl CpuStepState for IrqStep4 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            self.low,
-        );
+        push(core, ppu, cartridge, controller, apu, self.low);
 
         Box::new(IrqStep5::new())
     }
@@ -555,16 +460,7 @@ impl CpuStepState for IrqStep5 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let p = core.register.get_p();
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            p,
-        );
+        push(core, ppu, cartridge, controller, apu, p);
 
         Box::new(IrqStep6::new(if core.interrupt.nmi {
             core.interrupt.nmi = false;
@@ -659,9 +555,7 @@ impl CpuStepState for Reset {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        core.memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
 
         core.interrupt.irq_flag = IrqSource::empty();
         core.interrupt.irq_mask = IrqSource::All;
@@ -689,10 +583,7 @@ impl CpuStepState for ResetStep2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        core.memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         Box::new(ResetStep3::new())
     }
 }
