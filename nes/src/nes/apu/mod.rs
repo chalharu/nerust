@@ -76,9 +76,9 @@ impl Core {
             sample_cycle: 0,
             sample_reset_cycle,
             new_frame_value: 0,
-            frame_write_counter: 0,
+            frame_write_counter: 5,
             clock_cycle: 0,
-            frame_block: 2,
+            frame_block: 0,
         }
     }
 
@@ -178,14 +178,14 @@ impl Core {
     }
 
     fn quarter_frame(&mut self, cpu: &mut Cpu) {
-        if self.frame_block != 0 {
+        if self.frame_block == 0 {
             self.step_envelope();
             self.frame_block = 2;
         }
     }
 
     fn half_frame(&mut self, cpu: &mut Cpu) {
-        if self.frame_block != 0 {
+        if self.frame_block == 0 {
             self.quarter_frame(cpu);
             self.step_sweep();
             self.step_length();
@@ -305,6 +305,7 @@ impl Core {
 
     fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.frame_irq = ((value >> 6) & 1) == 0;
+        self.new_frame_value = value;
         if (self.clock_cycle & 1) != 0 {
             self.frame_write_counter = 3;
         } else {
