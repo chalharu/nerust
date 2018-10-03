@@ -303,3 +303,47 @@ impl OamDmaStepState for OamDmaStep2 {
         self.count
     }
 }
+
+fn push(
+    memory: &mut Memory,
+    register: &mut Register,
+    ppu: &mut Ppu,
+    cartridge: &mut Box<Cartridge>,
+    controller: &mut Controller,
+    apu: &mut Apu,
+    interrupt: &mut Interrupt,
+    value: u8,
+) {
+    let sp = register.get_sp();
+    register.set_sp(sp.wrapping_sub(1));
+    memory.write(
+        0x100 | usize::from(sp),
+        value,
+        ppu,
+        cartridge,
+        controller,
+        apu,
+        interrupt,
+    );
+}
+
+fn pull(
+    memory: &mut Memory,
+    register: &mut Register,
+    ppu: &mut Ppu,
+    cartridge: &mut Box<Cartridge>,
+    controller: &mut Controller,
+    apu: &mut Apu,
+    interrupt: &mut Interrupt,
+) -> u8 {
+    let sp = register.get_sp().wrapping_add(1);
+    register.set_sp(sp);
+    memory.read(
+        0x100 | usize::from(sp),
+        ppu,
+        cartridge,
+        controller,
+        apu,
+        interrupt,
+    )
+}

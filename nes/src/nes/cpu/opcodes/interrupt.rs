@@ -72,17 +72,18 @@ impl CpuStepState for BrkStep2 {
         let pc = core.register.get_pc();
         let hi = (pc >> 8) as u8;
         let low = (pc & 0xFF) as u8;
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            hi,
+
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            hi,
         );
+
         Box::new(BrkStep3::new(low))
     }
 }
@@ -106,16 +107,15 @@ impl CpuStepState for BrkStep3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            self.low,
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            self.low,
         );
 
         Box::new(BrkStep4::new())
@@ -139,17 +139,16 @@ impl CpuStepState for BrkStep4 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
         let p = core.register.get_p() | (RegisterP::Break | RegisterP::Reserved).bits();
-        core.memory.write(
-            0x100 | sp,
-            p,
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            p,
         );
 
         Box::new(BrkStep5::new(if core.interrupt.nmi {
@@ -315,8 +314,6 @@ impl CpuStepState for RtiStep2 {
             &mut core.interrupt,
         );
 
-        core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
-
         Box::new(RtiStep3::new())
     }
 }
@@ -338,19 +335,17 @@ impl CpuStepState for RtiStep3 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        let p = core.memory.read(
-            sp | 0x100,
+        let p = pull(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
         );
-
         core.register
             .set_p((p & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits());
-        core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
         Box::new(RtiStep4::new())
     }
@@ -373,17 +368,15 @@ impl CpuStepState for RtiStep4 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        let low = core.memory.read(
-            sp | 0x100,
+        let low = pull(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
         );
-
-        core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
         Box::new(RtiStep5::new(low))
     }
@@ -408,9 +401,9 @@ impl CpuStepState for RtiStep5 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        let high = core.memory.read(
-            sp | 0x100,
+        let high = pull(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
@@ -496,16 +489,15 @@ impl CpuStepState for IrqStep3 {
         let pc = core.register.get_pc();
         let hi = (pc >> 8) as u8;
         let low = (pc & 0xFF) as u8;
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            hi,
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            hi,
         );
         Box::new(IrqStep4::new(low))
     }
@@ -530,16 +522,15 @@ impl CpuStepState for IrqStep4 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            self.low,
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            self.low,
         );
 
         Box::new(IrqStep5::new())
@@ -563,17 +554,16 @@ impl CpuStepState for IrqStep5 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        let p = core.register.get_p() | 0x10;
-        core.memory.write(
-            0x100 | sp,
-            p,
+        let p = core.register.get_p();
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            p,
         );
 
         Box::new(IrqStep6::new(if core.interrupt.nmi {

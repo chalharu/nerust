@@ -30,7 +30,7 @@ fn main() {
         // &mut include_bytes!("../../../sample_roms/giko016.nes")
         // &mut include_bytes!("../../../sample_roms/giko017.nes")
         // &mut include_bytes!("../../../sample_roms/giko018.nes")
-        // &mut include_bytes!("../../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
+        &mut include_bytes!("../../../sample_roms/cpu_flag_concurrency/test_cpu_flag_concurrency.nes")
         // &mut include_bytes!("../../../sample_roms/cpu_interrupts_v2/cpu_interrupts.nes")
         // &mut include_bytes!("../../../sample_roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes")
         // &mut include_bytes!("../../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
@@ -58,9 +58,11 @@ fn main() {
         // &mut include_bytes!("../../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
         // &mut include_bytes!("../../../sample_roms/branch_timing_tests/2.Backward_Branch.nes")
         // &mut include_bytes!("../../../sample_roms/branch_timing_tests/3.Forward_Branch.nes")
-        &mut include_bytes!("../../../sample_roms/instr_timing/instr_timing.nes")
+        // &mut include_bytes!("../../../sample_roms/instr_timing/instr_timing.nes")
         // &mut include_bytes!("../../../sample_roms/instr_misc/instr_misc.nes")
         // &mut include_bytes!("../../../sample_roms/instr_misc/rom_singles/04-dummy_reads_apu.nes")
+        // &mut include_bytes!("../../../sample_roms/instr_timing/rom_singles/1-instr_timing.nes")
+        // &mut include_bytes!("../../../sample_roms/instr_timing/rom_singles/2-branch_timing.nes")
             .into_iter()
             .cloned(),
         44_100,
