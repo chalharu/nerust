@@ -133,8 +133,8 @@ fn condition_jump(
     interrupt: &mut Interrupt,
 ) -> Box<dyn CpuStepState> {
     if condition {
-        if interrupt.executing && !interrupt.detected {
-            interrupt.executing = false;
+        if !interrupt.executing && interrupt.detected {
+            interrupt.detected = false;
         }
         Box::new(Step1::new(address))
     } else {

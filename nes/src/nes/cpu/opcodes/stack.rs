@@ -30,26 +30,20 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep1<F> {
         let _ = core
             .memory
             .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-        let sp = usize::from(core.register.get_sp().wrapping_add(1));
 
         Box::new(PullStep2::new(
-            0x100 | sp,
             std::mem::replace(&mut self.func, None).unwrap(),
         ))
     }
 }
 
 struct PullStep2<F: Fn(&mut Register, u8) -> ()> {
-    address: usize,
     func: Option<F>,
 }
 
 impl<F: Fn(&mut Register, u8) -> ()> PullStep2<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self {
-            address,
-            func: Some(func),
-        }
+    pub fn new(func: F) -> Self {
+        Self { func: Some(func) }
     }
 }
 
@@ -63,31 +57,29 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep2<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
+        let sp = core.register.get_sp();
         let _ = core.memory.read(
-            self.address,
+            0x100 | usize::from(sp),
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
         );
-        core.register.set_sp((self.address & 0xFF) as u8);
 
         Box::new(PullStep3::new(
-            self.address,
             std::mem::replace(&mut self.func, None).unwrap(),
         ))
     }
 }
 
 struct PullStep3<F: Fn(&mut Register, u8) -> ()> {
-    address: usize,
     func: F,
 }
 
 impl<F: Fn(&mut Register, u8) -> ()> PullStep3<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self { address, func }
+    pub fn new(func: F) -> Self {
+        Self { func }
     }
 }
 
@@ -100,8 +92,9 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for PullStep3<F> {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let value = core.memory.read(
-            self.address,
+        let value = pull(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
@@ -138,7 +131,9 @@ impl OpCode for Plp {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(PullStep1::new(|r, v| r.set_p((v & 0xEF) | 0x20)))
+        Box::new(PullStep1::new(|r, v| {
+            r.set_p((v & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits())
+        }))
     }
     fn name(&self) -> &'static str {
         "PLP"
@@ -170,22 +165,19 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for PushStep1<F> {
             .memory
             .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
         let data = (self.func)(&mut core.register);
 
-        Box::new(PushStep2::new(0x100 | sp, data))
+        Box::new(PushStep2::new(data))
     }
 }
 
 struct PushStep2 {
-    address: usize,
     data: u8,
 }
 
 impl PushStep2 {
-    pub fn new(address: usize, data: u8) -> Self {
-        Self { address, data }
+    pub fn new(data: u8) -> Self {
+        Self { data }
     }
 }
 
@@ -198,15 +190,17 @@ impl CpuStepState for PushStep2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        core.memory.write(
-            self.address,
-            self.data,
+        push(
+            &mut core.memory,
+            &mut core.register,
             ppu,
             cartridge,
             controller,
             apu,
             &mut core.interrupt,
+            self.data,
         );
+
         FetchOpCode::new(&core.interrupt)
     }
 }
