@@ -123,7 +123,7 @@ impl CpuStepState for Step3 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        core.memory.read_dummy(
+        core.memory.read_dummy_cross(
             self.address,
             self.new_address,
             ppu,

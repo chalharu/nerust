@@ -26,11 +26,7 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep1<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = usize::from(core.register.get_pc());
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         Box::new(PullStep2::new(
             std::mem::replace(&mut self.func, None).unwrap(),
         ))
@@ -92,15 +88,7 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for PullStep3<F> {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let value = pull(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+        let value = pull(core, ppu, cartridge, controller, apu);
         (self.func)(&mut core.register, value);
         FetchOpCode::new(&core.interrupt)
     }
@@ -160,11 +148,7 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for PushStep1<F> {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = usize::from(core.register.get_pc());
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         let data = (self.func)(&mut core.register);
 
         Box::new(PushStep2::new(data))
@@ -190,16 +174,7 @@ impl CpuStepState for PushStep2 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        push(
-            &mut core.memory,
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-            self.data,
-        );
+        push(core, ppu, cartridge, controller, apu, self.data);
 
         FetchOpCode::new(&core.interrupt)
     }

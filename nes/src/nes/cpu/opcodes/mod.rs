@@ -41,31 +41,6 @@ use self::store::*;
 use self::transfer::*;
 use super::*;
 
-// fn push(state: &mut State, memory: &mut Memory, value: u8) {
-//     let sp = state.register().get_sp();
-//     state.stall += memory.write(0x100 | usize::from(sp), value, state);
-//     state.register().set_sp(sp.wrapping_sub(1));
-// }
-
-// fn pull(state: &mut State, memory: &mut Memory) -> u8 {
-//     let sp = state.register().get_sp().wrapping_add(1);
-//     state.register().set_sp(sp);
-//     memory.read(usize::from(sp) | 0x100, state)
-// }
-
-// fn push_u16(state: &mut State, memory: &mut Memory, value: u16) {
-//     let hi = (value >> 8) as u8;
-//     let low = (value & 0xFF) as u8;
-//     push(state, memory, hi);
-//     push(state, memory, low);
-// }
-
-// fn pull_u16(state: &mut State, memory: &mut Memory) -> u16 {
-//     let low = u16::from(pull(state, memory));
-//     let hi = u16::from(pull(state, memory));
-//     (hi << 8) | low
-// }
-
 pub(crate) trait OpCode {
     fn next_func(
         &self,
@@ -75,57 +50,6 @@ pub(crate) trait OpCode {
     ) -> Box<dyn CpuStepState>;
     fn name(&self) -> &'static str;
 }
-
-// pub(crate) struct Nmi;
-// impl OpCode for Nmi {
-//     fn execute(&self, state: &mut State, memory: &mut Memory, _address: usize) -> usize {
-//         let pc = state.register().get_pc();
-//         let _ = memory.read(pc as usize, state); // dummy fetch
-//         state.register().set_b(false);
-//         push_u16(state, memory, pc);
-//         let data = state.register().get_p();
-//         push(state, memory, data);
-//         state.register().set_i(true);
-//         state.interrupt.started = InterruptStatus::Executing;
-//         4
-//     }
-//     fn name(&self) -> &'static str {
-//         "NMI"
-//     }
-// }
-
-// pub(crate) struct Irq;
-// impl OpCode for Irq {
-//     fn execute(&self, state: &mut State, memory: &mut Memory, _address: usize) -> usize {
-//         let pc = state.register().get_pc();
-//         let _ = memory.read(pc as usize, state); // dummy fetch
-//         state.register().set_b(false);
-
-//         push_u16(state, memory, pc);
-//         let data = state.register().get_p();
-//         push(state, memory, data);
-
-//         state.register().set_i(true);
-//         state.interrupt.started = InterruptStatus::Executing;
-//         4
-//     }
-//     fn name(&self) -> &'static str {
-//         "IRQ"
-//     }
-// }
-
-// pub(crate) struct InterruptBody;
-// impl OpCode for InterruptBody {
-//     fn execute(&self, state: &mut State, memory: &mut Memory, address: usize) -> usize {
-//         let new_pc = memory.read_u16(address, state);
-//         state.register().set_pc(new_pc);
-//         state.interrupt.started = InterruptStatus::Polling;
-//         3
-//     }
-//     fn name(&self) -> &'static str {
-//         "InterruptBody"
-//     }
-// }
 
 struct AccStep1<
     FGet: Fn(&mut Register) -> u8,
@@ -167,11 +91,7 @@ impl<
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = core.register.get_pc() as usize;
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         let data = (self.getter)(&mut core.register);
         let result = (self.calculator)(&mut core.register, data);
         (self.setter)(&mut core.register, result);

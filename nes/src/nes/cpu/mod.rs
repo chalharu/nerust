@@ -206,10 +206,7 @@ impl OamDmaStepState for OamDma {
         apu: &mut Apu,
     ) -> Option<Box<dyn OamDmaStepState>> {
         // dummy read
-        let pc = usize::from(core.register.get_pc());
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         if core.cycles & 1 != 0 {
             Some(OamDma::new(self.offset))
         } else {
@@ -305,45 +302,54 @@ impl OamDmaStepState for OamDmaStep2 {
 }
 
 fn push(
-    memory: &mut Memory,
-    register: &mut Register,
+    core: &mut Core,
     ppu: &mut Ppu,
     cartridge: &mut Box<Cartridge>,
     controller: &mut Controller,
     apu: &mut Apu,
-    interrupt: &mut Interrupt,
     value: u8,
 ) {
-    let sp = register.get_sp();
-    register.set_sp(sp.wrapping_sub(1));
-    memory.write(
+    let sp = core.register.get_sp();
+    core.register.set_sp(sp.wrapping_sub(1));
+    core.memory.write(
         0x100 | usize::from(sp),
         value,
         ppu,
         cartridge,
         controller,
         apu,
-        interrupt,
+        &mut core.interrupt,
     );
 }
 
 fn pull(
-    memory: &mut Memory,
-    register: &mut Register,
+    core: &mut Core,
     ppu: &mut Ppu,
     cartridge: &mut Box<Cartridge>,
     controller: &mut Controller,
     apu: &mut Apu,
-    interrupt: &mut Interrupt,
 ) -> u8 {
-    let sp = register.get_sp().wrapping_add(1);
-    register.set_sp(sp);
-    memory.read(
+    let sp = core.register.get_sp().wrapping_add(1);
+    core.register.set_sp(sp);
+    core.memory.read(
         0x100 | usize::from(sp),
         ppu,
         cartridge,
         controller,
         apu,
-        interrupt,
+        &mut core.interrupt,
     )
+}
+
+fn read_dummy_current(
+    core: &mut Core,
+    ppu: &mut Ppu,
+    cartridge: &mut Box<Cartridge>,
+    controller: &mut Controller,
+    apu: &mut Apu,
+) {
+    let pc = usize::from(core.register.get_pc());
+    let _ = core
+        .memory
+        .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
 }

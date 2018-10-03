@@ -178,10 +178,7 @@ impl CpuStepState for RtsStep1 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
-        let pc = usize::from(core.register.get_pc());
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        read_dummy_current(core, ppu, cartridge, controller, apu);
         Box::new(RtsStep2::new())
     }
 }

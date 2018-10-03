@@ -60,7 +60,7 @@ impl Memory {
         result
     }
 
-    pub fn read_dummy(
+    pub fn read_dummy_cross(
         &mut self,
         address: usize,
         new_address: usize,

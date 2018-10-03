@@ -79,7 +79,7 @@ impl CpuStepState for Step2 {
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let pc = usize::from(core.register.get_pc());
-        core.memory.read_dummy(
+        core.memory.read_dummy_cross(
             pc,
             self.zeropage_address,
             ppu,
