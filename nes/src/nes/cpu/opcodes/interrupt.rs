@@ -203,7 +203,7 @@ pub(crate) struct Rti;
 impl OpCode for Rti {
     fn next_func(
         &self,
-        address: usize,
+        _address: usize,
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
@@ -670,7 +670,6 @@ impl CpuStepState for ResetStep5 {
     ) -> Box<dyn CpuStepState> {
         let sp = usize::from(core.register.get_sp());
         core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        let p = core.register.get_p() | 0x10;
         core.memory.read(
             0x100 | sp,
             ppu,

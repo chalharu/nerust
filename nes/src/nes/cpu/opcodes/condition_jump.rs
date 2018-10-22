@@ -14,7 +14,7 @@ impl OpCode for Bcc {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_c(), address, register, interrupt)
+        condition_jump(!register.get_c(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BCC"
@@ -29,7 +29,7 @@ impl OpCode for Bcs {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_c(), address, register, interrupt)
+        condition_jump(register.get_c(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BCS"
@@ -44,7 +44,7 @@ impl OpCode for Beq {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_z(), address, register, interrupt)
+        condition_jump(register.get_z(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BEQ"
@@ -59,7 +59,7 @@ impl OpCode for Bmi {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_n(), address, register, interrupt)
+        condition_jump(register.get_n(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BMI"
@@ -74,7 +74,7 @@ impl OpCode for Bne {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_z(), address, register, interrupt)
+        condition_jump(!register.get_z(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BNE"
@@ -89,7 +89,7 @@ impl OpCode for Bpl {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_n(), address, register, interrupt)
+        condition_jump(!register.get_n(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BPL"
@@ -104,7 +104,7 @@ impl OpCode for Bvc {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_v(), address, register, interrupt)
+        condition_jump(!register.get_v(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BVC"
@@ -119,7 +119,7 @@ impl OpCode for Bvs {
         register: &mut Register,
         interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_v(), address, register, interrupt)
+        condition_jump(register.get_v(), address, interrupt)
     }
     fn name(&self) -> &'static str {
         "BVS"
@@ -129,7 +129,6 @@ impl OpCode for Bvs {
 fn condition_jump(
     condition: bool,
     address: usize,
-    register: &mut Register,
     interrupt: &mut Interrupt,
 ) -> Box<dyn CpuStepState> {
     if condition {

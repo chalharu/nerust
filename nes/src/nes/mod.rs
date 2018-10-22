@@ -42,8 +42,8 @@ impl Console {
     }
 
     pub fn reset(&mut self) {
-        // self.cpu.reset();
-        // self.ppu.reset();
+        self.cpu.reset();
+        self.ppu.reset();
     }
 
     pub fn step<S: Screen, SP: Speaker>(
@@ -61,7 +61,10 @@ impl Console {
             &mut self.apu,
         );
         for _ in 0..3 {
-            if self.ppu.step(screen, &mut self.cartridge, &mut self.cpu) {
+            if self
+                .ppu
+                .step(screen, &mut self.cartridge, &mut self.cpu.interrupt)
+            {
                 result = true;
             }
             self.cartridge.step();

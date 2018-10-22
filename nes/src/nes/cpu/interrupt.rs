@@ -57,4 +57,15 @@ impl Interrupt {
     pub fn clear_irq(&mut self, source: IrqSource) {
         self.irq_flag &= !source;
     }
+
+    pub fn reset(&mut self) {
+        self.nmi = false;
+        self.executing = false;
+        self.detected = false;
+        self.running_dma = false;
+        self.oam_dma = None;
+        self.write = false;
+        self.dmc_start = false;
+        self.dmc_count = 0;
+    }
 }

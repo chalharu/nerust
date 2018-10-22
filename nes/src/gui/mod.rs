@@ -446,7 +446,9 @@ impl Window {
                 Buttons::empty()
             }
             Some(VirtualKeyCode::Escape) => {
-                self.console.reset();
+                if input.state == ElementState::Released {
+                    self.console.reset();
+                }
                 Buttons::empty()
             }
             _ => Buttons::empty(),

@@ -177,7 +177,7 @@ impl Core {
                                  + usize::from(self.dmc.output())]
     }
 
-    fn quarter_frame(&mut self, cpu: &mut Cpu) {
+    fn quarter_frame(&mut self, _cpu: &mut Cpu) {
         if self.frame_block == 0 {
             self.step_envelope();
             self.frame_block = 2;
