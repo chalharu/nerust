@@ -112,7 +112,7 @@ impl DMC {
         }
     }
 
-    pub fn step_reader(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+    pub fn step_reader(&mut self, _cpu: &mut Cpu, _cartridge: &mut Box<Cartridge>) {
         if self.length_value > 0 && self.bit_count == 0 {
             self.shift_register = self.read_buffer;
             self.bit_count = 8;

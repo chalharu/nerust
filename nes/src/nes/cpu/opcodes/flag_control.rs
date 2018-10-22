@@ -10,8 +10,8 @@ pub(crate) struct Clc;
 impl OpCode for Clc {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_c(false)))
@@ -25,8 +25,8 @@ pub(crate) struct Cld;
 impl OpCode for Cld {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_d(false)))
@@ -40,8 +40,8 @@ pub(crate) struct Cli;
 impl OpCode for Cli {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_i(false)))
@@ -55,8 +55,8 @@ pub(crate) struct Clv;
 impl OpCode for Clv {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_v(false)))
@@ -70,8 +70,8 @@ pub(crate) struct Sec;
 impl OpCode for Sec {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_c(true)))
@@ -85,8 +85,8 @@ pub(crate) struct Sed;
 impl OpCode for Sed {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_d(true)))
@@ -100,8 +100,8 @@ pub(crate) struct Sei;
 impl OpCode for Sei {
     fn next_func(
         &self,
-        address: usize,
-        register: &mut Register,
+        _address: usize,
+        _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(Step1::new(|r| r.set_i(true)))

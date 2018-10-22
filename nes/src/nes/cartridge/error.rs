@@ -10,6 +10,7 @@ pub enum CartridgeError {
     DataError,
     #[fail(display = "file ends unexpectedly")]
     UnexpectedEof,
+    #[allow(dead_code)]
     #[fail(display = "unexpected error")]
     Unexpected,
 }

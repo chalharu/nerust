@@ -58,6 +58,13 @@ impl Core {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.interrupt.reset();
+        self.oam_dma = None;
+        self.next_func = Reset::new();
+        self.cycles = 0;
+    }
+
     pub fn step(
         &mut self,
         ppu: &mut Ppu,
@@ -99,7 +106,7 @@ impl Core {
             } else {
                 self.interrupt.executing = self.interrupt.detected;
                 self.interrupt.detected = self.interrupt.nmi
-                    || (!(self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty()
+                    || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
                         && !self.register.get_i());
 
                 // 身代わりパターン

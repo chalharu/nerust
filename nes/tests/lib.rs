@@ -8,6 +8,9 @@ extern crate crc;
 extern crate nes;
 extern crate std as core;
 
+use self::ButtonCode::*;
+use self::PadState::{Pressed, Released};
+use self::StandardControllerButtonCode::Pad1;
 use crc::crc64;
 use nes::gui::ScreenBuffer;
 use nes::nes::controller::standard_controller::{Buttons, StandardController};
@@ -72,6 +75,9 @@ impl ScenarioRunner {
                             ));
                         };
                     }
+                    ScenarioOperation::Reset => {
+                        self.console.reset();
+                    }
                     ScenarioOperation::StandardControllerInput { code, state } => match code {
                         StandardControllerButtonCode::Pad1(code) => {
                             self.pad1 = match state {
@@ -133,6 +139,7 @@ impl From<ButtonCode> for Buttons {
 #[derive(Debug, Copy, Clone)]
 enum StandardControllerButtonCode {
     Pad1(ButtonCode),
+    #[allow(dead_code)]
     Pad2(ButtonCode),
 }
 
@@ -147,6 +154,7 @@ enum ScenarioOperation {
     CheckScreen {
         hash: u64,
     },
+    Reset,
     StandardControllerInput {
         code: StandardControllerButtonCode,
         state: PadState,
@@ -158,6 +166,9 @@ impl ScenarioOperation {
     }
     pub fn standard_controller(code: StandardControllerButtonCode, state: PadState) -> Self {
         ScenarioOperation::StandardControllerInput { code, state }
+    }
+    pub fn reset() -> Self {
+        ScenarioOperation::Reset
     }
 }
 
@@ -174,6 +185,22 @@ impl ScenarioLeaf {
             operation,
         }
     }
+    pub fn check_screen(frame_number: u64, hash: u64) -> Self {
+        Self::new(frame_number, ScenarioOperation::check_screen(hash))
+    }
+    pub fn standard_controller(
+        frame_number: u64,
+        code: StandardControllerButtonCode,
+        state: PadState,
+    ) -> Self {
+        Self::new(
+            frame_number,
+            ScenarioOperation::standard_controller(code, state),
+        )
+    }
+    pub fn reset(frame_number: u64) -> Self {
+        Self::new(frame_number, ScenarioOperation::reset())
+    }
 }
 
 struct Scenario(Vec<ScenarioLeaf>);
@@ -184,64 +211,52 @@ impl Scenario {
     }
 }
 
+macro_rules! test{
+    ($filename:expr, $( $x:expr ),+) => {
+        let mut runner = ScenarioRunner::new(
+            &mut include_bytes!(concat!("../../sample_roms/", $filename))
+                .iter()
+                .cloned(),
+        );
+        let scenario = Scenario::new(&vec![ $( $x ),* ]);
+        runner.run(scenario);
+    }
+}
+
 mod branch_timing_tests {
     use super::*;
 
     #[test]
     fn _1_branch_basics() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/branch_timing_tests/1.Branch_Basics.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "branch_timing_tests/1.Branch_Basics.nes",
+            ScenarioLeaf::check_screen(25, 0x081BA42EB6C3294D)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            25,
-            ScenarioOperation::check_screen(0x081BA42EB6C3294D),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _2_backward_branch() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/branch_timing_tests/2.Backward_Branch.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "branch_timing_tests/2.Backward_Branch.nes",
+            ScenarioLeaf::check_screen(25, 0xE70FF858A009593F)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            25,
-            ScenarioOperation::check_screen(0xE70FF858A009593F),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _3_forward_branch() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/branch_timing_tests/3.Forward_Branch.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "branch_timing_tests/3.Forward_Branch.nes",
+            ScenarioLeaf::check_screen(25, 0xD394B778636B1CEF)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            25,
-            ScenarioOperation::check_screen(0xD394B778636B1CEF),
-        )]);
-        runner.run(scenario);
     }
 }
 
 #[test]
 fn cpu_dummy_reads() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/cpu_dummy_reads.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "cpu_dummy_reads.nes",
+        ScenarioLeaf::check_screen(50, 0x68A285C0C944073D)
     );
-    let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        50,
-        ScenarioOperation::check_screen(0x68A285C0C944073D),
-    )]);
-    runner.run(scenario);
 }
 
 mod cpu_dummy_writes {
@@ -249,30 +264,18 @@ mod cpu_dummy_writes {
 
     #[test]
     fn cpu_dummy_writes_oam() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_dummy_writes/cpu_dummy_writes_oam.nes",
+            ScenarioLeaf::check_screen(330, 0x6AB7DBF3764D9D43)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            330,
-            ScenarioOperation::check_screen(0x6AB7DBF3764D9D43),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn cpu_dummy_writes_ppumem() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes",
+            ScenarioLeaf::check_screen(240, 0xF8A9BE71A106B451)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            240,
-            ScenarioOperation::check_screen(0xF8A9BE71A106B451),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -281,145 +284,68 @@ mod cpu_exec_space {
 
     #[test]
     fn test_cpu_exec_space_ppuio() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_exec_space/test_cpu_exec_space_ppuio.nes",
+            ScenarioLeaf::check_screen(45, 0xB1866B91E4771BAB)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            45,
-            ScenarioOperation::check_screen(0xB1866B91E4771BAB),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn test_cpu_exec_space_apu() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_exec_space/test_cpu_exec_space_apu.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_exec_space/test_cpu_exec_space_apu.nes",
+            ScenarioLeaf::check_screen(295, 0x28EE2FAC59284B74)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            295,
-            ScenarioOperation::check_screen(0x28EE2FAC59284B74),
-        )]);
-        runner.run(scenario);
     }
 }
 
 #[test]
 fn nestest() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/nestest.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "nestest.nes",
+        ScenarioLeaf::check_screen(15, 0x43073DD69063B0D2),
+        ScenarioLeaf::standard_controller(15, Pad1(START), Pressed),
+        ScenarioLeaf::standard_controller(16, Pad1(START), Released),
+        ScenarioLeaf::check_screen(70, 0x01A4B722289CD31E),
+        ScenarioLeaf::standard_controller(70, Pad1(SELECT), Pressed),
+        ScenarioLeaf::standard_controller(71, Pad1(SELECT), Released),
+        ScenarioLeaf::check_screen(75, 0xA5763C5F44A6FBED),
+        ScenarioLeaf::standard_controller(75, Pad1(START), Pressed),
+        ScenarioLeaf::standard_controller(76, Pad1(START), Released),
+        ScenarioLeaf::check_screen(90, 0x6FBB66DD65D28A99)
     );
-    let scenario = Scenario::new(&vec![
-        ScenarioLeaf::new(15, ScenarioOperation::check_screen(0x43073DD69063B0D2)),
-        ScenarioLeaf::new(
-            15,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::START),
-                PadState::Pressed,
-            ),
-        ),
-        ScenarioLeaf::new(
-            16,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::START),
-                PadState::Released,
-            ),
-        ),
-        ScenarioLeaf::new(70, ScenarioOperation::check_screen(0x01A4B722289CD31E)),
-        ScenarioLeaf::new(
-            70,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::SELECT),
-                PadState::Pressed,
-            ),
-        ),
-        ScenarioLeaf::new(
-            71,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::SELECT),
-                PadState::Released,
-            ),
-        ),
-        ScenarioLeaf::new(75, ScenarioOperation::check_screen(0xA5763C5F44A6FBED)),
-        ScenarioLeaf::new(
-            75,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::START),
-                PadState::Pressed,
-            ),
-        ),
-        ScenarioLeaf::new(
-            76,
-            ScenarioOperation::standard_controller(
-                StandardControllerButtonCode::Pad1(ButtonCode::START),
-                PadState::Released,
-            ),
-        ),
-        ScenarioLeaf::new(90, ScenarioOperation::check_screen(0x6FBB66DD65D28A99)),
-    ]);
-    runner.run(scenario);
 }
 
 #[test]
 fn instr_timing() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/instr_timing/instr_timing.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "instr_timing/instr_timing.nes",
+        ScenarioLeaf::check_screen(1330, 0x5E0E057574FF467B)
     );
-    let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        1330,
-        ScenarioOperation::check_screen(0x5E0E057574FF467B),
-    )]);
-    runner.run(scenario);
 }
 
 #[test]
 fn instr_misc() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/instr_misc/instr_misc.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "instr_misc/instr_misc.nes",
+        ScenarioLeaf::check_screen(344, 0xE00704F6A0376CBE)
     );
-    let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        344,
-        ScenarioOperation::check_screen(0xE00704F6A0376CBE),
-    )]);
-    runner.run(scenario);
 }
 
 #[test]
 fn instr_test_v5() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/instr_test-v5/all_instrs.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "instr_test-v5/all_instrs.nes",
+        ScenarioLeaf::check_screen(2450, 0x0D3D1CD1F7F9EC0B)
     );
-    let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        2450,
-        ScenarioOperation::check_screen(0x0D3D1CD1F7F9EC0B),
-    )]);
-    runner.run(scenario);
 }
 
 #[test]
 fn cpu_timing_test6() {
-    let mut runner = ScenarioRunner::new(
-        &mut include_bytes!("../../sample_roms/cpu_timing_test6/cpu_timing_test.nes")
-            .iter()
-            .cloned(),
+    test!(
+        "cpu_timing_test6/cpu_timing_test.nes",
+        ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
     );
-    let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-        639,
-        ScenarioOperation::check_screen(0x475DE2E673F715D4),
-    )]);
-    runner.run(scenario);
 }
 
 mod blargg_apu_2005_07_30 {
@@ -427,156 +353,90 @@ mod blargg_apu_2005_07_30 {
 
     #[test]
     fn _01_len_ctr() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/01.len_ctr.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/01.len_ctr.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _02_len_table() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/02.len_table.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/02.len_table.nes",
+            ScenarioLeaf::check_screen(15, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            15,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _03_irq_flag() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/03.irq_flag.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/03.irq_flag.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _04_clock_jitter() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/04.clock_jitter.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/04.clock_jitter.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _05_len_timing_mode0() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/05.len_timing_mode0.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _06_len_timing_mode1() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/06.len_timing_mode1.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _07_irq_flag_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/07.irq_flag_timing.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _08_irq_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/08.irq_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/08.irq_timing.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _09_reset_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/09.reset_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/09.reset_timing.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _10_len_halt_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/10.len_halt_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/10.len_halt_timing.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _11_len_reload_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_apu_2005.07.30/11.len_reload_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_apu_2005.07.30/11.len_reload_timing.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -585,30 +445,22 @@ mod cpu_reset {
 
     #[test]
     fn ram_after_reset() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_reset/ram_after_reset.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_reset/ram_after_reset.nes",
+            ScenarioLeaf::check_screen(155, 0x6C18F33A360A267A),
+            ScenarioLeaf::reset(156),
+            ScenarioLeaf::check_screen(255, 0xA70256FE525B5712)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            45,
-            ScenarioOperation::check_screen(0xB1866B91E4771BAB),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn registers() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/cpu_reset/registers.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "cpu_reset/registers.nes",
+            ScenarioLeaf::check_screen(155, 0x6C18F33A360A267A),
+            ScenarioLeaf::reset(156),
+            ScenarioLeaf::check_screen(255, 0x15A2A5B1C285B8CE)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            295,
-            ScenarioOperation::check_screen(0x28EE2FAC59284B74),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -617,74 +469,42 @@ mod blargg_ppu_tests_2005_09_15b {
 
     #[test]
     fn palette_ram() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_ppu_tests_2005.09.15b/palette_ram.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_ppu_tests_2005.09.15b/palette_ram.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn power_up_palette() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn sprite_ram() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_ppu_tests_2005.09.15b/sprite_ram.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn vbl_clear_time() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn vram_access() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/blargg_ppu_tests_2005.09.15b/vram_access.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "blargg_ppu_tests_2005.09.15b/vram_access.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -693,44 +513,26 @@ mod full_palette {
 
     #[test]
     fn flowing_palette() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/full_palette/flowing_palette.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "full_palette/flowing_palette.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn full_palette_smooth() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/full_palette/full_palette_smooth.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "full_palette/full_palette_smooth.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn full_palette() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/full_palette/full_palette.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "full_palette/full_palette.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
 }
@@ -740,30 +542,18 @@ mod nmi_sync {
 
     #[test]
     fn demo_ntsc() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/nmi_sync/demo_ntsc.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "nmi_sync/demo_ntsc.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn demo_pal() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/nmi_sync/demo_pal.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "nmi_sync/demo_pal.nes",
+            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            30,
-            ScenarioOperation::check_screen(0x85459C9BE19FB8A0),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -772,160 +562,90 @@ mod sprite_hit_tests_2005_10_05 {
 
     #[test]
     fn _01_basics() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/01.basics.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/01.basics.nes",
+            ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x89392E806F5682F4),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _02_alignment() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/02.alignment.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/02.alignment.nes",
+            ScenarioLeaf::check_screen(34, 0x75D8550D59B6F72B)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x75D8550D59B6F72B),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _03_corners() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/03.corners.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/03.corners.nes",
+            ScenarioLeaf::check_screen(34, 0x2983264967F6A253)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x2983264967F6A253),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _04_flip() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/04.flip.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/04.flip.nes",
+            ScenarioLeaf::check_screen(34, 0x9BAF184F5F15E8A7)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x9BAF184F5F15E8A7),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _05_left_clip() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/05.left_clip.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/05.left_clip.nes",
+            ScenarioLeaf::check_screen(34, 0x14DE22738C3636C0)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x14DE22738C3636C0),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _06_right_edge() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/06.right_edge.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/06.right_edge.nes",
+            ScenarioLeaf::check_screen(34, 0x2270DD899C0E1480)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x2270DD899C0E1480),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _07_screen_bottom() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/07.screen_bottom.nes",
+            ScenarioLeaf::check_screen(34, 0x5571EB62B8928090)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0x5571EB62B8928090),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _08_double_height() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/sprite_hit_tests_2005.10.05/08.double_height.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/08.double_height.nes",
+            ScenarioLeaf::check_screen(34, 0xC5EE8DB0ABBD48ED)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            34,
-            ScenarioOperation::check_screen(0xC5EE8DB0ABBD48ED),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _09_timing_basics() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/09.timing_basics.nes",
+            ScenarioLeaf::check_screen(60, 0x8CED0595749BE2DA)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            60,
-            ScenarioOperation::check_screen(0x8CED0595749BE2DA),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _10_timing_order() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!(
-                "../../sample_roms/sprite_hit_tests_2005.10.05/10.timing_order.nes"
-            ).iter()
-            .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/10.timing_order.nes",
+            ScenarioLeaf::check_screen(60, 0xBDE510E7036C02DD)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            60,
-            ScenarioOperation::check_screen(0xBDE510E7036C02DD),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _11_edge_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_hit_tests_2005.10.05/11.edge_timing.nes",
+            ScenarioLeaf::check_screen(60, 0xB3C59FBA25A122C8)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            60,
-            ScenarioOperation::check_screen(0xB3C59FBA25A122C8),
-        )]);
-        runner.run(scenario);
     }
 }
 
@@ -934,71 +654,41 @@ mod sprite_overflow_tests {
 
     #[test]
     fn _1_basics() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_overflow_tests/1.Basics.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_overflow_tests/1.Basics.nes",
+            ScenarioLeaf::check_screen(36, 0x64673F9E8279B5DA)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x64673F9E8279B5DA),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _2_details() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_overflow_tests/2.Details.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_overflow_tests/2.Details.nes",
+            ScenarioLeaf::check_screen(36, 0x6857729005806691)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x6857729005806691),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _3_timing() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_overflow_tests/3.Timing.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_overflow_tests/3.Timing.nes",
+            ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x89392E806F5682F4),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _4_obscure() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_overflow_tests/4.Obscure.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_overflow_tests/4.Obscure.nes",
+            ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x89392E806F5682F4),
-        )]);
-        runner.run(scenario);
     }
 
     #[test]
     fn _5_emulator() {
-        let mut runner = ScenarioRunner::new(
-            &mut include_bytes!("../../sample_roms/sprite_overflow_tests/5.Emulator.nes")
-                .iter()
-                .cloned(),
+        test!(
+            "sprite_overflow_tests/5.Emulator.nes",
+            ScenarioLeaf::check_screen(36, 0x0F70D5EEDE382586)
         );
-        let scenario = Scenario::new(&vec![ScenarioLeaf::new(
-            36,
-            ScenarioOperation::check_screen(0x0F70D5EEDE382586),
-        )]);
-        runner.run(scenario);
     }
 }

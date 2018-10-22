@@ -214,7 +214,7 @@ impl OpCode for Shx {
     ) -> Box<dyn CpuStepState> {
         let high = ((address >> 8) as u8).wrapping_add(1);
         let low = address & 0xFF;
-        Box::new(WriteNewAddrStep1::new(address, move |r| {
+        Box::new(WriteNewAddrStep1::new(move |r| {
             let value = r.get_x() & high;
             let new_addr = (usize::from(value) << 8) | low;
             (value, new_addr)
@@ -235,7 +235,7 @@ impl OpCode for Shy {
     ) -> Box<dyn CpuStepState> {
         let high = ((address >> 8) as u8).wrapping_add(1);
         let low = address & 0xFF;
-        Box::new(WriteNewAddrStep1::new(address, move |r| {
+        Box::new(WriteNewAddrStep1::new(move |r| {
             let value = r.get_y() & high;
             let new_addr = (usize::from(value) << 8) | low;
             (value, new_addr)
@@ -314,13 +314,12 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for WriteStep1<F> {
 }
 
 struct WriteNewAddrStep1<F: Fn(&mut Register) -> (u8, usize)> {
-    address: usize,
     func: F,
 }
 
 impl<F: Fn(&mut Register) -> (u8, usize)> WriteNewAddrStep1<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self { address, func }
+    pub fn new(func: F) -> Self {
+        Self { func }
     }
 }
 

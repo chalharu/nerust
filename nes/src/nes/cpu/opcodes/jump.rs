@@ -28,7 +28,7 @@ impl OpCode for Jsr {
         &self,
         address: usize,
         _register: &mut Register,
-        interrupt: &mut Interrupt,
+        _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(JsrStep1::new(address))
     }
@@ -149,7 +149,7 @@ pub(crate) struct Rts;
 impl OpCode for Rts {
     fn next_func(
         &self,
-        address: usize,
+        _address: usize,
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
