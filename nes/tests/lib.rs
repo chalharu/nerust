@@ -508,34 +508,33 @@ mod blargg_ppu_tests_2005_09_15b {
     }
 }
 
-mod full_palette {
-    use super::*;
+// mod full_palette {
+//     use super::*;
 
-    #[test]
-    fn flowing_palette() {
-        test!(
-            "full_palette/flowing_palette.nes",
-            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
-        );
-    }
+//     #[test]
+//     fn flowing_palette() {
+//         test!(
+//             "full_palette/flowing_palette.nes",
+//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//         );
+//     }
 
-    #[test]
-    fn full_palette_smooth() {
-        test!(
-            "full_palette/full_palette_smooth.nes",
-            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
-        );
-    }
+//     #[test]
+//     fn full_palette_smooth() {
+//         test!(
+//             "full_palette/full_palette_smooth.nes",
+//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//         );
+//     }
 
-    #[test]
-    fn full_palette() {
-        test!(
-            "full_palette/full_palette.nes",
-            ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
-        );
-    }
-
-}
+//     #[test]
+//     fn full_palette() {
+//         test!(
+//             "full_palette/full_palette.nes",
+//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//         );
+//     }
+// }
 
 mod nmi_sync {
     use super::*;
@@ -628,7 +627,7 @@ mod sprite_hit_tests_2005_10_05 {
     fn _09_timing_basics() {
         test!(
             "sprite_hit_tests_2005.10.05/09.timing_basics.nes",
-            ScenarioLeaf::check_screen(60, 0x8CED0595749BE2DA)
+            ScenarioLeaf::check_screen(80, 0x8CED0595749BE2DA)
         );
     }
 
@@ -644,7 +643,7 @@ mod sprite_hit_tests_2005_10_05 {
     fn _11_edge_timing() {
         test!(
             "sprite_hit_tests_2005.10.05/11.edge_timing.nes",
-            ScenarioLeaf::check_screen(60, 0xB3C59FBA25A122C8)
+            ScenarioLeaf::check_screen(80, 0xB3C59FBA25A122C8)
         );
     }
 }
@@ -672,7 +671,7 @@ mod sprite_overflow_tests {
     fn _3_timing() {
         test!(
             "sprite_overflow_tests/3.Timing.nes",
-            ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
+            ScenarioLeaf::check_screen(130, 0xBF60CA9E1BDCFA3B)
         );
     }
 
@@ -680,7 +679,7 @@ mod sprite_overflow_tests {
     fn _4_obscure() {
         test!(
             "sprite_overflow_tests/4.Obscure.nes",
-            ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
+            ScenarioLeaf::check_screen(36, 0xE6B70C24953720D2)
         );
     }
 
