@@ -63,6 +63,10 @@ impl Cartridge for Mapper2 {
 
     fn step(&mut self) {}
 
+    fn name(&self) -> &str {
+        "Mapper2(UxROM)"
+    }
+
     fn mirror_mode(&self) -> MirrorMode {
         self.cartridge_data.get_mirror_mode()
     }

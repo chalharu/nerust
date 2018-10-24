@@ -183,6 +183,10 @@ impl Cartridge for Mapper1 {
         }
     }
 
+    fn name(&self) -> &str {
+        "Mapper1(MMC1)"
+    }
+
     fn step(&mut self) {}
 
     fn mirror_mode(&self) -> MirrorMode {

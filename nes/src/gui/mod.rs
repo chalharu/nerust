@@ -23,6 +23,8 @@ use std::os::raw::c_void;
 use std::time::{Duration, Instant};
 use std::{f64, iter, mem, thread};
 
+const PAR: f64 = 7.0 / 8.0;
+
 struct Fps {
     instants: VecDeque<Instant>,
     wait_instants: Instant,
@@ -64,7 +66,7 @@ impl Fps {
 
 fn create_window(events_loop: &EventsLoop) -> GlWindow {
     let window = WindowBuilder::new()
-        .with_dimensions(LogicalSize::new(256.0, 240.0))
+        .with_dimensions(LogicalSize::new(256.0 / PAR, 240.0))
         .with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
@@ -387,7 +389,7 @@ impl Window {
         let dpi_factor = self.window.get_hidpi_factor();
         self.window.resize(logical_size.to_physical(dpi_factor));
 
-        let rate_x = logical_size.width / 256.0;
+        let rate_x = logical_size.width / 256.0 * PAR;
         let rate_y = logical_size.height / 240.0;
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;

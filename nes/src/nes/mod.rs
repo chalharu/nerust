@@ -74,3 +74,8 @@ impl Console {
         result
     }
 }
+
+struct BusReadResult {
+    pub data: u8,
+    pub mask: u8,
+}

@@ -68,6 +68,10 @@ impl Cartridge for Mapper3 {
 
     fn step(&mut self) {}
 
+    fn name(&self) -> &str {
+        "Mapper3(CNROM)"
+    }
+
     fn mirror_mode(&self) -> MirrorMode {
         self.cartridge_data.get_mirror_mode()
     }
