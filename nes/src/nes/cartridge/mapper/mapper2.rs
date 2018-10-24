@@ -7,6 +7,7 @@
 use super::super::Cartridge;
 use super::CartridgeData;
 use crate::nes::MirrorMode;
+use crate::nes::OpenBusReadResult;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Mapper2 {
@@ -29,21 +30,24 @@ impl Mapper2 {
 }
 
 impl Cartridge for Mapper2 {
-    fn read(&self, address: usize) -> u8 {
-        match address {
-            0...0x1FFF => self.cartridge_data.read_char_rom(address),
-            0x6000...0x7FFF => self.cartridge_data.read_sram(address - 0x6000),
-            0x8000...0xBFFF => self
-                .cartridge_data
-                .read_prog_rom(usize::from(self.prg_bank1) * 0x4000 + address - 0x8000),
-            n if n >= 0xC000 => self
-                .cartridge_data
-                .read_prog_rom(usize::from(self.prg_bank2) * 0x4000 + address - 0xC000),
-            _ => {
-                error!("unhandled mapper2 read at address: 0x{:04X}", address);
-                0
-            }
-        }
+    fn read(&self, address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(
+            match address {
+                0...0x1FFF => self.cartridge_data.read_char_rom(address),
+                0x6000...0x7FFF => self.cartridge_data.read_sram(address - 0x6000),
+                0x8000...0xBFFF => self
+                    .cartridge_data
+                    .read_prog_rom(usize::from(self.prg_bank1) * 0x4000 + address - 0x8000),
+                n if n >= 0xC000 => self
+                    .cartridge_data
+                    .read_prog_rom(usize::from(self.prg_bank2) * 0x4000 + address - 0xC000),
+                _ => {
+                    error!("unhandled mapper2 read at address: 0x{:04X}", address);
+                    0
+                }
+            },
+            0xFF,
+        )
     }
 
     fn write(&mut self, address: usize, value: u8) {

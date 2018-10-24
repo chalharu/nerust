@@ -8,9 +8,10 @@ pub mod error;
 pub mod format;
 pub mod mapper;
 use crate::nes::MirrorMode;
+use crate::nes::OpenBusReadResult;
 
 pub trait Cartridge {
-    fn read(&self, address: usize) -> u8;
+    fn read(&self, address: usize) -> OpenBusReadResult;
     fn write(&mut self, address: usize, value: u8);
     fn step(&mut self);
     fn mirror_mode(&self) -> MirrorMode;
