@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Controller;
+use crate::nes::OpenBusReadResult;
 
 pub struct StandardController {
     buttons: [Buttons; 2],
@@ -56,9 +57,9 @@ impl StandardController {
 }
 
 impl Controller for StandardController {
-    fn read(&mut self, address: usize) -> u8 {
+    fn read(&mut self, address: usize) -> OpenBusReadResult {
         match address {
-            0 => {
+            0 => OpenBusReadResult::new(
                 (if self.index1 < 8 {
                     let result = self.buttons[0].bits() >> self.index1;
                     if !self.strobe {
@@ -67,9 +68,10 @@ impl Controller for StandardController {
                     result
                 } else {
                     0
-                }) | (if self.microphone { 0x04 } else { 0 })
-            }
-            1 => {
+                }) | (if self.microphone { 0x04 } else { 0 }),
+                7,
+            ),
+            1 => OpenBusReadResult::new(
                 if self.index2 < 8 {
                     let result = self.buttons[1].bits() >> self.index2;
                     if !self.strobe {
@@ -78,11 +80,12 @@ impl Controller for StandardController {
                     result
                 } else {
                     0
-                }
-            }
+                },
+                0x1F,
+            ),
             _ => {
                 error!("unhandled controller read at address: 0x{:04X}", address);
-                0
+                OpenBusReadResult::new(0, 0)
             }
         }
     }

@@ -75,7 +75,34 @@ impl Console {
     }
 }
 
-struct BusReadResult {
+struct OpenBus {
+    data: u8,
+}
+
+impl OpenBus {
+    pub fn new() -> Self {
+        Self { data: 0 }
+    }
+
+    pub fn unite(&mut self, data: OpenBusReadResult) -> u8 {
+        let result = (self.data & !data.mask) | (data.data & data.mask);
+        self.data = result;
+        result
+    }
+
+    pub fn write(&mut self, data: u8) -> u8 {
+        self.data = data;
+        data
+    }
+}
+
+pub struct OpenBusReadResult {
     pub data: u8,
     pub mask: u8,
+}
+
+impl OpenBusReadResult {
+    pub fn new(data: u8, mask: u8) -> Self {
+        Self { data, mask }
+    }
 }

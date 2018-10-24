@@ -6,17 +6,18 @@
 
 use crate::nes::cpu::{Interrupt, Register};
 use crate::nes::{Apu, Cartridge, Controller, Ppu};
+use crate::nes::{OpenBus, OpenBusReadResult};
 
 pub(crate) struct Memory {
     wram: [u8; 2048],
-    lastread: u8,
+    openbus: OpenBus,
 }
 
 impl Memory {
     pub fn new() -> Self {
         Self {
             wram: [0; 2048],
-            lastread: 0,
+            openbus: OpenBus::new(),
         }
     }
 
@@ -44,20 +45,22 @@ impl Memory {
         interrupt: &mut Interrupt,
     ) -> u8 {
         let result = match address {
-            0...0x1FFF => self.wram[address & 0x07FF],
-            0x2000...0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
-            0x4015 => apu.read_register(address, interrupt),
-            0x4016 | 0x4017 => (controller.read(address & 1) & 0x1F) | (self.lastread & 0xE0),
-            0x4000...0x5FFF => self.lastread, // TODO: I/O registers
-            0x6000...0x10000 => cartridge.read(address),
+            0...0x1FFF => OpenBusReadResult::new(self.wram[address & 0x07FF], 0xFF),
+            0x2000...0x3FFF => OpenBusReadResult::new(
+                ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
+                0xFF,
+            ),
+            0x4015 => OpenBusReadResult::new(apu.read_register(address, interrupt), 0xFF),
+            0x4016 | 0x4017 => controller.read(address & 1),
+            0x4000...0x5FFF => OpenBusReadResult::new(0, 0), // TODO: I/O registers
+            0x6000...0x10000 => OpenBusReadResult::new(cartridge.read(address), 0xFF),
             _ => {
                 error!("unhandled cpu memory read at address: 0x{:04X}", address);
-                self.lastread
+                OpenBusReadResult::new(0, 0)
             }
         };
-        self.lastread = result;
         interrupt.write = false;
-        result
+        self.openbus.unite(result)
     }
 
     pub fn read_dummy_cross(
