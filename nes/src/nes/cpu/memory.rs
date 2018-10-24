@@ -53,7 +53,7 @@ impl Memory {
             0x4015 => OpenBusReadResult::new(apu.read_register(address, interrupt), 0xFF),
             0x4016 | 0x4017 => controller.read(address & 1),
             0x4000...0x5FFF => OpenBusReadResult::new(0, 0), // TODO: I/O registers
-            0x6000...0x10000 => OpenBusReadResult::new(cartridge.read(address), 0xFF),
+            0x6000...0x10000 => cartridge.read(address),
             _ => {
                 error!("unhandled cpu memory read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)

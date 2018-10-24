@@ -7,6 +7,7 @@
 use super::super::Cartridge;
 use super::CartridgeData;
 use crate::nes::MirrorMode;
+use crate::nes::OpenBusReadResult;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Mapper1 {
@@ -142,27 +143,30 @@ impl Mapper1 {
 }
 
 impl Cartridge for Mapper1 {
-    fn read(&self, mut address: usize) -> u8 {
-        match address {
-            0...0x1FFF => {
-                let bank = address / 0x1000;
-                let offset = address & 0xFFF;
-                self.cartridge_data
-                    .read_char_rom(self.chr_offsets[bank] + offset)
-            }
-            0x6000...0x7FFF => self.cartridge_data.read_sram(address - 0x6000),
-            n if n >= 0x8000 => {
-                address -= 0x8000;
-                let bank = address / 0x4000;
-                let offset = address & 0x3FFF;
-                self.cartridge_data
-                    .read_prog_rom(self.prg_offsets[bank] + offset)
-            }
-            _ => {
-                error!("unhandled mapper1 read at address: 0x{:04X}", address);
-                0
-            }
-        }
+    fn read(&self, mut address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(
+            match address {
+                0...0x1FFF => {
+                    let bank = address / 0x1000;
+                    let offset = address & 0xFFF;
+                    self.cartridge_data
+                        .read_char_rom(self.chr_offsets[bank] + offset)
+                }
+                0x6000...0x7FFF => self.cartridge_data.read_sram(address - 0x6000),
+                n if n >= 0x8000 => {
+                    address -= 0x8000;
+                    let bank = address / 0x4000;
+                    let offset = address & 0x3FFF;
+                    self.cartridge_data
+                        .read_prog_rom(self.prg_offsets[bank] + offset)
+                }
+                _ => {
+                    error!("unhandled mapper1 read at address: 0x{:04X}", address);
+                    0
+                }
+            },
+            0xFF,
+        )
     }
 
     fn write(&mut self, address: usize, value: u8) {

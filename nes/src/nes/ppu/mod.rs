@@ -11,7 +11,7 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::nes::cartridge::Cartridge;
 use crate::nes::cpu::interrupt::Interrupt;
-use crate::nes::{Screen, RGB};
+use crate::nes::{OpenBus, OpenBusReadResult, Screen, RGB};
 use std::cmp;
 use std::mem;
 
@@ -234,7 +234,6 @@ pub(crate) struct Core {
     render_executing: bool,
     post_render_executing: bool,
 
-    register_buffer: u8,
     oam_read_buffer: u8,
     vram_read_delay: u8,
 
@@ -248,6 +247,8 @@ pub(crate) struct Core {
     sprite_reading: bool,
     oam_address_high: u8,
     oam_address_low: u8,
+    openbus_vram: OpenBus,
+    openbus_io: OpenBus,
 }
 
 impl Core {
@@ -273,7 +274,6 @@ impl Core {
             previous_tile: TileInfo::new(),
             next_tile: TileInfo::new(),
             sprites: [SpriteInfo::new(); 64],
-            register_buffer: 0,
             render_executing: false,
             post_render_executing: false,
             oam_read_buffer: 0,
@@ -290,6 +290,8 @@ impl Core {
             secondary_oam_address: 0,
             sprite_count: 0,
             sprite_index: 0,
+            openbus_vram: OpenBus::new(),
+            openbus_io: OpenBus::new(),
         }
     }
 
@@ -317,7 +319,6 @@ impl Core {
         self.has_first_sprite = false;
         // self.render_executing = false;
         // self.post_render_executing = false;
-        // self.register_buffer = 0;
         // self.oam_read_buffer = 0;
     }
 
@@ -328,15 +329,12 @@ impl Core {
         interrupt: &mut Interrupt,
     ) -> u8 {
         let result = match address {
-            0x2002 => {
-                (self.read_status(interrupt) & 0b1110_0000) | (self.register_buffer & 0b0001_1111)
-            }
-            0x2004 => self.read_oam(),
-            0x2007 => self.read_data(cartridge),
-            _ => self.register_buffer,
+            0x2002 => OpenBusReadResult::new(self.read_status(interrupt), 0b1110_0000),
+            0x2004 => OpenBusReadResult::new(self.read_oam(), 0xFF),
+            0x2007 => OpenBusReadResult::new(self.read_data(cartridge), 0xFF),
+            _ => OpenBusReadResult::new(0, 0),
         };
-        self.register_buffer = result;
-        result
+        self.openbus_io.unite(result)
     }
 
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
@@ -373,7 +371,7 @@ impl Core {
 
     fn read_data(&mut self, cartridge: &mut Box<Cartridge>) -> u8 {
         if self.vram_read_delay > 0 {
-            self.register_buffer
+            self.openbus_io.unite(OpenBusReadResult::new(0, 0))
         } else {
             self.vram_read_delay = 6;
             let addr = self.state.vram_addr as usize;
@@ -429,14 +427,18 @@ impl Core {
 
     pub fn read_vram(&mut self, mut address: usize, cartridge: &mut Box<Cartridge>) -> u8 {
         address &= 0x3FFF;
-        match address {
+        let result = match address {
             0...0x1FFF => cartridge.read(address),
-            2000...0x3FFF => self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF],
+            2000...0x3FFF => OpenBusReadResult::new(
+                self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF],
+                0xFF,
+            ),
             _ => {
                 error!("unhandled ppu memory read at address: 0x{:04X}", address);
-                0
+                OpenBusReadResult::new(0, 0)
             }
-        }
+        };
+        self.openbus_vram.unite(result)
     }
 
     fn palette_address(address: usize) -> usize {
@@ -468,7 +470,7 @@ impl Core {
             0x2007 => self.write_data(value, cartridge),
             _ => {}
         }
-        self.register_buffer = value;
+        self.openbus_io.write(value);
     }
 
     fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
