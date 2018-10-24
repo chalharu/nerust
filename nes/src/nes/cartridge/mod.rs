@@ -14,6 +14,7 @@ pub trait Cartridge {
     fn write(&mut self, address: usize, value: u8);
     fn step(&mut self);
     fn mirror_mode(&self) -> MirrorMode;
+    fn name(&self) -> &str;
 }
 
 pub fn try_from<I: Iterator<Item = u8>>(
