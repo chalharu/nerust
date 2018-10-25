@@ -22,12 +22,6 @@ pub(crate) struct CartridgeData {
     has_battery: bool,
 }
 
-trait Mapper {
-    fn read(&mut self, address: u32) -> u8;
-    fn write(&mut self, address: u32, value: u8);
-    fn step(&mut self);
-}
-
 impl CartridgeData {
     pub(crate) fn try_from<I: Iterator<Item = u8>>(
         input: &mut I,

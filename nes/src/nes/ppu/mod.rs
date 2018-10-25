@@ -327,14 +327,14 @@ impl Core {
         address: usize,
         cartridge: &mut Box<Cartridge>,
         interrupt: &mut Interrupt,
-    ) -> u8 {
+    ) -> OpenBusReadResult {
         let result = match address {
             0x2002 => OpenBusReadResult::new(self.read_status(interrupt), 0b1110_0000),
             0x2004 => OpenBusReadResult::new(self.read_oam(), 0xFF),
             0x2007 => OpenBusReadResult::new(self.read_data(cartridge), 0xFF),
             _ => OpenBusReadResult::new(0, 0),
         };
-        self.openbus_io.unite(result)
+        OpenBusReadResult::new(self.openbus_io.unite(result), 0xFF)
     }
 
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
