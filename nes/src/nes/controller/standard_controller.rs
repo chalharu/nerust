@@ -17,14 +17,14 @@ pub struct StandardController {
 
 bitflags! {
     pub struct Buttons: u8 {
-        const A = 0b00000001;
-        const B = 0b00000010;
+        const A =      0b00000001;
+        const B =      0b00000010;
         const SELECT = 0b00000100;
-        const START = 0b00001000;
-        const UP = 0b00010000;
-        const DOWN = 0b00100000;
-        const LEFT = 0b01000000;
-        const RIGHT = 0b10000000;
+        const START =  0b00001000;
+        const UP =     0b00010000;
+        const DOWN =   0b00100000;
+        const LEFT =   0b01000000;
+        const RIGHT =  0b10000000;
     }
 }
 
@@ -60,15 +60,15 @@ impl Controller for StandardController {
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         match address {
             0 => OpenBusReadResult::new(
-                (if self.index1 < 8 {
+                if self.index1 < 8 {
                     let result = self.buttons[0].bits() >> self.index1;
                     if !self.strobe {
                         self.index1 += 1;
                     }
-                    result
+                    result & 1
                 } else {
                     0
-                }) | (if self.microphone { 0x04 } else { 0 }),
+                } | (if self.microphone { 0x04 } else { 0 }),
                 7,
             ),
             1 => OpenBusReadResult::new(
@@ -77,7 +77,7 @@ impl Controller for StandardController {
                     if !self.strobe {
                         self.index2 += 1;
                     }
-                    result
+                    result & 1
                 } else {
                     0
                 },
