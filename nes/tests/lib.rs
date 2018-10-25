@@ -14,6 +14,8 @@ mod macros;
 
 mod apu;
 mod cpu;
+mod input;
+mod mapper;
 mod ppu;
 
 use self::ButtonCode::*;
