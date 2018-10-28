@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn _1_branch_basics() {
     test!(
-        "branch_timing_tests/1.Branch_Basics.nes",
+        "cpu/branch_timing_tests/1.Branch_Basics.nes",
         ScenarioLeaf::check_screen(25, 0x081BA42EB6C3294D)
     );
 }
@@ -17,7 +17,7 @@ fn _1_branch_basics() {
 #[test]
 fn _2_backward_branch() {
     test!(
-        "branch_timing_tests/2.Backward_Branch.nes",
+        "cpu/branch_timing_tests/2.Backward_Branch.nes",
         ScenarioLeaf::check_screen(25, 0xE70FF858A009593F)
     );
 }
@@ -25,7 +25,7 @@ fn _2_backward_branch() {
 #[test]
 fn _3_forward_branch() {
     test!(
-        "branch_timing_tests/3.Forward_Branch.nes",
+        "cpu/branch_timing_tests/3.Forward_Branch.nes",
         ScenarioLeaf::check_screen(25, 0xD394B778636B1CEF)
     );
 }

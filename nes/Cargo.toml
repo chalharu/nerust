@@ -17,3 +17,6 @@ bitflags = { version = ">=0.0.0" }
 alto =  { version = ">=0.0.0" }
 crc = { version = ">=0.0.0" }
 futures = { version = ">=0.0.0" }
+
+[dev-dependencies]
+hound = { version = ">=0.0.0" }

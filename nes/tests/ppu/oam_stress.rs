@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn oam_stress() {
     test!(
-        "oam_stress/oam_stress.nes",
+        "ppu/oam_stress/oam_stress.nes",
         ScenarioLeaf::check_screen(1740, 0x3A6D3CAAAF465F69)
     );
 }

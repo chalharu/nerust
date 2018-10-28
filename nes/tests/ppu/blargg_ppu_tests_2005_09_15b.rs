@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn palette_ram() {
     test!(
-        "blargg_ppu_tests_2005.09.15b/palette_ram.nes",
+        "ppu/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
         ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
     );
 }
@@ -17,7 +17,7 @@ fn palette_ram() {
 #[test]
 fn power_up_palette() {
     test!(
-        "blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
+        "ppu/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
         ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
     );
 }
@@ -25,7 +25,7 @@ fn power_up_palette() {
 #[test]
 fn sprite_ram() {
     test!(
-        "blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
+        "ppu/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
         ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
     );
 }
@@ -33,7 +33,7 @@ fn sprite_ram() {
 #[test]
 fn vbl_clear_time() {
     test!(
-        "blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
+        "ppu/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
         ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
     );
 }
@@ -41,7 +41,7 @@ fn vbl_clear_time() {
 #[test]
 fn vram_access() {
     test!(
-        "blargg_ppu_tests_2005.09.15b/vram_access.nes",
+        "ppu/blargg_ppu_tests_2005.09.15b/vram_access.nes",
         ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
     );
 }

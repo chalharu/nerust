@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn cpu_interrupts() {
     test!(
-        "cpu_interrupts_v2/cpu_interrupts.nes",
+        "cpu/cpu_interrupts_v2/cpu_interrupts.nes",
         ScenarioLeaf::check_screen(45, 0xB1866B91E4771BAB)
     );
     panic!("Not implemented");

@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn instr_misc() {
     test!(
-        "instr_misc/instr_misc.nes",
+        "cpu/instr_misc/instr_misc.nes",
         ScenarioLeaf::check_screen(344, 0xE00704F6A0376CBE)
     );
 }

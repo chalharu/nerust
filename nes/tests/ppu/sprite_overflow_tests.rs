@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn _1_basics() {
     test!(
-        "sprite_overflow_tests/1.Basics.nes",
+        "ppu/sprite_overflow_tests/1.Basics.nes",
         ScenarioLeaf::check_screen(36, 0x64673F9E8279B5DA)
     );
 }
@@ -17,7 +17,7 @@ fn _1_basics() {
 #[test]
 fn _2_details() {
     test!(
-        "sprite_overflow_tests/2.Details.nes",
+        "ppu/sprite_overflow_tests/2.Details.nes",
         ScenarioLeaf::check_screen(36, 0x6857729005806691)
     );
 }
@@ -25,7 +25,7 @@ fn _2_details() {
 #[test]
 fn _3_timing() {
     test!(
-        "sprite_overflow_tests/3.Timing.nes",
+        "ppu/sprite_overflow_tests/3.Timing.nes",
         ScenarioLeaf::check_screen(130, 0xBF60CA9E1BDCFA3B)
     );
 }
@@ -33,7 +33,7 @@ fn _3_timing() {
 #[test]
 fn _4_obscure() {
     test!(
-        "sprite_overflow_tests/4.Obscure.nes",
+        "ppu/sprite_overflow_tests/4.Obscure.nes",
         ScenarioLeaf::check_screen(36, 0xE6B70C24953720D2)
     );
 }
@@ -41,7 +41,7 @@ fn _4_obscure() {
 #[test]
 fn _5_emulator() {
     test!(
-        "sprite_overflow_tests/5.Emulator.nes",
+        "ppu/sprite_overflow_tests/5.Emulator.nes",
         ScenarioLeaf::check_screen(36, 0x0F70D5EEDE382586)
     );
 }
