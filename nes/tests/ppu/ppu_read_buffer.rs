@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn test_ppu_read_buffer() {
     test!(
-        "ppu_read_buffer/test_ppu_read_buffer.nes",
+        "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
         ScenarioLeaf::check_screen(30, 0x04C8F601831BF986)
     );
     panic!("Not implemented");

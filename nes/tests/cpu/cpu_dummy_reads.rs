@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn cpu_dummy_reads() {
     test!(
-        "cpu_dummy_reads.nes",
+        "cpu/cpu_dummy_reads.nes",
         ScenarioLeaf::check_screen(50, 0x68A285C0C944073D)
     );
 }

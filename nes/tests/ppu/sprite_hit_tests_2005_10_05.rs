@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn _01_basics() {
     test!(
-        "sprite_hit_tests_2005.10.05/01.basics.nes",
+        "ppu/sprite_hit_tests_2005.10.05/01.basics.nes",
         ScenarioLeaf::check_screen(36, 0x89392E806F5682F4)
     );
 }
@@ -17,7 +17,7 @@ fn _01_basics() {
 #[test]
 fn _02_alignment() {
     test!(
-        "sprite_hit_tests_2005.10.05/02.alignment.nes",
+        "ppu/sprite_hit_tests_2005.10.05/02.alignment.nes",
         ScenarioLeaf::check_screen(34, 0x75D8550D59B6F72B)
     );
 }
@@ -25,7 +25,7 @@ fn _02_alignment() {
 #[test]
 fn _03_corners() {
     test!(
-        "sprite_hit_tests_2005.10.05/03.corners.nes",
+        "ppu/sprite_hit_tests_2005.10.05/03.corners.nes",
         ScenarioLeaf::check_screen(34, 0x2983264967F6A253)
     );
 }
@@ -33,7 +33,7 @@ fn _03_corners() {
 #[test]
 fn _04_flip() {
     test!(
-        "sprite_hit_tests_2005.10.05/04.flip.nes",
+        "ppu/sprite_hit_tests_2005.10.05/04.flip.nes",
         ScenarioLeaf::check_screen(34, 0x9BAF184F5F15E8A7)
     );
 }
@@ -41,7 +41,7 @@ fn _04_flip() {
 #[test]
 fn _05_left_clip() {
     test!(
-        "sprite_hit_tests_2005.10.05/05.left_clip.nes",
+        "ppu/sprite_hit_tests_2005.10.05/05.left_clip.nes",
         ScenarioLeaf::check_screen(34, 0x14DE22738C3636C0)
     );
 }
@@ -49,7 +49,7 @@ fn _05_left_clip() {
 #[test]
 fn _06_right_edge() {
     test!(
-        "sprite_hit_tests_2005.10.05/06.right_edge.nes",
+        "ppu/sprite_hit_tests_2005.10.05/06.right_edge.nes",
         ScenarioLeaf::check_screen(34, 0x2270DD899C0E1480)
     );
 }
@@ -57,7 +57,7 @@ fn _06_right_edge() {
 #[test]
 fn _07_screen_bottom() {
     test!(
-        "sprite_hit_tests_2005.10.05/07.screen_bottom.nes",
+        "ppu/sprite_hit_tests_2005.10.05/07.screen_bottom.nes",
         ScenarioLeaf::check_screen(34, 0x5571EB62B8928090)
     );
 }
@@ -65,7 +65,7 @@ fn _07_screen_bottom() {
 #[test]
 fn _08_double_height() {
     test!(
-        "sprite_hit_tests_2005.10.05/08.double_height.nes",
+        "ppu/sprite_hit_tests_2005.10.05/08.double_height.nes",
         ScenarioLeaf::check_screen(34, 0xC5EE8DB0ABBD48ED)
     );
 }
@@ -73,7 +73,7 @@ fn _08_double_height() {
 #[test]
 fn _09_timing_basics() {
     test!(
-        "sprite_hit_tests_2005.10.05/09.timing_basics.nes",
+        "ppu/sprite_hit_tests_2005.10.05/09.timing_basics.nes",
         ScenarioLeaf::check_screen(80, 0x8CED0595749BE2DA)
     );
 }
@@ -81,7 +81,7 @@ fn _09_timing_basics() {
 #[test]
 fn _10_timing_order() {
     test!(
-        "sprite_hit_tests_2005.10.05/10.timing_order.nes",
+        "ppu/sprite_hit_tests_2005.10.05/10.timing_order.nes",
         ScenarioLeaf::check_screen(60, 0xBDE510E7036C02DD)
     );
 }
@@ -89,7 +89,7 @@ fn _10_timing_order() {
 #[test]
 fn _11_edge_timing() {
     test!(
-        "sprite_hit_tests_2005.10.05/11.edge_timing.nes",
+        "ppu/sprite_hit_tests_2005.10.05/11.edge_timing.nes",
         ScenarioLeaf::check_screen(80, 0xB3C59FBA25A122C8)
     );
 }

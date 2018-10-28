@@ -7,7 +7,7 @@
 macro_rules! test{
     ($filename:expr, $( $x:expr ),+) => {
         let mut runner = $crate::ScenarioRunner::new(
-            &mut include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sample_roms/", $filename))
+            &mut include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../roms/", $filename))
                 .iter()
                 .cloned(),
         );

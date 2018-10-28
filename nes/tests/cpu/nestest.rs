@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn nestest() {
     test!(
-        "nestest.nes",
+        "cpu/nestest.nes",
         ScenarioLeaf::check_screen(15, 0x43073DD69063B0D2),
         ScenarioLeaf::standard_controller(15, Pad1(START), Pressed),
         ScenarioLeaf::standard_controller(16, Pad1(START), Released),

@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn bntest_aorom() {
     test!(
-        "bntest/bntest_aorom.nes",
+        "mapper/bntest/bntest_aorom.nes",
         ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
     );
     panic!("Not implemented");
@@ -18,7 +18,7 @@ fn bntest_aorom() {
 #[test]
 fn bntest_h() {
     test!(
-        "bntest/bntest_h.nes",
+        "mapper/bntest/bntest_h.nes",
         ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
     );
     panic!("Not implemented");
@@ -27,7 +27,7 @@ fn bntest_h() {
 #[test]
 fn bntest_v() {
     test!(
-        "bntest/bntest_v.nes",
+        "mapper/bntest/bntest_v.nes",
         ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
     );
     panic!("Not implemented");

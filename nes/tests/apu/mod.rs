@@ -5,5 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod blargg_apu_2005_07_30;
+mod test_apu_2;
+mod test_apu_m;
 
 use super::*;

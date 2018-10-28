@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn test_cpu_flag_concurrency() {
     test!(
-        "cpu_flag_concurrency/test_cpu_flag_concurrency.nes",
+        "cpu/cpu_flag_concurrency/test_cpu_flag_concurrency.nes",
         ScenarioLeaf::check_screen(45, 0xB1866B91E4771BAB)
     );
     panic!("Not implemented");
