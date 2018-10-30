@@ -231,9 +231,9 @@ impl Core {
     fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
+        self.pulse1.step_timer();
+        self.pulse2.step_timer();
         if self.clock_cycle & 1 == 0 {
-            self.pulse1.step_timer();
-            self.pulse2.step_timer();
             self.noise.step_timer();
             self.dmc.step_timer(cpu, cartridge);
         }
