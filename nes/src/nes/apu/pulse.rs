@@ -176,7 +176,7 @@ impl Pulse {
 
     pub fn output(&self) -> u8 {
         if (self.period < 8 || (!self.sweep_negate && self.sweep_target_period > 0x7FF))
-            && !DUTY_TABLE[usize::from(self.duty_mode)][usize::from(self.duty_value)]
+            || !DUTY_TABLE[usize::from(self.duty_mode)][usize::from(self.duty_value)]
         {
             0
         } else {

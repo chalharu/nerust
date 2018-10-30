@@ -231,10 +231,11 @@ impl Core {
     fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
+        self.noise.step_length_counter();
         self.pulse1.step_timer();
         self.pulse2.step_timer();
+        self.noise.step_timer();
         if self.clock_cycle & 1 == 0 {
-            self.noise.step_timer();
             self.dmc.step_timer(cpu, cartridge);
         }
         self.triangle.step_timer();
@@ -269,7 +270,7 @@ impl Core {
         let result = (if self.pulse1.get_status() { 1 } else { 0 })
             | (if self.pulse2.get_status() { 2 } else { 0 })
             | (if self.triangle.length_value > 0 { 4 } else { 0 })
-            | (if self.noise.length_value > 0 { 8 } else { 0 })
+            | (if self.noise.get_status() { 8 } else { 0 })
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
             | (if interrupt.get_irq(IrqSource::FrameCounter) {
                 0x40
@@ -289,13 +290,10 @@ impl Core {
         self.pulse1.set_enabled((value & 1) != 0);
         self.pulse2.set_enabled((value & 2) != 0);
         self.triangle.enabled = (value & 4) != 0;
-        self.noise.enabled = (value & 8) != 0;
+        self.noise.set_enabled((value & 8) != 0);
         self.dmc.enabled = (value & 16) != 0;
         if !self.triangle.enabled {
             self.triangle.length_value = 0;
-        }
-        if !self.noise.enabled {
-            self.noise.length_value = 0;
         }
         if !self.dmc.enabled {
             self.dmc.length_value = 0;
