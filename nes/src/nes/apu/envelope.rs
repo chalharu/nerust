@@ -85,7 +85,7 @@ pub(crate) trait Envelope: HaveEnvelopeDao + HaveLengthCounter {
         }
     }
 
-    fn step_frame(&mut self) {
+    fn step_envelope(&mut self) {
         let l = self.length_counter().get_halt();
         self.envelope_dao_mut().step_frame(l)
     }

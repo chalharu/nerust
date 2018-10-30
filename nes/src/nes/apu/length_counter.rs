@@ -101,11 +101,11 @@ pub(crate) trait LengthCounter: HaveLengthCounterDao {
         self.length_counter_dao_mut().set_enabled(enabled)
     }
 
-    fn step_frame(&mut self) {
+    fn step_length(&mut self) {
         self.length_counter_dao_mut().step_frame()
     }
 
-    fn step(&mut self) {
+    fn step_length_counter(&mut self) {
         self.length_counter_dao_mut().step()
     }
 

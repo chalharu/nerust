@@ -10,6 +10,7 @@ mod filter;
 mod length_counter;
 mod noise;
 mod pulse;
+mod timer;
 mod triangle;
 
 use self::dmc::DMC;
@@ -228,8 +229,8 @@ impl Core {
     }
 
     fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
-        LengthCounter::step(&mut self.pulse1);
-        LengthCounter::step(&mut self.pulse2);
+        self.pulse1.step_length_counter();
+        self.pulse2.step_length_counter();
         if self.clock_cycle & 1 == 0 {
             self.pulse1.step_timer();
             self.pulse2.step_timer();
@@ -240,8 +241,8 @@ impl Core {
     }
 
     fn step_envelope(&mut self) {
-        Envelope::step_frame(&mut self.pulse1);
-        Envelope::step_frame(&mut self.pulse2);
+        self.pulse1.step_envelope();
+        self.pulse2.step_envelope();
         self.noise.step_envelope();
         self.triangle.step_counter();
     }
@@ -252,8 +253,8 @@ impl Core {
     }
 
     fn step_length(&mut self) {
-        LengthCounter::step_frame(&mut self.pulse1);
-        LengthCounter::step_frame(&mut self.pulse2);
+        self.pulse1.step_length();
+        self.pulse2.step_length();
         self.noise.step_length();
         self.triangle.step_length();
     }
