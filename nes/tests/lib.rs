@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 extern crate crc;
+extern crate hound;
 extern crate nes;
 extern crate std as core;
 

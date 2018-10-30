@@ -5,13 +5,17 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod dmc;
+mod envelope;
 mod filter;
+mod length_counter;
 mod noise;
 mod pulse;
 mod triangle;
 
 use self::dmc::DMC;
+use self::envelope::*;
 use self::filter::*;
+use self::length_counter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
@@ -224,6 +228,8 @@ impl Core {
     }
 
     fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+        LengthCounter::step(&mut self.pulse1);
+        LengthCounter::step(&mut self.pulse2);
         if self.clock_cycle & 1 == 0 {
             self.pulse1.step_timer();
             self.pulse2.step_timer();
@@ -234,8 +240,8 @@ impl Core {
     }
 
     fn step_envelope(&mut self) {
-        self.pulse1.step_envelope();
-        self.pulse2.step_envelope();
+        Envelope::step_frame(&mut self.pulse1);
+        Envelope::step_frame(&mut self.pulse2);
         self.noise.step_envelope();
         self.triangle.step_counter();
     }
@@ -246,8 +252,8 @@ impl Core {
     }
 
     fn step_length(&mut self) {
-        self.pulse1.step_length();
-        self.pulse2.step_length();
+        LengthCounter::step_frame(&mut self.pulse1);
+        LengthCounter::step_frame(&mut self.pulse2);
         self.noise.step_length();
         self.triangle.step_length();
     }
@@ -259,8 +265,8 @@ impl Core {
     }
 
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
-        let result = (if self.pulse1.length_value > 0 { 1 } else { 0 })
-            | (if self.pulse2.length_value > 0 { 2 } else { 0 })
+        let result = (if self.pulse1.get_status() { 1 } else { 0 })
+            | (if self.pulse2.get_status() { 2 } else { 0 })
             | (if self.triangle.length_value > 0 { 4 } else { 0 })
             | (if self.noise.length_value > 0 { 8 } else { 0 })
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
@@ -279,17 +285,11 @@ impl Core {
     }
 
     fn write_control(&mut self, value: u8) {
-        self.pulse1.enabled = (value & 1) != 0;
-        self.pulse2.enabled = (value & 2) != 0;
+        self.pulse1.set_enabled((value & 1) != 0);
+        self.pulse2.set_enabled((value & 2) != 0);
         self.triangle.enabled = (value & 4) != 0;
         self.noise.enabled = (value & 8) != 0;
         self.dmc.enabled = (value & 16) != 0;
-        if !self.pulse1.enabled {
-            self.pulse1.length_value = 0;
-        }
-        if !self.pulse2.enabled {
-            self.pulse2.length_value = 0;
-        }
         if !self.triangle.enabled {
             self.triangle.length_value = 0;
         }
