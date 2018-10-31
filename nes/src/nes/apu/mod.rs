@@ -28,10 +28,6 @@ use crate::nes::{Cartridge, Speaker};
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
 const CLOCK_RATE: u64 = 1_789_773;
-const LENGTH_TABLE: [u8; 32] = [
-    0x0A, 0xFE, 0x14, 0x02, 0x28, 0x04, 0x50, 0x06, 0xA0, 0x08, 0x3C, 0x0A, 0x0E, 0x0C, 0x1A, 0x0E,
-    0x0C, 0x10, 0x18, 0x12, 0x30, 0x14, 0x60, 0x16, 0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E,
-];
 
 pub struct Core {
     pulse_table: Vec<f32>,
@@ -269,7 +265,7 @@ impl Core {
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
         let result = (if self.pulse1.get_status() { 1 } else { 0 })
             | (if self.pulse2.get_status() { 2 } else { 0 })
-            | (if self.triangle.length_value > 0 { 4 } else { 0 })
+            | (if self.triangle.get_status() { 4 } else { 0 })
             | (if self.noise.get_status() { 8 } else { 0 })
             | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
             | (if interrupt.get_irq(IrqSource::FrameCounter) {
@@ -289,12 +285,9 @@ impl Core {
     fn write_control(&mut self, value: u8) {
         self.pulse1.set_enabled((value & 1) != 0);
         self.pulse2.set_enabled((value & 2) != 0);
-        self.triangle.enabled = (value & 4) != 0;
+        self.triangle.set_enabled((value & 4) != 0);
         self.noise.set_enabled((value & 8) != 0);
         self.dmc.enabled = (value & 16) != 0;
-        if !self.triangle.enabled {
-            self.triangle.length_value = 0;
-        }
         if !self.dmc.enabled {
             self.dmc.length_value = 0;
         } else if self.dmc.length_value == 0 {
