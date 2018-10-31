@@ -57,7 +57,7 @@ impl Triangle {
     }
 
     pub fn reset(&mut self) {
-        self.length_counter.reset();
+        self.length_counter.soft_reset();
         self.timer.reset();
         self.duty_value = 0;
         self.counter_reload = false;

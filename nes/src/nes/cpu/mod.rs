@@ -90,11 +90,17 @@ impl Core {
         if self.interrupt.dmc_count > 0 && (self.cycles & 1 == 0) {
             self.interrupt.dmc_count -= 1;
             if self.interrupt.dmc_count == 0 {
-                let addr = apu.dmc_fill_address();
-                let value =
-                    self.memory
-                        .read(addr, ppu, cartridge, controller, apu, &mut self.interrupt);
-                apu.dmc_fill(value, &mut self.interrupt);
+                if let Some(addr) = apu.dmc_fill_address() {
+                    let value = self.memory.read(
+                        addr,
+                        ppu,
+                        cartridge,
+                        controller,
+                        apu,
+                        &mut self.interrupt,
+                    );
+                    apu.dmc_fill(value, &mut self.interrupt);
+                }
             }
         } else {
             if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
