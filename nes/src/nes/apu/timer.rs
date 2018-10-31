@@ -39,6 +39,10 @@ impl TimerDao {
             false
         }
     }
+
+    pub fn get_period(&mut self) -> u16 {
+        self.period
+    }
 }
 
 pub(crate) trait HaveTimerDao {
