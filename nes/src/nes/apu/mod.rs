@@ -115,7 +115,7 @@ impl Core {
             0x400D => (),
             0x400E => self.noise.write_period(value),
             0x400F => self.noise.write_length(value),
-            0x4015 => self.write_control(value),
+            0x4015 => self.write_control(value, interrupt),
             0x4017 => self.write_frame_counter(value, interrupt),
             _ => error!("unhandled apu register write at address: 0x{:04X}", address),
         }
@@ -125,7 +125,7 @@ impl Core {
         self.dmc.fill(value, interrupt);
     }
 
-    pub(crate) fn dmc_fill_address(&mut self) -> usize {
+    pub(crate) fn dmc_fill_address(&self) -> Option<usize> {
         self.dmc.fill_address()
     }
 
@@ -231,9 +231,7 @@ impl Core {
         self.pulse1.step_timer();
         self.pulse2.step_timer();
         self.noise.step_timer();
-        if self.clock_cycle & 1 == 0 {
-            self.dmc.step_timer(cpu, cartridge);
-        }
+        self.dmc.step_timer(&mut cpu.interrupt, cartridge);
         self.triangle.step_timer();
     }
 
@@ -267,7 +265,7 @@ impl Core {
             | (if self.pulse2.get_status() { 2 } else { 0 })
             | (if self.triangle.get_status() { 4 } else { 0 })
             | (if self.noise.get_status() { 8 } else { 0 })
-            | (if self.dmc.length_value > 0 { 0x10 } else { 0 })
+            | (if self.dmc.get_status() { 0x10 } else { 0 })
             | (if interrupt.get_irq(IrqSource::FrameCounter) {
                 0x40
             } else {
@@ -282,17 +280,12 @@ impl Core {
         result
     }
 
-    fn write_control(&mut self, value: u8) {
+    fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.pulse1.set_enabled((value & 1) != 0);
         self.pulse2.set_enabled((value & 2) != 0);
         self.triangle.set_enabled((value & 4) != 0);
         self.noise.set_enabled((value & 8) != 0);
-        self.dmc.enabled = (value & 16) != 0;
-        if !self.dmc.enabled {
-            self.dmc.length_value = 0;
-        } else if self.dmc.length_value == 0 {
-            self.dmc.restart();
-        }
+        self.dmc.set_enabled((value & 16) != 0, interrupt);
     }
 
     fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
