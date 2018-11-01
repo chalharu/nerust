@@ -7,6 +7,7 @@
 mod dmc;
 mod envelope;
 mod filter;
+mod frame_counter;
 mod length_counter;
 mod noise;
 mod pulse;
@@ -16,6 +17,7 @@ mod triangle;
 use self::dmc::DMC;
 use self::envelope::*;
 use self::filter::*;
+use self::frame_counter::*;
 use self::length_counter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
@@ -39,15 +41,9 @@ pub struct Core {
     triangle: Triangle,
     noise: Noise,
     dmc: DMC,
-    cycle: u16,
-    frame_period: bool,
-    frame_irq: bool,
     sample_cycle: u64,
     sample_reset_cycle: u64,
-    new_frame_value: u8,
-    frame_write_counter: u8,
-    clock_cycle: u64,
-    frame_block: u8,
+    frame_counter: FrameCounter,
 }
 
 impl Core {
@@ -71,15 +67,9 @@ impl Core {
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            cycle: 0,
-            frame_period: false,
-            frame_irq: true,
             sample_cycle: 0,
             sample_reset_cycle,
-            new_frame_value: 0,
-            frame_write_counter: 5,
-            clock_cycle: 0,
-            frame_block: 0,
+            frame_counter: FrameCounter::new(),
         }
     }
 
@@ -116,7 +106,7 @@ impl Core {
             0x400E => self.noise.write_period(value),
             0x400F => self.noise.write_length(value),
             0x4015 => self.write_control(value, interrupt),
-            0x4017 => self.write_frame_counter(value, interrupt),
+            0x4017 => self.frame_counter.write_frame_counter(value, interrupt),
             _ => error!("unhandled apu register write at address: 0x{:04X}", address),
         }
     }
@@ -135,29 +125,23 @@ impl Core {
         cartridge: &mut Box<Cartridge>,
         speaker: &mut S,
     ) {
-        self.clock_cycle = self.clock_cycle.wrapping_add(1);
-        self.cycle += 1;
         let cycle1 = self.sample_cycle;
         self.sample_cycle += 1;
         let cycle2 = self.sample_cycle;
         if self.sample_cycle == self.sample_reset_cycle {
             self.sample_cycle = 0;
         }
-        self.step_timer(cpu, cartridge);
-        self.step_frame_counter(cpu);
-        if self.frame_write_counter > 0 {
-            self.frame_write_counter -= 1;
-            if self.frame_write_counter == 0 {
-                self.frame_period = ((self.new_frame_value >> 7) & 1) != 0;
-                self.cycle = 0;
-                if self.frame_period {
-                    self.half_frame(cpu);
-                }
+
+        self.step_timer(&mut cpu.interrupt, cartridge);
+        match self.frame_counter.step_frame_counter(&mut cpu.interrupt) {
+            FrameType::Half => {
+                self.quarter_frame();
+                self.half_frame();
             }
+            FrameType::Quarter => self.quarter_frame(),
+            FrameType::None => (),
         }
-        if self.frame_block > 0 {
-            self.frame_block -= 1;
-        }
+
         let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
         let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
         if s1 != s2 {
@@ -178,60 +162,23 @@ impl Core {
                                  + usize::from(self.dmc.output())]
     }
 
-    fn quarter_frame(&mut self, _cpu: &mut Cpu) {
-        if self.frame_block == 0 {
-            self.step_envelope();
-            self.frame_block = 2;
-        }
+    fn quarter_frame(&mut self) {
+        self.step_envelope();
     }
 
-    fn half_frame(&mut self, cpu: &mut Cpu) {
-        if self.frame_block == 0 {
-            self.quarter_frame(cpu);
-            self.step_sweep();
-            self.step_length();
-        }
+    fn half_frame(&mut self) {
+        self.step_sweep();
+        self.step_length();
     }
 
-    pub(crate) fn step_frame_counter(&mut self, cpu: &mut Cpu) {
-        // https://wiki.nesdev.com/w/index.php/APU_Frame_Counter
-        if self.frame_period {
-            // mode 1 -- 5step
-            match self.cycle {
-                7457 | 22371 => self.quarter_frame(cpu),
-                14913 | 37281 => self.half_frame(cpu),
-                37282 => self.cycle = 0,
-                0...37282 => (),
-                _ => unreachable!(),
-            }
-        } else {
-            // mode 0 -- 4step
-            match self.cycle {
-                7457 | 22371 => self.quarter_frame(cpu),
-                14913 => self.half_frame(cpu),
-                29828 => self.fire_irq(cpu),
-                29829 => {
-                    self.half_frame(cpu);
-                    self.fire_irq(cpu);
-                }
-                29830 => {
-                    self.fire_irq(cpu);
-                    self.cycle = 0;
-                }
-                0...29830 => (),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    fn step_timer(&mut self, cpu: &mut Cpu, cartridge: &mut Box<Cartridge>) {
+    fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut Box<Cartridge>) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
         self.noise.step_length_counter();
         self.pulse1.step_timer();
         self.pulse2.step_timer();
         self.noise.step_timer();
-        self.dmc.step_timer(&mut cpu.interrupt, cartridge);
+        self.dmc.step_timer(interrupt, cartridge);
         self.triangle.step_timer();
     }
 
@@ -252,12 +199,6 @@ impl Core {
         self.pulse2.step_length();
         self.noise.step_length();
         self.triangle.step_length();
-    }
-
-    fn fire_irq(&mut self, cpu: &mut Cpu) {
-        if self.frame_irq {
-            cpu.interrupt.set_irq(IrqSource::FrameCounter);
-        }
     }
 
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
@@ -286,18 +227,5 @@ impl Core {
         self.triangle.set_enabled((value & 4) != 0);
         self.noise.set_enabled((value & 8) != 0);
         self.dmc.set_enabled((value & 16) != 0, interrupt);
-    }
-
-    fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
-        self.frame_irq = ((value >> 6) & 1) == 0;
-        self.new_frame_value = value;
-        if (self.clock_cycle & 1) != 0 {
-            self.frame_write_counter = 3;
-        } else {
-            self.frame_write_counter = 4;
-        }
-        if !self.frame_irq {
-            interrupt.clear_irq(IrqSource::FrameCounter);
-        }
     }
 }
