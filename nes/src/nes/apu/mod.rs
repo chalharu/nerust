@@ -132,7 +132,6 @@ impl Core {
             self.sample_cycle = 0;
         }
 
-        self.step_timer(&mut cpu.interrupt, cartridge);
         match self.frame_counter.step_frame_counter(&mut cpu.interrupt) {
             FrameType::Half => {
                 self.quarter_frame();
@@ -141,6 +140,7 @@ impl Core {
             FrameType::Quarter => self.quarter_frame(),
             FrameType::None => (),
         }
+        self.step_timer(&mut cpu.interrupt, cartridge);
 
         let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
         let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
