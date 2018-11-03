@@ -47,7 +47,7 @@ impl Memory {
         let result = match address {
             0...0x1FFF => OpenBusReadResult::new(self.wram[address & 0x07FF], 0xFF),
             0x2000...0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
-            0x4015 => OpenBusReadResult::new(apu.read_register(address, interrupt), 0xFF),
+            0x4015 => apu.read_register(address, interrupt),
             0x4016 | 0x4017 => controller.read(address & 1),
             0x4000...0x5FFF => OpenBusReadResult::new(0, 0), // TODO: I/O registers
             0x6000...0x10000 => cartridge.read(address),
