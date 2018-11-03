@@ -24,6 +24,7 @@ use self::pulse::Pulse;
 use self::triangle::Triangle;
 use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
 use crate::nes::Cpu;
+use crate::nes::OpenBusReadResult;
 use crate::nes::{Cartridge, Speaker};
 
 // // 240Hz フレームシーケンサ
@@ -73,12 +74,16 @@ impl Core {
         }
     }
 
-    pub(crate) fn read_register(&mut self, address: usize, interrupt: &mut Interrupt) -> u8 {
+    pub(crate) fn read_register(
+        &mut self,
+        address: usize,
+        interrupt: &mut Interrupt,
+    ) -> OpenBusReadResult {
         match address {
-            0x4015 => self.read_status(interrupt),
+            0x4015 => OpenBusReadResult::new(self.read_status(interrupt), 0xFF),
             _ => {
                 error!("unhandled apu register read at address: 0x{:04X}", address);
-                0
+                OpenBusReadResult::new(0, 0)
             }
         }
     }
@@ -207,6 +212,7 @@ impl Core {
             | (if self.triangle.get_status() { 4 } else { 0 })
             | (if self.noise.get_status() { 8 } else { 0 })
             | (if self.dmc.get_status() { 0x10 } else { 0 })
+            | 0x20
             | (if interrupt.get_irq(IrqSource::FrameCounter) {
                 0x40
             } else {

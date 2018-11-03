@@ -111,13 +111,13 @@ impl Core {
                 self.oam_dma = oam_dma.next(self, ppu, cartridge, controller, apu);
             } else {
                 self.interrupt.executing = self.interrupt.detected;
+                // 身代わりパターン
+                self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
+                    .next(self, ppu, cartridge, controller, apu);
                 self.interrupt.detected = self.interrupt.nmi
                     || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
                         && !self.register.get_i());
 
-                // 身代わりパターン
-                self.next_func = (::std::mem::replace(&mut self.next_func, Box::new(Dummy)))
-                    .next(self, ppu, cartridge, controller, apu);
             }
         }
     }
