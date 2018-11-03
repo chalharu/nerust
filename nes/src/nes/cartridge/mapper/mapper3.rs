@@ -57,8 +57,8 @@ impl Cartridge for Mapper3 {
     fn write(&mut self, address: usize, value: u8) {
         match address {
             0...0x1FFF => {
-                self.cartridge_data
-                    .write_char_rom(usize::from(self.char_bank) * 0x2000 + address, value);
+                // self.cartridge_data
+                //     .write_char_rom(usize::from(self.char_bank) * 0x2000 + address, value);
             }
             0x6000...0x7FFF => self.cartridge_data.write_sram(address - 0x6000, value),
             n if n >= 0x8000 => {

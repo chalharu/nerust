@@ -377,12 +377,13 @@ impl Core {
             let addr = self.state.vram_addr as usize;
             let mut value = self.read_vram(addr, cartridge);
             // emulate buffered reads
-            if addr & 0x3FFF < 0x3F00 {
+            if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
             } else {
                 let buffered_data = self.buffered_data;
                 self.buffered_data = value;
-                value = self.read_palette(addr) | (buffered_data & 0xC0);
+                // value = self.read_palette(addr) | (buffered_data & 0xC0);
+                value = self.read_palette(addr);
             }
             self.increment_address(cartridge);
             value
