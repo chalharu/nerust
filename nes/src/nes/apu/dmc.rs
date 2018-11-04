@@ -163,7 +163,9 @@ impl DMC {
             if self.enabled {
                 self.step_shifter();
             }
-            self.bit_count -= 1;
+            if self.bit_count > 0 {
+                self.bit_count -= 1;
+            }
 
             self.step_reader(interrupt, cartridge);
         }

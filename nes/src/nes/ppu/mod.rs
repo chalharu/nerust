@@ -380,7 +380,7 @@ impl Core {
             if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
             } else {
-                let buffered_data = self.buffered_data;
+                // let buffered_data = self.buffered_data;
                 self.buffered_data = value;
                 // value = self.read_palette(addr) | (buffered_data & 0xC0);
                 value = self.read_palette(addr);

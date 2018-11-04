@@ -27,7 +27,7 @@ impl FrameCounter {
     pub fn new() -> Self {
         Self {
             period: false,
-            irq: false,
+            irq: true,
             write_counter: 3,
             block: 0,
             new_value: 0,
