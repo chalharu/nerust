@@ -48,10 +48,14 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new(sample_rate: u32) -> Self {
+    pub(crate) fn new(
+        sample_rate: u32,
+        interrupt: &mut Interrupt,
+        cartridge: &mut Box<Cartridge>,
+    ) -> Self {
         let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
         let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
-        Self {
+        let mut result = Self {
             // https://wiki.nesdev.com/w/index.php/APU_Mixer
             pulse_table: (0..31)
                 .map(|x| 95.52 / (8128.0 / x as f32 + 100.0))
@@ -71,6 +75,24 @@ impl Core {
             sample_cycle: 0,
             sample_reset_cycle,
             frame_counter: FrameCounter::new(),
+        };
+        result.initialize(interrupt, cartridge);
+        result
+    }
+
+    pub(crate) fn reset(&mut self, interrupt: &mut Interrupt, cartridge: &mut Box<Cartridge>) {
+        self.pulse1.reset();
+        self.pulse2.reset();
+        self.triangle.reset();
+        self.noise.reset();
+        self.dmc.reset();
+        self.frame_counter.reset();
+        self.initialize(interrupt, cartridge);
+    }
+
+    fn initialize(&mut self, interrupt: &mut Interrupt, cartridge: &mut Box<Cartridge>) {
+        for _ in 0..4 {
+            self.step_frame(interrupt, cartridge);
         }
     }
 
@@ -80,7 +102,7 @@ impl Core {
         interrupt: &mut Interrupt,
     ) -> OpenBusReadResult {
         match address {
-            0x4015 => OpenBusReadResult::new(self.read_status(interrupt), 0xFF),
+            0x4015 => OpenBusReadResult::new(self.read_status(interrupt), !0x20),
             _ => {
                 error!("unhandled apu register read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
@@ -124,6 +146,18 @@ impl Core {
         self.dmc.fill_address()
     }
 
+    fn step_frame(&mut self, interrupt: &mut Interrupt, cartridge: &mut Box<Cartridge>) {
+        match self.frame_counter.step_frame_counter(interrupt) {
+            FrameType::Half => {
+                self.quarter_frame();
+                self.half_frame();
+            }
+            FrameType::Quarter => self.quarter_frame(),
+            FrameType::None => (),
+        }
+        self.step_timer(interrupt, cartridge);
+    }
+
     pub(crate) fn step<S: Speaker>(
         &mut self,
         cpu: &mut Cpu,
@@ -137,15 +171,7 @@ impl Core {
             self.sample_cycle = 0;
         }
 
-        match self.frame_counter.step_frame_counter(&mut cpu.interrupt) {
-            FrameType::Half => {
-                self.quarter_frame();
-                self.half_frame();
-            }
-            FrameType::Quarter => self.quarter_frame(),
-            FrameType::None => (),
-        }
-        self.step_timer(&mut cpu.interrupt, cartridge);
+        self.step_frame(&mut cpu.interrupt, cartridge);
 
         let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
         let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
@@ -212,7 +238,6 @@ impl Core {
             | (if self.triangle.get_status() { 4 } else { 0 })
             | (if self.noise.get_status() { 8 } else { 0 })
             | (if self.dmc.get_status() { 0x10 } else { 0 })
-            | 0x20
             | (if interrupt.get_irq(IrqSource::FrameCounter) {
                 0x40
             } else {

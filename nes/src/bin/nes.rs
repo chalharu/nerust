@@ -50,7 +50,7 @@ fn main() {
             // "color_test.nes",
             // "tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
-            // "apu/blargg_apu_2005.07.30/09.reset_timing.nes",
+            "apu/blargg_apu_2005.07.30/09.reset_timing.nes",
             // "ppu/ppu_open_bus/ppu_open_bus.nes",
             // "cpu_reset/ram_after_reset.nes",
             // "cpu_reset/registers.nes",
@@ -61,7 +61,7 @@ fn main() {
             // "ntsc_torture.nes",
             // "instr_test-v5/all_instrs.nes",
             // "apu/test_apu_env/test_apu_env.nes",
-            "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
+            // "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
         )).into_iter()
         .cloned(),
         44_100,

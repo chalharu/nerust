@@ -33,17 +33,21 @@ impl Console {
         input: &mut I,
         sound_sample_rate: u32,
     ) -> Result<Console, Error> {
+        let mut cpu = Cpu::new();
+        let mut cartridge = cartridge::try_from(input)?;
+        let apu = Apu::new(sound_sample_rate, &mut cpu.interrupt, &mut cartridge);
         Ok(Self {
-            cpu: Cpu::new(),
+            cpu,
             ppu: Ppu::new(),
-            apu: Apu::new(sound_sample_rate),
-            cartridge: cartridge::try_from(input)?,
+            apu,
+            cartridge,
         })
     }
 
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.reset();
+        self.apu.reset(&mut self.cpu.interrupt, &mut self.cartridge);
     }
 
     pub fn step<S: Screen, SP: Speaker>(
