@@ -132,10 +132,8 @@ fn condition_jump(
     interrupt: &mut Interrupt,
 ) -> Box<dyn CpuStepState> {
     if condition {
-        if !interrupt.executing && interrupt.detected {
-            interrupt.detected = false;
-        }
-        Box::new(Step1::new(address))
+
+        Box::new(Step1::new(address, interrupt.detected))
     } else {
         FetchOpCode::new(interrupt)
     }
@@ -143,11 +141,12 @@ fn condition_jump(
 
 struct Step1 {
     address: usize,
+    interrupt_detected: bool,
 }
 
 impl Step1 {
-    pub fn new(address: usize) -> Self {
-        Self { address }
+    pub fn new(address: usize, interrupt_detected: bool) -> Self {
+        Self { address, interrupt_detected }
     }
 }
 
@@ -162,6 +161,9 @@ impl CpuStepState for Step1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
+        if !self.interrupt_detected {
+            core.interrupt.executing = false;
+        }
 
         let pc = core.register.get_pc() as usize;
         if page_crossed(self.address, pc) {

@@ -100,15 +100,22 @@ impl CpuStepState for BrkStep3 {
     ) -> Box<dyn CpuStepState> {
         push(core, ppu, cartridge, controller, apu, self.low);
 
-        Box::new(BrkStep4::new())
+        Box::new(BrkStep4::new(if core.interrupt.nmi {
+            // core.interrupt.nmi = false;
+            NMI_VECTOR
+        } else {
+            IRQ_VECTOR
+        }))
     }
 }
 
-struct BrkStep4 {}
+struct BrkStep4 {
+    vector: usize,
+}
 
 impl BrkStep4 {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(vector: usize) -> Self {
+        Self { vector }
     }
 }
 
@@ -123,13 +130,7 @@ impl CpuStepState for BrkStep4 {
     ) -> Box<dyn CpuStepState> {
         let p = core.register.get_p() | (RegisterP::Break | RegisterP::Reserved).bits();
         push(core, ppu, cartridge, controller, apu, p);
-
-        Box::new(BrkStep5::new(if core.interrupt.nmi {
-            core.interrupt.nmi = false;
-            NMI_VECTOR
-        } else {
-            IRQ_VECTOR
-        }))
+        Box::new(BrkStep5::new(self.vector))
     }
 }
 
@@ -438,15 +439,25 @@ impl CpuStepState for IrqStep4 {
     ) -> Box<dyn CpuStepState> {
         push(core, ppu, cartridge, controller, apu, self.low);
 
-        Box::new(IrqStep5::new())
+        Box::new(IrqStep5::new(
+            if core.interrupt.nmi {
+                NMI_VECTOR
+            } else {
+                IRQ_VECTOR
+            },
+            core.interrupt.nmi,
+        ))
     }
 }
 
-struct IrqStep5 {}
+struct IrqStep5 {
+    vector: usize,
+    nmi: bool,
+}
 
 impl IrqStep5 {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(vector: usize, nmi: bool) -> Self {
+        Self { vector, nmi }
     }
 }
 
@@ -459,25 +470,21 @@ impl CpuStepState for IrqStep5 {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let p = core.register.get_p();
+        let p = (core.register.get_p() & !RegisterP::Break.bits()) | RegisterP::Reserved.bits();
         push(core, ppu, cartridge, controller, apu, p);
 
-        Box::new(IrqStep6::new(if core.interrupt.nmi {
-            core.interrupt.nmi = false;
-            NMI_VECTOR
-        } else {
-            IRQ_VECTOR
-        }))
+        Box::new(IrqStep6::new(self.vector, self.nmi))
     }
 }
 
 struct IrqStep6 {
     vector: usize,
+    nmi: bool,
 }
 
 impl IrqStep6 {
-    pub fn new(vector: usize) -> Self {
-        Self { vector }
+    pub fn new(vector: usize, nmi: bool) -> Self {
+        Self { vector, nmi }
     }
 }
 
@@ -499,6 +506,9 @@ impl CpuStepState for IrqStep6 {
             apu,
             &mut core.interrupt,
         );
+        if self.nmi {
+            core.interrupt.nmi = false;
+        }
         Box::new(IrqStep7::new(self.vector, low))
     }
 }
@@ -532,7 +542,7 @@ impl CpuStepState for IrqStep7 {
             &mut core.interrupt,
         ));
         core.register.set_pc((hi << 8) | u16::from(self.low));
-        // core.interrupt.executing = false;
+        core.interrupt.executing = false;
         FetchOpCode::new(&core.interrupt)
     }
 }
