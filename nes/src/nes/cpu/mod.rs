@@ -117,7 +117,6 @@ impl Core {
                 self.interrupt.detected = self.interrupt.nmi
                     || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
                         && !self.register.get_i());
-
             }
         }
     }
