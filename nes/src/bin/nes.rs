@@ -33,14 +33,14 @@ fn main() {
             // "samples/gikones/giko017.nes",
             // "samples/gikones/giko018.nes",
             // "cpu/cpu_flag_concurrency/test_cpu_flag_concurrency.nes",
-            "cpu/cpu_interrupts_v2/cpu_interrupts.nes",
+            // "cpu/cpu_interrupts_v2/cpu_interrupts.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/1-cli_latency.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
             // "ram_retain/ram_retain.nes",
-            // "oamtest3/oam3.nes",
+            // "ppu/oamtest3/oam3.nes",
             // "allpads.nes",
             // "apu/apu_mixer/noise.nes",
             // "apu/apu_phase_reset/apu_phase_reset.nes",
@@ -67,6 +67,19 @@ fn main() {
             // "apu/test_apu_env/test_apu_env.nes",
             // "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
             // "cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes",
+            // "tests/coredump-v1.3.nes",
+            // "ppu/ppu_sprite_hit/ppu_sprite_hit.nes",
+            // "ppu/ppu_sprite_overflow/ppu_sprite_overflow.nes",
+            // "ppu/ppu_sprite_hit/rom_singles/01-basics.nes", 60, 0x42CFACAA9A15D013
+            // "ppu/ppu_sprite_hit/rom_singles/02-alignment.nes", 85, 0xB1B5C43737FB16EF
+            // "ppu/ppu_sprite_hit/rom_singles/03-corners.nes", 55. 0x700017AB5E656ECD
+            // "ppu/ppu_sprite_hit/rom_singles/04-flip.nes", 40, 0x549F8BF6A80774B1
+            // "ppu/ppu_sprite_hit/rom_singles/05-left_clip.nes", 52, 0xCB232878F232040A
+            // "ppu/ppu_sprite_hit/rom_singles/06-right_edge.nes", 45, 0x89567E17B702EED4
+            "ppu/ppu_sprite_hit/rom_singles/07-screen_bottom.nes",
+            // "ppu/ppu_sprite_hit/rom_singles/08-double_height.nes", 40, 0xCCFC308B39369365
+            // "ppu/ppu_sprite_hit/rom_singles/09-timing.nes",
+            // "ppu/ppu_sprite_hit/rom_singles/10-timing_order.nes", 90, 0x65F210E6178421E0
         )).into_iter()
         .cloned(),
         44_100,

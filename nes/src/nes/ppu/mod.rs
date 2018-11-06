@@ -249,6 +249,7 @@ pub(crate) struct Core {
     oam_address_low: u8,
     openbus_vram: OpenBus,
     openbus_io: OpenBus,
+    has_next_sprite: bool,
 }
 
 impl Core {
@@ -292,6 +293,7 @@ impl Core {
             sprite_index: 0,
             openbus_vram: OpenBus::new(),
             openbus_io: OpenBus::new(),
+            has_next_sprite: false,
         }
     }
 
@@ -320,6 +322,7 @@ impl Core {
         // self.render_executing = false;
         // self.post_render_executing = false;
         // self.oam_read_buffer = 0;
+        self.has_next_sprite = false;
     }
 
     pub fn read_register(
@@ -650,6 +653,9 @@ impl Core {
             info.high_byte = high_byte;
             info.tile_addr = tile_address as u16;
             info.position = position_x;
+            if self.scan_line > 0 {
+                self.has_next_sprite = true;
+            }
         }
 
         self.sprite_index += 1;
@@ -686,7 +692,7 @@ impl Core {
                 + bg
         };
 
-        if self.show_sprite() {
+        if self.show_sprite() & self.has_next_sprite {
             for i in 0..self.sprite_count {
                 let s: &SpriteInfo = &self.sprites[usize::from(i)];
                 if self.cycle > u16::from(s.position) {
@@ -900,6 +906,7 @@ impl Core {
                     257...320 => {
                         if self.cycle == 257 {
                             self.sprite_index = 0;
+                            self.has_next_sprite = false;
                             if self.post_render_executing {
                                 self.state.vram_addr = (self.state.vram_addr & !0x041F)
                                     | (self.state.temp_vram_addr & 0x041F);
