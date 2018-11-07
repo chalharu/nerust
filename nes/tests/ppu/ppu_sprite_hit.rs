@@ -10,9 +10,8 @@ use super::*;
 fn ppu_sprite_hit() {
     test!(
         "ppu/ppu_sprite_hit/ppu_sprite_hit.nes",
-        ScenarioLeaf::check_screen(480, 0x404D35A34AC3F6CD)
+        ScenarioLeaf::check_screen(600, 0x1C836FC773555051)
     );
-    panic!("Not implemented");
 }
 
 #[test]
@@ -67,9 +66,8 @@ fn _06_right_edge() {
 fn _07_screen_bottom() {
     test!(
         "ppu/ppu_sprite_hit/rom_singles/07-screen_bottom.nes",
-        ScenarioLeaf::check_screen(45, 0x89567E17B702EED4)
+        ScenarioLeaf::check_screen(50, 0xAF9129A6D7E48B2B)
     );
-    panic!("Not implemented");
 }
 
 #[test]
@@ -84,9 +82,8 @@ fn _08_double_height() {
 fn _09_timing() {
     test!(
         "ppu/ppu_sprite_hit/rom_singles/09-timing.nes",
-        ScenarioLeaf::check_screen(45, 0x89567E17B702EED4)
+        ScenarioLeaf::check_screen(200, 0x0EF3FB81DCF0DE18)
     );
-    panic!("Not implemented");
 }
 
 #[test]
