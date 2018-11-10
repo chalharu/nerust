@@ -4,6 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct RGB {
     pub red: u8,
     pub green: u8,
@@ -21,7 +22,7 @@ impl From<u32> for RGB {
 }
 
 pub trait Screen {
-    fn set_rgb(&mut self, x: u16, y: u16, color: RGB);
+    fn set_rgb(&mut self, x: usize, y: usize, color: RGB);
 }
 
 pub trait Speaker {

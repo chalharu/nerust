@@ -4,27 +4,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod ntsc_filter;
 mod spriteinfo;
 mod tileinfo;
 
+use self::ntsc_filter::setup::NesNtscSetup;
+use self::ntsc_filter::NesNtsc;
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::nes::cartridge::Cartridge;
 use crate::nes::cpu::interrupt::Interrupt;
-use crate::nes::{OpenBus, OpenBusReadResult, Screen, RGB};
+use crate::nes::{OpenBus, OpenBusReadResult, Screen};
 use std::cmp;
 use std::mem;
-
-const PALETTE: [u32; 64] = [
-    0x666666, 0x002A88, 0x1412A7, 0x3B00A4, 0x5C007E, 0x6E0040, 0x6C0600, 0x561D00, 0x333500,
-    0x0B4800, 0x005200, 0x004F08, 0x00404D, 0x000000, 0x000000, 0x000000, 0xADADAD, 0x155FD9,
-    0x4240FF, 0x7527FE, 0xA01ACC, 0xB71E7B, 0xB53120, 0x994E00, 0x6B6D00, 0x388700, 0x0C9300,
-    0x008F32, 0x007C8D, 0x000000, 0x000000, 0x000000, 0xFFFEFF, 0x64B0FF, 0x9290FF, 0xC676FF,
-    0xF36AFF, 0xFE6ECC, 0xFE8170, 0xEA9E22, 0xBCBE00, 0x88D800, 0x5CE430, 0x45E082, 0x48CDDE,
-    0x4F4F4F, 0x000000, 0x000000, 0xFFFEFF, 0xC0DFFF, 0xD3D2FF, 0xE8C8FF, 0xFBC2FF, 0xFEC4EA,
-    0xFECCC5, 0xF7D8A5, 0xE4E594, 0xCFEF96, 0xBDF4AB, 0xB3F3CC, 0xB5EBF2, 0xB8B8B8, 0x000000,
-    0x000000,
-];
 
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
@@ -250,6 +242,9 @@ pub(crate) struct Core {
     openbus_vram: OpenBus,
     openbus_io: OpenBus,
     has_next_sprite: bool,
+
+    screen_buffer: [u8; 256 * 240],
+    ntsc: NesNtsc,
 }
 
 impl Core {
@@ -294,6 +289,8 @@ impl Core {
             openbus_vram: OpenBus::new(),
             openbus_io: OpenBus::new(),
             has_next_sprite: false,
+            screen_buffer: [0; 256 * 240],
+            ntsc: NesNtsc::new(&NesNtscSetup::composite()),
         }
     }
 
@@ -727,16 +724,25 @@ impl Core {
         bg_result_func(self)
     }
 
-    fn render_pixel<S: Screen>(&mut self, screen: &mut S) {
+    fn render_pixel(&mut self) {
         let color = if self.render_executing || ((self.state.vram_addr & 0x3F00) == 0) {
             usize::from(self.evaluate_pixel())
         } else {
             self.state.vram_addr as usize
         };
-        screen.set_rgb(
-            self.cycle - 1,
-            self.scan_line - 1,
-            RGB::from(PALETTE[usize::from(self.read_palette(color)) & 0x3F]),
+        self.screen_buffer[(self.cycle as usize - 1) + (self.scan_line as usize - 1) * 256] =
+            self.read_palette(color) & 0x3F;
+    }
+
+    fn render_screen<S: Screen>(&mut self, screen: &mut S) {
+        self.ntsc.blit(
+            &self.screen_buffer,
+            256,
+            // self.cycle as usize & 3,
+            0,
+            256,
+            240,
+            screen,
         );
     }
 
@@ -862,6 +868,7 @@ impl Core {
                 241 => {
                     self.frames += 1;
                     result = true;
+                    self.render_screen(screen);
                 }
                 NMI_SCAN_LINE => self.set_vertical_blank(interrupt),
                 TOTAL_SCAN_LINE => {
@@ -886,7 +893,7 @@ impl Core {
                         }
 
                         if self.scan_line > 0 {
-                            self.render_pixel(screen);
+                            self.render_pixel();
                             self.state.low_bit_shift <<= 1;
                             self.state.high_bit_shift <<= 1;
 

@@ -23,7 +23,7 @@ use std::os::raw::c_void;
 use std::time::{Duration, Instant};
 use std::{f64, iter, mem, thread};
 
-const PAR: f64 = 7.0 / 8.0;
+// const PAR: f64 = 7.0 / 8.0;
 
 struct Fps {
     instants: VecDeque<Instant>,
@@ -66,7 +66,7 @@ impl Fps {
 
 fn create_window(events_loop: &EventsLoop) -> GlWindow {
     let window = WindowBuilder::new()
-        .with_dimensions(LogicalSize::new(256.0 / PAR, 240.0))
+        .with_dimensions(LogicalSize::new(602.0, 480.0))
         .with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
@@ -147,16 +147,16 @@ impl VertexData {
     }
 }
 
-fn init_screen_buffer() -> [u8; 256 * 240 * 4] {
-    let mut screen_buffer = [0_u8; 256 * 240 * 4];
+fn init_screen_buffer() -> [u8; 602 * 480 * 4] {
+    let mut screen_buffer = [0_u8; 602 * 480 * 4];
     for (i, s) in screen_buffer.iter_mut().enumerate() {
         let p = i & 3;
-        let x = (i >> 2) % 256;
-        let y = (i >> 2) / 256;
-        let r = ((x * 0xFF) / 256) as u8;
+        let x = (i >> 2) % 602;
+        let y = (i >> 2) / 602;
+        let r = ((x * 0xFF) / 602) as u8;
         *s = match p {
             0 => r,
-            1 => ((y * 0xFF) / 240) as u8,
+            1 => ((y * 0xFF) / 480) as u8,
             2 => !r,
             _ => 0,
         };
@@ -164,7 +164,7 @@ fn init_screen_buffer() -> [u8; 256 * 240 * 4] {
     screen_buffer
 }
 
-pub struct ScreenBuffer([u8; 256 * 240 * 4]);
+pub struct ScreenBuffer([u8; 602 * 480 * 4]);
 
 impl ScreenBuffer {
     pub fn new() -> Self {
@@ -173,13 +173,13 @@ impl ScreenBuffer {
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        &self.0 as *const [u8; 256 * 240 * 4] as *const u8
+        &self.0 as *const [u8; 602 * 480 * 4] as *const u8
     }
 }
 
 impl Screen for ScreenBuffer {
-    fn set_rgb(&mut self, x: u16, y: u16, color: RGB) {
-        let pos = (usize::from(y) * 256 + usize::from(x)) << 2;
+    fn set_rgb(&mut self, x: usize, y: usize, color: RGB) {
+        let pos = (usize::from(y) * 602 + usize::from(x)) << 2;
         self.0[pos] = color.red;
         self.0[pos + 1] = color.green;
         self.0[pos + 2] = color.blue;
@@ -278,12 +278,12 @@ impl Window {
             gl::TEXTURE_2D,
             0,
             gl::RGBA as GLint,
-            256,
-            256,
+            1024,
+            512,
             0,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            unsafe { mem::transmute([0_u8; 256 * 256 * 4].as_ptr()) },
+            unsafe { mem::transmute([0_u8; 1024 * 512 * 4].as_ptr()) },
         ).unwrap();
 
         tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
@@ -294,11 +294,11 @@ impl Window {
         // vbo
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
-            VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 240.0 / 256.0)),
-            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(256.0 / 256.0, 0.0)),
+            VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 480.0 / 512.0)),
+            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(602.0 / 1024.0, 0.0)),
             VertexData::new(
                 Vec2D::new(1.0, -1.0),
-                Vec2D::new(256.0 / 256.0, 240.0 / 256.0),
+                Vec2D::new(602.0 / 1024.0, 480.0 / 512.0),
             ),
         ];
 
@@ -367,8 +367,8 @@ impl Window {
             0,
             0,
             0,
-            256,
-            240,
+            602,
+            480,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             self.screen_buffer.as_ptr() as *const c_void,
@@ -389,8 +389,8 @@ impl Window {
         let dpi_factor = self.window.get_hidpi_factor();
         self.window.resize(logical_size.to_physical(dpi_factor));
 
-        let rate_x = logical_size.width / 256.0 * PAR;
-        let rate_y = logical_size.height / 240.0;
+        let rate_x = logical_size.width / 602.0;
+        let rate_y = logical_size.height / 480.0;
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;
