@@ -52,7 +52,7 @@ fn main() {
             // "bntest/bntest_h.nes",
             // "bntest/bntest_v.nes",
             // "color_test.nes",
-            // "tvpassfail/tv.nes",
+            "tests/tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
             // "apu/blargg_apu_2005.07.30/09.reset_timing.nes",
             // "ppu/ppu_open_bus/ppu_open_bus.nes",
@@ -71,7 +71,7 @@ fn main() {
 
             // "tests/scanline/scanline.nes",
             // "tests/nmi_sync/demo_ntsc.nes",
-            "tests/ntsc_torture.nes",
+            // "tests/ntsc_torture.nes",
         )).into_iter()
         .cloned(),
         44_100,
