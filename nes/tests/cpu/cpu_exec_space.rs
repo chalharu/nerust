@@ -10,7 +10,7 @@ use super::*;
 fn test_cpu_exec_space_ppuio() {
     test!(
         "cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes",
-        ScenarioLeaf::check_screen(45, 0xB1866B91E4771BAB)
+        ScenarioLeaf::check_screen(45, 0xFA8F4E7F0ECDD92F)
     );
 }
 
@@ -18,6 +18,6 @@ fn test_cpu_exec_space_ppuio() {
 fn test_cpu_exec_space_apu() {
     test!(
         "cpu/cpu_exec_space/test_cpu_exec_space_apu.nes",
-        ScenarioLeaf::check_screen(295, 0x28EE2FAC59284B74)
+        ScenarioLeaf::check_screen(295, 0x3A0C2ED9AA73D9F4)
     );
 }

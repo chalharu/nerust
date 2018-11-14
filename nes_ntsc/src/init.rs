@@ -18,21 +18,21 @@ pub struct Init {
 }
 
 impl Init {
-    pub fn new(setup: &NesNtscSetup) -> Self {
+    pub fn new(setup: &Setup) -> Self {
         // let brightness = setup.brightness as f32 * (RGB_UNIT >> 1) as f32 + RGB_OFFSET;
         // let contrast = (setup.contrast as f32 + 1.0) * (RGB_UNIT >> 1) as f32;
 
-        let artifacts = (if setup.artifacts > 0.0 {
-            setup.artifacts as f32 * (ARTIFACTS_MAX - ARTIFACTS_MID)
+        let artifacts = (if setup.artifacts() > 0.0 {
+            setup.artifacts() * (ARTIFACTS_MAX - ARTIFACTS_MID)
         } else {
-            setup.artifacts as f32
+            setup.artifacts()
         }) * ARTIFACTS_MID
             + ARTIFACTS_MID;
 
-        let fringing = (if setup.fringing > 0.0 {
-            setup.fringing as f32 * (FRINGING_MAX - FRINGING_MID)
+        let fringing = (if setup.fringing() > 0.0 {
+            setup.fringing() * (FRINGING_MAX - FRINGING_MID)
         } else {
-            setup.fringing as f32
+            setup.fringing()
         }) * FRINGING_MID
             + FRINGING_MID;
 
@@ -52,9 +52,8 @@ impl Init {
 
         // setup decoder matricies
         let to_rgb = {
-            let hue =
-                (setup.hue as f32 * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
-            let sat = setup.saturation as f32 + 1.0;
+            let hue = (setup.hue() * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
+            let sat = setup.saturation() + 1.0;
 
             let s = hue.sin() * sat;
             let c = hue.cos() * sat;
@@ -82,18 +81,18 @@ impl Init {
         }
     }
 
-    fn init_filters(setup: &NesNtscSetup) -> Vec<f32> {
+    fn init_filters(setup: &Setup) -> Vec<f32> {
         let mut kernels = [0.0; KERNEL_SIZE * 2];
 
         // generate luma (y) filter using sinc kernel
         {
             // sinc with rolloff (dsf)
-            let rolloff = 1.0 + setup.sharpness as f32 * 0.032;
+            let rolloff = 1.0 + setup.sharpness() * 0.032;
             let maxh = 32.0;
             let pow_a_n = rolloff.powf(maxh);
 
             // quadratic mapping to reduce negative (blurring) range
-            let to_angle = setup.resolution as f32 + 1.0;
+            let to_angle = setup.resolution() + 1.0;
             let to_angle = f32::consts::PI / maxh * LUMA_CUTOFF * (to_angle * to_angle + 1.0);
 
             kernels[KERNEL_SIZE * 3 / 2] = maxh; // default center value
@@ -135,11 +134,11 @@ impl Init {
             let cutoff = cutoff_factor
                 - 0.65
                     * cutoff_factor
-                    * (if setup.bleed < 0.0 {
+                    * (if setup.bleed() < 0.0 {
                         // keep extreme value accessible only near upper end of scale (1.0)
-                        (setup.bleed as f32).powi(4) * (-30.0 / 0.65)
+                        setup.bleed().powi(4) * (-30.0 / 0.65)
                     } else {
-                        setup.bleed as f32
+                        setup.bleed()
                     });
 
             for i in 0..=(KERNEL_HALF * 2) {
@@ -167,14 +166,14 @@ impl Init {
         }
 
         {
-            // debug!("luma:");
-            // for i in KERNEL_SIZE..(KERNEL_SIZE * 2) {
-            //     debug!("{}", kernels[i]);
-            // }
-            // debug!("chroma:");
-            // for i in 0..KERNEL_SIZE {
-            //     debug!("{}", kernels[i]);
-            // }
+            trace!("luma:");
+            for i in KERNEL_SIZE..(KERNEL_SIZE * 2) {
+                trace!("{}", kernels[i]);
+            }
+            trace!("chroma:");
+            for i in 0..KERNEL_SIZE {
+                trace!("{}", kernels[i]);
+            }
         }
 
         {

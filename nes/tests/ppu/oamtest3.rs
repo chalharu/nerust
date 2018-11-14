@@ -10,7 +10,7 @@ use super::*;
 fn oam3() {
     test!(
         "ppu/oamtest3/oam3.nes",
-        ScenarioLeaf::check_screen(1740, 0x3A6D3CAAAF465F69)
+        ScenarioLeaf::check_screen(1740, 0x865796B297C30C6B)
     );
     panic!("Not implemented");
 }

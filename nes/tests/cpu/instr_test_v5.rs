@@ -10,6 +10,6 @@ use super::*;
 fn instr_test_v5() {
     test!(
         "cpu/instr_test-v5/all_instrs.nes",
-        ScenarioLeaf::check_screen(2450, 0x0D3D1CD1F7F9EC0B)
+        ScenarioLeaf::check_screen(2450, 0x4E0209B232069DEA)
     );
 }

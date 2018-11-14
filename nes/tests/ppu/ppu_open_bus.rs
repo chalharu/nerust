@@ -10,7 +10,7 @@ use super::*;
 fn ppu_open_bus() {
     test!(
         "ppu/ppu_open_bus/ppu_open_bus.nes",
-        ScenarioLeaf::check_screen(30, 0x04C8F601831BF986)
+        ScenarioLeaf::check_screen(30, 0x09D034960D5BF704)
     );
     panic!("Not implemented");
 }

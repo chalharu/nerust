@@ -10,6 +10,6 @@ use super::*;
 fn ppu_sprite_overflow() {
     test!(
         "ppu/ppu_sprite_overflow/ppu_sprite_overflow.nes",
-        ScenarioLeaf::check_screen(480, 0x404D35A34AC3F6CD)
+        ScenarioLeaf::check_screen(480, 0x9026DAD65555ECA0)
     );
 }

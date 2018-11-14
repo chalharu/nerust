@@ -10,6 +10,6 @@ use super::*;
 fn oam_read() {
     test!(
         "ppu/oam_read/oam_read.nes",
-        ScenarioLeaf::check_screen(30, 0x04C8F601831BF986)
+        ScenarioLeaf::check_screen(30, 0x09D034960D5BF704)
     );
 }

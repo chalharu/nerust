@@ -4,12 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod ntsc_filter;
 mod spriteinfo;
 mod tileinfo;
 
-use self::ntsc_filter::setup::NesNtscSetup;
-use self::ntsc_filter::NesNtsc;
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::nes::cartridge::Cartridge;
@@ -242,9 +239,7 @@ pub(crate) struct Core {
     openbus_vram: OpenBus,
     openbus_io: OpenBus,
     has_next_sprite: bool,
-
-    screen_buffer: [u8; 256 * 240],
-    ntsc: NesNtsc,
+    // screen_buffer: [u8; 256 * 240],
 }
 
 impl Core {
@@ -289,8 +284,7 @@ impl Core {
             openbus_vram: OpenBus::new(),
             openbus_io: OpenBus::new(),
             has_next_sprite: false,
-            screen_buffer: [0; 256 * 240],
-            ntsc: NesNtsc::new(&NesNtscSetup::composite()),
+            // screen_buffer: [0; 256 * 240],
         }
     }
 
@@ -724,26 +718,19 @@ impl Core {
         bg_result_func(self)
     }
 
-    fn render_pixel(&mut self) {
+    fn render_pixel<S: Screen>(&mut self, screen: &mut S) {
         let color = if self.render_executing || ((self.state.vram_addr & 0x3F00) == 0) {
             usize::from(self.evaluate_pixel())
         } else {
             self.state.vram_addr as usize
         };
-        self.screen_buffer[(self.cycle as usize - 1) + (self.scan_line as usize - 1) * 256] =
-            self.read_palette(color) & 0x3F;
+        screen.push(self.read_palette(color) & 0x3F);
+        // self.screen_buffer[(self.cycle as usize - 1) + (self.scan_line as usize - 1) * 256]
     }
 
     fn render_screen<S: Screen>(&mut self, screen: &mut S) {
-        self.ntsc.blit(
-            &self.screen_buffer,
-            256,
-            // self.cycle as usize & 3,
-            0,
-            256,
-            240,
-            screen,
-        );
+        screen.render();
+        // self.screen_buffer.iter().forEach(screen.push);
     }
 
     fn evaluate_sprites(&mut self) {
@@ -893,7 +880,7 @@ impl Core {
                         }
 
                         if self.scan_line > 0 {
-                            self.render_pixel();
+                            self.render_pixel(screen);
                             self.state.low_bit_shift <<= 1;
                             self.state.high_bit_shift <<= 1;
 
