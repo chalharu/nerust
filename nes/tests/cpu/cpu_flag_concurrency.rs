@@ -11,6 +11,6 @@ fn test_cpu_flag_concurrency() {
     test!(
         "cpu/cpu_flag_concurrency/test_cpu_flag_concurrency.nes",
         // ScenarioLeaf::check_screen(850, 0xF08167007525306C)
-        ScenarioLeaf::check_screen(850, 0x65CC7F8C6F7B5C41)
+        ScenarioLeaf::check_screen(850, 0x238D985A6183B697)
     );
 }

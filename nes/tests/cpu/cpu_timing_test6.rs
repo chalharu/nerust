@@ -10,6 +10,6 @@ use super::*;
 fn cpu_timing_test6() {
     test!(
         "cpu/cpu_timing_test6/cpu_timing_test.nes",
-        ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
+        ScenarioLeaf::check_screen(639, 0x172C687E69C06327)
     );
 }

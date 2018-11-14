@@ -4,12 +4,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
+extern crate log;
+
 mod init;
-pub mod setup;
+mod setup;
+
+pub use self::setup::Setup;
+use self::setup::SetupValues;
 
 use self::init::Init;
-use self::setup::NesNtscSetup;
-use crate::nes::{Screen, RGB};
+use std::mem;
 
 const NES_NTSC_PALETTE_SIZE: usize = 64;
 const NES_NTSC_ENTRY_SIZE: usize = 128;
@@ -49,7 +57,7 @@ const NES_NTSC_RGB_BUILDER: u32 = (1 << 21) | (1 << 11) | (1 << 1);
 const RGB_BIAS: u32 = RGB_UNIT as u32 * 2 * NES_NTSC_RGB_BUILDER;
 
 const NES_NTSC_IN_CHUNK: usize = 3;
-// const NES_NTSC_OUT_CHUNK: usize = 7;
+const NES_NTSC_OUT_CHUNK: usize = 7;
 const NES_NTSC_BURST_COUNT: usize = 3;
 const NES_NTSC_BLACK: u8 = 15;
 const NES_NTSC_BURST_SIZE: usize = NES_NTSC_ENTRY_SIZE / NES_NTSC_BURST_COUNT;
@@ -64,42 +72,78 @@ struct PixelInfo {
     kernel: [f32; 4],
 }
 
-macro_rules! pixel_offset_impl {
-    ($ntsc:expr, $scaled:expr) => {
-        KERNEL_SIZE as isize / 2
-            + $ntsc
-            + ($scaled as f32 / $scaled as f32) as isize // これは大丈夫なのか？ NaN as isize -> 0 を期待している。
-            + (RESCALE_OUT as isize - $scaled) % RESCALE_OUT as isize
-            + (KERNEL_SIZE as isize * 2 * $scaled)
-    };
+fn pixel_offset_impl(ntsc: isize, scaled: isize) -> usize {
+    (KERNEL_SIZE as isize / 2
+        + ntsc
+        + if scaled != 0 { 1 } else { 0 }
+        + (RESCALE_OUT as isize - scaled) % RESCALE_OUT as isize
+        + (KERNEL_SIZE as isize * 2 * scaled)) as usize
 }
 
-macro_rules! pixel_offset {
-    ($ntsc:expr, $scaled:expr, $kernel:expr) => {
-        PixelInfo {
-            offset: pixel_offset_impl!(
-                ($ntsc - $scaled / RESCALE_OUT as isize * RESCALE_IN as isize),
-                (($scaled + RESCALE_OUT as isize * 10) % RESCALE_OUT as isize)
-            ) as usize,
-            negate: (1.0 - (($ntsc + 100) & 2) as f32),
-            kernel: $kernel,
-        }
-    };
+fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
+    let offset = pixel_offset_impl(
+        ntsc - scaled / RESCALE_OUT as isize * RESCALE_IN as isize,
+        (scaled + RESCALE_OUT as isize * 10) % RESCALE_OUT as isize,
+    );
+    PixelInfo {
+        offset,
+        negate: (1.0 - ((ntsc + 100) & 2) as f32),
+        kernel: kernel,
+    }
 }
 
 // 3 input pixels -> 8 composite samples
-const NES_NTSC_PIXELS: [PixelInfo; ALIGNMENT_COUNT] = [
-    pixel_offset!(-4, -9, [1.0, 1.0, 0.6667, 0.0]),
-    pixel_offset!(-2, -7, [0.3333, 1.0, 1.0, 0.3333]),
-    pixel_offset!(0, -5, [0.0, 0.6667, 1.0, 1.0]),
-];
+lazy_static! {
+    static ref NES_NTSC_PIXELS: [PixelInfo; ALIGNMENT_COUNT] = [
+        pixel_offset(-4, -9, [1.0, 1.0, 0.6667, 0.0]),
+        pixel_offset(-2, -7, [0.3333, 1.0, 1.0, 0.3333]),
+        pixel_offset(0, -5, [0.0, 0.6667, 1.0, 1.0]),
+    ];
+}
 
 fn rotate_iq(iq: &(f32, f32), sin_b: f32, cos_b: f32) -> (f32, f32) {
     (iq.0 * cos_b - iq.1 * sin_b, iq.0 * sin_b + iq.1 * cos_b)
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct RGB {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+impl From<u32> for RGB {
+    fn from(value: u32) -> RGB {
+        RGB {
+            red: ((value >> 16) & 0xFF) as u8,
+            green: ((value >> 8) & 0xFF) as u8,
+            blue: (value & 0xFF) as u8,
+        }
+    }
+}
+
+// pub trait NesNtscExt<I1: IntoIterator<Item = u8>, I2: Iterator<Item = I1>> {
+//     fn filter(self, kernel: &NesNtsc) -> NesNtscIterator<I1, I2>;
+// }
+
+// impl<I1, I2> NesNtscExt<I1, I2::IntoIter> for I2
+// where
+//     I1: IntoIterator<Item = u8>,
+//     I2: IntoIterator<Item = I1>,
+// {
+//     fn filter(self, kernel: &NesNtsc) -> NesNtscIterator<I1, I2::IntoIter> {
+//         NesNtscIterator::new(self.into_iter(), kernel)
+//     }
+// }
+
 pub struct NesNtsc {
+    burst: usize,
     table: Vec<u32>,
+    width: usize,
+    in_chunk_count: usize,
+    row_pos: usize,
+    row: Option<NtscRow>,
+    chunk_size: usize,
 }
 
 impl NesNtsc {
@@ -247,19 +291,27 @@ impl NesNtsc {
             .wrapping_sub(fourth.wrapping_mul(3));
     }
 
-    pub fn new(setup: &NesNtscSetup) -> Self {
+    pub fn new(setup: &Setup, width: usize) -> Self {
         let filter_impl = Init::new(setup);
 
         // setup fast gamma
         let gamma_factor = {
-            let gamma = setup.gamma * -0.5 + 0.1333;
-            gamma.abs().powf(0.73).abs() as f32
+            let gamma = setup.gamma() * -0.5 + 0.1333;
+            gamma.abs().powf(0.73).abs()
         };
 
         let merge_fields =
-            (setup.artifacts <= -1.0 && setup.fringing <= -1.0) || setup.merge_fields;
+            (setup.artifacts() <= -1.0 && setup.fringing() <= -1.0) || setup.merge_fields();
+
+        let chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
 
         Self {
+            chunk_size,
+            width,
+            burst: 0,
+            in_chunk_count: 0,
+            row_pos: 0,
+            row: None,
             table: (0..NES_NTSC_PALETTE_SIZE)
                 .map(|entry| {
                     // Base 64-color generation
@@ -281,9 +333,9 @@ impl NesNtsc {
                             let q = Self::to_angle_cos(color) * sat;
                             let y = ((high + low) * 0.5)
                     // Apply brightness, contrast, and gamma
-                    * (setup.contrast as f32 * 0.5 + 1.0)
+                    * (setup.contrast() * 0.5 + 1.0)
                     // adjustment reduces error when using input palette
-                    + setup.brightness as f32 * 0.5
+                    + setup.brightness() * 0.5
                                 - 0.5 / 256.0;
 
                             let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, &DEFAULT_DECODER);
@@ -323,85 +375,83 @@ impl NesNtsc {
         }
     }
 
-    pub fn blit<S: Screen>(
-        &mut self,
-        input: &[u8],
-        in_row_width: usize,
-        mut burst_phase: usize,
-        in_width: usize,
-        in_height: usize,
-        screen: &mut S,
-    ) {
-        let chunk_count = (in_width - 1) / NES_NTSC_IN_CHUNK;
-        let mut outbuf = Vec::with_capacity((chunk_count + 1) * 7 * (in_height + 1));
-        for i in 0..in_height {
-            let mut row = NtscRow::new(
-                burst_phase,
-                NES_NTSC_BLACK,
-                NES_NTSC_BLACK,
-                input[i * in_row_width],
+    pub fn set_burst(&mut self, burst: usize) {
+        self.burst = burst;
+    }
+
+    pub fn set_source_width(&mut self, width: usize) {
+        self.width = width;
+        self.chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
+    }
+
+    pub fn output_width(source: usize) -> usize {
+        ((source - 1) / NES_NTSC_IN_CHUNK + 1) * NES_NTSC_OUT_CHUNK
+    }
+
+    fn rgb_out<F: FnMut(RGB)>(&mut self, in_chunk: usize, value: u8, next_func: &mut F) {
+        match in_chunk {
+            0 => {
+                self.row.as_mut().unwrap().color_in(0, value);
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 0));
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 1));
+            }
+            1 => {
+                self.row.as_mut().unwrap().color_in(1, value);
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 2));
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 3));
+            }
+            2 => {
+                self.row.as_mut().unwrap().color_in(2, value);
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 4));
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 5));
+                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 6));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn push<F: FnMut(RGB)>(&mut self, value: u8, next_func: &mut F) {
+        if self.row_pos == 0 {
+            mem::replace(
+                &mut self.row,
+                Some(NtscRow::new(
+                    self.burst,
+                    NES_NTSC_BLACK,
+                    NES_NTSC_BLACK,
+                    value,
+                )),
             );
-            let mut input_offset: usize = i * in_row_width + 1;
-
-            for _ in 0..chunk_count {
-                // order of input and output pixels must not be altered
-                row.color_in(0, input[input_offset]);
-
-                outbuf.push(row.rgb_out(&self.table, 0));
-                outbuf.push(row.rgb_out(&self.table, 1));
-
-                row.color_in(1, input[input_offset + 1]);
-                outbuf.push(row.rgb_out(&self.table, 2));
-                outbuf.push(row.rgb_out(&self.table, 3));
-
-                row.color_in(2, input[input_offset + 2]);
-                outbuf.push(row.rgb_out(&self.table, 4));
-                outbuf.push(row.rgb_out(&self.table, 5));
-                outbuf.push(row.rgb_out(&self.table, 6));
-
-                input_offset += 3;
-            }
-
-            // finish final pixels
-
-            row.color_in(0, NES_NTSC_BLACK);
-            outbuf.push(row.rgb_out(&self.table, 0));
-            outbuf.push(row.rgb_out(&self.table, 1));
-
-            row.color_in(1, NES_NTSC_BLACK);
-            outbuf.push(row.rgb_out(&self.table, 2));
-            outbuf.push(row.rgb_out(&self.table, 3));
-
-            row.color_in(2, NES_NTSC_BLACK);
-            outbuf.push(row.rgb_out(&self.table, 4));
-            outbuf.push(row.rgb_out(&self.table, 5));
-            outbuf.push(row.rgb_out(&self.table, 6));
-
-            burst_phase = (burst_phase + 1) % NES_NTSC_BURST_COUNT;
+        } else {
+            let chunk_count = self.in_chunk_count;
+            self.rgb_out(chunk_count, value, next_func);
+            self.in_chunk_count = match self.in_chunk_count {
+                0 => 1,
+                1 => 2,
+                2 => 0,
+                _ => unreachable!(),
+            };
         }
-
-        for _ in 0..((chunk_count + 1) * 7) {
-            outbuf.push(0);
-        }
-
-        for i in 0..in_height {
-            for j in 0..((chunk_count + 1) * 7) {
-                let prev = outbuf[j + i * (chunk_count + 1) * 7];
-                let next = outbuf[j + (i + 1) * (chunk_count + 1) * 7];
-                // mix 32-bit rgb without losing low bits
-                let mixed = prev + next + ((prev ^ next) & 0x00010101);
-                // darken by 12%
-                screen.set_rgb(j, i * 2, RGB::from(prev));
-                screen.set_rgb(
-                    j,
-                    i * 2 + 1,
-                    RGB::from((mixed >> 1) - (mixed >> 4 & 0x001F1F1F)),
-                );
-            }
+        self.row_pos += 1;
+        if self.row_pos == self.width {
+            self.row_pos = 0;
+            match self.in_chunk_count {
+                0 => (),
+                1 => {
+                    self.rgb_out(1, NES_NTSC_BLACK, next_func);
+                    self.rgb_out(2, NES_NTSC_BLACK, next_func);
+                }
+                2 => self.rgb_out(2, NES_NTSC_BLACK, next_func),
+                _ => unreachable!(),
+            };
+            self.rgb_out(0, NES_NTSC_BLACK, next_func);
+            self.rgb_out(1, NES_NTSC_BLACK, next_func);
+            self.rgb_out(2, NES_NTSC_BLACK, next_func);
+            self.burst = (self.burst + 1) % NES_NTSC_BURST_COUNT;
         }
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 struct NtscRow {
     // burst: usize,
     // pixel: [u32; 3],
@@ -412,7 +462,7 @@ struct NtscRow {
 
 impl NtscRow {
     // NES_NTSC_BEGIN_ROW
-    pub fn new(burst: usize, pixel0: u8, pixel1: u8, pixel2: u8) -> Self {
+    pub(crate) fn new(burst: usize, pixel0: u8, pixel1: u8, pixel2: u8) -> Self {
         let ktable_offset = burst * NES_NTSC_BURST_SIZE;
         let kernel0 = Self::entry_impl(ktable_offset, pixel0);
         Self {
@@ -433,27 +483,22 @@ impl NtscRow {
         ktable_offset + usize::from(n) * NES_NTSC_ENTRY_SIZE
     }
 
-    pub fn rgb_out(&mut self, input: &[u32], x: usize) -> u32 {
-        let raw = Self::clamp_impl(
+    pub fn rgb_out(&self, input: &[u32], x: usize) -> RGB {
+        RGB::from(Self::rgb_out_impl(Self::clamp_impl(
             input[self.kernel[0] + x]
                 .wrapping_add(input[self.kernel[1] + (x + 12) % 7 + 14])
                 .wrapping_add(input[self.kernel[2] + (x + 10) % 7 + 28])
                 .wrapping_add(input[self.kernelx[0] + (x + 7) % 14])
                 .wrapping_add(input[self.kernelx[1] + (x + 5) % 7 + 21])
                 .wrapping_add(input[self.kernelx[2] + (x + 3) % 7 + 35]),
-        );
-        let result = Self::rgb_out_impl(raw);
-        result
+        )))
     }
 
     // common ntsc macros
-    fn clamp_impl(mut io: u32) -> u32 {
+    fn clamp_impl(io: u32) -> u32 {
         let sub = io >> 9 & NES_NTSC_CLAMP_MASK;
-        let mut clamp = NES_NTSC_CLAMP_ADD - sub;
-        io |= clamp;
-        clamp -= sub;
-        io &= clamp;
-        io
+        let clamp = NES_NTSC_CLAMP_ADD - sub;
+        (io | clamp) & (clamp - sub)
     }
 
     fn rgb_out_impl(raw: u32) -> u32 {

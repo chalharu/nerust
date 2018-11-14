@@ -17,6 +17,8 @@ bitflags = { version = ">=0.0.0" }
 alto =  { version = ">=0.0.0" }
 crc = { version = ">=0.0.0" }
 futures = { version = ">=0.0.0" }
+nes_ntsc = { version = ">=0.0.0", path="../nes_ntsc" }
+
 
 [dev-dependencies]
 hound = { version = ">=0.0.0" }

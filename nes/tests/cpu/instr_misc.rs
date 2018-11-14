@@ -10,7 +10,7 @@ use super::*;
 fn instr_misc() {
     test!(
         "cpu/instr_misc/instr_misc.nes",
-        ScenarioLeaf::check_screen(344, 0xE00704F6A0376CBE)
+        ScenarioLeaf::check_screen(344, 0x20E234D5DB551AA9)
     );
 }
 
@@ -18,7 +18,7 @@ fn instr_misc() {
 fn _01_abs_x_wrap() {
     test!(
         "cpu/instr_misc/rom_singles/01-abs_x_wrap.nes",
-        ScenarioLeaf::check_screen(15, 0x70C16D43E3AB469F)
+        ScenarioLeaf::check_screen(15, 0xE2900046F45BB66A)
     );
 }
 
@@ -26,7 +26,7 @@ fn _01_abs_x_wrap() {
 fn _02_branch_wrap() {
     test!(
         "cpu/instr_misc/rom_singles/02-branch_wrap.nes",
-        ScenarioLeaf::check_screen(20, 0x0BF2CADC2FD357FB)
+        ScenarioLeaf::check_screen(20, 0x0341BD5B2530B417)
     );
 }
 
@@ -34,7 +34,7 @@ fn _02_branch_wrap() {
 fn _03_dummy_reads() {
     test!(
         "cpu/instr_misc/rom_singles/03-dummy_reads.nes",
-        ScenarioLeaf::check_screen(70, 0xC92F20641AC33CF6)
+        ScenarioLeaf::check_screen(70, 0x0584AAAEB26972DC)
     );
 }
 
@@ -42,6 +42,6 @@ fn _03_dummy_reads() {
 fn _04_dummy_reads_apu() {
     test!(
         "cpu/instr_misc/rom_singles/04-dummy_reads_apu.nes",
-        ScenarioLeaf::check_screen(165, 0xE3181E996F5F1FD0)
+        ScenarioLeaf::check_screen(165, 0xAE30A6A220EF1A20)
     );
 }

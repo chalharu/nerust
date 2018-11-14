@@ -10,6 +10,6 @@ use super::*;
 fn ppu_vbl_nmi() {
     test!(
         "ppu/ppu_vbl_nmi/ppu_vbl_nmi.nes",
-        ScenarioLeaf::check_screen(1640, 0x1C836FC773555051)
+        ScenarioLeaf::check_screen(1640, 0xEB57E16978E45540)
     );
 }

@@ -10,9 +10,9 @@ use super::*;
 fn ram_after_reset() {
     test!(
         "cpu/cpu_reset/ram_after_reset.nes",
-        ScenarioLeaf::check_screen(155, 0x6C18F33A360A267A),
+        ScenarioLeaf::check_screen(155, 0x440354DCC93B0821),
         ScenarioLeaf::reset(156),
-        ScenarioLeaf::check_screen(255, 0xA70256FE525B5712)
+        ScenarioLeaf::check_screen(255, 0xD3422C94B83715E9)
     );
 }
 
@@ -20,8 +20,8 @@ fn ram_after_reset() {
 fn registers() {
     test!(
         "cpu/cpu_reset/registers.nes",
-        ScenarioLeaf::check_screen(155, 0x6C18F33A360A267A),
+        ScenarioLeaf::check_screen(155, 0x440354DCC93B0821),
         ScenarioLeaf::reset(156),
-        ScenarioLeaf::check_screen(255, 0x15A2A5B1C285B8CE)
+        ScenarioLeaf::check_screen(255, 0x71F4ECB5DA8686D2)
     );
 }

@@ -10,7 +10,7 @@ use super::*;
 fn bntest_aorom() {
     test!(
         "mapper/bntest/bntest_aorom.nes",
-        ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
+        ScenarioLeaf::check_screen(639, 0x172C687E69C06327)
     );
     panic!("Not implemented");
 }
@@ -19,7 +19,7 @@ fn bntest_aorom() {
 fn bntest_h() {
     test!(
         "mapper/bntest/bntest_h.nes",
-        ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
+        ScenarioLeaf::check_screen(639, 0x172C687E69C06327)
     );
     panic!("Not implemented");
 }
@@ -28,7 +28,7 @@ fn bntest_h() {
 fn bntest_v() {
     test!(
         "mapper/bntest/bntest_v.nes",
-        ScenarioLeaf::check_screen(639, 0x475DE2E673F715D4)
+        ScenarioLeaf::check_screen(639, 0x172C687E69C06327)
     );
     panic!("Not implemented");
 }

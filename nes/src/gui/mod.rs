@@ -4,24 +4,64 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+pub mod filterset;
+
 use alto::*;
 use crate::glwrap::*;
 use crate::nes::controller::standard_controller::{Buttons, StandardController};
-use crate::nes::{Console, Screen, Speaker, RGB};
+use crate::nes::{Console, Screen, Speaker};
 use crc::crc64;
 use gl;
 use gl::types::GLint;
-use glutin::dpi::LogicalSize;
 use glutin::{
-    Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
+    dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
     GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
 };
 
+use self::filterset::{FilterType, NesFilter};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_void;
 use std::time::{Duration, Instant};
 use std::{f64, iter, mem, thread};
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct RGB {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+impl From<u32> for RGB {
+    fn from(value: u32) -> RGB {
+        RGB {
+            red: ((value >> 16) & 0xFF) as u8,
+            green: ((value >> 8) & 0xFF) as u8,
+            blue: (value & 0xFF) as u8,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct PhysicalSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl From<LogicalSize> for PhysicalSize {
+    fn from(value: LogicalSize) -> PhysicalSize {
+        PhysicalSize {
+            width: value.width as f32,
+            height: value.height as f32,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct LogicalSize {
+    pub width: usize,
+    pub height: usize,
+}
 
 // const PAR: f64 = 7.0 / 8.0;
 
@@ -64,10 +104,12 @@ impl Fps {
     }
 }
 
-fn create_window(events_loop: &EventsLoop) -> GlWindow {
+fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> GlWindow {
     let window = WindowBuilder::new()
-        .with_dimensions(LogicalSize::new(602.0, 480.0))
-        .with_title("Nes");
+        .with_dimensions(dpi::LogicalSize::new(
+            f64::from(size.width),
+            f64::from(size.height),
+        )).with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
         .with_gl_profile(GlProfile::Compatibility)
@@ -147,48 +189,137 @@ impl VertexData {
     }
 }
 
-fn init_screen_buffer() -> [u8; 602 * 480 * 4] {
-    let mut screen_buffer = [0_u8; 602 * 480 * 4];
-    for (i, s) in screen_buffer.iter_mut().enumerate() {
-        let p = i & 3;
-        let x = (i >> 2) % 602;
-        let y = (i >> 2) / 602;
-        let r = ((x * 0xFF) / 602) as u8;
-        *s = match p {
-            0 => r,
-            1 => ((y * 0xFF) / 480) as u8,
-            2 => !r,
-            _ => 0,
-        };
+fn allocate(size: usize) -> Box<[u8]> {
+    let mut buffer = Vec::with_capacity(size);
+    unsafe {
+        buffer.set_len(size);
     }
-    screen_buffer
+    buffer.into_boxed_slice()
 }
 
-pub struct ScreenBuffer([u8; 602 * 480 * 4]);
+fn init_screen_buffer(size: LogicalSize) -> Box<[u8]> {
+    allocate(size.width * size.height * 4)
+}
 
-impl ScreenBuffer {
-    pub fn new() -> Self {
-        //ScreenBuffer([0_u8; 256 * 240 * 4])
-        ScreenBuffer(init_screen_buffer())
+struct ScreenBufferUnit {
+    buffer: Box<[u8]>,
+    pos: usize,
+}
+
+impl ScreenBufferUnit {
+    pub fn new(size: LogicalSize) -> Self {
+        Self {
+            buffer: init_screen_buffer(size),
+            pos: 0,
+        }
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        &self.0 as *const [u8; 602 * 480 * 4] as *const u8
+        self.buffer.as_ref() as *const [u8] as *const u8
+    }
+
+    pub fn as_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    pub fn as_ref(&mut self) -> &Self {
+        self
     }
 }
 
+pub struct ScreenBuffer {
+    filter: Box<NesFilter>,
+    dest: ScreenBufferUnit,
+    src_buffer: Box<[u8]>,
+    src_buffer_next: Box<[u8]>,
+    src_size: LogicalSize,
+    src_pos: usize,
+}
+
+// fn init_screen_buffer(size: Size) -> [u8; 602 * 480 * 4] {
+//     let mut screen_buffer = [0_u8; 602 * 480 * 4];
+//     for (i, s) in screen_buffer.iter_mut().enumerate() {
+//         let p = i & 3;
+//         let x = (i >> 2) % 602;
+//         let y = (i >> 2) / 602;
+//         let r = ((x * 0xFF) / 602) as u8;
+//         *s = match p {
+//             0 => r,
+//             1 => ((y * 0xFF) / 480) as u8,
+//             2 => !r,
+//             _ => 0,
+//         };
+//     }
+//     screen_buffer
+// }
+
+impl ScreenBuffer {
+    pub fn new(filter_type: FilterType, src_size: LogicalSize) -> Self {
+        let filter = filter_type.generate(src_size);
+        let src_buffer_size = src_size.height * src_size.width;
+        let src_buffer = allocate(src_buffer_size);
+        let src_buffer_next = allocate(src_buffer_size);
+
+        Self {
+            dest: ScreenBufferUnit::new(filter.logical_size()),
+            filter,
+            src_buffer,
+            src_buffer_next,
+            src_size,
+            src_pos: 0,
+        }
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.dest.as_ptr()
+    }
+
+    pub fn logical_size(&self) -> LogicalSize {
+        self.filter.logical_size()
+    }
+
+    pub fn physical_size(&self) -> PhysicalSize {
+        self.filter.physical_size()
+    }
+
+    // pub fn change_filter(&mut self, filter_type: FilterType) {
+    //     let filter = filter_type.generate(self.src_size);
+    //     let buffer = init_screen_buffer(filter.logical_size());
+    //     self.filter = filter;
+    //     self.dest_buffer = buffer;
+    //     for i in 0..self.dest_pos {
+    //         self.dest_buffer[i] = self.src_buffe
+    //     }
+    // }
+}
+
 impl Screen for ScreenBuffer {
-    fn set_rgb(&mut self, x: usize, y: usize, color: RGB) {
-        let pos = (usize::from(y) * 602 + usize::from(x)) << 2;
-        self.0[pos] = color.red;
-        self.0[pos + 1] = color.green;
-        self.0[pos + 2] = color.blue;
+    fn push(&mut self, value: u8) {
+        let dest = &mut self.dest;
+        self.filter.as_mut().push(
+            value,
+            Box::new(|color: RGB| {
+                let pos = dest.pos << 2;
+                dest.buffer[pos] = color.red;
+                dest.buffer[pos + 1] = color.green;
+                dest.buffer[pos + 2] = color.blue;
+                dest.pos += 1;
+            }),
+        );
+        self.src_buffer_next[self.src_pos] = value;
+        self.src_pos += 1;
+    }
+
+    fn render(&mut self) {
+        mem::swap(&mut self.src_buffer, &mut self.src_buffer_next);
+        self.src_pos = 0;
+        self.dest.pos = 0;
     }
 }
 
 impl Hash for ScreenBuffer {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.src_buffer.hash(state);
     }
 }
 
@@ -211,10 +342,18 @@ struct Window {
 
 impl Window {
     fn new(console: Console, speaker: AlSpeaker) -> Self {
+        let screen_buffer = ScreenBuffer::new(
+            // FilterType::NtscComposite,
+            FilterType::None,
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        );
         // glutin initialize
         let events_loop = EventsLoop::new();
         // create opengl window
-        let window = create_window(&events_loop);
+        let window = create_window(&events_loop, screen_buffer.physical_size());
 
         Self {
             events_loop: Some(events_loop),
@@ -222,7 +361,7 @@ impl Window {
             running: true,
             fps: Fps::new(),
             tex_name: 0,
-            screen_buffer: ScreenBuffer::new(),
+            screen_buffer,
             vertex_vbo: 0,
             shader: None,
             console,
@@ -274,31 +413,54 @@ impl Window {
         pixel_storei(gl::UNPACK_ALIGNMENT, 4).unwrap();
 
         bind_texture(gl::TEXTURE_2D, self.tex_name).unwrap();
+
+        let logical_size = self.screen_buffer.logical_size();
+        let buffer_width = logical_size.width.next_power_of_two();
+        let buffer_height = logical_size.height.next_power_of_two();
+
         tex_image_2d(
             gl::TEXTURE_2D,
             0,
             gl::RGBA as GLint,
-            1024,
-            512,
+            buffer_width as i32,
+            buffer_height as i32,
             0,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            unsafe { mem::transmute([0_u8; 1024 * 512 * 4].as_ptr()) },
+            unsafe {
+                mem::transmute(
+                    init_screen_buffer(LogicalSize {
+                        width: buffer_width,
+                        height: buffer_height,
+                    }).as_ptr(),
+                )
+            },
         ).unwrap();
 
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32).unwrap();
+        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32).unwrap();
+        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
 
         // bind_texture(gl::TEXTURE_2D, 0).unwrap();
 
         // vbo
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
-            VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 480.0 / 512.0)),
-            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(602.0 / 1024.0, 0.0)),
+            VertexData::new(
+                Vec2D::new(-1.0, -1.0),
+                Vec2D::new(0.0, logical_size.height as f32 / buffer_height as f32),
+            ),
+            VertexData::new(
+                Vec2D::new(1.0, 1.0),
+                Vec2D::new(logical_size.width as f32 / buffer_width as f32, 0.0),
+            ),
             VertexData::new(
                 Vec2D::new(1.0, -1.0),
-                Vec2D::new(602.0 / 1024.0, 480.0 / 512.0),
+                Vec2D::new(
+                    logical_size.width as f32 / buffer_width as f32,
+                    logical_size.height as f32 / buffer_height as f32,
+                ),
             ),
         ];
 
@@ -367,8 +529,8 @@ impl Window {
             0,
             0,
             0,
-            602,
-            480,
+            self.screen_buffer.logical_size().width as i32,
+            self.screen_buffer.logical_size().height as i32,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             self.screen_buffer.as_ptr() as *const c_void,
@@ -385,12 +547,14 @@ impl Window {
         self.window.set_title(title.as_str());
     }
 
-    fn on_resize(&mut self, logical_size: LogicalSize) {
+    fn on_resize(&mut self, logical_size: dpi::LogicalSize) {
         let dpi_factor = self.window.get_hidpi_factor();
         self.window.resize(logical_size.to_physical(dpi_factor));
 
-        let rate_x = logical_size.width / 602.0;
-        let rate_y = logical_size.height / 480.0;
+        let physical_size = self.screen_buffer.physical_size();
+
+        let rate_x = logical_size.width / physical_size.width as f64;
+        let rate_y = logical_size.height / physical_size.height as f64;
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;

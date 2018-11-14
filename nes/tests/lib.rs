@@ -23,7 +23,8 @@ use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
 use crc::crc64;
-use nes::gui::ScreenBuffer;
+use nes::gui::filterset::FilterType;
+use nes::gui::{LogicalSize, ScreenBuffer};
 use nes::nes::controller::standard_controller::{Buttons, StandardController};
 use nes::nes::{Console, Speaker};
 use std::collections::VecDeque;
@@ -54,7 +55,13 @@ struct ScenarioRunner {
 impl ScenarioRunner {
     fn new<I: Iterator<Item = u8>>(input: &mut I) -> Self {
         Self {
-            screen_buffer: ScreenBuffer::new(),
+            screen_buffer: ScreenBuffer::new(
+                FilterType::None,
+                LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
+            ),
             console: Console::new(input, 44_100).unwrap(),
             controller: StandardController::new(),
             speaker: TestSpeaker::new(),
@@ -229,7 +236,7 @@ impl Scenario {
 //     fn flowing_palette() {
 //         test!(
 //             "full_palette/flowing_palette.nes",
-//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
 //         );
 //     }
 
@@ -237,7 +244,7 @@ impl Scenario {
 //     fn full_palette_smooth() {
 //         test!(
 //             "full_palette/full_palette_smooth.nes",
-//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
 //         );
 //     }
 
@@ -245,7 +252,7 @@ impl Scenario {
 //     fn full_palette() {
 //         test!(
 //             "full_palette/full_palette.nes",
-//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
 //         );
 //     }
 // }
@@ -257,7 +264,7 @@ impl Scenario {
 //     fn demo_ntsc() {
 //         test!(
 //             "nmi_sync/demo_ntsc.nes",
-//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
 //         );
 //     }
 
@@ -265,7 +272,7 @@ impl Scenario {
 //     fn demo_pal() {
 //         test!(
 //             "nmi_sync/demo_pal.nes",
-//             ScenarioLeaf::check_screen(30, 0x85459C9BE19FB8A0)
+//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
 //         );
 //     }
 // }
