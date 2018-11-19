@@ -9,6 +9,7 @@ mod cartridge;
 pub mod controller;
 mod cpu;
 mod interface;
+mod mixer;
 mod ppu;
 mod status;
 
@@ -17,6 +18,7 @@ use self::cartridge::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 pub use self::interface::*;
+pub(crate) use self::mixer::NesMixer;
 use self::ppu::Core as Ppu;
 use self::status::mirror_mode::MirrorMode;
 use failure::Error;
@@ -29,13 +31,10 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new<I: Iterator<Item = u8>>(
-        input: &mut I,
-        sound_sample_rate: u32,
-    ) -> Result<Console, Error> {
+    pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
         let mut cpu = Cpu::new();
         let mut cartridge = cartridge::try_from(input)?;
-        let apu = Apu::new(sound_sample_rate, &mut cpu.interrupt, &mut cartridge);
+        let apu = Apu::new(&mut cpu.interrupt, &mut cartridge);
         Ok(Self {
             cpu,
             ppu: Ppu::new(),
@@ -50,11 +49,11 @@ impl Console {
         self.apu.reset(&mut self.cpu.interrupt, &mut self.cartridge);
     }
 
-    pub fn step<S: Screen, SP: Speaker>(
+    pub fn step<S: Screen, M: MixerInput>(
         &mut self,
         screen: &mut S,
         controller: &mut Controller,
-        speaker: &mut SP,
+        mixer: &mut M,
     ) -> bool {
         // 1CPUサイクルにつき、APUは1、PPUはNTSC=>3,PAL=>3.2となる
         let mut result = false;
@@ -73,7 +72,7 @@ impl Console {
             }
             self.cartridge.step();
         }
-        self.apu.step(&mut self.cpu, &mut self.cartridge, speaker);
+        self.apu.step(&mut self.cpu, &mut self.cartridge, mixer);
 
         result
     }

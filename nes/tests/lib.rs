@@ -26,27 +26,27 @@ use crc::crc64;
 use nes::gui::filterset::FilterType;
 use nes::gui::{LogicalSize, ScreenBuffer};
 use nes::nes::controller::standard_controller::{Buttons, StandardController};
-use nes::nes::{Console, Speaker};
+use nes::nes::{Console, MixerInput};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
-struct TestSpeaker {}
+struct TestMixer {}
 
-impl TestSpeaker {
+impl TestMixer {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl Speaker for TestSpeaker {
-    fn push(&mut self, _data: i16) {}
+impl MixerInput for TestMixer {
+    fn push(&mut self, _data: f32) {}
 }
 
 struct ScenarioRunner {
     screen_buffer: ScreenBuffer,
     console: Console,
     controller: StandardController,
-    speaker: TestSpeaker,
+    mixer: TestMixer,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
@@ -62,9 +62,9 @@ impl ScenarioRunner {
                     height: 240,
                 },
             ),
-            console: Console::new(input, 44_100).unwrap(),
+            console: Console::new(input).unwrap(),
             controller: StandardController::new(),
-            speaker: TestSpeaker::new(),
+            mixer: TestMixer::new(),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
@@ -121,7 +121,7 @@ impl ScenarioRunner {
         while !self.console.step(
             &mut self.screen_buffer,
             &mut self.controller,
-            &mut self.speaker,
+            &mut self.mixer,
         ) {}
         self.frame_counter += 1;
     }

@@ -9,7 +9,7 @@ pub mod filterset;
 use alto::*;
 use crate::glwrap::*;
 use crate::nes::controller::standard_controller::{Buttons, StandardController};
-use crate::nes::{Console, Screen, Speaker};
+use crate::nes::{Console, NesMixer, Screen};
 use crc::crc64;
 use gl;
 use gl::types::GLint;
@@ -17,13 +17,16 @@ use glutin::{
     dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
     GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
 };
+use std::ops::Add;
 
 use self::filterset::{FilterType, NesFilter};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_void;
 use std::time::{Duration, Instant};
-use std::{f64, iter, mem, thread};
+use std::{f64, mem, thread};
+
+const CLOCK_RATE: usize = 1_789_773;
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct RGB {
@@ -68,39 +71,56 @@ pub struct LogicalSize {
 struct Fps {
     instants: VecDeque<Instant>,
     wait_instants: Instant,
+    thread_sleep_nanos: Duration,
+    frame_wait_nanos: Duration,
 }
 
 impl Fps {
     pub fn new() -> Self {
-        let mut instants = VecDeque::new();
-        for _ in 0..64 {
-            instants.push_back(Instant::now());
-        }
+        let instants = VecDeque::with_capacity(64);
         let wait_instants = Instant::now();
         Self {
             instants,
             wait_instants,
+            thread_sleep_nanos: Duration::from_nanos(Self::FRAME_WAIT_NANOS - 1_000_000),
+            frame_wait_nanos: Duration::from_nanos(Self::FRAME_WAIT_NANOS),
         }
     }
 
-    const FRAME_WAITS: u64 = 1_000 / 60;
+    const FRAME_DOTS: f64 = 89341.5;
+    const VSYNC_RATE: f64 = CLOCK_RATE as f64 * 3.0 / Self::FRAME_DOTS;
+    const FRAME_WAIT_NANOS: u64 = (1.0 / Self::VSYNC_RATE * 1_000_000_000.0) as u64;
 
     pub fn wait(&mut self) {
         let new_now = Instant::now();
         let duration = new_now.duration_since(self.wait_instants);
-        if let Some(wait) = Duration::from_millis(Self::FRAME_WAITS).checked_sub(duration) {
+        if let Some(wait) = self.thread_sleep_nanos.checked_sub(duration) {
             thread::sleep(wait);
         }
-        self.wait_instants = Instant::now();
+        let next = self.wait_instants.add(self.frame_wait_nanos);
+        let mut wait_instants = Instant::now();
+        while wait_instants < next {
+            wait_instants = Instant::now();
+        }
+        self.wait_instants = wait_instants;
     }
 
     pub fn to_fps(&mut self) -> f32 {
         let new_now = Instant::now();
-        let duration = new_now.duration_since(self.instants.pop_front().unwrap());
+        let len = self.instants.len();
+        if len == 0 {
+            self.instants.push_back(new_now);
+            return 0.0;
+        }
+        let duration = new_now.duration_since(if len >= 64 {
+            self.instants.pop_front().unwrap()
+        } else {
+            *self.instants.front().unwrap()
+        });
         self.instants.push_back(new_now);
-        (1_000_000_f64
-            / f64::from(duration.as_secs() as u32 * 1_000_000 + duration.subsec_micros())
-            * 64.0) as f32
+        (1_000_000_000_f64
+            / f64::from(duration.as_secs() as u32 * 1_000_000_000 + duration.subsec_nanos())
+            * len as f64) as f32
     }
 }
 
@@ -217,14 +237,6 @@ impl ScreenBufferUnit {
     pub fn as_ptr(&self) -> *const u8 {
         self.buffer.as_ref() as *const [u8] as *const u8
     }
-
-    pub fn as_mut(&mut self) -> &mut Self {
-        self
-    }
-
-    pub fn as_ref(&mut self) -> &Self {
-        self
-    }
 }
 
 pub struct ScreenBuffer {
@@ -232,7 +244,7 @@ pub struct ScreenBuffer {
     dest: ScreenBufferUnit,
     src_buffer: Box<[u8]>,
     src_buffer_next: Box<[u8]>,
-    src_size: LogicalSize,
+    // src_size: LogicalSize,
     src_pos: usize,
 }
 
@@ -265,7 +277,7 @@ impl ScreenBuffer {
             filter,
             src_buffer,
             src_buffer_next,
-            src_size,
+            // src_size,
             src_pos: 0,
         }
     }
@@ -509,11 +521,19 @@ impl Window {
 
     fn on_update(&mut self) {
         if !self.paused {
+            let mut speak_count = 0;
             while !self.console.step(
                 &mut self.screen_buffer,
                 &mut self.controller,
-                &mut self.speaker,
-            ) {}
+                self.speaker.mixer_mut(),
+            ) {
+                if speak_count == 0 {
+                    speak_count = 1000;
+                    self.speaker.step();
+                } else {
+                    speak_count -= 1;
+                }
+            }
             self.frame_counter += 1;
         }
 
@@ -632,26 +652,21 @@ struct AlSpeaker {
     // dev: Option<OutputDevice>,
     // ctx: Option<Context>,
     src: Option<StreamingSource>,
-    buf: Vec<Mono<i16>>,
+    mixer: NesMixer,
+    sample_rate: i32,
 }
 
 impl AlSpeaker {
-    pub fn new() -> Self {
+    pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
+        let mut mixer =
+            NesMixer::nes_mixer(sample_rate as f32, buffer_width * buffer_count, CLOCK_RATE);
         let src = if let Ok(src) = Alto::load_default()
             .and_then(|alto| alto.open(None))
             .and_then(|dev| dev.new_context(None))
             .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
-            .and_then(|(mut src, ctx)| {
-                for _ in 0..10 {
-                    let buf = ctx
-                        .new_buffer(
-                            iter::repeat(0_i16)
-                                .take(44_100 / 120)
-                                .map(|x| Mono { center: x })
-                                .collect::<Vec<Mono<i16>>>(),
-                            44_000,
-                        ).unwrap();
-                    src.queue_buffer(buf).unwrap();
+            .and_then(|(mut src, mut ctx)| {
+                for _ in 0..buffer_count {
+                    Self::add_buffer(&mut ctx, &mut src, sample_rate, &mut mixer, buffer_width);
                 }
                 Ok(src)
             }) {
@@ -662,11 +677,9 @@ impl AlSpeaker {
         };
 
         Self {
-            // alto,
-            // ctx,
-            // dev,
             src,
-            buf: Vec::new(),
+            mixer,
+            sample_rate,
         }
     }
 
@@ -687,19 +700,41 @@ impl AlSpeaker {
             }
         }
     }
-}
 
-impl Speaker for AlSpeaker {
-    fn push(&mut self, data: i16) {
+    pub fn mixer_mut(&mut self) -> &mut NesMixer {
+        &mut self.mixer
+    }
+
+    fn add_buffer(
+        ctx: &mut Context,
+        src: &mut StreamingSource,
+        sample_rate: i32,
+        mixer: &mut NesMixer,
+        buffer_width: usize,
+    ) {
+        let data = &mixer
+            .take(buffer_width)
+            .map(|x| Mono { center: x })
+            .collect::<Vec<_>>();
+        let buf = ctx.new_buffer(data, sample_rate).unwrap();
+        src.queue_buffer(buf).unwrap();
+    }
+
+    fn fill_buffer(src: &mut StreamingSource, sample_rate: i32, mixer: &mut NesMixer) {
+        let mut buf = src.unqueue_buffer().unwrap();
+        let data = &mixer
+            .take(buf.size() as usize / 2) // i16 でのバイト数
+            .map(|x| Mono { center: x })
+            .collect::<Vec<_>>();
+        buf.set_data(data, sample_rate).unwrap();
+        src.queue_buffer(buf).unwrap();
+    }
+
+    pub fn step(&mut self) {
         if let Some(ref mut src) = self.src.as_mut() {
-            self.buf.push(Mono { center: data });
-            if self.buf.len() >= (44_100 / 120) {
-                for _ in 0..src.buffers_processed() {
-                    let mut buf = src.unqueue_buffer().unwrap();
-                    buf.set_data(&self.buf, 44_100).unwrap();
-                    src.queue_buffer(buf).unwrap();
-                }
-                self.buf.clear();
+            let buffers_processed = src.buffers_processed();
+            for _ in 0..buffers_processed {
+                Self::fill_buffer(src, self.sample_rate, &mut self.mixer);
             }
             match src.state() {
                 SourceState::Playing => (),
@@ -719,6 +754,9 @@ impl Gui {
     }
 
     pub fn run(self) {
-        Window::new(self.console, AlSpeaker::new()).run();
+        // 1024 * 5 = 107ms
+        // 512 * 5 = 54ms
+        // 256 * 5 = 27ms
+        Window::new(self.console, AlSpeaker::new(48000, 128, 15)).run();
     }
 }
