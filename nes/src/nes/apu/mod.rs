@@ -6,7 +6,6 @@
 
 mod dmc;
 mod envelope;
-mod filter;
 mod frame_counter;
 mod length_counter;
 mod noise;
@@ -16,7 +15,6 @@ mod triangle;
 
 use self::dmc::DMC;
 use self::envelope::*;
-use self::filter::*;
 use self::frame_counter::*;
 use self::length_counter::*;
 use self::noise::Noise;
@@ -25,36 +23,36 @@ use self::triangle::Triangle;
 use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
 use crate::nes::Cpu;
 use crate::nes::OpenBusReadResult;
-use crate::nes::{Cartridge, Speaker};
+use crate::nes::{Cartridge, MixerInput};
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
-const CLOCK_RATE: u64 = 1_789_773;
+// const CLOCK_RATE: u64 = 1_789_773;
 
 pub struct Core {
     pulse_table: Vec<f32>,
     tnd_table: Vec<f32>,
-    filter: ChaindFilter<ChaindFilter<PassFilter, PassFilter>, PassFilter>,
-    sample_rate: u32,
+    // filter: ChaindFilter<ChaindFilter<PassFilter, PassFilter>, PassFilter>,
+    // sample_rate: u32,
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
     dmc: DMC,
-    sample_cycle: u64,
-    sample_reset_cycle: u64,
+    // sample_cycle: u64,
+    // sample_reset_cycle: u64,
     frame_counter: FrameCounter,
 }
 
 impl Core {
     pub(crate) fn new(
-        sample_rate: u32,
+        // sample_rate: u32,
         interrupt: &mut Interrupt,
         cartridge: &mut Box<Cartridge>,
     ) -> Self {
-        let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
-        let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
+        // let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
+        // let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
         let mut result = Self {
             // https://wiki.nesdev.com/w/index.php/APU_Mixer
             pulse_table: (0..31)
@@ -63,17 +61,17 @@ impl Core {
             tnd_table: (0..203)
                 .map(|x| 163.67 / (24329.0 / x as f32 + 100.0))
                 .collect::<Vec<_>>(),
-            filter: PassFilter::get_highpass_filter(filter_sample_rate, 90.0)
-                .chain(PassFilter::get_highpass_filter(filter_sample_rate, 440.0))
-                .chain(PassFilter::get_lowpass_filter(filter_sample_rate, 14000.0)),
-            sample_rate,
+            // filter: PassFilter::get_highpass_filter(filter_sample_rate, 90.0)
+            //     .chain(PassFilter::get_highpass_filter(filter_sample_rate, 440.0))
+            //     .chain(PassFilter::get_lowpass_filter(filter_sample_rate, 14000.0)),
+            // sample_rate,
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            sample_cycle: 0,
-            sample_reset_cycle,
+            // sample_cycle: 0,
+            // sample_reset_cycle,
             frame_counter: FrameCounter::new(),
         };
         result.initialize(interrupt, cartridge);
@@ -158,35 +156,31 @@ impl Core {
         self.step_timer(interrupt, cartridge);
     }
 
-    pub(crate) fn step<S: Speaker>(
+    pub(crate) fn step<M: MixerInput>(
         &mut self,
         cpu: &mut Cpu,
         cartridge: &mut Box<Cartridge>,
-        speaker: &mut S,
+        mixer: &mut M,
     ) {
-        let cycle1 = self.sample_cycle;
-        self.sample_cycle += 1;
-        let cycle2 = self.sample_cycle;
-        if self.sample_cycle == self.sample_reset_cycle {
-            self.sample_cycle = 0;
-        }
+        // let cycle1 = self.sample_cycle;
+        // self.sample_cycle += 1;
+        // let cycle2 = self.sample_cycle;
+        // if self.sample_cycle == self.sample_reset_cycle {
+        //     self.sample_cycle = 0;
+        // }
 
         self.step_frame(&mut cpu.interrupt, cartridge);
-
-        let s1 = cycle1 * u64::from(self.sample_rate) / CLOCK_RATE;
-        let s2 = cycle2 * u64::from(self.sample_rate) / CLOCK_RATE;
-        if s1 != s2 {
-            self.send_sample(speaker);
-        }
+        self.send_sample(mixer);
     }
 
-    pub fn send_sample<S: Speaker>(&mut self, speaker: &mut S) {
-        let output = self.output();
-        let filtered = self.filter.step(output);
-        speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
+    pub fn send_sample<M: MixerInput>(&self, mixer: &mut M) {
+        mixer.push(self.output());
+        // let output = self.output();
+        // let filtered = self.filter.step(output);
+        // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
     }
 
-    pub fn output(&mut self) -> f32 {
+    pub fn output(&self) -> f32 {
         self.pulse_table[usize::from(self.pulse1.output()) + usize::from(self.pulse2.output())]
             + self.tnd_table[3 * usize::from(self.triangle.output())
                                  + 2 * usize::from(self.noise.output())

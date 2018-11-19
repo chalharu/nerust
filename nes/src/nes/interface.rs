@@ -9,6 +9,8 @@ pub trait Screen {
     fn render(&mut self);
 }
 
-pub trait Speaker {
-    fn push(&mut self, data: i16);
+pub trait MixerInput {
+    fn push(&mut self, data: f32); // 0.0 ~ 1.0
 }
+
+pub trait MixerOutput: Iterator<Item = i16> {} // 16bit

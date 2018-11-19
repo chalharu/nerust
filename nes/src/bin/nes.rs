@@ -43,6 +43,10 @@ fn main() {
             // "ppu/oamtest3/oam3.nes",
             // "allpads.nes",
             // "apu/apu_mixer/noise.nes",
+            // "apu/test_apu_timers/square_pitch.nes"
+            // "apu/test_apu_timers/triangle_pitch.nes"
+            // "apu/test_apu_timers/noise_pitch.nes"
+            "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
             // "mapper/bntest/bntest_aorom.nes",
             // "bntest/bntest_h.nes",
@@ -52,7 +56,7 @@ fn main() {
             // "bntest/bntest_h.nes",
             // "bntest/bntest_v.nes",
             // "color_test.nes",
-            "tests/tvpassfail/tv.nes",
+            // "tests/tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
             // "apu/blargg_apu_2005.07.30/09.reset_timing.nes",
             // "ppu/ppu_open_bus/ppu_open_bus.nes",
@@ -74,7 +78,6 @@ fn main() {
             // "tests/ntsc_torture.nes",
         )).into_iter()
         .cloned(),
-        44_100,
     ).unwrap();
 
     let gui = Gui::new(console);
