@@ -5,11 +5,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 pub mod filterset;
+mod sound;
 
-use alto::*;
 use crate::glwrap::*;
 use crate::nes::controller::standard_controller::{Buttons, StandardController};
-use crate::nes::{Console, NesMixer, Screen};
+use crate::nes::{Console, Screen};
 use crc::crc64;
 use gl;
 use gl::types::GLint;
@@ -20,13 +20,15 @@ use glutin::{
 use std::ops::Add;
 
 use self::filterset::{FilterType, NesFilter};
+use self::sound::Sound;
+use crate::nes::MixerInput;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_void;
 use std::time::{Duration, Instant};
 use std::{f64, mem, thread};
 
-const CLOCK_RATE: usize = 1_789_773;
+pub const CLOCK_RATE: usize = 1_789_773;
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct RGB {
@@ -77,7 +79,7 @@ struct Fps {
 
 impl Fps {
     pub fn new() -> Self {
-        let instants = VecDeque::with_capacity(64);
+        let instants = VecDeque::with_capacity(Self::CALC_FRAMES);
         let wait_instants = Instant::now();
         Self {
             instants,
@@ -87,6 +89,7 @@ impl Fps {
         }
     }
 
+    const CALC_FRAMES: usize = 64;
     const FRAME_DOTS: f64 = 89341.5;
     const VSYNC_RATE: f64 = CLOCK_RATE as f64 * 3.0 / Self::FRAME_DOTS;
     const FRAME_WAIT_NANOS: u64 = (1.0 / Self::VSYNC_RATE * 1_000_000_000.0) as u64;
@@ -112,14 +115,14 @@ impl Fps {
             self.instants.push_back(new_now);
             return 0.0;
         }
-        let duration = new_now.duration_since(if len >= 64 {
+        let duration = new_now.duration_since(if len >= Self::CALC_FRAMES {
             self.instants.pop_front().unwrap()
         } else {
             *self.instants.front().unwrap()
         });
         self.instants.push_back(new_now);
         (1_000_000_000_f64
-            / f64::from(duration.as_secs() as u32 * 1_000_000_000 + duration.subsec_nanos())
+            / (duration.as_secs() * 1_000_000_000 + u64::from(duration.subsec_nanos())) as f64
             * len as f64) as f32
     }
 }
@@ -344,16 +347,14 @@ struct Window {
     screen_buffer: ScreenBuffer,
     vertex_vbo: u32,
     shader: Option<Shader>,
-    console: Console,
     controller: StandardController,
     keys: Buttons,
-    speaker: AlSpeaker,
     paused: bool,
     frame_counter: u64,
 }
 
 impl Window {
-    fn new(console: Console, speaker: AlSpeaker) -> Self {
+    fn new() -> Self {
         let screen_buffer = ScreenBuffer::new(
             // FilterType::NtscComposite,
             FilterType::None,
@@ -376,19 +377,18 @@ impl Window {
             screen_buffer,
             vertex_vbo: 0,
             shader: None,
-            console,
             controller: StandardController::new(),
             keys: Buttons::empty(),
-            speaker,
             paused: false,
             frame_counter: 0,
         }
     }
 
-    fn run(&mut self) {
+    fn run<S: Sound + MixerInput>(&mut self, mut console: Console, mut speaker: S) {
         self.on_load();
+        speaker.start();
         while self.running {
-            self.on_update();
+            self.on_update(&mut console, &mut speaker);
             self.fps.wait();
             let mut el = mem::replace(&mut self.events_loop, None);
             el.as_mut().unwrap().poll_events(|event| match event {
@@ -400,7 +400,7 @@ impl Window {
                         self.on_resize(logical_size);
                     }
                     WindowEvent::KeyboardInput { device_id, input } => {
-                        self.on_keyboard_input(device_id, input);
+                        self.on_keyboard_input(device_id, input, &mut console, &mut speaker);
                     }
                     _ => (),
                 },
@@ -519,21 +519,9 @@ impl Window {
         self.shader = Some(shader);
     }
 
-    fn on_update(&mut self) {
+    fn on_update<S: Sound + MixerInput>(&mut self, console: &mut Console, speaker: &mut S) {
         if !self.paused {
-            let mut speak_count = 0;
-            while !self.console.step(
-                &mut self.screen_buffer,
-                &mut self.controller,
-                self.speaker.mixer_mut(),
-            ) {
-                if speak_count == 0 {
-                    speak_count = 1000;
-                    self.speaker.step();
-                } else {
-                    speak_count -= 1;
-                }
-            }
+            while !console.step(&mut self.screen_buffer, &mut self.controller, speaker) {}
             self.frame_counter += 1;
         }
 
@@ -596,7 +584,13 @@ impl Window {
         delete_textures(1, &self.tex_name).unwrap();
     }
 
-    fn on_keyboard_input(&mut self, _device_id: DeviceId, input: KeyboardInput) {
+    fn on_keyboard_input<S: Sound + MixerInput>(
+        &mut self,
+        _device_id: DeviceId,
+        input: KeyboardInput,
+        console: &mut Console,
+        speaker: &mut S,
+    ) {
         // とりあえず、pad1のみ次の通りとする。
         // A      -> Z
         // B      -> X
@@ -618,7 +612,7 @@ impl Window {
             Some(VirtualKeyCode::Space) if input.state == ElementState::Pressed => {
                 self.paused = !self.paused;
                 if self.paused {
-                    self.speaker.pause();
+                    speaker.pause();
                     let mut hasher = crc64::Digest::new(crc64::ECMA);
                     self.screen_buffer.hash(&mut hasher);
                     info!(
@@ -627,13 +621,13 @@ impl Window {
                         hasher.finish()
                     );
                 } else {
-                    self.speaker.resume();
+                    speaker.start();
                 }
                 Buttons::empty()
             }
             Some(VirtualKeyCode::Escape) => {
                 if input.state == ElementState::Released {
-                    self.console.reset();
+                    console.reset();
                 }
                 Buttons::empty()
             }
@@ -644,103 +638,6 @@ impl Window {
             ElementState::Released => self.keys & !code,
         };
         self.controller.set_pad1(self.keys);
-    }
-}
-
-struct AlSpeaker {
-    // alto: Option<Alto>,
-    // dev: Option<OutputDevice>,
-    // ctx: Option<Context>,
-    src: Option<StreamingSource>,
-    mixer: NesMixer,
-    sample_rate: i32,
-}
-
-impl AlSpeaker {
-    pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
-        let mut mixer =
-            NesMixer::nes_mixer(sample_rate as f32, buffer_width * buffer_count, CLOCK_RATE);
-        let src = if let Ok(src) = Alto::load_default()
-            .and_then(|alto| alto.open(None))
-            .and_then(|dev| dev.new_context(None))
-            .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
-            .and_then(|(mut src, mut ctx)| {
-                for _ in 0..buffer_count {
-                    Self::add_buffer(&mut ctx, &mut src, sample_rate, &mut mixer, buffer_width);
-                }
-                Ok(src)
-            }) {
-            Some(src)
-        } else {
-            error!("No OpenAL implementation present!");
-            None
-        };
-
-        Self {
-            src,
-            mixer,
-            sample_rate,
-        }
-    }
-
-    pub fn pause(&mut self) {
-        if let Some(ref mut src) = self.src.as_mut() {
-            match src.state() {
-                SourceState::Playing => src.pause(),
-                _ => (),
-            }
-        }
-    }
-
-    pub fn resume(&mut self) {
-        if let Some(ref mut src) = self.src.as_mut() {
-            match src.state() {
-                SourceState::Playing => (),
-                _ => src.play(),
-            }
-        }
-    }
-
-    pub fn mixer_mut(&mut self) -> &mut NesMixer {
-        &mut self.mixer
-    }
-
-    fn add_buffer(
-        ctx: &mut Context,
-        src: &mut StreamingSource,
-        sample_rate: i32,
-        mixer: &mut NesMixer,
-        buffer_width: usize,
-    ) {
-        let data = &mixer
-            .take(buffer_width)
-            .map(|x| Mono { center: x })
-            .collect::<Vec<_>>();
-        let buf = ctx.new_buffer(data, sample_rate).unwrap();
-        src.queue_buffer(buf).unwrap();
-    }
-
-    fn fill_buffer(src: &mut StreamingSource, sample_rate: i32, mixer: &mut NesMixer) {
-        let mut buf = src.unqueue_buffer().unwrap();
-        let data = &mixer
-            .take(buf.size() as usize / 2) // i16 でのバイト数
-            .map(|x| Mono { center: x })
-            .collect::<Vec<_>>();
-        buf.set_data(data, sample_rate).unwrap();
-        src.queue_buffer(buf).unwrap();
-    }
-
-    pub fn step(&mut self) {
-        if let Some(ref mut src) = self.src.as_mut() {
-            let buffers_processed = src.buffers_processed();
-            for _ in 0..buffers_processed {
-                Self::fill_buffer(src, self.sample_rate, &mut self.mixer);
-            }
-            match src.state() {
-                SourceState::Playing => (),
-                _ => src.play(),
-            }
-        }
     }
 }
 
@@ -757,6 +654,6 @@ impl Gui {
         // 1024 * 5 = 107ms
         // 512 * 5 = 54ms
         // 256 * 5 = 27ms
-        Window::new(self.console, AlSpeaker::new(48000, 128, 15)).run();
+        Window::new().run(self.console, sound::OpenAl::new(48000, 128, 20));
     }
 }

@@ -9,7 +9,6 @@ mod cartridge;
 pub mod controller;
 mod cpu;
 mod interface;
-mod mixer;
 mod ppu;
 mod status;
 
@@ -18,7 +17,6 @@ use self::cartridge::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 pub use self::interface::*;
-pub(crate) use self::mixer::NesMixer;
 use self::ppu::Core as Ppu;
 use self::status::mirror_mode::MirrorMode;
 use failure::Error;
