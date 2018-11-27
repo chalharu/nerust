@@ -206,7 +206,7 @@ pub struct OpenAl {
     data_sender: Sender<f32>,
     filter: NesFilter,
     thread: Option<JoinHandle<()>>,
-    resampler: SimpleResampler,
+    resampler: SimpleDownSampler,
 }
 
 impl OpenAl {
@@ -236,7 +236,7 @@ impl OpenAl {
             data_sender,
             stop_sender,
             thread: Some(thread),
-            resampler: SimpleResampler::new(super::CLOCK_RATE as f64, sample_rate as f64),
+            resampler: SimpleDownSampler::new(super::CLOCK_RATE as f64, sample_rate as f64),
         }
     }
 }
