@@ -45,8 +45,8 @@ fn main() {
             // "apu/apu_mixer/noise.nes",
             // "apu/test_apu_timers/square_pitch.nes"
             // "apu/test_apu_timers/triangle_pitch.nes"
-            "apu/test_apu_timers/noise_pitch.nes"
-            // "apu/test_apu_timers/dmc_pitch.nes"
+            // "apu/test_apu_timers/noise_pitch.nes"
+            "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
             // "mapper/bntest/bntest_aorom.nes",
             // "bntest/bntest_h.nes",
