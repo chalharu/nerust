@@ -5,8 +5,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod filter;
+mod resampler;
 
 use self::filter::*;
+use self::resampler::*;
 use alto::*;
 use crate::nes::MixerInput;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -199,19 +201,16 @@ impl OpenAlState {
 }
 
 pub struct OpenAl {
-    rate: f64,
-    cycle: f64,
-    next_cycle: f64,
     stop_sender: Sender<()>,
     playing_sender: Sender<bool>,
     data_sender: Sender<f32>,
     filter: NesFilter,
     thread: Option<JoinHandle<()>>,
+    resampler: SimpleResampler,
 }
 
 impl OpenAl {
     pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
-        let rate = super::CLOCK_RATE as f64 / sample_rate as f64;
         let filter = NesFilter::new(sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
@@ -233,13 +232,11 @@ impl OpenAl {
 
         Self {
             filter,
-            rate,
-            cycle: 0.0,
-            next_cycle: 0.0,
             playing_sender,
             data_sender,
             stop_sender,
             thread: Some(thread),
+            resampler: SimpleResampler::new(super::CLOCK_RATE as f64, sample_rate as f64),
         }
     }
 }
@@ -261,10 +258,12 @@ impl Sound for OpenAl {
 impl MixerInput for OpenAl {
     // 0.0 ~ 1.0 => -1.0 ~ 1.0
     fn push(&mut self, data: f32) {
-        self.cycle += 1.0;
-        if self.cycle > self.next_cycle {
-            self.next_cycle += self.rate;
-            if let Err(_) = self.data_sender.send(self.filter.step(data * 2.0 - 1.0)) {
+        if let Some(resampled_data) = self.resampler.step(data) {
+            if self
+                .data_sender
+                .send(self.filter.step(resampled_data * 2.0 - 1.0))
+                .is_err()
+            {
                 warn!("OpenAL channel (data) send failed");
             }
         }
@@ -273,7 +272,7 @@ impl MixerInput for OpenAl {
 
 impl Drop for OpenAl {
     fn drop(&mut self) {
-        if let Err(_) = self.stop_sender.send(()) {
+        if self.stop_sender.send(()).is_err() {
             warn!("OpenAL channel (stop) send failed");
         }
         mem::replace(&mut self.thread, None).map(|x| x.join());
