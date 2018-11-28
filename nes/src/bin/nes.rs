@@ -40,13 +40,13 @@ fn main() {
             // "cpu/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
             // "ram_retain/ram_retain.nes",
-            // "ppu/oamtest3/oam3.nes",
+            "ppu/oamtest3/oam3.nes",
             // "allpads.nes",
             // "apu/apu_mixer/noise.nes",
             // "apu/test_apu_timers/square_pitch.nes"
             // "apu/test_apu_timers/triangle_pitch.nes"
             // "apu/test_apu_timers/noise_pitch.nes"
-            "apu/test_apu_timers/dmc_pitch.nes"
+            // "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
             // "mapper/bntest/bntest_aorom.nes",
             // "bntest/bntest_h.nes",
