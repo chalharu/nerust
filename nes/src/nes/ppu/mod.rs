@@ -563,8 +563,8 @@ impl Core {
         self.state.high_bit_shift |= u16::from(self.next_tile.high_byte);
         self.next_tile.tile_addr =
             (u16::from(self.read_vram(self.state.name_table_address(), cartridge)) << 4)
-                | (self.state.vram_addr >> 12)
-                | if self.control.background_table { 1 } else { 0 };
+                | ((self.state.vram_addr >> 12) & 7)
+                | if self.control.background_table { 0x1000 } else { 0 };
     }
 
     fn fetch_attribute_table_byte(&mut self, cartridge: &mut Box<Cartridge>) {
