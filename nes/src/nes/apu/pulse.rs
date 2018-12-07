@@ -168,9 +168,11 @@ impl Pulse {
     fn sweep(&mut self) {
         let delta = self.period >> self.sweep_shift;
         self.sweep_target_period = if self.sweep_negate {
-            self.period - delta - if self.is_first_channel { 1 } else { 0 }
+            self.period
+                .wrapping_sub(delta)
+                .wrapping_sub(if self.is_first_channel { 1 } else { 0 })
         } else {
-            self.period + delta
+            self.period.wrapping_add(delta)
         }
     }
 

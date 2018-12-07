@@ -10,23 +10,20 @@ use crate::nes::MirrorMode;
 use std::cmp;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(
+    headers: &[u8],
     input: &mut I,
 ) -> Result<CartridgeData, CartridgeError> {
-    let headers = input.take(12).collect::<Vec<_>>();
-    if headers.len() != 12 {
-        return Err(CartridgeError::UnexpectedEof);
-    }
-    let prom_length = usize::from(headers[0]) * 0x4000;
-    let crom_length = usize::from(headers[1]) * 0x2000;
-    let flags1 = headers[2];
-    let flags2 = headers[3];
-    let ram_length = cmp::max(usize::from(headers[4]), 1) * 0x2000;
+    let prom_length = usize::from(headers[4]) * 0x4000;
+    let crom_length = usize::from(headers[5]) * 0x2000;
+    let flags1 = headers[6];
+    let flags2 = headers[7];
+    let pram_length = cmp::max(usize::from(headers[8]), 1) * 0x2000;
 
-    let mapper_type = (flags1 >> 4) | (flags2 & 0xf0);
+    let mapper_type = u16::from((flags1 >> 4) | (flags2 & 0xf0));
     let mirror_type = (flags1 & 1) | ((flags1 >> 2) & 2);
     let has_battery = (flags1 & 2) == 2;
     let has_trainer = (flags1 & 4) == 4;
-    let _trainer = if has_trainer {
+    let trainer = if has_trainer {
         let tmp = input.take(512).collect::<Vec<_>>();
         if tmp.len() != 512 {
             return Err(CartridgeError::UnexpectedEof);
@@ -46,15 +43,22 @@ pub(crate) fn read_ines<I: Iterator<Item = u8>>(
         }
         tmp
     } else {
-        vec![0; 8192]
+        Vec::new()
     };
+    let vram_length = if crom_length != 0 { 0 } else { 0x2000 };
     let mirror_mode = MirrorMode::try_from(mirror_type).map_err(|_| CartridgeError::DataError)?;
+    let sub_mapper_type = 0;
     Ok(CartridgeData {
         prog_rom,
         char_rom,
-        sram: vec![0; ram_length],
+        pram_length,
+        save_pram_length: 0,
+        vram_length,
+        save_vram_length: 0,
         mapper_type,
         mirror_mode,
         has_battery,
+        sub_mapper_type,
+        trainer,
     })
 }

@@ -10,9 +10,8 @@ use super::*;
 fn bntest_aorom() {
     test!(
         "mapper/bntest/bntest_aorom.nes",
-        ScenarioLeaf::check_screen(639, 0x172C687E69C06327)
+        ScenarioLeaf::check_screen(15, 0xAD9D23DD8E573B19)
     );
-    panic!("Not implemented");
 }
 
 #[test]
