@@ -68,8 +68,8 @@ impl Console {
             {
                 result = true;
             }
-            self.cartridge.step();
         }
+        self.cartridge.step();
         self.apu.step(&mut self.cpu, &mut self.cartridge, mixer);
 
         result

@@ -40,7 +40,7 @@ fn main() {
             // "cpu/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
             // "cpu/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
             // "ram_retain/ram_retain.nes",
-            "ppu/oamtest3/oam3.nes",
+            // "ppu/oamtest3/oam3.nes",
             // "allpads.nes",
             // "apu/apu_mixer/noise.nes",
             // "apu/test_apu_timers/square_pitch.nes"
@@ -69,8 +69,9 @@ fn main() {
             // "ntsc_torture.nes",
             // "instr_test-v5/all_instrs.nes",
             // "apu/test_apu_env/test_apu_env.nes",
-            // "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
+            "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
             // "cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes",
+            // "cpu/cpu_dummy_reads.nes",
             // "tests/coredump-v1.3.nes",
 
             // "tests/scanline/scanline.nes",
