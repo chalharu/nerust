@@ -41,7 +41,7 @@ impl CartridgeData {
                 if headers.len() != 16 {
                     return Err(CartridgeError::UnexpectedEof);
                 }
-                if headers[7] & 0x0C == 0x80 {
+                if headers[7] & 0x0C == 0x08 {
                     nes20::read_nes20(&headers, input)
                 } else {
                     ines::read_ines(&headers, input)
