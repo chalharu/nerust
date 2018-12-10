@@ -191,7 +191,7 @@ impl Mapper for SxRom {
     }
 
     fn name(&self) -> &str {
-        "MMC1 SxRom (Mapper1)"
+        "MMC1 SXROM (Mapper1)"
     }
 
     fn bus_conflicts(&self) -> bool {

@@ -9,23 +9,21 @@
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
 
-pub(crate) struct CNRom {
+pub(crate) struct Nina001 {
     cartridge_data: CartridgeData,
     state: MapperState,
-    protect: bool,
 }
 
-impl CNRom {
-    pub(crate) fn new(data: CartridgeData, protect: bool) -> Self {
+impl Nina001 {
+    pub(crate) fn new(data: CartridgeData) -> Self {
         Self {
             cartridge_data: data,
             state: MapperState::new(),
-            protect,
         }
     }
 }
 
-impl CartridgeDataDao for CNRom {
+impl CartridgeDataDao for Nina001 {
     fn data_mut(&mut self) -> &mut CartridgeData {
         &mut self.cartridge_data
     }
@@ -34,7 +32,7 @@ impl CartridgeDataDao for CNRom {
     }
 }
 
-impl MapperStateDao for CNRom {
+impl MapperStateDao for Nina001 {
     fn mapper_state_mut(&mut self) -> &mut MapperState {
         &mut self.state
     }
@@ -43,12 +41,12 @@ impl MapperStateDao for CNRom {
     }
 }
 
-impl Mapper for CNRom {
+impl Mapper for Nina001 {
     fn program_page_len(&self) -> usize {
         0x8000
     }
     fn character_page_len(&self) -> usize {
-        0x2000
+        0x1000
     }
 
     fn initialize(&mut self) {
@@ -56,33 +54,16 @@ impl Mapper for CNRom {
         self.change_character_page(0, 0);
     }
 
-    fn bus_conflicts(&self) -> bool {
-        self.protect || self.data_ref().sub_mapper_type() == 2
-    }
-
     fn name(&self) -> &str {
-        if self.protect {
-            "CNROM (Mapper3) "
-        } else {
-            "CNROM (Mapper185)"
-        }
+        "NINA-001 (Mapper34) "
     }
 
-    fn character_openbus_default(&self) -> Option<u8> {
-        Some(0xFF)
-    }
-
-    fn write_register(&mut self, _address: usize, value: u8) {
-        if self.protect {
-            if (self.data_ref().sub_mapper_type() == 16 && (value & 0x01) != 0)
-                || (self.data_ref().sub_mapper_type() == 0 && (value & 0x0F) != 0 && value != 0x13)
-            {
-                self.change_character_page(0, 0);
-            } else {
-                self.release_character_page(0);
-            }
-        } else {
-            self.change_character_page(0, usize::from(value));
+    fn write_register(&mut self, address: usize, value: u8) {
+        match address {
+            0x7FFD => self.change_program_page(0, usize::from(value & 1)),
+            0x7FFE => self.change_character_page(0, usize::from(value & 0x0F)),
+            0x7FFF => self.change_character_page(1, usize::from(value & 0x0F)),
+            _ => (),
         }
     }
 }
