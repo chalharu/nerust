@@ -62,9 +62,9 @@ impl Mapper for CNRom {
 
     fn name(&self) -> &str {
         if self.protect {
-            "CNRom (Mapper3) "
+            "CNROM (Mapper3) "
         } else {
-            "CNRom (Mapper185)"
+            "CNROM (Mapper185)"
         }
     }
 

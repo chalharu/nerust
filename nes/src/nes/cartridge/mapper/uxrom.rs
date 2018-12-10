@@ -57,7 +57,7 @@ impl Mapper for UxRom {
     }
 
     fn name(&self) -> &str {
-        "UxRom (Mapper2)"
+        "UXROM (Mapper2)"
     }
 
     fn bus_conflicts(&self) -> bool {

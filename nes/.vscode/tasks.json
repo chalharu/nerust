@@ -10,5 +10,9 @@
         "kind": "build",
         "isDefault": true
     },
+    "presentation": {
+        "panel": "dedicated",
+        "clear": true
+    },
     "problemMatcher": "$rustc"
 }
