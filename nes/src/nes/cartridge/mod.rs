@@ -108,7 +108,11 @@ pub trait Cartridge: Mapper {
 
     fn write_program(&mut self, address: usize, value: u8) {
         if self.register_addr(address) {
-            self.write_register(address, value);
+            self.write_register(address, if self.bus_conflicts() {
+                self.read_program(address).data & value
+            } else {
+                value
+            });
         } else {
             if let Some(addr) = self.program_address(address) {
                 self.data_mut().write_prog_rom(addr, value);
