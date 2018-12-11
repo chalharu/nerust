@@ -107,7 +107,7 @@ impl SxRom {
                     self.change_ram_page(0, usize::from((extra_reg >> 2) & 0x01));
                 }
             } else {
-                // ram 8kb
+                // ram 8kb or nothing
                 self.change_ram_page(0, 0);
             }
         }

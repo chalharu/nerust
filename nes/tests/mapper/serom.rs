@@ -4,11 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod bntest;
-mod _2_test;
-mod _3_test;
-mod _7_test;
-mod bxrom_512k_test;
-mod serom;
-
 use super::*;
+
+#[test]
+fn serom() {
+    test!(
+        "mapper/serom/serom.nes",
+        ScenarioLeaf::check_screen(20, 0x66F3C603B1119162)
+    );
+}

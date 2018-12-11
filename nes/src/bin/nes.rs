@@ -41,7 +41,7 @@ fn main() {
             // "apu/test_apu_timers/noise_pitch.nes"
             // "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
-            "mapper/3_test_src/3_test_2.nes",
+            "mapper/serom/serom.nes",
             // "240pee-0.15/240pee-bnrom.nes",
             // "mapper/240pee-0.15/240pee.nes",
             // "color_test.nes",

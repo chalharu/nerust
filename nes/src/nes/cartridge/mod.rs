@@ -261,15 +261,17 @@ pub trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn change_ram_page(&mut self, offset: usize, page: usize) {
         let total_pages = self.mapper_state_mut().sram.len() >> 8;
-        let page_count = self.ram_page_len() >> 8;
-        let page_offset = offset * page_count;
-        let mut page_value_offset = page * page_count;
-        for i in page_offset..(page_offset + page_count) {
-            while page_value_offset >= total_pages {
-                page_value_offset -= total_pages;
+        if total_pages > 0 {
+            let page_count = self.ram_page_len() >> 8;
+            let page_offset = offset * page_count;
+            let mut page_value_offset = page * page_count;
+            for i in page_offset..(page_offset + page_count) {
+                while page_value_offset >= total_pages {
+                    page_value_offset -= total_pages;
+                }
+                self.mapper_state_mut().sram_page_table[i] = Some(page_value_offset);
+                page_value_offset += 1;
             }
-            self.mapper_state_mut().sram_page_table[i] = Some(page_value_offset);
-            page_value_offset += 1;
         }
     }
 
