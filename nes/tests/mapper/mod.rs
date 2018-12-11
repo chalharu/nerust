@@ -6,5 +6,7 @@
 
 mod bntest;
 mod _2_test;
+mod _3_test;
+mod _7_test;
 
 use super::*;
