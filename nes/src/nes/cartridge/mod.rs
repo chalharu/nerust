@@ -46,7 +46,7 @@ pub trait Cartridge: Mapper {
             0x8000...0xFFFF => self.read_program(address - 0x8000),
             _ => {
                 error!("unhandled mapper read at address: 0x{:04X}", address);
-                OpenBusReadResult::new(0, 0xFF)
+                OpenBusReadResult::new(0, 0)
             }
         }
     }
@@ -71,7 +71,7 @@ pub trait Cartridge: Mapper {
     }
 
     fn read_ram(&self, address: usize) -> OpenBusReadResult {
-        OpenBusReadResult::new(Mapper::read_ram(self, address).unwrap_or(0), 0xFF)
+        Mapper::read_ram(self, address).map_or_else(|| OpenBusReadResult::new(0, 0), |x| OpenBusReadResult::new(x, 0xFF))
     }
 
     fn read_program(&self, address: usize) -> OpenBusReadResult {
