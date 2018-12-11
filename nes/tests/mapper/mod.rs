@@ -8,5 +8,7 @@ mod bntest;
 mod _2_test;
 mod _3_test;
 mod _7_test;
+mod bxrom_512k_test;
+mod serom;
 
 use super::*;
