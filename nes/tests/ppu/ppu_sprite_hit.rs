@@ -10,7 +10,7 @@ use super::*;
 fn ppu_sprite_hit() {
     test!(
         "ppu/ppu_sprite_hit/ppu_sprite_hit.nes",
-        ScenarioLeaf::check_screen(600, 0xEB57E16978E45540)
+        ScenarioLeaf::check_screen(800, 0xEB57E16978E45540)
     );
 }
 

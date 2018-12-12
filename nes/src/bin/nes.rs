@@ -39,7 +39,8 @@ fn main() {
             // "apu/test_apu_timers/noise_pitch.nes"
             // "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
-            "mapper/34_test_src/34_test_2.nes",
+            // "mapper/34_test_src/34_test_2.nes",
+            "ppu/ppu_sprite_hit/ppu_sprite_hit.nes"
 
             // "color_test.nes",
             // "tests/tvpassfail/tv.nes",
