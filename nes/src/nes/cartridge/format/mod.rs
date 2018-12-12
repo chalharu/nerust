@@ -112,9 +112,9 @@ impl CartridgeData {
         self.prog_rom[index] = data;
     }
 
-    pub(crate) fn write_char_rom(&mut self, index: usize, data: u8) {
-        self.char_rom[index] = data;
-    }
+    // pub(crate) fn write_char_rom(&mut self, index: usize, data: u8) {
+    //     self.char_rom[index] = data;
+    // }
 
     // pub(crate) fn write_sram(&mut self, index: usize, data: u8) {
     //     self.sram[index] = data;
