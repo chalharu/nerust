@@ -86,8 +86,8 @@ pub trait Cartridge: Mapper {
     fn write(&mut self, address: usize, value: u8) {
         match address {
             0...0x1FFF => self.write_character(address, value),
-            0x6000...0x7FFF => Cartridge::write_ram(self, address - 0x6000, value),
-            0x8000...0xFFFF => self.write_program(address - 0x8000, value),
+            0x6000...0x7FFF => Cartridge::write_ram(self, address, value),
+            0x8000...0xFFFF => self.write_program(address, value),
             _ => {
                 error!("unhandled mapper write at address: 0x{:04X}", address);
             }
@@ -103,18 +103,27 @@ pub trait Cartridge: Mapper {
     }
 
     fn write_ram(&mut self, address: usize, value: u8) {
-        Mapper::write_ram(self, address, value);
+        if self.register_addr(address) {
+            self.write_register(address, if self.bus_conflicts() {
+                Mapper::read_ram(self, address - 0x6000).unwrap_or(0) & value
+            } else {
+                value
+            });
+        } else {
+             Mapper::write_ram(self, address - 0x6000, value);
+        }
+
     }
 
     fn write_program(&mut self, address: usize, value: u8) {
         if self.register_addr(address) {
             self.write_register(address, if self.bus_conflicts() {
-                self.read_program(address).data & value
+                self.read_program(address - 0x8000).data & value
             } else {
                 value
             });
         } else {
-            if let Some(addr) = self.program_address(address) {
+            if let Some(addr) = self.program_address(address - 0x8000) {
                 self.data_mut().write_prog_rom(addr, value);
             }
         }
@@ -173,9 +182,8 @@ pub trait Mapper: MapperStateDao + CartridgeDataDao {
         0x2000
     }
 
-    #[allow(unused_variables)]
     fn register_addr(&self, address: usize) -> bool {
-        true
+        address >= 0x8000
     }
 
     #[allow(unused_variables)]

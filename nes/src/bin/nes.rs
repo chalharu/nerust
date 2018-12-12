@@ -32,18 +32,15 @@ fn main() {
             // "samples/gikones/giko016.nes",
             // "samples/gikones/giko017.nes",
             // "samples/gikones/giko018.nes",
-            // "ram_retain/ram_retain.nes",
             // "ppu/oamtest3/oam3.nes",
-            // "allpads.nes",
             // "apu/apu_mixer/noise.nes",
             // "apu/test_apu_timers/square_pitch.nes"
             // "apu/test_apu_timers/triangle_pitch.nes"
             // "apu/test_apu_timers/noise_pitch.nes"
             // "apu/test_apu_timers/dmc_pitch.nes"
             // "apu/apu_phase_reset/apu_phase_reset.nes",
-            "mapper/serom/serom.nes",
-            // "240pee-0.15/240pee-bnrom.nes",
-            // "mapper/240pee-0.15/240pee.nes",
+            "mapper/34_test_src/34_test_2.nes",
+
             // "color_test.nes",
             // "tests/tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
@@ -56,6 +53,11 @@ fn main() {
             // "nmi_sync/demo_ntsc.nes",
             // "ntsc_torture.nes",
             // "tests/coredump-v1.3.nes",
+
+            // "tests/240pee-0.15/240pee.nes",
+            // "tests/240pee-0.15/240pee-bnrom.nes",
+            // "tests/allpads.nes",
+            // "tests/ram_retain/ram_retain.nes",
 
             // "tests/scanline/scanline.nes",
             // "tests/nmi_sync/demo_ntsc.nes",
