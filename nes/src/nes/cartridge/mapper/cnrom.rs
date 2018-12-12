@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// Mapper 0
+// Mapper 3 or 185
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
