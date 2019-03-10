@@ -268,7 +268,8 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
             &mut size,
             &mut ty,
             name_buf,
-        ).unwrap();
+        )
+        .unwrap();
         let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
         result.insert(name, i);
     }
@@ -297,7 +298,8 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLuint> {
             &mut size,
             &mut ty,
             name_buf,
-        ).unwrap();
+        )
+        .unwrap();
         let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
         result.insert(name, i);
     }
