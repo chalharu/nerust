@@ -14,8 +14,8 @@ use crc::crc64;
 use gl;
 use gl::types::GLint;
 use glutin::{
-    dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlContext, GlProfile,
-    GlRequest, GlWindow, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent,
+    dpi, Api, ContextBuilder, ContextTrait, DeviceId, ElementState, Event, EventsLoop, GlProfile,
+    GlRequest, KeyboardInput, VirtualKeyCode, WindowBuilder, WindowEvent, WindowedContext,
 };
 use std::ops::Add;
 
@@ -127,25 +127,26 @@ impl Fps {
     }
 }
 
-fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> GlWindow {
+fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContext {
     let window = WindowBuilder::new()
         .with_dimensions(dpi::LogicalSize::new(
             f64::from(size.width),
             f64::from(size.height),
-        )).with_title("Nes");
+        ))
+        .with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
         .with_gl_profile(GlProfile::Compatibility)
         // .with_vsync(true)
-        .with_gl(GlRequest::Specific(Api::OpenGlEs, (2, 0)));
-
-    let gl_window = GlWindow::new(window, context, events_loop).unwrap();
+        .with_gl(GlRequest::Specific(Api::OpenGlEs, (2, 0)))
+        .build_windowed(window, &events_loop)
+        .unwrap();
 
     unsafe {
-        gl_window.make_current().unwrap();
-        gl::load_with(|symbol| mem::transmute(gl_window.get_proc_address(symbol)));
+        context.make_current().unwrap();
+        gl::load_with(|symbol| mem::transmute(context.get_proc_address(symbol)));
     }
-    gl_window
+    context
 }
 
 #[repr(packed)]
@@ -339,7 +340,7 @@ impl Hash for ScreenBuffer {
 }
 
 struct Window {
-    window: GlWindow,
+    context: WindowedContext,
     events_loop: Option<EventsLoop>,
     running: bool,
     fps: Fps,
@@ -366,11 +367,11 @@ impl Window {
         // glutin initialize
         let events_loop = EventsLoop::new();
         // create opengl window
-        let window = create_window(&events_loop, screen_buffer.physical_size());
+        let context = create_window(&events_loop, screen_buffer.physical_size());
 
         Self {
             events_loop: Some(events_loop),
-            window,
+            context,
             running: true,
             fps: Fps::new(),
             tex_name: 0,
@@ -444,10 +445,12 @@ impl Window {
                     init_screen_buffer(LogicalSize {
                         width: buffer_width,
                         height: buffer_height,
-                    }).as_ptr(),
+                    })
+                    .as_ptr(),
                 )
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32).unwrap();
         tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32).unwrap();
@@ -483,7 +486,8 @@ impl Window {
             mem::size_of_val(&vertex_data) as isize,
             unsafe { mem::transmute(vertex_data.as_ptr()) },
             gl::STATIC_DRAW,
-        ).unwrap();
+        )
+        .unwrap();
 
         // attribute属性を有効にする
         enable_vertex_attrib_array(shader.get_attribute("position")).unwrap();
@@ -495,7 +499,8 @@ impl Window {
             1,
             gl::FALSE,
             unsafe { mem::transmute(Mat4::identity().as_ptr()) },
-        ).unwrap();
+        )
+        .unwrap();
         uniform_1i(shader.get_uniform("texture") as GLint, 0).unwrap();
 
         // attribute属性を登録
@@ -506,7 +511,8 @@ impl Window {
             gl::FALSE,
             16,
             0 as *const c_void,
-        ).unwrap();
+        )
+        .unwrap();
         vertex_attrib_pointer(
             shader.get_attribute("uv"),
             2,
@@ -514,7 +520,8 @@ impl Window {
             gl::FALSE,
             16,
             8 as *const c_void,
-        ).unwrap();
+        )
+        .unwrap();
         bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
     }
@@ -542,9 +549,10 @@ impl Window {
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             self.screen_buffer.as_ptr() as *const c_void,
-        ).unwrap();
+        )
+        .unwrap();
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
-        self.window.swap_buffers().unwrap();
+        self.context.swap_buffers().unwrap();
 
         let fps = self.fps.to_fps();
         let title = if self.paused {
@@ -552,12 +560,12 @@ impl Window {
         } else {
             format!("Nes -- FPS: {:.2}", fps)
         };
-        self.window.set_title(title.as_str());
+        self.context.set_title(title.as_str());
     }
 
     fn on_resize(&mut self, logical_size: dpi::LogicalSize) {
-        let dpi_factor = self.window.get_hidpi_factor();
-        self.window.resize(logical_size.to_physical(dpi_factor));
+        let dpi_factor = self.context.get_hidpi_factor();
+        self.context.resize(logical_size.to_physical(dpi_factor));
 
         let physical_size = self.screen_buffer.physical_size();
 
@@ -574,7 +582,8 @@ impl Window {
             1,
             gl::FALSE,
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
-        ).unwrap();
+        )
+        .unwrap();
         bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
     }
 
