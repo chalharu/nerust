@@ -153,20 +153,14 @@ impl OpCode for Rts {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(RtsStep1::new())
+        Box::new(RtsStep1)
     }
     fn name(&self) -> &'static str {
         "RTS"
     }
 }
 
-struct RtsStep1 {}
-
-impl RtsStep1 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtsStep1;
 
 impl CpuStepState for RtsStep1 {
     fn next(
@@ -179,17 +173,11 @@ impl CpuStepState for RtsStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
-        Box::new(RtsStep2::new())
+        Box::new(RtsStep2)
     }
 }
 
-struct RtsStep2 {}
-
-impl RtsStep2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtsStep2;
 
 impl CpuStepState for RtsStep2 {
     fn next(
@@ -213,17 +201,11 @@ impl CpuStepState for RtsStep2 {
 
         core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
 
-        Box::new(RtsStep3::new())
+        Box::new(RtsStep3)
     }
 }
 
-struct RtsStep3 {}
-
-impl RtsStep3 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtsStep3;
 
 impl CpuStepState for RtsStep3 {
     fn next(

@@ -14,20 +14,14 @@ impl OpCode for Brk {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(BrkStep1::new())
+        Box::new(BrkStep1)
     }
     fn name(&self) -> &'static str {
         "BRK"
     }
 }
 
-struct BrkStep1 {}
-
-impl BrkStep1 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct BrkStep1;
 
 impl CpuStepState for BrkStep1 {
     fn next(
@@ -48,17 +42,11 @@ impl CpuStepState for BrkStep1 {
             &mut core.interrupt,
         );
 
-        Box::new(BrkStep2::new())
+        Box::new(BrkStep2)
     }
 }
 
-struct BrkStep2 {}
-
-impl BrkStep2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct BrkStep2;
 
 impl CpuStepState for BrkStep2 {
     fn next(
@@ -208,20 +196,14 @@ impl OpCode for Rti {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(RtiStep1::new())
+        Box::new(RtiStep1)
     }
     fn name(&self) -> &'static str {
         "RTI"
     }
 }
 
-struct RtiStep1 {}
-
-impl RtiStep1 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtiStep1;
 
 impl CpuStepState for RtiStep1 {
     fn next(
@@ -234,17 +216,11 @@ impl CpuStepState for RtiStep1 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
-        Box::new(RtiStep2::new())
+        Box::new(RtiStep2)
     }
 }
 
-struct RtiStep2 {}
-
-impl RtiStep2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtiStep2;
 
 impl CpuStepState for RtiStep2 {
     fn next(
@@ -266,17 +242,11 @@ impl CpuStepState for RtiStep2 {
             &mut core.interrupt,
         );
 
-        Box::new(RtiStep3::new())
+        Box::new(RtiStep3)
     }
 }
 
-struct RtiStep3 {}
-
-impl RtiStep3 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtiStep3;
 
 impl CpuStepState for RtiStep3 {
     fn next(
@@ -291,17 +261,11 @@ impl CpuStepState for RtiStep3 {
         core.register
             .set_p((p & !(RegisterP::BREAK.bits())) | RegisterP::RESERVED.bits());
 
-        Box::new(RtiStep4::new())
+        Box::new(RtiStep4)
     }
 }
 
-struct RtiStep4 {}
-
-impl RtiStep4 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct RtiStep4;
 
 impl CpuStepState for RtiStep4 {
     fn next(
@@ -345,13 +309,7 @@ impl CpuStepState for RtiStep5 {
     }
 }
 
-pub(crate) struct Irq {}
-
-impl Irq {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+pub(crate) struct Irq;
 
 impl CpuStepState for Irq {
     fn next(
@@ -365,17 +323,11 @@ impl CpuStepState for Irq {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
 
-        Box::new(IrqStep2::new())
+        Box::new(IrqStep2)
     }
 }
 
-struct IrqStep2 {}
-
-impl IrqStep2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct IrqStep2;
 
 impl CpuStepState for IrqStep2 {
     fn next(
@@ -389,17 +341,11 @@ impl CpuStepState for IrqStep2 {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
 
-        Box::new(IrqStep3::new())
+        Box::new(IrqStep3)
     }
 }
 
-struct IrqStep3 {}
-
-impl IrqStep3 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct IrqStep3;
 
 impl CpuStepState for IrqStep3 {
     fn next(
@@ -547,13 +493,7 @@ impl CpuStepState for IrqStep7 {
     }
 }
 
-pub(crate) struct Reset {}
-
-impl Reset {
-    pub fn new() -> Box<dyn CpuStepState> {
-        Box::new(Self {})
-    }
-}
+pub(crate) struct Reset;
 
 impl CpuStepState for Reset {
     fn next(
@@ -571,17 +511,11 @@ impl CpuStepState for Reset {
         core.interrupt.irq_mask = IrqSource::ALL;
         core.interrupt.nmi = false;
 
-        Box::new(ResetStep2::new())
+        Box::new(ResetStep2)
     }
 }
 
-struct ResetStep2 {}
-
-impl ResetStep2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct ResetStep2;
 
 impl CpuStepState for ResetStep2 {
     fn next(
@@ -594,17 +528,11 @@ impl CpuStepState for ResetStep2 {
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
-        Box::new(ResetStep3::new())
+        Box::new(ResetStep3)
     }
 }
 
-struct ResetStep3 {}
-
-impl ResetStep3 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct ResetStep3;
 
 impl CpuStepState for ResetStep3 {
     fn next(
@@ -625,17 +553,11 @@ impl CpuStepState for ResetStep3 {
             apu,
             &mut core.interrupt,
         );
-        Box::new(ResetStep4::new())
+        Box::new(ResetStep4)
     }
 }
 
-struct ResetStep4 {}
-
-impl ResetStep4 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct ResetStep4;
 
 impl CpuStepState for ResetStep4 {
     fn next(
@@ -657,17 +579,11 @@ impl CpuStepState for ResetStep4 {
             &mut core.interrupt,
         );
 
-        Box::new(ResetStep5::new())
+        Box::new(ResetStep5)
     }
 }
 
-struct ResetStep5 {}
-
-impl ResetStep5 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct ResetStep5;
 
 impl CpuStepState for ResetStep5 {
     fn next(

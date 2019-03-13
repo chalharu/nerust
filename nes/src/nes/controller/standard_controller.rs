@@ -56,6 +56,12 @@ impl StandardController {
     }
 }
 
+impl Default for StandardController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Controller for StandardController {
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         match address {

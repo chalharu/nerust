@@ -25,7 +25,7 @@ impl OamDmaStateValue {
         Self {
             offset: 0,
             count: 0,
-            value : 0,
+            value: 0,
         }
     }
 }
@@ -39,7 +39,11 @@ pub(crate) struct OamDmaState {
 impl OamDmaState {
     pub fn new() -> OamDmaState {
         Self {
-            state_pool: [Box::new(OamDma), Box::new(OamDmaStep1), Box::new(OamDmaStep2)],
+            state_pool: [
+                Box::new(OamDma),
+                Box::new(OamDmaStep1),
+                Box::new(OamDmaStep2),
+            ],
             state: OamDmaStateEnumValue::None,
             value: OamDmaStateValue::new(),
         }
@@ -67,7 +71,14 @@ impl OamDmaState {
         controller: &mut Controller,
         apu: &mut Apu,
     ) {
-        self.state = self.state_pool[self.state as usize].next(core, ppu, cartridge, controller, apu, &mut self.value);
+        self.state = self.state_pool[self.state as usize].next(
+            core,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut self.value,
+        );
     }
 
     pub fn count(&self) -> Option<u8> {
