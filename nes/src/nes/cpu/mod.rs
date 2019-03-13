@@ -7,13 +7,14 @@
 mod addressing_mode;
 pub mod interrupt;
 mod memory;
+mod oamdma;
 mod opcodes;
 mod register;
-mod oamdma;
 
 use self::addressing_mode::*;
 use self::interrupt::{Interrupt, IrqSource};
 use self::memory::Memory;
+use self::oamdma::OamDmaState;
 use self::opcodes::{
     interrupt::{Irq, Reset},
     *,
@@ -21,7 +22,6 @@ use self::opcodes::{
 use self::register::{Register, RegisterP};
 use super::*;
 use std::ops::Shr;
-use self::oamdma::OamDmaState;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where
@@ -55,7 +55,7 @@ impl Core {
             interrupt: Interrupt::new(),
             memory: Memory::new(),
             cycles: 0,
-            next_func: Reset::new(),
+            next_func: Box::new(Reset),
             oam_dma: Some(OamDmaState::new()),
         }
     }
@@ -63,7 +63,7 @@ impl Core {
     pub fn reset(&mut self) {
         self.interrupt.reset();
         self.oam_dma.as_mut().unwrap().reset();
-        self.next_func = Reset::new();
+        self.next_func = Box::new(Reset);
         self.cycles = 0;
     }
 
@@ -108,7 +108,10 @@ impl Core {
 
             if self.oam_dma.as_ref().unwrap().has_transaction() {
                 let mut oam_dma = ::std::mem::replace(&mut self.oam_dma, None);
-                oam_dma.as_mut().unwrap().next(self, ppu, cartridge, controller, apu);
+                oam_dma
+                    .as_mut()
+                    .unwrap()
+                    .next(self, ppu, cartridge, controller, apu);
                 self.oam_dma = oam_dma;
             } else {
                 self.interrupt.executing = self.interrupt.detected;
@@ -148,14 +151,14 @@ pub(crate) trait CpuStepState {
     ) -> Box<dyn CpuStepState>;
 }
 
-struct FetchOpCode {}
+struct FetchOpCode;
 
 impl FetchOpCode {
     pub fn new(interrupt: &Interrupt) -> Box<dyn CpuStepState> {
         if interrupt.executing {
-            Box::new(Irq::new())
+            Box::new(Irq)
         } else {
-            Box::new(Self {})
+            Box::new(Self)
         }
     }
 }

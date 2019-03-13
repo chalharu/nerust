@@ -30,13 +30,7 @@ use nes::nes::{Console, MixerInput};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
-struct TestMixer {}
-
-impl TestMixer {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct TestMixer;
 
 impl MixerInput for TestMixer {
     fn push(&mut self, _data: f32) {}
@@ -64,7 +58,7 @@ impl ScenarioRunner {
             ),
             console: Console::new(input).unwrap(),
             controller: StandardController::new(),
-            mixer: TestMixer::new(),
+            mixer: TestMixer,
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),

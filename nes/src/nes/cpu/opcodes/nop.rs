@@ -14,7 +14,7 @@ impl OpCode for Nop {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step2::new())
+        Box::new(Step2)
     }
     fn name(&self) -> &'static str {
         "NOP"
@@ -29,20 +29,14 @@ impl OpCode for Kil {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new())
+        Box::new(Step1)
     }
     fn name(&self) -> &'static str {
         "KIL"
     }
 }
 
-struct Step1 {}
-
-impl Step1 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct Step1;
 
 impl CpuStepState for Step1 {
     fn next(
@@ -57,17 +51,11 @@ impl CpuStepState for Step1 {
         let _ = core
             .memory
             .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-        Box::new(Step2::new())
+        Box::new(Step2)
     }
 }
 
-struct Step2 {}
-
-impl Step2 {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+struct Step2;
 
 impl CpuStepState for Step2 {
     fn next(
