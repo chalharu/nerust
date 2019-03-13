@@ -25,7 +25,7 @@ impl<FCalc: Fn(&mut Register, u8, u8) -> u8> CpuStepState for Step1<FCalc> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {

@@ -24,14 +24,14 @@ pub(crate) struct Register {
 
 bitflags! {
     pub struct RegisterP: u8 {
-        const Carry = 0b00000001;
-        const Zero = 0b00000010;
-        const Interrupt = 0b00000100;
-        const Decimal = 0b00001000;
-        const Break = 0b00010000;
-        const Reserved = 0b00100000;
-        const Overflow = 0b01000000;
-        const Negative = 0b10000000;
+        const CARRY = 0b0000_0001;
+        const ZERO = 0b0000_0010;
+        const INTERRUPT = 0b0000_0100;
+        const DECIMAL = 0b0000_1000;
+        const BREAK = 0b0001_0000;
+        const RESERVED = 0b0010_0000;
+        const OVERFLOW = 0b0100_0000;
+        const NEGATIVE = 0b1000_0000;
     }
 }
 
@@ -90,38 +90,39 @@ impl Register {
     }
     pub fn get_p(&self) -> u8 {
         ((if self.c {
-            RegisterP::Carry
+            RegisterP::CARRY
         } else {
             RegisterP::empty()
         }) | (if self.z {
-            RegisterP::Zero
+            RegisterP::ZERO
         } else {
             RegisterP::empty()
         }) | (if self.i {
-            RegisterP::Interrupt
+            RegisterP::INTERRUPT
         } else {
             RegisterP::empty()
         }) | (if self.d {
-            RegisterP::Decimal
+            RegisterP::DECIMAL
         } else {
             RegisterP::empty()
         }) | (if self.b {
-            RegisterP::Break
+            RegisterP::BREAK
         } else {
             RegisterP::empty()
         }) | (if self.r {
-            RegisterP::Reserved
+            RegisterP::RESERVED
         } else {
             RegisterP::empty()
         }) | (if self.v {
-            RegisterP::Overflow
+            RegisterP::OVERFLOW
         } else {
             RegisterP::empty()
         }) | (if self.n {
-            RegisterP::Negative
+            RegisterP::NEGATIVE
         } else {
             RegisterP::empty()
-        })).bits()
+        }))
+        .bits()
     }
 
     pub fn set_pc(&mut self, value: u16) {
@@ -156,14 +157,14 @@ impl Register {
     }
     pub fn set_p(&mut self, value: u8) {
         let reg_p = RegisterP::from_bits(value).unwrap();
-        self.c = reg_p.contains(RegisterP::Carry);
-        self.z = reg_p.contains(RegisterP::Zero);
-        self.i = reg_p.contains(RegisterP::Interrupt);
-        self.d = reg_p.contains(RegisterP::Decimal);
-        self.b = reg_p.contains(RegisterP::Break);
-        self.r = reg_p.contains(RegisterP::Reserved);
-        self.v = reg_p.contains(RegisterP::Overflow);
-        self.n = reg_p.contains(RegisterP::Negative);
+        self.c = reg_p.contains(RegisterP::CARRY);
+        self.z = reg_p.contains(RegisterP::ZERO);
+        self.i = reg_p.contains(RegisterP::INTERRUPT);
+        self.d = reg_p.contains(RegisterP::DECIMAL);
+        self.b = reg_p.contains(RegisterP::BREAK);
+        self.r = reg_p.contains(RegisterP::RESERVED);
+        self.v = reg_p.contains(RegisterP::OVERFLOW);
+        self.n = reg_p.contains(RegisterP::NEGATIVE);
     }
 
     pub fn set_z_from_value(&mut self, value: u8) {

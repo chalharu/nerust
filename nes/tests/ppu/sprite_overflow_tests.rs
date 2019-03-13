@@ -10,7 +10,7 @@ use super::*;
 fn _1_basics() {
     test!(
         "ppu/sprite_overflow_tests/1.Basics.nes",
-        ScenarioLeaf::check_screen(36, 0x50A5A002EEA2256E)
+        ScenarioLeaf::check_screen(36, 0x50A5_A002_EEA2_256E)
     );
 }
 
@@ -18,7 +18,7 @@ fn _1_basics() {
 fn _2_details() {
     test!(
         "ppu/sprite_overflow_tests/2.Details.nes",
-        ScenarioLeaf::check_screen(36, 0xFAFB3F12716BD507)
+        ScenarioLeaf::check_screen(36, 0xFAFB_3F12_716B_D507)
     );
 }
 
@@ -26,7 +26,7 @@ fn _2_details() {
 fn _3_timing() {
     test!(
         "ppu/sprite_overflow_tests/3.Timing.nes",
-        ScenarioLeaf::check_screen(130, 0xF324957B1A6A158E)
+        ScenarioLeaf::check_screen(130, 0xF324_957B_1A6A_158E)
     );
 }
 
@@ -34,7 +34,7 @@ fn _3_timing() {
 fn _4_obscure() {
     test!(
         "ppu/sprite_overflow_tests/4.Obscure.nes",
-        ScenarioLeaf::check_screen(36, 0xDF355FCAEA6D930E)
+        ScenarioLeaf::check_screen(36, 0xDF35_5FCA_EA6D_930E)
     );
 }
 
@@ -42,6 +42,6 @@ fn _4_obscure() {
 fn _5_emulator() {
     test!(
         "ppu/sprite_overflow_tests/5.Emulator.nes",
-        ScenarioLeaf::check_screen(36, 0x3FC68EEE283CE2C3)
+        ScenarioLeaf::check_screen(36, 0x3FC6_8EEE_283C_E2C3)
     );
 }

@@ -236,7 +236,7 @@ impl Scenario {
 //     fn flowing_palette() {
 //         test!(
 //             "full_palette/flowing_palette.nes",
-//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
+//             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
 //     }
 
@@ -244,7 +244,7 @@ impl Scenario {
 //     fn full_palette_smooth() {
 //         test!(
 //             "full_palette/full_palette_smooth.nes",
-//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
+//             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
 //     }
 
@@ -252,7 +252,7 @@ impl Scenario {
 //     fn full_palette() {
 //         test!(
 //             "full_palette/full_palette.nes",
-//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
+//             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
 //     }
 // }
@@ -264,7 +264,7 @@ impl Scenario {
 //     fn demo_ntsc() {
 //         test!(
 //             "nmi_sync/demo_ntsc.nes",
-//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
+//             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
 //     }
 
@@ -272,7 +272,7 @@ impl Scenario {
 //     fn demo_pal() {
 //         test!(
 //             "nmi_sync/demo_pal.nes",
-//             ScenarioLeaf::check_screen(30, 0xE31EB51722472E30)
+//             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
 //     }
 // }

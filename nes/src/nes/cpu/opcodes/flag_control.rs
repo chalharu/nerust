@@ -126,7 +126,7 @@ impl<F: Fn(&mut Register) -> ()> CpuStepState for Step1<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {

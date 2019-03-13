@@ -22,7 +22,7 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for Step1<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -50,7 +50,7 @@ impl OpCode for Lda {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r, v| r.set_a(v)))
+        Box::new(Step1::new(address, Register::set_a))
     }
     fn name(&self) -> &'static str {
         "LDA"
@@ -65,7 +65,7 @@ impl OpCode for Ldx {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r, v| r.set_x(v)))
+        Box::new(Step1::new(address, Register::set_x))
     }
     fn name(&self) -> &'static str {
         "LDX"
@@ -80,7 +80,7 @@ impl OpCode for Ldy {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r, v| r.set_y(v)))
+        Box::new(Step1::new(address, Register::set_y))
     }
     fn name(&self) -> &'static str {
         "LDY"

@@ -8,11 +8,12 @@ pub mod error;
 pub mod format;
 pub mod mapper;
 use self::format::CartridgeDataDao;
+use crate::nes::cpu::interrupt::Interrupt;
 use crate::nes::MirrorMode;
 use crate::nes::OpenBusReadResult;
 use std::cmp;
 
-pub trait Cartridge: Mapper {
+pub(crate) trait Cartridge: Mapper {
     fn initialize(&mut self) {
         self.mapper_state_mut().has_battery =
             self.data_ref().has_battery() || self.battery_default();
@@ -71,7 +72,10 @@ pub trait Cartridge: Mapper {
     }
 
     fn read_ram(&self, address: usize) -> OpenBusReadResult {
-        Mapper::read_ram(self, address).map_or_else(|| OpenBusReadResult::new(0, 0), |x| OpenBusReadResult::new(x, 0xFF))
+        Mapper::read_ram(self, address).map_or_else(
+            || OpenBusReadResult::new(0, 0),
+            |x| OpenBusReadResult::new(x, 0xFF),
+        )
     }
 
     fn read_program(&self, address: usize) -> OpenBusReadResult {
@@ -83,11 +87,11 @@ pub trait Cartridge: Mapper {
         )
     }
 
-    fn write(&mut self, address: usize, value: u8) {
+    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         match address {
             0...0x1FFF => self.write_character(address, value),
-            0x6000...0x7FFF => Cartridge::write_ram(self, address, value),
-            0x8000...0xFFFF => self.write_program(address, value),
+            0x6000...0x7FFF => Cartridge::write_ram(self, address, value, interrupt),
+            0x8000...0xFFFF => self.write_program(address, value, interrupt),
             _ => {
                 error!("unhandled mapper write at address: 0x{:04X}", address);
             }
@@ -102,30 +106,35 @@ pub trait Cartridge: Mapper {
         }
     }
 
-    fn write_ram(&mut self, address: usize, value: u8) {
+    fn write_ram(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         if self.register_addr(address) {
-            self.write_register(address, if self.bus_conflicts() {
-                Mapper::read_ram(self, address - 0x6000).unwrap_or(0) & value
-            } else {
-                value
-            });
+            self.write_register(
+                address,
+                if self.bus_conflicts() {
+                    Mapper::read_ram(self, address - 0x6000).unwrap_or(0) & value
+                } else {
+                    value
+                },
+                interrupt,
+            );
         } else {
-             Mapper::write_ram(self, address - 0x6000, value);
+            Mapper::write_ram(self, address - 0x6000, value);
         }
-
     }
 
-    fn write_program(&mut self, address: usize, value: u8) {
+    fn write_program(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         if self.register_addr(address) {
-            self.write_register(address, if self.bus_conflicts() {
-                self.read_program(address - 0x8000).data & value
-            } else {
-                value
-            });
-        } else {
-            if let Some(addr) = self.program_address(address - 0x8000) {
-                self.data_mut().write_prog_rom(addr, value);
-            }
+            self.write_register(
+                address,
+                if self.bus_conflicts() {
+                    self.read_program(address - 0x8000).data & value
+                } else {
+                    value
+                },
+                interrupt,
+            );
+        } else if let Some(addr) = self.program_address(address - 0x8000) {
+            self.data_mut().write_prog_rom(addr, value);
         }
     }
 
@@ -173,7 +182,7 @@ pub trait MapperStateDao {
     fn mapper_state_ref(&self) -> &MapperState;
 }
 
-pub trait Mapper: MapperStateDao + CartridgeDataDao {
+pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
     fn name(&self) -> &str;
     fn program_page_len(&self) -> usize;
     fn character_page_len(&self) -> usize;
@@ -187,7 +196,7 @@ pub trait Mapper: MapperStateDao + CartridgeDataDao {
     }
 
     #[allow(unused_variables)]
-    fn write_register(&mut self, address: usize, value: u8) {}
+    fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {}
 
     fn battery_default(&self) -> bool {
         false
@@ -321,9 +330,12 @@ pub trait Mapper: MapperStateDao + CartridgeDataDao {
     }
 
     fn step(&mut self) {}
+
+    #[allow(unused_variables)]
+    fn vram_address_change(&mut self, address: usize) {}
 }
 
-pub fn try_from<I: Iterator<Item = u8>>(
+pub(crate) fn try_from<I: Iterator<Item = u8>>(
     input: &mut I,
 ) -> Result<Box<Cartridge>, error::CartridgeError> {
     let mut result = mapper::try_from(format::CartridgeData::try_from(input)?);

@@ -132,7 +132,6 @@ fn condition_jump(
     interrupt: &mut Interrupt,
 ) -> Box<dyn CpuStepState> {
     if condition {
-
         Box::new(Step1::new(address, interrupt.detected))
     } else {
         FetchOpCode::new(interrupt)
@@ -146,7 +145,10 @@ struct Step1 {
 
 impl Step1 {
     pub fn new(address: usize, interrupt_detected: bool) -> Self {
-        Self { address, interrupt_detected }
+        Self {
+            address,
+            interrupt_detected,
+        }
     }
 }
 
@@ -155,7 +157,7 @@ impl CpuStepState for Step1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -190,7 +192,7 @@ impl CpuStepState for Step2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {

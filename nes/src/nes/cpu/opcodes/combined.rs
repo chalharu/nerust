@@ -262,7 +262,7 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for ReadStep1<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -295,7 +295,7 @@ impl<F: Fn(&mut Register) -> u8> CpuStepState for WriteStep1<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -328,7 +328,7 @@ impl<F: Fn(&mut Register) -> (u8, usize)> CpuStepState for WriteNewAddrStep1<F> 
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {

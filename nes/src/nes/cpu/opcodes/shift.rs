@@ -6,14 +6,6 @@
 
 use super::*;
 
-fn get_reg_a(register: &mut Register) -> u8 {
-    register.get_a()
-}
-
-fn set_reg_a(register: &mut Register, data: u8) {
-    register.set_a(data);
-}
-
 fn asl(register: &mut Register, data: u8) -> u8 {
     register.set_c(data & 0x80 != 0);
     let value = data << 1;
@@ -29,7 +21,7 @@ impl OpCode for AslAcc {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(get_reg_a, set_reg_a, asl))
+        Box::new(AccStep1::new(Register::get_a, Register::set_a, asl))
     }
     fn name(&self) -> &'static str {
         "ASL"
@@ -66,7 +58,7 @@ impl OpCode for LsrAcc {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(get_reg_a, set_reg_a, lsr))
+        Box::new(AccStep1::new(Register::get_a, Register::set_a, lsr))
     }
     fn name(&self) -> &'static str {
         "LSR"
@@ -104,7 +96,7 @@ impl OpCode for RolAcc {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(get_reg_a, set_reg_a, rol))
+        Box::new(AccStep1::new(Register::get_a, Register::set_a, rol))
     }
     fn name(&self) -> &'static str {
         "ROL"
@@ -142,7 +134,7 @@ impl OpCode for RorAcc {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(get_reg_a, set_reg_a, ror))
+        Box::new(AccStep1::new(Register::get_a, Register::set_a, ror))
     }
     fn name(&self) -> &'static str {
         "ROR"

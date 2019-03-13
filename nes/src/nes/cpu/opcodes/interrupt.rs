@@ -34,7 +34,7 @@ impl CpuStepState for BrkStep1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -65,7 +65,7 @@ impl CpuStepState for BrkStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -94,7 +94,7 @@ impl CpuStepState for BrkStep3 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -124,11 +124,11 @@ impl CpuStepState for BrkStep4 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let p = core.register.get_p() | (RegisterP::Break | RegisterP::Reserved).bits();
+        let p = core.register.get_p() | (RegisterP::BREAK | RegisterP::RESERVED).bits();
         push(core, ppu, cartridge, controller, apu, p);
         Box::new(BrkStep5::new(self.vector))
     }
@@ -149,7 +149,7 @@ impl CpuStepState for BrkStep5 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -182,7 +182,7 @@ impl CpuStepState for BrkStep6 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -228,7 +228,7 @@ impl CpuStepState for RtiStep1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -251,7 +251,7 @@ impl CpuStepState for RtiStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -283,13 +283,13 @@ impl CpuStepState for RtiStep3 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         let p = pull(core, ppu, cartridge, controller, apu);
         core.register
-            .set_p((p & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits());
+            .set_p((p & !(RegisterP::BREAK.bits())) | RegisterP::RESERVED.bits());
 
         Box::new(RtiStep4::new())
     }
@@ -308,7 +308,7 @@ impl CpuStepState for RtiStep4 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -333,7 +333,7 @@ impl CpuStepState for RtiStep5 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -358,7 +358,7 @@ impl CpuStepState for Irq {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -382,7 +382,7 @@ impl CpuStepState for IrqStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -406,7 +406,7 @@ impl CpuStepState for IrqStep3 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -433,7 +433,7 @@ impl CpuStepState for IrqStep4 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -466,11 +466,11 @@ impl CpuStepState for IrqStep5 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let p = (core.register.get_p() & !RegisterP::Break.bits()) | RegisterP::Reserved.bits();
+        let p = (core.register.get_p() & !RegisterP::BREAK.bits()) | RegisterP::RESERVED.bits();
         push(core, ppu, cartridge, controller, apu, p);
 
         Box::new(IrqStep6::new(self.vector, self.nmi))
@@ -493,7 +493,7 @@ impl CpuStepState for IrqStep6 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -529,7 +529,7 @@ impl CpuStepState for IrqStep7 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -560,7 +560,7 @@ impl CpuStepState for Reset {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -568,7 +568,7 @@ impl CpuStepState for Reset {
         read_dummy_current(core, ppu, cartridge, controller, apu);
 
         core.interrupt.irq_flag = IrqSource::empty();
-        core.interrupt.irq_mask = IrqSource::All;
+        core.interrupt.irq_mask = IrqSource::ALL;
         core.interrupt.nmi = false;
 
         Box::new(ResetStep2::new())
@@ -588,7 +588,7 @@ impl CpuStepState for ResetStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -611,7 +611,7 @@ impl CpuStepState for ResetStep3 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -642,7 +642,7 @@ impl CpuStepState for ResetStep4 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -674,7 +674,7 @@ impl CpuStepState for ResetStep5 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -708,7 +708,7 @@ impl CpuStepState for ResetStep6 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -741,7 +741,7 @@ impl CpuStepState for ResetStep7 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {

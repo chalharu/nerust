@@ -10,6 +10,6 @@ use super::*;
 fn instr_timing() {
     test!(
         "cpu/instr_timing/instr_timing.nes",
-        ScenarioLeaf::check_screen(1330, 0x911C1A51A508AB74)
+        ScenarioLeaf::check_screen(1330, 0x911C_1A51_A508_AB74)
     );
 }

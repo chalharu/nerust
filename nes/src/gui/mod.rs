@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_void;
 use std::time::{Duration, Instant};
-use std::{f64, mem, thread};
+use std::{f64, mem, ptr, thread};
 
 pub const CLOCK_RATE: usize = 1_789_773;
 
@@ -108,7 +108,7 @@ impl Fps {
         self.wait_instants = wait_instants;
     }
 
-    pub fn to_fps(&mut self) -> f32 {
+    pub fn as_fps(&mut self) -> f32 {
         let new_now = Instant::now();
         let len = self.instants.len();
         if len == 0 {
@@ -144,7 +144,7 @@ fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContex
 
     unsafe {
         context.make_current().unwrap();
-        gl::load_with(|symbol| mem::transmute(context.get_proc_address(symbol)));
+        gl::load_with(|symbol| context.get_proc_address(symbol) as *const std::ffi::c_void);
     }
     context
 }
@@ -196,7 +196,7 @@ impl Mat4 {
     }
 
     pub fn as_ptr(&self) -> *const f32 {
-        self as *const Self as *const f32
+        &{ self._data } as *const _ as *const f32
     }
 }
 
@@ -392,8 +392,8 @@ impl Window {
             self.on_update(&mut console, &mut speaker);
             self.fps.wait();
             let mut el = mem::replace(&mut self.events_loop, None);
-            el.as_mut().unwrap().poll_events(|event| match event {
-                Event::WindowEvent { event, .. } => match event {
+            el.as_mut().unwrap().poll_events(|event|
+                if let Event::WindowEvent { event, .. } = event { match event {
                     WindowEvent::CloseRequested => {
                         self.on_close();
                     }
@@ -404,15 +404,14 @@ impl Window {
                         self.on_keyboard_input(device_id, input, &mut console, &mut speaker);
                     }
                     _ => (),
-                },
+                }}
                 // Event::DeviceEvent { device_id, event } => match event {
                 //     DeviceEvent::Key(input) => {
                 //         self.on_keyboard_input(device_id, input);
                 //     }
                 //     _ => (),
                 // },
-                _ => (),
-            });
+            );
             mem::replace(&mut self.events_loop, el);
         }
     }
@@ -440,15 +439,11 @@ impl Window {
             0,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            unsafe {
-                mem::transmute(
-                    init_screen_buffer(LogicalSize {
-                        width: buffer_width,
-                        height: buffer_height,
-                    })
-                    .as_ptr(),
-                )
-            },
+            init_screen_buffer(LogicalSize {
+                width: buffer_width,
+                height: buffer_height,
+            })
+            .as_ptr() as *const std::ffi::c_void,
         )
         .unwrap();
 
@@ -484,7 +479,7 @@ impl Window {
         buffer_data(
             gl::ARRAY_BUFFER,
             mem::size_of_val(&vertex_data) as isize,
-            unsafe { mem::transmute(vertex_data.as_ptr()) },
+            vertex_data.as_ptr() as *const std::ffi::c_void,
             gl::STATIC_DRAW,
         )
         .unwrap();
@@ -498,7 +493,7 @@ impl Window {
             shader.get_uniform("unif_matrix") as GLint,
             1,
             gl::FALSE,
-            unsafe { mem::transmute(Mat4::identity().as_ptr()) },
+            Mat4::identity().as_ptr(),
         )
         .unwrap();
         uniform_1i(shader.get_uniform("texture") as GLint, 0).unwrap();
@@ -510,7 +505,7 @@ impl Window {
             gl::FLOAT,
             gl::FALSE,
             16,
-            0 as *const c_void,
+            ptr::null(),
         )
         .unwrap();
         vertex_attrib_pointer(
@@ -554,7 +549,7 @@ impl Window {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
         self.context.swap_buffers().unwrap();
 
-        let fps = self.fps.to_fps();
+        let fps = self.fps.as_fps();
         let title = if self.paused {
             "Nes -- Paused".to_owned()
         } else {
@@ -569,8 +564,8 @@ impl Window {
 
         let physical_size = self.screen_buffer.physical_size();
 
-        let rate_x = logical_size.width / physical_size.width as f64;
-        let rate_y = logical_size.height / physical_size.height as f64;
+        let rate_x = logical_size.width / f64::from(physical_size.width);
+        let rate_y = logical_size.height / f64::from(physical_size.height);
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;

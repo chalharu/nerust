@@ -10,7 +10,7 @@ use super::*;
 fn _01_frame_basics() {
     test!(
         "ppu/vbl_nmi_timing/1.frame_basics.nes",
-        ScenarioLeaf::check_screen(198, 0x1731EB1B8C091E47)
+        ScenarioLeaf::check_screen(198, 0x1731_EB1B_8C09_1E47)
     );
 }
 
@@ -18,7 +18,7 @@ fn _01_frame_basics() {
 fn _02_vbl_timing() {
     test!(
         "ppu/vbl_nmi_timing/2.vbl_timing.nes",
-        ScenarioLeaf::check_screen(179, 0xE51D5454497CBFDB)
+        ScenarioLeaf::check_screen(179, 0xE51D_5454_497C_BFDB)
     );
 }
 
@@ -26,7 +26,7 @@ fn _02_vbl_timing() {
 fn _03_even_odd_frames() {
     test!(
         "ppu/vbl_nmi_timing/3.even_odd_frames.nes",
-        ScenarioLeaf::check_screen(124, 0x537008D7E0C3FF45)
+        ScenarioLeaf::check_screen(124, 0x5370_08D7_E0C3_FF45)
     );
 }
 
@@ -34,7 +34,7 @@ fn _03_even_odd_frames() {
 fn _04_vbl_clear_timing() {
     test!(
         "ppu/vbl_nmi_timing/4.vbl_clear_timing.nes",
-        ScenarioLeaf::check_screen(140, 0x7E5D5B53E1C2703F)
+        ScenarioLeaf::check_screen(140, 0x7E5D_5B53_E1C2_703F)
     );
 }
 
@@ -42,7 +42,7 @@ fn _04_vbl_clear_timing() {
 fn _05_nmi_suppression() {
     test!(
         "ppu/vbl_nmi_timing/5.nmi_suppression.nes",
-        ScenarioLeaf::check_screen(187, 0xAC7573AA9EE324C0)
+        ScenarioLeaf::check_screen(187, 0xAC75_73AA_9EE3_24C0)
     );
 }
 
@@ -50,7 +50,7 @@ fn _05_nmi_suppression() {
 fn _06_nmi_disable() {
     test!(
         "ppu/vbl_nmi_timing/6.nmi_disable.nes",
-        ScenarioLeaf::check_screen(133, 0xC5509E44ABF95C7D)
+        ScenarioLeaf::check_screen(133, 0xC550_9E44_ABF9_5C7D)
     );
 }
 
@@ -58,6 +58,6 @@ fn _06_nmi_disable() {
 fn _07_nmi_timing() {
     test!(
         "ppu/vbl_nmi_timing/7.nmi_timing.nes",
-        ScenarioLeaf::check_screen(140, 0x47D4DAE682D8F8D0)
+        ScenarioLeaf::check_screen(140, 0x47D4_DAE6_82D8_F8D0)
     );
 }

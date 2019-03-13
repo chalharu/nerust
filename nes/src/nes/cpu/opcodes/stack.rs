@@ -21,7 +21,7 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep1<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -48,7 +48,7 @@ impl<F: 'static + Fn(&mut Register, u8) -> ()> CpuStepState for PullStep2<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -84,7 +84,7 @@ impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for PullStep3<F> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -120,7 +120,7 @@ impl OpCode for Plp {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(PullStep1::new(|r, v| {
-            r.set_p((v & !(RegisterP::Break.bits())) | RegisterP::Reserved.bits())
+            r.set_p((v & !(RegisterP::BREAK.bits())) | RegisterP::RESERVED.bits())
         }))
     }
     fn name(&self) -> &'static str {
@@ -128,28 +128,28 @@ impl OpCode for Plp {
     }
 }
 
-struct PushStep1<F: Fn(&mut Register) -> u8> {
+struct PushStep1<F: Fn(&Register) -> u8> {
     func: F,
 }
 
-impl<F: Fn(&mut Register) -> u8> PushStep1<F> {
+impl<F: Fn(&Register) -> u8> PushStep1<F> {
     pub fn new(func: F) -> Self {
-        Self { func: func }
+        Self { func }
     }
 }
 
-impl<F: Fn(&mut Register) -> u8> CpuStepState for PushStep1<F> {
+impl<F: Fn(&Register) -> u8> CpuStepState for PushStep1<F> {
     fn next(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
-        let data = (self.func)(&mut core.register);
+        let data = (self.func)(&core.register);
 
         Box::new(PushStep2::new(data))
     }
@@ -170,7 +170,7 @@ impl CpuStepState for PushStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -188,7 +188,7 @@ impl OpCode for Pha {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(PushStep1::new(|r| r.get_a()))
+        Box::new(PushStep1::new(Register::get_a))
     }
     fn name(&self) -> &'static str {
         "PHA"

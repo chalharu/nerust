@@ -8,6 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
+use crate::nes::cpu::interrupt::Interrupt;
 
 pub(crate) struct UxRom {
     cartridge_data: CartridgeData,
@@ -64,7 +65,7 @@ impl Mapper for UxRom {
         self.data_ref().sub_mapper_type() == 2
     }
 
-    fn write_register(&mut self, _address: usize, value: u8) {
+    fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {
         self.change_program_page(0, usize::from(value));
     }
 }

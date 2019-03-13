@@ -34,21 +34,22 @@ impl CartridgeData {
         let mut headers = input.take(4).collect::<Vec<_>>();
         if headers.len() != 4 {
             Err(CartridgeError::UnexpectedEof)
-        } else {
-            if headers[0] == 0x4e && headers[1] == 0x45 && headers[2] == 0x53 && headers[3] == 0x1a
-            {
-                headers.extend(input.take(12));
-                if headers.len() != 16 {
-                    return Err(CartridgeError::UnexpectedEof);
-                }
-                if headers[7] & 0x0C == 0x08 {
-                    nes20::read_nes20(&headers, input)
-                } else {
-                    ines::read_ines(&headers, input)
-                }
-            } else {
-                Err(CartridgeError::DataError)
+        } else if headers[0] == 0x4e
+            && headers[1] == 0x45
+            && headers[2] == 0x53
+            && headers[3] == 0x1a
+        {
+            headers.extend(input.take(12));
+            if headers.len() != 16 {
+                return Err(CartridgeError::UnexpectedEof);
             }
+            if headers[7] & 0x0C == 0x08 {
+                nes20::read_nes20(&headers, input)
+            } else {
+                ines::read_ines(&headers, input)
+            }
+        } else {
+            Err(CartridgeError::DataError)
         }
     }
 

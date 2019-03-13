@@ -9,6 +9,7 @@ pub mod interrupt;
 mod memory;
 mod opcodes;
 mod register;
+mod oamdma;
 
 use self::addressing_mode::*;
 use self::interrupt::{Interrupt, IrqSource};
@@ -20,6 +21,7 @@ use self::opcodes::{
 use self::register::{Register, RegisterP};
 use super::*;
 use std::ops::Shr;
+use self::oamdma::OamDmaState;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where
@@ -41,7 +43,7 @@ pub(crate) struct Core {
     pub(crate) interrupt: Interrupt,
     cycles: u64,
     next_func: Box<dyn CpuStepState>,
-    oam_dma: Option<Box<dyn OamDmaStepState>>,
+    oam_dma: Option<OamDmaState>,
 }
 
 impl Core {
@@ -54,13 +56,13 @@ impl Core {
             memory: Memory::new(),
             cycles: 0,
             next_func: Reset::new(),
-            oam_dma: None,
+            oam_dma: Some(OamDmaState::new()),
         }
     }
 
     pub fn reset(&mut self) {
         self.interrupt.reset();
-        self.oam_dma = None;
+        self.oam_dma.as_mut().unwrap().reset();
         self.next_func = Reset::new();
         self.cycles = 0;
     }
@@ -68,7 +70,7 @@ impl Core {
     pub fn step(
         &mut self,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) {
@@ -76,14 +78,11 @@ impl Core {
 
         if self.interrupt.dmc_start {
             self.interrupt.dmc_start = false;
-            self.interrupt.dmc_count = if let Some(oam_dma) = &self.oam_dma {
-                match oam_dma.count() {
-                    0 => 3,
-                    1 => 1,
-                    _ => 2,
-                }
-            } else {
-                4
+            self.interrupt.dmc_count = match self.oam_dma.as_ref().unwrap().count() {
+                None => 4,
+                Some(0) => 3,
+                Some(1) => 1,
+                _ => 2,
             };
         }
 
@@ -104,11 +103,13 @@ impl Core {
             }
         } else {
             if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
-                self.oam_dma = Some(OamDma::new(offset));
+                self.oam_dma.as_mut().unwrap().start_transaction(offset);
             }
 
-            if let Some(mut oam_dma) = ::std::mem::replace(&mut self.oam_dma, None) {
-                self.oam_dma = oam_dma.next(self, ppu, cartridge, controller, apu);
+            if self.oam_dma.as_ref().unwrap().has_transaction() {
+                let mut oam_dma = ::std::mem::replace(&mut self.oam_dma, None);
+                oam_dma.as_mut().unwrap().next(self, ppu, cartridge, controller, apu);
+                self.oam_dma = oam_dma;
             } else {
                 self.interrupt.executing = self.interrupt.detected;
                 // 身代わりパターン
@@ -128,7 +129,7 @@ impl CpuStepState for Dummy {
         &mut self,
         _core: &mut Core,
         _ppu: &mut Ppu,
-        _cartridge: &mut Box<Cartridge>,
+        _cartridge: &mut Cartridge,
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -141,7 +142,7 @@ pub(crate) trait CpuStepState {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState>;
@@ -164,7 +165,7 @@ impl CpuStepState for FetchOpCode {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -185,138 +186,10 @@ impl CpuStepState for FetchOpCode {
     }
 }
 
-pub(crate) trait OamDmaStepState {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Option<Box<dyn OamDmaStepState>>;
-
-    fn count(&self) -> u8;
-}
-
-struct OamDma {
-    offset: u8,
-}
-
-impl OamDma {
-    pub fn new(offset: u8) -> Box<dyn OamDmaStepState> {
-        Box::new(Self { offset })
-    }
-}
-
-impl OamDmaStepState for OamDma {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Option<Box<dyn OamDmaStepState>> {
-        // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
-        if core.cycles & 1 != 0 {
-            Some(OamDma::new(self.offset))
-        } else {
-            Some(OamDmaStep1::new(self.offset, 255))
-        }
-    }
-
-    fn count(&self) -> u8 {
-        255
-    }
-}
-
-struct OamDmaStep1 {
-    offset: u8,
-    count: u8,
-}
-
-impl OamDmaStep1 {
-    pub fn new(offset: u8, count: u8) -> Box<dyn OamDmaStepState> {
-        Box::new(Self { offset, count })
-    }
-}
-
-impl OamDmaStepState for OamDmaStep1 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Option<Box<dyn OamDmaStepState>> {
-        let value = core.memory.read(
-            usize::from(self.offset) * 0x100 + usize::from(255 - self.count),
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        Some(OamDmaStep2::new(self.offset, self.count, value))
-    }
-
-    fn count(&self) -> u8 {
-        self.count
-    }
-}
-
-struct OamDmaStep2 {
-    offset: u8,
-    count: u8,
-    value: u8,
-}
-
-impl OamDmaStep2 {
-    pub fn new(offset: u8, count: u8, value: u8) -> Box<dyn OamDmaStepState> {
-        Box::new(Self {
-            offset,
-            count,
-            value,
-        })
-    }
-}
-
-impl OamDmaStepState for OamDmaStep2 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Option<Box<dyn OamDmaStepState>> {
-        core.memory.write(
-            0x2004,
-            self.value,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        if self.count == 0 {
-            None
-        } else {
-            Some(OamDmaStep1::new(self.offset, self.count - 1))
-        }
-    }
-
-    fn count(&self) -> u8 {
-        self.count
-    }
-}
-
 fn push(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Box<Cartridge>,
+    cartridge: &mut Cartridge,
     controller: &mut Controller,
     apu: &mut Apu,
     value: u8,
@@ -337,7 +210,7 @@ fn push(
 fn pull(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Box<Cartridge>,
+    cartridge: &mut Cartridge,
     controller: &mut Controller,
     apu: &mut Apu,
 ) -> u8 {
@@ -356,7 +229,7 @@ fn pull(
 fn read_dummy_current(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Box<Cartridge>,
+    cartridge: &mut Cartridge,
     controller: &mut Controller,
     apu: &mut Apu,
 ) {

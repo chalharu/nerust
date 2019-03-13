@@ -14,7 +14,7 @@ impl OpCode for Cmp {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r| r.get_a()))
+        Box::new(Step1::new(address, Register::get_a))
     }
     fn name(&self) -> &'static str {
         "CMP"
@@ -29,7 +29,7 @@ impl OpCode for Cpx {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r| r.get_x()))
+        Box::new(Step1::new(address, Register::get_x))
     }
     fn name(&self) -> &'static str {
         "CPX"
@@ -44,34 +44,34 @@ impl OpCode for Cpy {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, |r| r.get_y()))
+        Box::new(Step1::new(address, Register::get_y))
     }
     fn name(&self) -> &'static str {
         "CPY"
     }
 }
 
-struct Step1<F: Fn(&mut Register) -> u8> {
+struct Step1<F: Fn(&Register) -> u8> {
     address: usize,
     func: F,
 }
 
-impl<F: Fn(&mut Register) -> u8> Step1<F> {
+impl<F: Fn(&Register) -> u8> Step1<F> {
     pub fn new(address: usize, func: F) -> Self {
         Self { address, func }
     }
 }
 
-impl<F: Fn(&mut Register) -> u8> CpuStepState for Step1<F> {
+impl<F: Fn(&Register) -> u8> CpuStepState for Step1<F> {
     fn next(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
-        let a = (self.func)(&mut core.register);
+        let a = (self.func)(&core.register);
         let b = core.memory.read(
             self.address,
             ppu,

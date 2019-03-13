@@ -38,7 +38,7 @@ impl CpuStepState for Step1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -50,7 +50,7 @@ impl CpuStepState for Step1 {
             apu,
             &mut core.interrupt,
         ));
-        let pc = u16::from(core.register.get_pc());
+        let pc = core.register.get_pc();
         let address = pc
             .wrapping_add(offset)
             .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 });
@@ -89,7 +89,7 @@ impl CpuStepState for Step1 {
 //         &mut self,
 //         core: &mut Core,
 //         ppu: &mut Ppu,
-//         cartridge: &mut Box<Cartridge>,
+//         cartridge: &mut Cartridge,
 //         controller: &mut Controller,
 //         apu: &mut Apu,
 //     ) -> Box<dyn CpuStepState> {

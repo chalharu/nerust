@@ -8,6 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
+use crate::nes::cpu::interrupt::Interrupt;
 use crate::nes::MirrorMode;
 
 pub(crate) struct SxRom {
@@ -198,7 +199,7 @@ impl Mapper for SxRom {
         self.data_ref().sub_mapper_type() == 2
     }
 
-    fn write_register(&mut self, address: usize, value: u8) {
+    fn write_register(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {
         if self.cycle.wrapping_sub(self.prev_cycle) >= 2 {
             if value & 0x80 == 0x80 {
                 self.shift_register = 0x10;
@@ -208,7 +209,7 @@ impl Mapper for SxRom {
                 let complete = self.shift_register & 1 == 1;
                 let shift_register = (self.shift_register >> 1) | ((value & 1) << 4);
                 self.shift_register = if complete {
-                    self.write_register_inner(address, shift_register);
+                    self.write_register_inner(address & 0x7FFF, shift_register);
                     0x10
                 } else {
                     shift_register

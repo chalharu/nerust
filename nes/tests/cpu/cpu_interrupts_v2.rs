@@ -10,7 +10,7 @@ use super::*;
 fn cpu_interrupts() {
     test!(
         "cpu/cpu_interrupts_v2/cpu_interrupts.nes",
-        ScenarioLeaf::check_screen(760, 0x9026DAD65555ECA0)
+        ScenarioLeaf::check_screen(760, 0x9026_DAD6_5555_ECA0)
     );
 }
 
@@ -18,7 +18,7 @@ fn cpu_interrupts() {
 fn _1_cli_latency() {
     test!(
         "cpu/cpu_interrupts_v2/rom_singles/1-cli_latency.nes",
-        ScenarioLeaf::check_screen(35, 0x06A2E9A5AD65ED0E)
+        ScenarioLeaf::check_screen(35, 0x06A2_E9A5_AD65_ED0E)
     );
 }
 
@@ -26,7 +26,7 @@ fn _1_cli_latency() {
 fn _2_nmi_and_brk() {
     test!(
         "cpu/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes",
-        ScenarioLeaf::check_screen(115, 0x2FB0BFAC269FD16A)
+        ScenarioLeaf::check_screen(115, 0x2FB0_BFAC_269F_D16A)
     );
 }
 
@@ -34,7 +34,7 @@ fn _2_nmi_and_brk() {
 fn _3_nmi_and_irq() {
     test!(
         "cpu/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes",
-        ScenarioLeaf::check_screen(150, 0x9A8775FF7A9697DF)
+        ScenarioLeaf::check_screen(150, 0x9A87_75FF_7A96_97DF)
     );
 }
 
@@ -42,7 +42,7 @@ fn _3_nmi_and_irq() {
 fn _4_irq_and_dma() {
     test!(
         "cpu/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
-        ScenarioLeaf::check_screen(75, 0x70E9CDAE61FC6CE6)
+        ScenarioLeaf::check_screen(75, 0x70E9_CDAE_61FC_6CE6)
     );
 }
 
@@ -50,6 +50,6 @@ fn _4_irq_and_dma() {
 fn _5_branch_delays_irq() {
     test!(
         "cpu/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
-        ScenarioLeaf::check_screen(400, 0xDCF04EA09FBB490C)
+        ScenarioLeaf::check_screen(400, 0xDCF0_4EA0_9FBB_490C)
     );
 }

@@ -20,8 +20,8 @@ impl OpCode for Tax {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
-            |r| r.get_a(),
-            |r, v| r.set_x(v),
+            Register::get_a,
+            Register::set_x,
             set_nz_from_value,
         ))
     }
@@ -39,8 +39,8 @@ impl OpCode for Tay {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
-            |r| r.get_a(),
-            |r, v| r.set_y(v),
+            Register::get_a,
+            Register::set_y,
             set_nz_from_value,
         ))
     }
@@ -58,8 +58,8 @@ impl OpCode for Tsx {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
-            |r| r.get_sp(),
-            |r, v| r.set_x(v),
+            Register::get_sp,
+            Register::set_x,
             set_nz_from_value,
         ))
     }
@@ -77,8 +77,8 @@ impl OpCode for Txa {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
-            |r| r.get_x(),
-            |r, v| r.set_a(v),
+            Register::get_x,
+            Register::set_a,
             set_nz_from_value,
         ))
     }
@@ -96,8 +96,8 @@ impl OpCode for Tya {
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
         Box::new(AccStep1::new(
-            |r| r.get_y(),
-            |r, v| r.set_a(v),
+            Register::get_y,
+            Register::set_a,
             set_nz_from_value,
         ))
     }
@@ -114,7 +114,7 @@ impl OpCode for Txs {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(|r| r.get_x(), |r, v| r.set_sp(v), |_, v| v))
+        Box::new(AccStep1::new(Register::get_x, Register::set_sp, |_, v| v))
     }
     fn name(&self) -> &'static str {
         "TXS"

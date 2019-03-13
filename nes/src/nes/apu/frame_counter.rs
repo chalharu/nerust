@@ -53,7 +53,7 @@ impl FrameCounter {
 
     fn fire_irq(&self, interrupt: &mut Interrupt) {
         if self.irq {
-            interrupt.set_irq(IrqSource::FrameCounter);
+            interrupt.set_irq(IrqSource::FRAME_COUNTER);
         }
     }
 
@@ -71,7 +71,7 @@ impl FrameCounter {
                     self.cycle = 0;
                     FrameType::None
                 }
-                0...37282 => FrameType::None,
+                0...7456 | 7458...14912 | 14914...22370 | 22372...37280 => FrameType::None,
                 _ => unreachable!(),
             }
         } else {
@@ -92,7 +92,7 @@ impl FrameCounter {
                     self.cycle = 0;
                     FrameType::None
                 }
-                0...29830 => FrameType::None,
+                0...7456 | 7458...14912 | 14914...22370 | 22372...29827 => FrameType::None,
                 _ => unreachable!(),
             }
         };
@@ -132,7 +132,7 @@ impl FrameCounter {
             self.write_counter = 4;
         }
         if !self.irq {
-            interrupt.clear_irq(IrqSource::FrameCounter);
+            interrupt.clear_irq(IrqSource::FRAME_COUNTER);
         }
     }
 }
