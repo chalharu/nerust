@@ -20,11 +20,7 @@ impl OpCode for Dex {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(
-            |register| register.get_x(),
-            |register, data| register.set_x(data),
-            decrement,
-        ))
+        Box::new(AccStep1::new(Register::get_x, Register::set_x, decrement))
     }
     fn name(&self) -> &'static str {
         "DEX"
@@ -39,11 +35,7 @@ impl OpCode for Dey {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(
-            |register| register.get_y(),
-            |register, data| register.set_y(data),
-            decrement,
-        ))
+        Box::new(AccStep1::new(Register::get_y, Register::set_y, decrement))
     }
     fn name(&self) -> &'static str {
         "DEY"

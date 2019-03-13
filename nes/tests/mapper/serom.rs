@@ -10,6 +10,6 @@ use super::*;
 fn serom() {
     test!(
         "mapper/serom/serom.nes",
-        ScenarioLeaf::check_screen(20, 0x66F3C603B1119162)
+        ScenarioLeaf::check_screen(20, 0x66F3_C603_B111_9162)
     );
 }

@@ -20,11 +20,7 @@ impl OpCode for Inx {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(
-            |register| register.get_x(),
-            |register, data| register.set_x(data),
-            increment,
-        ))
+        Box::new(AccStep1::new(Register::get_x, Register::set_x, increment))
     }
     fn name(&self) -> &'static str {
         "INX"
@@ -39,11 +35,7 @@ impl OpCode for Iny {
         _register: &mut Register,
         _interrupt: &mut Interrupt,
     ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(
-            |register| register.get_y(),
-            |register, data| register.set_y(data),
-            increment,
-        ))
+        Box::new(AccStep1::new(Register::get_y, Register::set_y, increment))
     }
     fn name(&self) -> &'static str {
         "INY"

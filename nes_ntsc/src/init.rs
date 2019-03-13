@@ -66,7 +66,7 @@ impl Init {
                             let q = DEFAULT_DECODER[(x << 1) + 1];
                             vec![i * acc.1 - q * acc.0, i * acc.0 + q * acc.1]
                         }).collect::<Vec<_>>();
-                    *acc = rotate_iq(acc, 0.866025, -0.5); // +120 degrees
+                    *acc = rotate_iq(*acc, 0.866_025, -0.5); // +120 degrees
                     Some(result)
                 }).collect::<Vec<_>>()
         };
@@ -96,7 +96,7 @@ impl Init {
             let to_angle = f32::consts::PI / maxh * LUMA_CUTOFF * (to_angle * to_angle + 1.0);
 
             kernels[KERNEL_SIZE * 3 / 2] = maxh; // default center value
-            for i in 0..(KERNEL_HALF * 2 + 1) {
+            for i in 0..=KERNEL_HALF * 2 {
                 let angle = to_angle * (i as f32 - KERNEL_HALF as f32);
 
                 // instability occurs at center point with rolloff very close to 1.0
@@ -112,7 +112,7 @@ impl Init {
 
             // apply blackman window and find sum
             let sum = 1.0
-                / (0..(KERNEL_HALF * 2 + 1)).fold(0.0, |acc, i| {
+                / (0..=KERNEL_HALF * 2).fold(0.0, |acc, i| {
                     let x = f32::consts::PI / KERNEL_HALF as f32 * i as f32;
                     let blackman = (0.42 - 0.5 * x.cos() + 0.08 * (x * 2.0).cos())
                         * kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i];
@@ -121,7 +121,7 @@ impl Init {
                 });
 
             // normalize kernel
-            for i in 0..(KERNEL_HALF * 2 + 1) {
+            for i in 0..=KERNEL_HALF * 2 {
                 let x = KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i;
                 kernels[x] *= sum;
                 debug_assert!(kernels[x].is_finite());
@@ -167,12 +167,12 @@ impl Init {
 
         {
             trace!("luma:");
-            for i in KERNEL_SIZE..(KERNEL_SIZE * 2) {
-                trace!("{}", kernels[i]);
+            for k in kernels[KERNEL_SIZE..].iter() {
+                trace!("{}", k);
             }
             trace!("chroma:");
-            for i in 0..KERNEL_SIZE {
-                trace!("{}", kernels[i]);
+            for k in kernels[..KERNEL_SIZE].iter() {
+                trace!("{}", k);
             }
         }
 

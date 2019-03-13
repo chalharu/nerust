@@ -61,7 +61,7 @@ pub struct Error(Vec<ErrorKind>);
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.0.len() > 0 {
+        if !self.0.is_empty() {
             write!(f, "{}", self.0[0])?;
             for e in self.0.iter().skip(1) {
                 writeln!(f)?;

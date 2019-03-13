@@ -347,7 +347,7 @@ impl AddressingModeLut {
         ])
     }
 
-    pub fn get(&self, code: usize) -> &Box<dyn AddressingMode> {
-        &self.0[code]
+    pub fn get(&self, code: usize) -> &AddressingMode {
+        self.0[code].as_ref()
     }
 }

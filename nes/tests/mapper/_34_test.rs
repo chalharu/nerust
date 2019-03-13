@@ -10,7 +10,7 @@ use super::*;
 fn _34_test_1() {
     test!(
         "mapper/34_test_src/34_test_1.nes",
-        ScenarioLeaf::check_screen(70, 0x4656955C241976B9)
+        ScenarioLeaf::check_screen(70, 0x4656_955C_2419_76B9)
     );
 }
 
@@ -18,7 +18,6 @@ fn _34_test_1() {
 fn _34_test_2() {
     test!(
         "mapper/34_test_src/34_test_2.nes",
-        ScenarioLeaf::check_screen(70, 0x00C9497C3EC444FF)
+        ScenarioLeaf::check_screen(70, 0x00C9_497C_3EC4_44FF)
     );
 }
-

@@ -10,7 +10,7 @@ use super::*;
 fn test_9() {
     test!(
         "apu/test_apu_m/test_9.nes",
-        ScenarioLeaf::check_screen(50, 0x5A5308AE5AE10624)
+        ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
 }
 
@@ -18,7 +18,7 @@ fn test_9() {
 fn test_10() {
     test!(
         "apu/test_apu_m/test_10.nes",
-        ScenarioLeaf::check_screen(50, 0x5A5308AE5AE10624)
+        ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
 }
 
@@ -26,6 +26,6 @@ fn test_10() {
 fn test_11() {
     test!(
         "apu/test_apu_m/test_11.nes",
-        ScenarioLeaf::check_screen(50, 0x5A5308AE5AE10624)
+        ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
 }

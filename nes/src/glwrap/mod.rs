@@ -315,10 +315,10 @@ fn compile_shader(src: &str, ty: GLenum) -> GLuint {
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
         gl::CompileShader(shader);
 
-        let mut status = gl::FALSE as GLint;
+        let mut status = GLint::from(gl::FALSE);
         gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut status);
 
-        if status != (gl::TRUE as GLint) {
+        if status != GLint::from(gl::TRUE) {
             let mut len = 0;
             gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
             let mut buf = Vec::with_capacity(len as usize);
@@ -331,9 +331,7 @@ fn compile_shader(src: &str, ty: GLenum) -> GLuint {
             );
             panic!(
                 "{}",
-                str::from_utf8(&buf)
-                    .ok()
-                    .expect("ShaderInfoLog not valid utf8")
+                str::from_utf8(&buf).expect("ShaderInfoLog not valid utf8")
             );
         }
     }
@@ -347,10 +345,10 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
         gl::AttachShader(program, fs);
         gl::LinkProgram(program);
 
-        let mut status = gl::FALSE as GLint;
+        let mut status = GLint::from(gl::FALSE);
         get_programiv(program, gl::LINK_STATUS, &mut status).unwrap();
 
-        if status != (gl::TRUE as GLint) {
+        if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
             get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).unwrap();
             let mut buf = Vec::with_capacity(len as usize);
@@ -363,9 +361,7 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
             );
             panic!(
                 "{}",
-                str::from_utf8(&buf)
-                    .ok()
-                    .expect("ProgramInfoLog not valid utf8")
+                str::from_utf8(&buf).expect("ProgramInfoLog not valid utf8")
             );
         }
         program

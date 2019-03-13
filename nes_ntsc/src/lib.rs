@@ -88,7 +88,7 @@ fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
     PixelInfo {
         offset,
         negate: (1.0 - ((ntsc + 100) & 2) as f32),
-        kernel: kernel,
+        kernel,
     }
 }
 
@@ -101,7 +101,7 @@ lazy_static! {
     ];
 }
 
-fn rotate_iq(iq: &(f32, f32), sin_b: f32, cos_b: f32) -> (f32, f32) {
+fn rotate_iq(iq: (f32, f32), sin_b: f32, cos_b: f32) -> (f32, f32) {
     (iq.0 * cos_b - iq.1 * sin_b, iq.0 * sin_b + iq.1 * cos_b)
 }
 
@@ -149,8 +149,8 @@ pub struct NesNtsc {
 impl NesNtsc {
     // phases [i] = cos( i * PI / 6 )
     const PHASES: [f32; 19] = [
-        -1.0, -0.866025, -0.5, 0.0, 0.5, 0.866025, 1.0, 0.866025, 0.5, 0.0, -0.5, -0.866025, -1.0,
-        -0.866025, -0.5, 0.0, 0.5, 0.866025, 1.0,
+        -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0, 0.866_025, 0.5, 0.0, -0.5, -0.866_025, -1.0,
+        -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0,
     ];
 
     fn to_angle_sin(color: usize) -> f32 {
@@ -217,10 +217,10 @@ impl NesNtsc {
 
                 for _ in 0..RGB_KERNEL_SIZE {
                     let i =
-                        filter_impl.kernel[offset + 0] * ic0 + filter_impl.kernel[offset + 2] * ic2;
+                        filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2;
                     let q =
                         filter_impl.kernel[offset + 1] * qc1 + filter_impl.kernel[offset + 3] * qc3;
-                    let y = filter_impl.kernel[offset + KERNEL_SIZE + 0] * yc0
+                    let y = filter_impl.kernel[offset + KERNEL_SIZE] * yc0
                         + filter_impl.kernel[offset + KERNEL_SIZE + 1] * yc1
                         + filter_impl.kernel[offset + KERNEL_SIZE + 2] * yc2
                         + filter_impl.kernel[offset + KERNEL_SIZE + 3] * yc3
@@ -238,7 +238,7 @@ impl NesNtsc {
                     out.push(Self::pack_rgb(r as u32, g as u32, b as u32).wrapping_sub(RGB_BIAS));
                 }
             }
-            let iq = rotate_iq(&(i, q), -0.866025, -0.5);
+            let iq = rotate_iq((i, q), -0.866_025, -0.5);
             i = iq.0;
             q = iq.1;
         }
@@ -250,13 +250,13 @@ impl NesNtsc {
 
     fn merge_kernel_fields(io: &mut [u32]) {
         for i in 0..BURST_SIZE {
-            let p0 = io[i + BURST_SIZE * 0].wrapping_add(RGB_BIAS);
-            let p1 = io[i + BURST_SIZE * 1].wrapping_add(RGB_BIAS);
+            let p0 = io[i].wrapping_add(RGB_BIAS);
+            let p1 = io[i + BURST_SIZE].wrapping_add(RGB_BIAS);
             let p2 = io[i + BURST_SIZE * 2].wrapping_add(RGB_BIAS);
             // merge colors without losing precision
-            io[i + BURST_SIZE * 0] =
+            io[i] =
                 ((p0 + p1 - ((p0 ^ p1) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
-            io[i + BURST_SIZE * 1] =
+            io[i + BURST_SIZE] =
                 ((p1 + p2 - ((p1 ^ p2) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
             io[i + BURST_SIZE * 2] =
                 ((p2 + p0 - ((p2 ^ p0) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
@@ -502,7 +502,7 @@ impl NtscRow {
     }
 
     fn rgb_out_impl(raw: u32) -> u32 {
-        ((raw >> 5) & 0xFF0000) | ((raw >> 3) & 0xFF00) | ((raw >> 1) & 0xFF)
+        ((raw >> 5) & 0x00FF_0000) | ((raw >> 3) & 0xFF00) | ((raw >> 1) & 0xFF)
     }
 
     // NES_NTSC_COLOR_IN

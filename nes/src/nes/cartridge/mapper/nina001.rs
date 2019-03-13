@@ -8,6 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
+use crate::nes::cpu::interrupt::Interrupt;
 
 pub(crate) struct Nina001 {
     cartridge_data: CartridgeData,
@@ -62,7 +63,7 @@ impl Mapper for Nina001 {
         address >= 0x7FFD && address <= 0x7FFF
     }
 
-    fn write_register(&mut self, address: usize, value: u8) {
+    fn write_register(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {
         match address {
             0x7FFD => self.change_program_page(0, usize::from(value & 1)),
             0x7FFE => self.change_character_page(0, usize::from(value & 0x0F)),

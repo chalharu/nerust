@@ -86,12 +86,10 @@ impl Triangle {
     }
 
     pub fn step_timer(&mut self) {
-        if self.timer.step_timer() {
-            if self.length_counter.get_status() && self.counter_value > 0 {
-                self.duty_value = (self.duty_value + 1) & 0x1F;
-                if self.timer.get_period() > 1 {
-                    self.output_value = TRIANGLE_TABLE[usize::from(self.duty_value)];
-                }
+        if self.timer.step_timer() && self.length_counter.get_status() && self.counter_value > 0 {
+            self.duty_value = (self.duty_value + 1) & 0x1F;
+            if self.timer.get_period() > 1 {
+                self.output_value = TRIANGLE_TABLE[usize::from(self.duty_value)];
             }
         }
     }

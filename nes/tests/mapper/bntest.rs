@@ -10,7 +10,7 @@ use super::*;
 fn bntest_aorom() {
     test!(
         "mapper/bntest/bntest_aorom.nes",
-        ScenarioLeaf::check_screen(15, 0xAD9D23DD8E573B19)
+        ScenarioLeaf::check_screen(15, 0xAD9D_23DD_8E57_3B19)
     );
 }
 
@@ -18,7 +18,7 @@ fn bntest_aorom() {
 fn bntest_h() {
     test!(
         "mapper/bntest/bntest_h.nes",
-        ScenarioLeaf::check_screen(15, 0x8108A6D2A9D9C28A)
+        ScenarioLeaf::check_screen(15, 0x8108_A6D2_A9D9_C28A)
     );
 }
 
@@ -26,6 +26,6 @@ fn bntest_h() {
 fn bntest_v() {
     test!(
         "mapper/bntest/bntest_v.nes",
-        ScenarioLeaf::check_screen(15, 0x4E34969EC01EA621)
+        ScenarioLeaf::check_screen(15, 0x4E34_969E_C01E_A621)
     );
 }

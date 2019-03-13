@@ -7,11 +7,11 @@
 bitflags! {
     #[derive(Serialize, Deserialize)]
     pub(crate) struct IrqSource: u8 {
-        const External = 0b00000001;
-        const FrameCounter = 0b00000010;
-        const DMC = 0b00000100;
-        const FdsDisk = 0b00001000;
-        const All = 0xFF;
+        const EXTERNAL = 0b0000_0001;
+        const FRAME_COUNTER = 0b0000_0010;
+        const DMC = 0b0000_0100;
+        const FDS_DISK = 0b0000_1000;
+        const ALL = 0xFF;
     }
 }
 

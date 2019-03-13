@@ -9,13 +9,12 @@ mod resampler;
 
 use self::filter::*;
 use self::resampler::*;
-use alto::*;
 use crate::nes::MixerInput;
+use alto::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use std::{f64, i16, mem};
+use std::{f64, i16, mem, thread};
 
 pub trait Sound {
     fn start(&mut self);
@@ -44,7 +43,8 @@ impl FadeBuffer {
             .map(|x| {
                 0.5 - (((x as f64 + fade_width as f64) * f64::consts::PI / fade_width as f64).cos()
                     * 0.5) as f32
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
         let fade_buffer = vec![0.0; (fade_width * 2 + 1).next_power_of_two()];
 
         Self {
@@ -164,7 +164,7 @@ impl OpenAlState {
         buffer.clear();
         for d in fade_buffer.take(len) {
             buffer.push(Mono {
-                center: (d * i16::max_value() as f32) as i16,
+                center: (d * f32::from(i16::max_value())) as i16,
             });
         }
         buf.set_data(buffer, sample_rate).unwrap();
@@ -190,11 +190,8 @@ impl OpenAlState {
                     SourceState::Playing => (),
                     _ => src.play(),
                 }
-            } else {
-                match src.state() {
-                    SourceState::Playing => src.pause(),
-                    _ => (),
-                }
+            } else if let SourceState::Playing = src.state() {
+                src.pause();
             }
         }
     }
@@ -236,20 +233,20 @@ impl OpenAl {
             data_sender,
             stop_sender,
             thread: Some(thread),
-            resampler: SimpleDownSampler::new(super::CLOCK_RATE as f64, sample_rate as f64),
+            resampler: SimpleDownSampler::new(super::CLOCK_RATE as f64, f64::from(sample_rate)),
         }
     }
 }
 
 impl Sound for OpenAl {
     fn pause(&mut self) {
-        if let Err(_) = self.playing_sender.send(false) {
+        if self.playing_sender.send(false).is_err() {
             warn!("OpenAL channel (playing) send failed");
         }
     }
 
     fn start(&mut self) {
-        if let Err(_) = self.playing_sender.send(true) {
+        if self.playing_sender.send(true).is_err() {
             warn!("OpenAL channel (playing) send failed");
         }
     }
@@ -275,6 +272,6 @@ impl Drop for OpenAl {
         if self.stop_sender.send(()).is_err() {
             warn!("OpenAL channel (stop) send failed");
         }
-        mem::replace(&mut self.thread, None).map(|x| x.join());
+        mem::replace(&mut self.thread, None).map(JoinHandle::join);
     }
 }

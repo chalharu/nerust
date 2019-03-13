@@ -11,7 +11,7 @@ macro_rules! test{
                 .iter()
                 .cloned(),
         );
-        let scenario = $crate::Scenario::new(&vec![ $( $x ),* ]);
+        let scenario = $crate::Scenario::new(&[ $( $x ),* ]);
         runner.run(scenario);
     }
 }

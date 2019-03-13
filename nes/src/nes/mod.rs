@@ -32,7 +32,7 @@ impl Console {
     pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
         let mut cpu = Cpu::new();
         let mut cartridge = cartridge::try_from(input)?;
-        let apu = Apu::new(&mut cpu.interrupt, &mut cartridge);
+        let apu = Apu::new(&mut cpu.interrupt, cartridge.as_mut());
         Ok(Self {
             cpu,
             ppu: Ppu::new(),
@@ -44,7 +44,8 @@ impl Console {
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.reset();
-        self.apu.reset(&mut self.cpu.interrupt, &mut self.cartridge);
+        self.apu
+            .reset(&mut self.cpu.interrupt, self.cartridge.as_mut());
     }
 
     pub fn step<S: Screen, M: MixerInput>(
@@ -57,20 +58,20 @@ impl Console {
         let mut result = false;
         self.cpu.step(
             &mut self.ppu,
-            &mut self.cartridge,
+            self.cartridge.as_mut(),
             controller,
             &mut self.apu,
         );
         for _ in 0..3 {
             if self
                 .ppu
-                .step(screen, &mut self.cartridge, &mut self.cpu.interrupt)
+                .step(screen, self.cartridge.as_mut(), &mut self.cpu.interrupt)
             {
                 result = true;
             }
         }
         self.cartridge.step();
-        self.apu.step(&mut self.cpu, &mut self.cartridge, mixer);
+        self.apu.step(&mut self.cpu, self.cartridge.as_mut(), mixer);
 
         result
     }

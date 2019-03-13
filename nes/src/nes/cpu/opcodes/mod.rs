@@ -52,7 +52,7 @@ pub(crate) trait OpCode {
 }
 
 struct AccStep1<
-    FGet: Fn(&mut Register) -> u8,
+    FGet: Fn(&Register) -> u8,
     FSet: Fn(&mut Register, u8) -> (),
     FCalc: Fn(&mut Register, u8) -> u8,
 > {
@@ -62,7 +62,7 @@ struct AccStep1<
 }
 
 impl<
-        FGet: Fn(&mut Register) -> u8,
+        FGet: Fn(&Register) -> u8,
         FSet: Fn(&mut Register, u8) -> (),
         FCalc: Fn(&mut Register, u8) -> u8,
     > AccStep1<FGet, FSet, FCalc>
@@ -77,7 +77,7 @@ impl<
 }
 
 impl<
-        FGet: Fn(&mut Register) -> u8,
+        FGet: Fn(&Register) -> u8,
         FSet: Fn(&mut Register, u8) -> (),
         FCalc: Fn(&mut Register, u8) -> u8,
     > CpuStepState for AccStep1<FGet, FSet, FCalc>
@@ -86,13 +86,13 @@ impl<
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
         // dummy read
         read_dummy_current(core, ppu, cartridge, controller, apu);
-        let data = (self.getter)(&mut core.register);
+        let data = (self.getter)(&core.register);
         let result = (self.calculator)(&mut core.register, data);
         (self.setter)(&mut core.register, result);
 
@@ -119,7 +119,7 @@ impl<FCalc: 'static + Fn(&mut Register, u8) -> u8> CpuStepState for MemStep1<FCa
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -160,7 +160,7 @@ impl<FCalc: Fn(&mut Register, u8) -> u8> CpuStepState for MemStep2<FCalc> {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -195,7 +195,7 @@ impl CpuStepState for MemStep3 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Box<Cartridge>,
+        cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> Box<dyn CpuStepState> {
@@ -508,7 +508,7 @@ impl Opcodes {
         ])
     }
 
-    pub fn get(&self, code: usize) -> &Box<OpCode> {
-        &self.0[code]
+    pub fn get(&self, code: usize) -> &OpCode {
+        self.0[code].as_ref()
     }
 }

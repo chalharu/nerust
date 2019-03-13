@@ -25,8 +25,8 @@ impl MirrorMode {
         }
     }
 
-    fn mirror_lut(&self) -> [u8; 4] {
-        match &self {
+    fn mirror_lut(self) -> [u8; 4] {
+        match self {
             MirrorMode::Horizontal => [0, 0, 1, 1],
             MirrorMode::Vertical => [0, 1, 0, 1],
             MirrorMode::Single0 => [0, 0, 0, 0],
@@ -35,7 +35,7 @@ impl MirrorMode {
         }
     }
 
-    pub fn mirror_address(&self, address: usize) -> usize {
+    pub fn mirror_address(self, address: usize) -> usize {
         let vram_address = address & 0x0FFF;
         let table = vram_address >> 10;
         let offset = vram_address & 0x3FF;

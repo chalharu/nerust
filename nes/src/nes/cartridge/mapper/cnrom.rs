@@ -8,6 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::CartridgeData;
+use crate::nes::cpu::interrupt::Interrupt;
 
 pub(crate) struct CNRom {
     cartridge_data: CartridgeData,
@@ -72,7 +73,7 @@ impl Mapper for CNRom {
         Some(0xFF)
     }
 
-    fn write_register(&mut self, _address: usize, value: u8) {
+    fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {
         if self.protect {
             if (self.data_ref().sub_mapper_type() == 16 && (value & 0x01) != 0)
                 || (self.data_ref().sub_mapper_type() == 0 && (value & 0x0F) != 0 && value != 0x13)

@@ -10,7 +10,7 @@ use super::*;
 fn cpu_dummy_writes_oam() {
     test!(
         "cpu/cpu_dummy_writes/cpu_dummy_writes_oam.nes",
-        ScenarioLeaf::check_screen(330, 0xF25FB885BF1F8DE2)
+        ScenarioLeaf::check_screen(330, 0xF25F_B885_BF1F_8DE2)
     );
 }
 
@@ -18,6 +18,6 @@ fn cpu_dummy_writes_oam() {
 fn cpu_dummy_writes_ppumem() {
     test!(
         "cpu/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes",
-        ScenarioLeaf::check_screen(240, 0x68404497D176CD2A)
+        ScenarioLeaf::check_screen(240, 0x6840_4497_D176_CD2A)
     );
 }

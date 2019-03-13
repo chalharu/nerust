@@ -26,7 +26,7 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     } else {
         1 << (6 + (pram_length_data >> 4))
     };
-    let save_pram_length = if pram_length_data & 0x0F == 0 {
+    let save_pram_length = if pram_length_data.trailing_zeros() >= 4 {
         0
     } else {
         1 << (6 + (pram_length_data & 0x0F))
@@ -40,7 +40,7 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     } else {
         1 << (6 + (vram_length_data >> 4))
     };
-    let save_vram_length = if vram_length_data & 0x0F == 0 {
+    let save_vram_length = if vram_length_data.trailing_zeros() >= 4 {
         0
     } else {
         1 << (6 + (vram_length_data & 0x0F))
