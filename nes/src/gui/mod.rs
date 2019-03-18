@@ -162,7 +162,6 @@ impl Vec2D {
     }
 }
 
-#[repr(packed)]
 #[derive(Copy, Clone)]
 struct Mat4 {
     _data: [[f32; 4]; 4],
@@ -196,7 +195,7 @@ impl Mat4 {
     }
 
     pub fn as_ptr(&self) -> *const f32 {
-        &{ self._data } as *const _ as *const f32
+        &self._data as *const _ as *const f32
     }
 }
 
@@ -357,8 +356,8 @@ struct Window {
 impl Window {
     fn new() -> Self {
         let screen_buffer = ScreenBuffer::new(
-            // FilterType::NtscComposite,
-            FilterType::None,
+            FilterType::NtscComposite,
+            // FilterType::None,
             LogicalSize {
                 width: 256,
                 height: 240,
