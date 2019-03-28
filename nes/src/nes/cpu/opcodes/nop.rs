@@ -6,70 +6,94 @@
 
 use super::*;
 
-pub(crate) struct Nop;
-impl OpCode for Nop {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step2)
-    }
-    fn name(&self) -> &'static str {
-        "NOP"
+pub(crate) struct Nop {
+    step: usize,
+}
+
+impl Nop {
+    pub fn new() -> Self {
+        Self { step: 0 }
     }
 }
 
-pub(crate) struct Kil;
-impl OpCode for Kil {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1)
+impl CpuStepState for Nop {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
     }
-    fn name(&self) -> &'static str {
-        "KIL"
-    }
-}
 
-struct Step1;
-
-impl CpuStepState for Step1 {
-    fn next(
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let pc = core.register.get_pc() as usize;
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-        Box::new(Step2)
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                let pc = core.register.get_pc() as usize;
+                let _ = core
+                    .memory
+                    .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
 
-struct Step2;
+pub(crate) struct Kil {
+    step: usize,
+}
 
-impl CpuStepState for Step2 {
-    fn next(
+impl Kil {
+    pub fn new() -> Self {
+        Self { step: 0 }
+    }
+}
+
+impl CpuStepState for Kil {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
+    }
+
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let pc = core.register.get_pc() as usize;
-        let _ = core
-            .memory
-            .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
-        FetchOpCode::new(&core.interrupt)
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 | 2 => {
+                let pc = core.register.get_pc() as usize;
+                let _ = core
+                    .memory
+                    .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }

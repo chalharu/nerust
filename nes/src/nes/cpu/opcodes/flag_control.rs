@@ -6,134 +6,81 @@
 
 use super::*;
 
-pub(crate) struct Clc;
-impl OpCode for Clc {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_c(false)))
-    }
-    fn name(&self) -> &'static str {
-        "CLC"
-    }
-}
+pub(crate) trait FlagControl: CpuStep {
+    fn setter(register: &mut Register);
 
-pub(crate) struct Cld;
-impl OpCode for Cld {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_d(false)))
+    fn entry_opcode(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.set_step(0);
     }
-    fn name(&self) -> &'static str {
-        "CLD"
-    }
-}
 
-pub(crate) struct Cli;
-impl OpCode for Cli {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_i(false)))
-    }
-    fn name(&self) -> &'static str {
-        "CLI"
-    }
-}
-
-pub(crate) struct Clv;
-impl OpCode for Clv {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_v(false)))
-    }
-    fn name(&self) -> &'static str {
-        "CLV"
-    }
-}
-
-pub(crate) struct Sec;
-impl OpCode for Sec {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_c(true)))
-    }
-    fn name(&self) -> &'static str {
-        "SEC"
-    }
-}
-
-pub(crate) struct Sed;
-impl OpCode for Sed {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_d(true)))
-    }
-    fn name(&self) -> &'static str {
-        "SED"
-    }
-}
-
-pub(crate) struct Sei;
-impl OpCode for Sei {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(|r| r.set_i(true)))
-    }
-    fn name(&self) -> &'static str {
-        "SEI"
-    }
-}
-
-struct Step1<F: Fn(&mut Register) -> ()> {
-    func: F,
-}
-
-impl<F: Fn(&mut Register) -> ()> Step1<F> {
-    pub fn new(func: F) -> Self {
-        Self { func }
-    }
-}
-
-impl<F: Fn(&mut Register) -> ()> CpuStepState for Step1<F> {
-    fn next(
+    fn exec_opcode(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
+    ) -> CpuStepStateEnum {
+        let step = self.get_step() + 1;
+        self.set_step(step);
+        match step {
+            1 => {
+                // dummy read
+                read_dummy_current(core, ppu, cartridge, controller, apu);
 
-        (self.func)(&mut core.register);
-        FetchOpCode::new(&core.interrupt)
+                Self::setter(&mut core.register);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
+
+macro_rules! flag_control {
+    ($name:ident, $func:expr) => {
+        pub(crate) struct $name {
+            step: usize,
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self { step: 0 }
+            }
+        }
+
+        impl CpuStep for $name {
+            fn get_step(&self) -> usize {
+                self.step
+            }
+
+            fn set_step(&mut self, value: usize) {
+                self.step = value;
+            }
+        }
+
+        impl FlagControl for $name {
+            fn setter(register: &mut Register) {
+                $func(register);
+            }
+        }
+
+        cpu_step_state_impl!($name);
+    };
+}
+
+flag_control!(Clc, |r: &mut Register| r.set_c(false));
+flag_control!(Cld, |r: &mut Register| r.set_d(false));
+flag_control!(Cli, |r: &mut Register| r.set_i(false));
+flag_control!(Clv, |r: &mut Register| r.set_v(false));
+flag_control!(Sec, |r: &mut Register| r.set_c(true));
+flag_control!(Sed, |r: &mut Register| r.set_d(true));
+flag_control!(Sei, |r: &mut Register| r.set_i(true));

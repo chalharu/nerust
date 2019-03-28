@@ -18,6 +18,8 @@ alto =  { version = ">=0.0.0" }
 crc = { version = ">=0.0.0" }
 futures = { version = ">=0.0.0" }
 nes_ntsc = { version = ">=0.0.0", path="../nes_ntsc" }
+strum = { version = ">=0.0.0" }
+strum_macros = { version = ">=0.0.0" }
 
 
 [dev-dependencies]

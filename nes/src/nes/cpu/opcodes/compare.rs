@@ -6,84 +6,85 @@
 
 use super::*;
 
-pub(crate) struct Cmp;
-impl OpCode for Cmp {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_a))
-    }
-    fn name(&self) -> &'static str {
-        "CMP"
-    }
-}
+pub(crate) trait Compare: CpuStep {
+    fn comparer(register: &Register) -> u8;
 
-pub(crate) struct Cpx;
-impl OpCode for Cpx {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_x))
+    fn entry_opcode(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.set_step(0);
     }
-    fn name(&self) -> &'static str {
-        "CPX"
-    }
-}
 
-pub(crate) struct Cpy;
-impl OpCode for Cpy {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_y))
-    }
-    fn name(&self) -> &'static str {
-        "CPY"
-    }
-}
-
-struct Step1<F: Fn(&Register) -> u8> {
-    address: usize,
-    func: F,
-}
-
-impl<F: Fn(&Register) -> u8> Step1<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self { address, func }
-    }
-}
-
-impl<F: Fn(&Register) -> u8> CpuStepState for Step1<F> {
-    fn next(
+    fn exec_opcode(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let a = (self.func)(&core.register);
-        let b = core.memory.read(
-            self.address,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+    ) -> CpuStepStateEnum {
+        let step = self.get_step() + 1;
+        self.set_step(step);
+        match step {
+            1 => {
+                let a = Self::comparer(&core.register);
+                let b = core.memory.read(
+                    core.register.get_opaddr(),
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
 
-        core.register.set_nz_from_value(a.wrapping_sub(b));
-        core.register.set_c(a >= b);
-
-        FetchOpCode::new(&core.interrupt)
+                core.register.set_nz_from_value(a.wrapping_sub(b));
+                core.register.set_c(a >= b);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
+
+macro_rules! compare {
+    ($name:ident, $comparer:expr) => {
+        pub(crate) struct $name {
+            step: usize,
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self { step: 0 }
+            }
+        }
+
+        impl CpuStep for $name {
+            fn get_step(&self) -> usize {
+                self.step
+            }
+
+            fn set_step(&mut self, value: usize) {
+                self.step = value;
+            }
+        }
+
+        impl Compare for $name {
+            fn comparer(register: &Register) -> u8 {
+                $comparer(register)
+            }
+        }
+
+        cpu_step_state_impl!($name);
+    };
+}
+
+compare!(Cmp, Register::get_a);
+compare!(Cpx, Register::get_x);
+compare!(Cpy, Register::get_y);

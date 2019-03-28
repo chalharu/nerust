@@ -6,104 +6,70 @@
 
 use super::*;
 
-pub(crate) struct Relative;
-impl AddressingMode for Relative {
-    fn next_func(
-        &self,
-        code: usize,
-        _register: &mut Register,
-        _opcodes: &mut Opcodes,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(code))
-    }
+pub(crate) struct Relative {
+    step: usize,
+}
 
-    fn name(&self) -> &'static str {
-        "Relative"
+impl Relative {
+    pub fn new() -> Self {
+        Self { step: 0 }
     }
 }
 
-struct Step1 {
-    code: usize,
-}
-
-impl Step1 {
-    pub fn new(code: usize) -> Self {
-        Self { code }
+impl CpuStepState for Relative {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
     }
-}
 
-impl CpuStepState for Step1 {
-    fn next(
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let offset = u16::from(core.memory.read_next(
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        ));
-        let pc = core.register.get_pc();
-        let address = pc
-            .wrapping_add(offset)
-            .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 });
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                let offset = u16::from(core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+                let pc = core.register.get_pc();
+                core.register
+                    .set_opaddr(pc.wrapping_add(offset).wrapping_sub(if offset < 0x80 {
+                        0
+                    } else {
+                        0x100
+                    }) as usize);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
+    }
 
-        core.opcode_tables.get(self.code).next_func(
-            address as usize,
-            &mut core.register,
-            &mut core.interrupt,
-        )
-        // if page_crossed(pc, address) {
-        //     Box::new(Step2::new(self.code, pc, address))
-        // } else {
-        //     opcodes.get(code).next_func(address)
-        // }
+    fn exit(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStatesEnum {
+        core.opcode_tables.get(core.register.get_opcode())
     }
 }
-
-// struct Step2 {
-//     code: usize,
-//     address: usize,
-//     new_address: usize,
-// }
-
-// impl Step2 {
-//     pub fn new(code: usize, address: usize, new_address: usize) -> Self {
-//         Self {
-//             code,
-//             address,
-//             new_address,
-//         }
-//     }
-// }
-
-// impl CpuStepState for Step2 {
-//     fn next(
-//         &mut self,
-//         core: &mut Core,
-//         ppu: &mut Ppu,
-//         cartridge: &mut Cartridge,
-//         controller: &mut Controller,
-//         apu: &mut Apu,
-//     ) -> Box<dyn CpuStepState> {
-//         // dummy read
-//         core.memory.read_dummy(
-//             self.address,
-//             self.new_address,
-//             ppu,
-//             cartridge,
-//             controller,
-//             apu,
-//         );
-//         core.opcode_tables
-//             .get(self.code)
-//             .next_func(self.new_address)
-//     }
-// }

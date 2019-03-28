@@ -6,19 +6,44 @@
 
 use super::*;
 
-pub(crate) struct Implied;
-impl AddressingMode for Implied {
-    fn next_func(
-        &self,
-        code: usize,
-        register: &mut Register,
-        opcodes: &mut Opcodes,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        opcodes.get(code).next_func(0, register, interrupt)
+pub(crate) struct Implied {}
+
+impl Implied {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for Implied {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
     }
 
-    fn name(&self) -> &'static str {
-        "Implied"
+    fn exec(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStepStateEnum {
+        CpuStepStateEnum::Exit
+    }
+
+    fn exit(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStatesEnum {
+        core.opcode_tables.get(core.register.get_opcode())
     }
 }

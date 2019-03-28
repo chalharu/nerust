@@ -20,6 +20,9 @@ pub(crate) struct Register {
     r: bool, // 0x20
     v: bool, // 0x40
     n: bool, // 0x80
+
+    opcode: usize,
+    opaddr: usize,
 }
 
 bitflags! {
@@ -52,6 +55,9 @@ impl Register {
             r: true,  // 0x20
             v: false, // 0x40
             n: false, // 0x80
+
+            opcode: 0,
+            opaddr: 0,
         }
     }
 
@@ -178,5 +184,21 @@ impl Register {
     pub fn set_nz_from_value(&mut self, value: u8) {
         self.set_z_from_value(value);
         self.set_n_from_value(value);
+    }
+
+    pub fn set_opcode(&mut self, value: usize) {
+        self.opcode = value;
+    }
+
+    pub fn get_opcode(&self) -> usize {
+        self.opcode
+    }
+
+    pub fn set_opaddr(&mut self, value: usize) {
+        self.opaddr = value;
+    }
+
+    pub fn get_opaddr(&self) -> usize {
+        self.opaddr
     }
 }

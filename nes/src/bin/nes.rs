@@ -18,7 +18,7 @@ fn main() {
         &mut include_bytes!(concat!(
             "../../../roms/",
             // "samples/sample1.nes",
-            "tests/Lan Master/Lan_Master.nes",
+            // "tests/Lan Master/Lan_Master.nes",
             // "giko005.nes",
             // "giko008.nes",
             // "giko009.nes",
@@ -42,6 +42,7 @@ fn main() {
             // "apu/apu_phase_reset/apu_phase_reset.nes",
             // "mapper/34_test_src/34_test_2.nes",
             // "ppu/ppu_sprite_hit/ppu_prite_hit.nes"
+            "cpu/nestest.nes",
 
             // "color_test.nes",
             // "tests/tvpassfail/tv.nes",
@@ -64,9 +65,11 @@ fn main() {
             // "tests/scanline/scanline.nes",
             // "tests/nmi_sync/demo_ntsc.nes",
             // "tests/ntsc_torture.nes",
-        )).iter()
+        ))
+        .iter()
         .cloned(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let gui = Gui::new(console);
     gui.run();

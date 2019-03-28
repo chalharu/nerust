@@ -13,6 +13,9 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log;
 extern crate nes_ntsc;
+extern crate strum;
+#[macro_use]
+extern crate strum_macros;
 
 mod glwrap;
 pub mod gui;

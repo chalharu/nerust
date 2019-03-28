@@ -6,293 +6,212 @@
 
 use super::*;
 
-pub(crate) struct Jmp;
-impl OpCode for Jmp {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        register.set_pc(address as u16);
-        FetchOpCode::new(interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "JMP"
+pub(crate) struct Jmp {}
+
+impl Jmp {
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
-pub(crate) struct Jsr;
-impl OpCode for Jsr {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(JsrStep1::new(address))
+impl CpuStepState for Jmp {
+    fn entry(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        core.register.set_pc(core.register.get_opaddr() as u16);
     }
-    fn name(&self) -> &'static str {
-        "JSR"
+
+    fn exec(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStepStateEnum {
+        CpuStepStateEnum::Exit
     }
 }
 
-struct JsrStep1 {
-    address: usize,
+pub(crate) struct Jsr {
+    step: usize,
+    data: u16,
 }
 
-impl JsrStep1 {
-    pub fn new(address: usize) -> Self {
-        Self { address }
+impl Jsr {
+    pub fn new() -> Self {
+        Self { step: 0, data: 0 }
     }
 }
 
-impl CpuStepState for JsrStep1 {
-    fn next(
+impl CpuStepState for Jsr {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
+    }
+
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        let sp = usize::from(core.register.get_sp());
-        let _ = core.memory.read(
-            0x100 | sp,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                let sp = usize::from(core.register.get_sp());
+                let _ = core.memory.read(
+                    0x100 | sp,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
 
-        let pc = core.register.get_pc().wrapping_sub(1);
-        Box::new(JsrStep2::new(self.address, pc))
+                self.data = core.register.get_pc().wrapping_sub(1);
+            }
+            2 => {
+                let hi = (self.data >> 8) as u8;
+                let sp = usize::from(core.register.get_sp());
+                core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+                core.memory.write(
+                    0x100 | sp,
+                    hi,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+            }
+            3 => {
+                let low = (self.data & 0xFF) as u8;
+                let sp = usize::from(core.register.get_sp());
+                core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
+                core.memory.write(
+                    0x100 | sp,
+                    low,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+                core.register.set_pc(core.register.get_opaddr() as u16);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
 
-struct JsrStep2 {
-    address: usize,
-    pc: u16,
+pub(crate) struct Rts {
+    step: usize,
+    data: u16,
 }
 
-impl JsrStep2 {
-    pub fn new(address: usize, pc: u16) -> Self {
-        Self { address, pc }
+impl Rts {
+    pub fn new() -> Self {
+        Self { step: 0, data: 0 }
     }
 }
 
-impl CpuStepState for JsrStep2 {
-    fn next(
+impl CpuStepState for Rts {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
+    }
+
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let hi = (self.pc >> 8) as u8;
-        let low = (self.pc & 0xFF) as u8;
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            hi,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        Box::new(JsrStep3::new(self.address, low))
-    }
-}
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                // dummy read
+                read_dummy_current(core, ppu, cartridge, controller, apu);
+            }
+            2 => {
+                // dummy read
+                let sp = usize::from(core.register.get_sp());
+                let _ = core.memory.read(
+                    sp | 0x100,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
 
-struct JsrStep3 {
-    address: usize,
-    low: u8,
-}
+                core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
+            }
+            3 => {
+                let sp = usize::from(core.register.get_sp());
+                self.data = u16::from(core.memory.read(
+                    sp | 0x100,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
 
-impl JsrStep3 {
-    pub fn new(address: usize, low: u8) -> Self {
-        Self { address, low }
-    }
-}
-
-impl CpuStepState for JsrStep3 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-        core.memory.write(
-            0x100 | sp,
-            self.low,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        core.register.set_pc(self.address as u16);
-        FetchOpCode::new(&core.interrupt)
-    }
-}
-
-pub(crate) struct Rts;
-impl OpCode for Rts {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(RtsStep1)
-    }
-    fn name(&self) -> &'static str {
-        "RTS"
-    }
-}
-
-struct RtsStep1;
-
-impl CpuStepState for RtsStep1 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
-        Box::new(RtsStep2)
-    }
-}
-
-struct RtsStep2;
-
-impl CpuStepState for RtsStep2 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        let sp = usize::from(core.register.get_sp());
-        let _ = core.memory.read(
-            sp | 0x100,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-
-        core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
-
-        Box::new(RtsStep3)
-    }
-}
-
-struct RtsStep3;
-
-impl CpuStepState for RtsStep3 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        let low = core.memory.read(
-            sp | 0x100,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-
-        core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
-
-        Box::new(RtsStep4::new(low))
-    }
-}
-
-struct RtsStep4 {
-    low: u8,
-}
-
-impl RtsStep4 {
-    pub fn new(low: u8) -> Self {
-        Self { low }
-    }
-}
-
-impl CpuStepState for RtsStep4 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let sp = usize::from(core.register.get_sp());
-        let high = core.memory.read(
-            sp | 0x100,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-
-        Box::new(RtsStep5::new(u16::from(self.low) | (u16::from(high) << 8)))
-    }
-}
-
-struct RtsStep5 {
-    address: u16,
-}
-
-impl RtsStep5 {
-    pub fn new(address: u16) -> Self {
-        Self { address }
-    }
-}
-
-impl CpuStepState for RtsStep5 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        core.register.set_pc(self.address);
-        core.memory.read_next(
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        FetchOpCode::new(&core.interrupt)
+                core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
+            }
+            4 => {
+                let sp = usize::from(core.register.get_sp());
+                let high = core.memory.read(
+                    sp | 0x100,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+                self.data |= u16::from(high) << 8;
+            }
+            5 => {
+                core.register.set_pc(self.data);
+                core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }

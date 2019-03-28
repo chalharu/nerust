@@ -6,83 +6,84 @@
 
 use super::*;
 
-struct Step1<F: Fn(&mut Register, u8) -> ()> {
-    address: usize,
-    func: F,
-}
+pub(crate) trait Load: CpuStep {
+    fn setter(register: &mut Register, value: u8);
 
-impl<F: Fn(&mut Register, u8) -> ()> Step1<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self { address, func }
+    fn entry_opcode(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.set_step(0);
     }
-}
 
-impl<F: Fn(&mut Register, u8) -> ()> CpuStepState for Step1<F> {
-    fn next(
+    fn exec_opcode(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let a = core.memory.read(
-            self.address,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
+    ) -> CpuStepStateEnum {
+        let step = self.get_step() + 1;
+        self.set_step(step);
+        match step {
+            1 => {
+                let a = core.memory.read(
+                    core.register.get_opaddr(),
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
 
-        core.register.set_nz_from_value(a);
-        (self.func)(&mut core.register, a);
-
-        FetchOpCode::new(&core.interrupt)
+                core.register.set_nz_from_value(a);
+                Self::setter(&mut core.register, a);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
 
-pub(crate) struct Lda;
-impl OpCode for Lda {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::set_a))
-    }
-    fn name(&self) -> &'static str {
-        "LDA"
-    }
+macro_rules! load {
+    ($name:ident, $func:expr) => {
+        pub(crate) struct $name {
+            step: usize,
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self { step: 0 }
+            }
+        }
+
+        impl CpuStep for $name {
+            fn get_step(&self) -> usize {
+                self.step
+            }
+
+            fn set_step(&mut self, value: usize) {
+                self.step = value;
+            }
+        }
+
+        impl Load for $name {
+            fn setter(register: &mut Register, value: u8) {
+                ($func)(register, value);
+            }
+        }
+
+        cpu_step_state_impl!($name);
+    };
 }
 
-pub(crate) struct Ldx;
-impl OpCode for Ldx {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::set_x))
-    }
-    fn name(&self) -> &'static str {
-        "LDX"
-    }
-}
-
-pub(crate) struct Ldy;
-impl OpCode for Ldy {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::set_y))
-    }
-    fn name(&self) -> &'static str {
-        "LDY"
-    }
-}
+load!(Lda, Register::set_a);
+load!(Ldx, Register::set_x);
+load!(Ldy, Register::set_y);

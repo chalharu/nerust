@@ -6,200 +6,97 @@
 
 use super::*;
 
-pub(crate) struct Bcc;
-impl OpCode for Bcc {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_c(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BCC"
-    }
-}
-
-pub(crate) struct Bcs;
-impl OpCode for Bcs {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_c(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BCS"
-    }
-}
-
-pub(crate) struct Beq;
-impl OpCode for Beq {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_z(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BEQ"
-    }
-}
-
-pub(crate) struct Bmi;
-impl OpCode for Bmi {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_n(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BMI"
-    }
-}
-
-pub(crate) struct Bne;
-impl OpCode for Bne {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_z(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BNE"
-    }
-}
-
-pub(crate) struct Bpl;
-impl OpCode for Bpl {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_n(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BPL"
-    }
-}
-
-pub(crate) struct Bvc;
-impl OpCode for Bvc {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(!register.get_v(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BVC"
-    }
-}
-
-pub(crate) struct Bvs;
-impl OpCode for Bvs {
-    fn next_func(
-        &self,
-        address: usize,
-        register: &mut Register,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        condition_jump(register.get_v(), address, interrupt)
-    }
-    fn name(&self) -> &'static str {
-        "BVS"
-    }
-}
-
-fn condition_jump(
-    condition: bool,
-    address: usize,
-    interrupt: &mut Interrupt,
-) -> Box<dyn CpuStepState> {
-    if condition {
-        Box::new(Step1::new(address, interrupt.detected))
-    } else {
-        FetchOpCode::new(interrupt)
-    }
-}
-
-struct Step1 {
-    address: usize,
-    interrupt_detected: bool,
-}
-
-impl Step1 {
-    pub fn new(address: usize, interrupt_detected: bool) -> Self {
-        Self {
-            address,
-            interrupt_detected,
+macro_rules! condition_jump {
+    ($name:ident, $cond:expr) => {
+        pub(crate) struct $name {
+            step: usize,
         }
-    }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self { step: 0 }
+            }
+        }
+
+        impl CpuStep for $name {
+            fn get_step(&self) -> usize {
+                self.step
+            }
+
+            fn set_step(&mut self, value: usize) {
+                self.step = value;
+            }
+        }
+
+        impl ConditionJump for $name {
+            fn condition(register: &Register) -> bool {
+                $cond(register)
+            }
+        }
+
+        cpu_step_state_impl!($name);
+    };
 }
 
-impl CpuStepState for Step1 {
-    fn next(
+condition_jump!(Bcc, |r: &Register| !r.get_c());
+condition_jump!(Bcs, Register::get_c);
+condition_jump!(Beq, Register::get_z);
+condition_jump!(Bmi, Register::get_n);
+condition_jump!(Bne, |r: &Register| !r.get_z());
+condition_jump!(Bpl, |r: &Register| !r.get_n());
+condition_jump!(Bvc, |r: &Register| !r.get_v());
+condition_jump!(Bvs, Register::get_v);
+
+pub(crate) trait ConditionJump: CpuStep {
+    fn condition(register: &Register) -> bool;
+
+    fn entry_opcode(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.set_step(0);
+    }
+
+    fn exec_opcode(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
-        if !self.interrupt_detected {
-            core.interrupt.executing = false;
+    ) -> CpuStepStateEnum {
+        let step = self.get_step() + 1;
+        self.set_step(step);
+        match step {
+            1 => {
+                if !Self::condition(&core.register) {
+                    return CpuStepStateEnum::Exit;
+                }
+                // dummy read
+                read_dummy_current(core, ppu, cartridge, controller, apu);
+                if !core.interrupt.detected {
+                    core.interrupt.executing = false;
+                }
+            }
+            2 => {
+                let pc = core.register.get_pc() as usize;
+                if !page_crossed(core.register.get_opaddr(), pc) {
+                    core.register.set_pc(core.register.get_opaddr() as u16);
+                    return CpuStepStateEnum::Exit;
+                }
+                // dummy read
+                read_dummy_current(core, ppu, cartridge, controller, apu);
+
+                core.register.set_pc(core.register.get_opaddr() as u16);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
         }
-
-        let pc = core.register.get_pc() as usize;
-        if page_crossed(self.address, pc) {
-            Box::new(Step2::new(self.address))
-        } else {
-            core.register.set_pc(self.address as u16);
-            FetchOpCode::new(&core.interrupt)
-        }
-    }
-}
-
-struct Step2 {
-    address: usize,
-}
-
-impl Step2 {
-    pub fn new(address: usize) -> Self {
-        Self { address }
-    }
-}
-
-impl CpuStepState for Step2 {
-    fn next(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
-
-        core.register.set_pc(self.address as u16);
-        FetchOpCode::new(&core.interrupt)
+        CpuStepStateEnum::Continue
     }
 }

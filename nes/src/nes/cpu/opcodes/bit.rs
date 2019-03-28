@@ -6,53 +6,56 @@
 
 use super::*;
 
-pub(crate) struct Bit;
-impl OpCode for Bit {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address))
-    }
-    fn name(&self) -> &'static str {
-        "BIT"
+pub(crate) struct Bit {
+    step: usize,
+}
+
+impl Bit {
+    pub fn new() -> Self {
+        Self { step: 0 }
     }
 }
 
-struct Step1 {
-    address: usize,
-}
-
-impl Step1 {
-    pub fn new(address: usize) -> Self {
-        Self { address }
+impl CpuStepState for Bit {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
     }
-}
 
-impl CpuStepState for Step1 {
-    fn next(
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let data = core.memory.read(
-            self.address,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        let a = data & core.register.get_a();
-        core.register.set_v(data & 0x40 != 0);
-        core.register.set_z_from_value(a);
-        core.register.set_n_from_value(data);
-
-        FetchOpCode::new(&core.interrupt)
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                let data = core.memory.read(
+                    core.register.get_opaddr(),
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+                let a = data & core.register.get_a();
+                core.register.set_v(data & 0x40 != 0);
+                core.register.set_z_from_value(a);
+                core.register.set_n_from_value(data);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
