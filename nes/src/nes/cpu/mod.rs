@@ -401,7 +401,6 @@ impl CpuStates {
         let mut machine = &mut self.map[self.state as usize];
         while let CpuStepStateEnum::Exit = machine.exec(core, ppu, cartridge, controller, apu) {
             self.state = machine.exit(core, ppu, cartridge, controller, apu);
-            // println!("State: {:?}", self.state);
             machine = &mut self.map[self.state as usize];
             machine.entry(core, ppu, cartridge, controller, apu);
         }
