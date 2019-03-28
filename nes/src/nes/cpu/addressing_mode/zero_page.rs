@@ -6,55 +6,64 @@
 
 use super::*;
 
-pub(crate) struct ZeroPage;
-impl AddressingMode for ZeroPage {
-    fn next_func(
-        &self,
-        code: usize,
-        _register: &mut Register,
-        _opcodes: &mut Opcodes,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(code))
-    }
+pub(crate) struct ZeroPage {
+    step: usize,
+}
 
-    fn name(&self) -> &'static str {
-        "ZeroPage"
+impl ZeroPage {
+    pub fn new() -> Self {
+        Self { step: 0 }
     }
 }
 
-struct Step1 {
-    code: usize,
-}
-
-impl Step1 {
-    pub fn new(code: usize) -> Self {
-        Self { code }
+impl CpuStepState for ZeroPage {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
     }
-}
 
-impl CpuStepState for Step1 {
-    fn next(
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let zeropage_address = usize::from(core.memory.read_next(
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        ));
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                let addr = usize::from(core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+                core.register.set_opaddr(addr);
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
+    }
 
-        core.opcode_tables.get(self.code).next_func(
-            zeropage_address,
-            &mut core.register,
-            &mut core.interrupt,
-        )
+    fn exit(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStatesEnum {
+        core.opcode_tables.get(core.register.get_opcode())
     }
 }

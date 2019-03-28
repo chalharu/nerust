@@ -6,23 +6,47 @@
 
 use super::*;
 
-pub(crate) struct Immediate;
-impl AddressingMode for Immediate {
-    fn next_func(
-        &self,
-        code: usize,
-        register: &mut Register,
-        opcodes: &mut Opcodes,
-        interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        let pc = register.get_pc();
-        register.set_pc(pc.wrapping_add(1));
-        opcodes
-            .get(code)
-            .next_func(pc as usize, register, interrupt)
+pub(crate) struct Immediate {}
+
+impl Immediate {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CpuStepState for Immediate {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
     }
 
-    fn name(&self) -> &'static str {
-        "Immediate"
+    fn exec(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStepStateEnum {
+        let pc = core.register.get_pc();
+        core.register.set_pc(pc.wrapping_add(1));
+        core.register.set_opaddr(usize::from(pc));
+        CpuStepStateEnum::Exit
+    }
+
+    fn exit(
+        &mut self,
+        core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStatesEnum {
+        core.opcode_tables.get(core.register.get_opcode())
     }
 }

@@ -13,35 +13,8 @@ fn asl(register: &mut Register, data: u8) -> u8 {
     value
 }
 
-pub(crate) struct AslAcc;
-impl OpCode for AslAcc {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_a, Register::set_a, asl))
-    }
-    fn name(&self) -> &'static str {
-        "ASL"
-    }
-}
-
-pub(crate) struct AslMem;
-impl OpCode for AslMem {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, asl))
-    }
-    fn name(&self) -> &'static str {
-        "ASL"
-    }
-}
+accumulate!(AslAcc, Register::get_a, Register::set_a, asl);
+accumulate_memory!(AslMem, asl);
 
 fn lsr(register: &mut Register, data: u8) -> u8 {
     register.set_c(data & 0x01 != 0);
@@ -50,35 +23,8 @@ fn lsr(register: &mut Register, data: u8) -> u8 {
     value
 }
 
-pub(crate) struct LsrAcc;
-impl OpCode for LsrAcc {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_a, Register::set_a, lsr))
-    }
-    fn name(&self) -> &'static str {
-        "LSR"
-    }
-}
-
-pub(crate) struct LsrMem;
-impl OpCode for LsrMem {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, lsr))
-    }
-    fn name(&self) -> &'static str {
-        "LSR"
-    }
-}
+accumulate!(LsrAcc, Register::get_a, Register::set_a, lsr);
+accumulate_memory!(LsrMem, lsr);
 
 fn rol(register: &mut Register, data: u8) -> u8 {
     let c = if register.get_c() { 1 } else { 0 };
@@ -88,35 +34,8 @@ fn rol(register: &mut Register, data: u8) -> u8 {
     value
 }
 
-pub(crate) struct RolAcc;
-impl OpCode for RolAcc {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_a, Register::set_a, rol))
-    }
-    fn name(&self) -> &'static str {
-        "ROL"
-    }
-}
-
-pub(crate) struct RolMem;
-impl OpCode for RolMem {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, rol))
-    }
-    fn name(&self) -> &'static str {
-        "ROL"
-    }
-}
+accumulate!(RolAcc, Register::get_a, Register::set_a, rol);
+accumulate_memory!(RolMem, rol);
 
 fn ror(register: &mut Register, data: u8) -> u8 {
     let c = if register.get_c() { 0x80 } else { 0 };
@@ -126,32 +45,5 @@ fn ror(register: &mut Register, data: u8) -> u8 {
     value
 }
 
-pub(crate) struct RorAcc;
-impl OpCode for RorAcc {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_a, Register::set_a, ror))
-    }
-    fn name(&self) -> &'static str {
-        "ROR"
-    }
-}
-
-pub(crate) struct RorMem;
-impl OpCode for RorMem {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, ror))
-    }
-    fn name(&self) -> &'static str {
-        "ROR"
-    }
-}
+accumulate!(RorAcc, Register::get_a, Register::set_a, ror);
+accumulate_memory!(RorMem, ror);

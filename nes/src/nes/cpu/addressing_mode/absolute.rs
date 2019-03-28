@@ -6,86 +6,79 @@
 
 use super::*;
 
-pub(crate) struct Absolute;
-impl AddressingMode for Absolute {
-    fn next_func(
-        &self,
-        code: usize,
-        _register: &mut Register,
-        _opcodes: &mut Opcodes,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(code))
-    }
+pub(crate) struct Absolute {
+    temp_address: usize,
+    step: usize,
+}
 
-    fn name(&self) -> &'static str {
-        "Absolute"
+impl Absolute {
+    pub fn new() -> Self {
+        Self {
+            temp_address: 0,
+            step: 0,
+        }
     }
 }
 
-struct Step1 {
-    code: usize,
-}
-
-impl Step1 {
-    pub fn new(code: usize) -> Self {
-        Self { code }
+impl CpuStepState for Absolute {
+    fn entry(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.step = 0;
     }
-}
 
-impl CpuStepState for Step1 {
-    fn next(
+    fn exec(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let address_low = core.memory.read_next(
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        Box::new(Step2::new(self.code, address_low))
+    ) -> CpuStepStateEnum {
+        self.step += 1;
+        match self.step {
+            1 => {
+                self.temp_address = usize::from(core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+            }
+            2 => {
+                let address_high = core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+                core.register
+                    .set_opaddr(self.temp_address | (usize::from(address_high) << 8));
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
-}
 
-struct Step2 {
-    code: usize,
-    address_low: u8,
-}
-
-impl Step2 {
-    pub fn new(code: usize, address_low: u8) -> Self {
-        Self { code, address_low }
-    }
-}
-
-impl CpuStepState for Step2 {
-    fn next(
+    fn exit(
         &mut self,
         core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let address_high = core.memory.read_next(
-            &mut core.register,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        core.opcode_tables.get(self.code).next_func(
-            (usize::from(address_high) << 8) | usize::from(self.address_low),
-            &mut core.register,
-            &mut core.interrupt,
-        )
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) -> CpuStatesEnum {
+        core.opcode_tables.get(core.register.get_opcode())
     }
 }

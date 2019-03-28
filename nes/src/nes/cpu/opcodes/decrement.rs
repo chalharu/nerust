@@ -12,47 +12,6 @@ fn decrement(register: &mut Register, data: u8) -> u8 {
     result
 }
 
-pub(crate) struct Dex;
-impl OpCode for Dex {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_x, Register::set_x, decrement))
-    }
-    fn name(&self) -> &'static str {
-        "DEX"
-    }
-}
-
-pub(crate) struct Dey;
-impl OpCode for Dey {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_y, Register::set_y, decrement))
-    }
-    fn name(&self) -> &'static str {
-        "DEY"
-    }
-}
-
-pub(crate) struct Dec;
-impl OpCode for Dec {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, decrement))
-    }
-    fn name(&self) -> &'static str {
-        "DEC"
-    }
-}
+accumulate!(Dex, Register::get_x, Register::set_x, decrement);
+accumulate!(Dey, Register::get_y, Register::set_y, decrement);
+accumulate_memory!(Dec, decrement);

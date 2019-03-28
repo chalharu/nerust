@@ -12,47 +12,6 @@ fn increment(register: &mut Register, data: u8) -> u8 {
     result
 }
 
-pub(crate) struct Inx;
-impl OpCode for Inx {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_x, Register::set_x, increment))
-    }
-    fn name(&self) -> &'static str {
-        "INX"
-    }
-}
-
-pub(crate) struct Iny;
-impl OpCode for Iny {
-    fn next_func(
-        &self,
-        _address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(AccStep1::new(Register::get_y, Register::set_y, increment))
-    }
-    fn name(&self) -> &'static str {
-        "INY"
-    }
-}
-
-pub(crate) struct Inc;
-impl OpCode for Inc {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(MemStep1::new(address, increment))
-    }
-    fn name(&self) -> &'static str {
-        "INC"
-    }
-}
+accumulate!(Inx, Register::get_x, Register::set_x, increment);
+accumulate!(Iny, Register::get_y, Register::set_y, increment);
+accumulate_memory!(Inc, increment);

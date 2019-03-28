@@ -6,81 +6,83 @@
 
 use super::*;
 
-struct Step1<F: Fn(&Register) -> u8> {
-    address: usize,
-    func: F,
-}
+pub(crate) trait Store: CpuStep {
+    fn getter(register: &Register) -> u8;
 
-impl<F: Fn(&Register) -> u8> Step1<F> {
-    pub fn new(address: usize, func: F) -> Self {
-        Self { address, func }
+    fn entry_opcode(
+        &mut self,
+        _core: &mut Core,
+        _ppu: &mut Ppu,
+        _cartridge: &mut Cartridge,
+        _controller: &mut Controller,
+        _apu: &mut Apu,
+    ) {
+        self.set_step(0);
     }
-}
 
-impl<F: Fn(&Register) -> u8> CpuStepState for Step1<F> {
-    fn next(
+    fn exec_opcode(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
-    ) -> Box<dyn CpuStepState> {
-        let data = (self.func)(&core.register);
-        core.memory.write(
-            self.address,
-            data,
-            ppu,
-            cartridge,
-            controller,
-            apu,
-            &mut core.interrupt,
-        );
-        FetchOpCode::new(&core.interrupt)
+    ) -> CpuStepStateEnum {
+        let step = self.get_step() + 1;
+        self.set_step(step);
+        match step {
+            1 => {
+                let data = Self::getter(&core.register);
+                core.memory.write(
+                    core.register.get_opaddr(),
+                    data,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+            }
+            _ => {
+                return CpuStepStateEnum::Exit;
+            }
+        }
+        CpuStepStateEnum::Continue
     }
 }
 
-pub(crate) struct Sta;
-impl OpCode for Sta {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_a))
-    }
-    fn name(&self) -> &'static str {
-        "STA"
-    }
+macro_rules! store {
+    ($name:ident, $func:expr) => {
+        pub(crate) struct $name {
+            step: usize,
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self { step: 0 }
+            }
+        }
+
+        impl CpuStep for $name {
+            fn get_step(&self) -> usize {
+                self.step
+            }
+
+            fn set_step(&mut self, value: usize) {
+                self.step = value;
+            }
+        }
+
+        impl Store for $name {
+            fn getter(register: &Register) -> u8 {
+                $func(register)
+            }
+        }
+
+        cpu_step_state_impl!($name);
+    };
 }
 
-pub(crate) struct Stx;
-impl OpCode for Stx {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_x))
-    }
-    fn name(&self) -> &'static str {
-        "STX"
-    }
-}
-
-pub(crate) struct Sty;
-impl OpCode for Sty {
-    fn next_func(
-        &self,
-        address: usize,
-        _register: &mut Register,
-        _interrupt: &mut Interrupt,
-    ) -> Box<dyn CpuStepState> {
-        Box::new(Step1::new(address, Register::get_y))
-    }
-    fn name(&self) -> &'static str {
-        "STY"
-    }
-}
+store!(Sta, Register::get_a);
+store!(Stx, Register::get_x);
+store!(Sty, Register::get_y);
