@@ -92,9 +92,9 @@ impl CpuStepState for Brk {
                     &mut core.interrupt,
                 ));
                 core.register.set_pc((hi << 8) | u16::from(self.low));
-                core.interrupt.executing = false;
             }
             _ => {
+                core.interrupt.executing = false;
                 return CpuStepStateEnum::Exit;
             }
         }
@@ -264,9 +264,9 @@ impl CpuStepState for Irq {
                     &mut core.interrupt,
                 ));
                 core.register.set_pc((hi << 8) | u16::from(self.low));
-                core.interrupt.executing = false;
             }
             _ => {
+                core.interrupt.executing = false;
                 return CpuStepStateEnum::Exit;
             }
         }
