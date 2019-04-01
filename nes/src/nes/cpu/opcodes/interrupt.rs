@@ -294,7 +294,6 @@ impl CpuStepState for Reset {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -379,6 +378,7 @@ impl CpuStepState for Reset {
                 core.interrupt.executing = false;
             }
             _ => {
+                self.step = 0;
                 return CpuStepStateEnum::Exit;
             }
         }
