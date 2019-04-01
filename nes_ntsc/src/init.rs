@@ -155,13 +155,13 @@ impl Init {
                 }
             });
             let sum = (1.0 / sum.0, 1.0 / sum.1);
-            for i in 0..KERNEL_SIZE {
+            for (i, k) in kernels.iter_mut().take(KERNEL_SIZE).enumerate() {
                 if i & 1 == 0 {
-                    kernels[i] *= sum.0;
+                    *k *= sum.0;
                 } else {
-                    kernels[i] *= sum.1;
+                    *k *= sum.1;
                 }
-                debug_assert!(kernels[i].is_finite());
+                debug_assert!(k.is_finite());
             }
         }
 

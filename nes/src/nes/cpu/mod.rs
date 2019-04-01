@@ -116,13 +116,13 @@ impl Core {
                     .next(self, ppu, cartridge, controller, apu);
                 self.oam_dma = oam_dma;
             } else {
-                self.interrupt.executing = self.interrupt.detected;
                 let mut cpu_states = ::std::mem::replace(&mut self.cpu_states, None);
                 cpu_states
                     .as_mut()
                     .unwrap()
                     .next(self, ppu, cartridge, controller, apu);
                 self.cpu_states = cpu_states;
+                self.interrupt.executing = self.interrupt.detected;
                 self.interrupt.detected = self.interrupt.nmi
                     || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
                         && !self.register.get_i());
@@ -284,7 +284,10 @@ impl CpuStates {
         map.insert(CpuStatesEnum::Reset, Box::new(Reset::new()));
         map.insert(CpuStatesEnum::FetchOpCode, Box::new(FetchOpCode::new()));
         map.insert(CpuStatesEnum::Irq, Box::new(Irq::new()));
-        map.insert(CpuStatesEnum::AbsoluteIndirect, Box::new(AbsoluteIndirect::new()));
+        map.insert(
+            CpuStatesEnum::AbsoluteIndirect,
+            Box::new(AbsoluteIndirect::new()),
+        );
         map.insert(CpuStatesEnum::AbsoluteXRMW, Box::new(AbsoluteXRMW::new()));
         map.insert(CpuStatesEnum::AbsoluteX, Box::new(AbsoluteX::new()));
         map.insert(CpuStatesEnum::AbsoluteYRMW, Box::new(AbsoluteYRMW::new()));
@@ -293,9 +296,18 @@ impl CpuStates {
         map.insert(CpuStatesEnum::Accumulator, Box::new(Accumulator::new()));
         map.insert(CpuStatesEnum::Immediate, Box::new(Immediate::new()));
         map.insert(CpuStatesEnum::Implied, Box::new(Implied::new()));
-        map.insert(CpuStatesEnum::IndexedIndirect, Box::new(IndexedIndirect::new()));
-        map.insert(CpuStatesEnum::IndirectIndexedRMW, Box::new(IndirectIndexedRMW::new()));
-        map.insert(CpuStatesEnum::IndirectIndexed, Box::new(IndirectIndexed::new()));
+        map.insert(
+            CpuStatesEnum::IndexedIndirect,
+            Box::new(IndexedIndirect::new()),
+        );
+        map.insert(
+            CpuStatesEnum::IndirectIndexedRMW,
+            Box::new(IndirectIndexedRMW::new()),
+        );
+        map.insert(
+            CpuStatesEnum::IndirectIndexed,
+            Box::new(IndirectIndexed::new()),
+        );
         map.insert(CpuStatesEnum::Relative, Box::new(Relative::new()));
         map.insert(CpuStatesEnum::ZeroPageX, Box::new(ZeroPageX::new()));
         map.insert(CpuStatesEnum::ZeroPageY, Box::new(ZeroPageY::new()));
@@ -379,7 +391,9 @@ impl CpuStates {
         map.insert(CpuStatesEnum::Txa, Box::new(Txa::new()));
         map.insert(CpuStatesEnum::Tya, Box::new(Tya::new()));
         map.insert(CpuStatesEnum::Txs, Box::new(Txs::new()));
-        let map = CpuStatesEnum::iter().map(|x| map.remove(&x).unwrap()).collect();
+        let map = CpuStatesEnum::iter()
+            .map(|x| map.remove(&x).unwrap())
+            .collect();
         Self {
             state: CpuStatesEnum::Reset,
             map,

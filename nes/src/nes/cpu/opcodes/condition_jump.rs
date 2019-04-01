@@ -10,11 +10,17 @@ macro_rules! condition_jump {
     ($name:ident, $cond:expr) => {
         pub(crate) struct $name {
             step: usize,
+            crossed: bool,
+            interrupt: bool,
         }
 
         impl $name {
             pub fn new() -> Self {
-                Self { step: 0 }
+                Self {
+                    step: 0,
+                    crossed: false,
+                    interrupt: false,
+                }
             }
         }
 
@@ -31,6 +37,22 @@ macro_rules! condition_jump {
         impl ConditionJump for $name {
             fn condition(register: &Register) -> bool {
                 $cond(register)
+            }
+
+            fn set_interrupt(&mut self, value: bool) {
+                self.interrupt = value;
+            }
+
+            fn get_interrupt(&self) -> bool {
+                self.interrupt
+            }
+
+            fn set_crossed(&mut self, value: bool) {
+                self.crossed = value;
+            }
+
+            fn get_crossed(&self) -> bool {
+                self.crossed
             }
         }
 
@@ -49,16 +71,22 @@ condition_jump!(Bvs, Register::get_v);
 
 pub(crate) trait ConditionJump: CpuStep {
     fn condition(register: &Register) -> bool;
+    fn set_crossed(&mut self, value: bool);
+    fn get_crossed(&self) -> bool;
+    fn set_interrupt(&mut self, value: bool);
+    fn get_interrupt(&self) -> bool;
 
     fn entry_opcode(
         &mut self,
-        _core: &mut Core,
+        core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
         self.set_step(0);
+        self.set_crossed(true);
+        self.set_interrupt(core.interrupt.executing);
     }
 
     fn exec_opcode(
@@ -78,14 +106,15 @@ pub(crate) trait ConditionJump: CpuStep {
                 }
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
-                if !core.interrupt.detected {
-                    core.interrupt.executing = false;
-                }
+                let pc = core.register.get_pc() as usize;
+                self.set_crossed(page_crossed(core.register.get_opaddr(), pc));
             }
             2 => {
-                let pc = core.register.get_pc() as usize;
-                if !page_crossed(core.register.get_opaddr(), pc) {
+                if !self.get_crossed() {
                     core.register.set_pc(core.register.get_opaddr() as u16);
+                    if !self.get_interrupt() {
+                        core.interrupt.executing = false;
+                    }
                     return CpuStepStateEnum::Exit;
                 }
                 // dummy read
