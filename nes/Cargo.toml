@@ -24,3 +24,6 @@ strum_macros = { version = ">=0.0.0" }
 
 [dev-dependencies]
 hound = { version = ">=0.0.0" }
+
+[profile.bench]
+debug = true

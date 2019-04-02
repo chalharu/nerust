@@ -9,15 +9,19 @@ mod filters;
 use super::{LogicalSize, PhysicalSize, RGB};
 
 pub trait NesFilter {
-    fn push<'a>(&'a mut self, value: u8, next_func: Box<dyn FnMut(RGB) + 'a>);
+    fn push(&mut self, value: u8, filter_func: &mut FilterFunc);
 
     fn logical_size(&self) -> LogicalSize;
     fn physical_size(&self) -> PhysicalSize;
 }
 
+pub trait FilterFunc {
+    fn filter_func(&mut self, value: RGB);
+}
+
 impl<F: filters::FilterUnit<Input = u8, Output = RGB>> NesFilter for F {
-    fn push<'a>(&'a mut self, value: u8, mut next_func: Box<dyn FnMut(RGB) + 'a>) {
-        filters::FilterUnit::push(self, value, &mut |x| next_func(x))
+    fn push(&mut self, value: u8, filter_func: &mut FilterFunc) {
+        filters::FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
     }
 
     fn logical_size(&self) -> LogicalSize {
