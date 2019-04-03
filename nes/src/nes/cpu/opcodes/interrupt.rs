@@ -17,16 +17,6 @@ impl Brk {
 }
 
 impl CpuStepState for Brk {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,
@@ -110,16 +100,6 @@ impl Rti {
 }
 
 impl CpuStepState for Rti {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,
@@ -179,16 +159,6 @@ impl Irq {
 }
 
 impl CpuStepState for Irq {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,
@@ -272,16 +242,6 @@ impl Reset {
 }
 
 impl CpuStepState for Reset {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,

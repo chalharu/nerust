@@ -139,15 +139,6 @@ pub(crate) enum CpuStepStateEnum {
 }
 
 pub(crate) trait CpuStepState {
-    fn entry(
-        &mut self,
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    );
-
     fn exec(
         &mut self,
         core: &mut Core,
@@ -420,7 +411,6 @@ impl CpuStates {
             self.state = machine.exit(core, ppu, cartridge, controller, apu);
             core.register.set_opstep(1);
             machine = &mut self.map[self.state as usize];
-            machine.entry(core, ppu, cartridge, controller, apu);
         }
     }
 }
@@ -434,16 +424,6 @@ impl FetchOpCode {
 }
 
 impl CpuStepState for FetchOpCode {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,

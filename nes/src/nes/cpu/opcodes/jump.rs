@@ -15,25 +15,15 @@ impl Jmp {
 }
 
 impl CpuStepState for Jmp {
-    fn entry(
+    fn exec(
         &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,
         _controller: &mut Controller,
         _apu: &mut Apu,
-    ) {
-        core.register.set_pc(core.register.get_opaddr() as u16);
-    }
-
-    fn exec(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
     ) -> CpuStepStateEnum {
+        core.register.set_pc(core.register.get_opaddr() as u16);
         CpuStepStateEnum::Exit
     }
 }
@@ -49,16 +39,6 @@ impl Jsr {
 }
 
 impl CpuStepState for Jsr {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,
@@ -129,16 +109,6 @@ impl Rts {
 }
 
 impl CpuStepState for Rts {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         core: &mut Core,

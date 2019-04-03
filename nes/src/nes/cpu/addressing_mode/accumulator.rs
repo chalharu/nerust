@@ -15,16 +15,6 @@ impl Accumulator {
 }
 
 impl CpuStepState for Accumulator {
-    fn entry(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-    }
-
     fn exec(
         &mut self,
         _core: &mut Core,
