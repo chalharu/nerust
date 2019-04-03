@@ -7,13 +7,12 @@
 use super::*;
 
 pub(crate) struct Brk {
-    step: usize,
     low: u8,
 }
 
 impl Brk {
     pub fn new() -> Self {
-        Self { step: 0, low: 0 }
+        Self { low: 0 }
     }
 }
 
@@ -26,7 +25,6 @@ impl CpuStepState for Brk {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -37,8 +35,7 @@ impl CpuStepState for Brk {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 core.memory.read_next(
@@ -103,13 +100,12 @@ impl CpuStepState for Brk {
 }
 
 pub(crate) struct Rti {
-    step: usize,
     low: u8,
 }
 
 impl Rti {
     pub fn new() -> Self {
-        Self { step: 0, low: 0 }
+        Self { low: 0 }
     }
 }
 
@@ -122,7 +118,6 @@ impl CpuStepState for Rti {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -133,8 +128,7 @@ impl CpuStepState for Rti {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -174,18 +168,13 @@ impl CpuStepState for Rti {
 }
 
 pub(crate) struct Irq {
-    step: usize,
     low: u8,
     nmi: bool,
 }
 
 impl Irq {
     pub fn new() -> Self {
-        Self {
-            step: 0,
-            low: 0,
-            nmi: false,
-        }
+        Self { low: 0, nmi: false }
     }
 }
 
@@ -198,7 +187,6 @@ impl CpuStepState for Irq {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -209,8 +197,7 @@ impl CpuStepState for Irq {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -275,13 +262,12 @@ impl CpuStepState for Irq {
 }
 
 pub(crate) struct Reset {
-    step: usize,
     low: u8,
 }
 
 impl Reset {
     pub fn new() -> Self {
-        Self { step: 0, low: 0 }
+        Self { low: 0 }
     }
 }
 
@@ -304,8 +290,7 @@ impl CpuStepState for Reset {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -378,7 +363,6 @@ impl CpuStepState for Reset {
                 core.interrupt.executing = false;
             }
             _ => {
-                self.step = 0;
                 return CpuStepStateEnum::Exit;
             }
         }

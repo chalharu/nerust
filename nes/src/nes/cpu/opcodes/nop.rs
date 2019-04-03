@@ -6,13 +6,11 @@
 
 use super::*;
 
-pub(crate) struct Nop {
-    step: usize,
-}
+pub(crate) struct Nop;
 
 impl Nop {
     pub fn new() -> Self {
-        Self { step: 0 }
+        Self
     }
 }
 
@@ -25,7 +23,6 @@ impl CpuStepState for Nop {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -36,8 +33,7 @@ impl CpuStepState for Nop {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 let pc = core.register.get_pc() as usize;
                 let _ = core
@@ -52,13 +48,11 @@ impl CpuStepState for Nop {
     }
 }
 
-pub(crate) struct Kil {
-    step: usize,
-}
+pub(crate) struct Kil;
 
 impl Kil {
     pub fn new() -> Self {
-        Self { step: 0 }
+        Self
     }
 }
 
@@ -71,7 +65,6 @@ impl CpuStepState for Kil {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -82,8 +75,7 @@ impl CpuStepState for Kil {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 | 2 => {
                 let pc = core.register.get_pc() as usize;
                 let _ = core

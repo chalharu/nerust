@@ -6,19 +6,8 @@
 
 use super::*;
 
-pub(crate) trait Read: CpuStep {
+pub(crate) trait Read {
     fn reader(register: &mut Register, value: u8);
-
-    fn entry_opcode(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-        self.set_step(0);
-    }
 
     fn exec_opcode(
         &mut self,
@@ -28,9 +17,7 @@ pub(crate) trait Read: CpuStep {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        let step = self.get_step() + 1;
-        self.set_step(step);
-        match step {
+        match core.register.get_opstep() {
             1 => {
                 let data = core.memory.read(
                     core.register.get_opaddr(),
@@ -52,23 +39,11 @@ pub(crate) trait Read: CpuStep {
 
 macro_rules! read {
     ($name:ident, $reader:expr) => {
-        pub(crate) struct $name {
-            step: usize,
-        }
+        pub(crate) struct $name;
 
         impl $name {
             pub fn new() -> Self {
-                Self { step: 0 }
-            }
-        }
-
-        impl CpuStep for $name {
-            fn get_step(&self) -> usize {
-                self.step
-            }
-
-            fn set_step(&mut self, value: usize) {
-                self.step = value;
+                Self
             }
         }
 
@@ -82,19 +57,8 @@ macro_rules! read {
     };
 }
 
-pub(crate) trait Write: CpuStep {
+pub(crate) trait Write {
     fn writer(register: &mut Register) -> (u8, usize);
-
-    fn entry_opcode(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-        self.set_step(0);
-    }
 
     fn exec_opcode(
         &mut self,
@@ -104,9 +68,7 @@ pub(crate) trait Write: CpuStep {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        let step = self.get_step() + 1;
-        self.set_step(step);
-        match step {
+        match core.register.get_opstep() {
             1 => {
                 let (data, address) = Self::writer(&mut core.register);
                 core.memory.write(
@@ -129,23 +91,11 @@ pub(crate) trait Write: CpuStep {
 
 macro_rules! write {
     ($name:ident, $writer:expr) => {
-        pub(crate) struct $name {
-            step: usize,
-        }
+        pub(crate) struct $name {}
 
         impl $name {
             pub fn new() -> Self {
-                Self { step: 0 }
-            }
-        }
-
-        impl CpuStep for $name {
-            fn get_step(&self) -> usize {
-                self.step
-            }
-
-            fn set_step(&mut self, value: usize) {
-                self.step = value;
+                Self {}
             }
         }
 

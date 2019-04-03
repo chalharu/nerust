@@ -6,11 +6,11 @@
 
 use super::*;
 
-pub(crate) struct Jmp {}
+pub(crate) struct Jmp;
 
 impl Jmp {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
@@ -39,13 +39,12 @@ impl CpuStepState for Jmp {
 }
 
 pub(crate) struct Jsr {
-    step: usize,
     data: u16,
 }
 
 impl Jsr {
     pub fn new() -> Self {
-        Self { step: 0, data: 0 }
+        Self { data: 0 }
     }
 }
 
@@ -58,7 +57,6 @@ impl CpuStepState for Jsr {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -69,8 +67,7 @@ impl CpuStepState for Jsr {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 let sp = usize::from(core.register.get_sp());
                 let _ = core.memory.read(
@@ -122,13 +119,12 @@ impl CpuStepState for Jsr {
 }
 
 pub(crate) struct Rts {
-    step: usize,
     data: u16,
 }
 
 impl Rts {
     pub fn new() -> Self {
-        Self { step: 0, data: 0 }
+        Self { data: 0 }
     }
 }
 
@@ -141,7 +137,6 @@ impl CpuStepState for Rts {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -152,8 +147,7 @@ impl CpuStepState for Rts {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
