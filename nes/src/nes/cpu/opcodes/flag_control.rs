@@ -6,19 +6,8 @@
 
 use super::*;
 
-pub(crate) trait FlagControl: CpuStep {
+pub(crate) trait FlagControl {
     fn setter(register: &mut Register);
-
-    fn entry_opcode(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-        self.set_step(0);
-    }
 
     fn exec_opcode(
         &mut self,
@@ -28,9 +17,7 @@ pub(crate) trait FlagControl: CpuStep {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        let step = self.get_step() + 1;
-        self.set_step(step);
-        match step {
+        match core.register.get_opstep() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -47,23 +34,11 @@ pub(crate) trait FlagControl: CpuStep {
 
 macro_rules! flag_control {
     ($name:ident, $func:expr) => {
-        pub(crate) struct $name {
-            step: usize,
-        }
+        pub(crate) struct $name;
 
         impl $name {
             pub fn new() -> Self {
-                Self { step: 0 }
-            }
-        }
-
-        impl CpuStep for $name {
-            fn get_step(&self) -> usize {
-                self.step
-            }
-
-            fn set_step(&mut self, value: usize) {
-                self.step = value;
+                Self
             }
         }
 

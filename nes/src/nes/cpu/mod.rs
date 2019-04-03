@@ -67,6 +67,7 @@ impl Core {
         self.oam_dma.as_mut().unwrap().reset();
         self.cpu_states.as_mut().unwrap().reset();
         self.cycles = 0;
+        self.register.set_opstep(1);
     }
 
     pub fn step(
@@ -413,8 +414,11 @@ impl CpuStates {
         apu: &mut Apu,
     ) {
         let mut machine = &mut self.map[self.state as usize];
+        let step = core.register.get_opstep() + 1;
+        core.register.set_opstep(step);
         while let CpuStepStateEnum::Exit = machine.exec(core, ppu, cartridge, controller, apu) {
             self.state = machine.exit(core, ppu, cartridge, controller, apu);
+            core.register.set_opstep(1);
             machine = &mut self.map[self.state as usize];
             machine.entry(core, ppu, cartridge, controller, apu);
         }

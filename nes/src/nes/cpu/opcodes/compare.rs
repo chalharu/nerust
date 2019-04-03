@@ -6,19 +6,8 @@
 
 use super::*;
 
-pub(crate) trait Compare: CpuStep {
+pub(crate) trait Compare {
     fn comparer(register: &Register) -> u8;
-
-    fn entry_opcode(
-        &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-        self.set_step(0);
-    }
 
     fn exec_opcode(
         &mut self,
@@ -28,9 +17,7 @@ pub(crate) trait Compare: CpuStep {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        let step = self.get_step() + 1;
-        self.set_step(step);
-        match step {
+        match core.register.get_opstep() {
             1 => {
                 let a = Self::comparer(&core.register);
                 let b = core.memory.read(
@@ -55,23 +42,11 @@ pub(crate) trait Compare: CpuStep {
 
 macro_rules! compare {
     ($name:ident, $comparer:expr) => {
-        pub(crate) struct $name {
-            step: usize,
-        }
+        pub(crate) struct $name;
 
         impl $name {
             pub fn new() -> Self {
-                Self { step: 0 }
-            }
-        }
-
-        impl CpuStep for $name {
-            fn get_step(&self) -> usize {
-                self.step
-            }
-
-            fn set_step(&mut self, value: usize) {
-                self.step = value;
+                Self
             }
         }
 

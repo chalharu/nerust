@@ -9,7 +9,6 @@ use super::*;
 macro_rules! condition_jump {
     ($name:ident, $cond:expr) => {
         pub(crate) struct $name {
-            step: usize,
             crossed: bool,
             interrupt: bool,
         }
@@ -17,20 +16,9 @@ macro_rules! condition_jump {
         impl $name {
             pub fn new() -> Self {
                 Self {
-                    step: 0,
                     crossed: false,
                     interrupt: false,
                 }
-            }
-        }
-
-        impl CpuStep for $name {
-            fn get_step(&self) -> usize {
-                self.step
-            }
-
-            fn set_step(&mut self, value: usize) {
-                self.step = value;
             }
         }
 
@@ -69,25 +57,12 @@ condition_jump!(Bpl, |r: &Register| !r.get_n());
 condition_jump!(Bvc, |r: &Register| !r.get_v());
 condition_jump!(Bvs, Register::get_v);
 
-pub(crate) trait ConditionJump: CpuStep {
+pub(crate) trait ConditionJump {
     fn condition(register: &Register) -> bool;
     fn set_crossed(&mut self, value: bool);
     fn get_crossed(&self) -> bool;
     fn set_interrupt(&mut self, value: bool);
     fn get_interrupt(&self) -> bool;
-
-    fn entry_opcode(
-        &mut self,
-        core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) {
-        self.set_step(0);
-        self.set_crossed(true);
-        self.set_interrupt(core.interrupt.executing);
-    }
 
     fn exec_opcode(
         &mut self,
@@ -97,10 +72,10 @@ pub(crate) trait ConditionJump: CpuStep {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        let step = self.get_step() + 1;
-        self.set_step(step);
-        match step {
+        match core.register.get_opstep() {
             1 => {
+                self.set_crossed(true);
+                self.set_interrupt(core.interrupt.executing);
                 if !Self::condition(&core.register) {
                     return CpuStepStateEnum::Exit;
                 }

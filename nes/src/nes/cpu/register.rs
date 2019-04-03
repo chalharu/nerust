@@ -23,6 +23,7 @@ pub(crate) struct Register {
 
     opcode: usize,
     opaddr: usize,
+    opstep: usize,
 }
 
 bitflags! {
@@ -58,6 +59,7 @@ impl Register {
 
             opcode: 0,
             opaddr: 0,
+            opstep: 0,
         }
     }
 
@@ -200,5 +202,13 @@ impl Register {
 
     pub fn get_opaddr(&self) -> usize {
         self.opaddr
+    }
+
+    pub fn set_opstep(&mut self, value: usize) {
+        self.opstep = value;
+    }
+
+    pub fn get_opstep(&self) -> usize {
+        self.opstep
     }
 }
