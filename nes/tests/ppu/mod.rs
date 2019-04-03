@@ -7,7 +7,7 @@
 mod blargg_ppu_tests_2005_09_15b;
 mod oam_read;
 mod oam_stress;
-mod oamtest3;
+// mod oamtest3;
 mod ppu_open_bus;
 mod ppu_read_buffer;
 mod ppu_sprite_hit;

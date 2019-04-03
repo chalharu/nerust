@@ -18,7 +18,7 @@ fn main() {
         &mut include_bytes!(concat!(
             "../../../roms/",
             // "samples/sample1.nes",
-            "tests/Lan Master/Lan_Master.nes",
+            // "tests/Lan Master/Lan_Master.nes",
             // "giko005.nes",
             // "giko008.nes",
             // "giko009.nes",
@@ -47,7 +47,7 @@ fn main() {
             // "color_test.nes",
             // "tests/tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
-            // "ppu/ppu_open_bus/ppu_open_bus.nes",
+            "ppu/ppu_open_bus/ppu_open_bus.nes",
             // "cpu_reset/ram_after_reset.nes",
             // "cpu_reset/registers.nes",
             // "full_palette/full_palette.nes",

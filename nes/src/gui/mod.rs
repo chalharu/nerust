@@ -19,7 +19,7 @@ use glutin::{
 };
 use std::ops::Add;
 
-use self::filterset::{FilterType, NesFilter, FilterFunc};
+use self::filterset::{FilterFunc, FilterType, NesFilter};
 use self::sound::Sound;
 use crate::nes::MixerInput;
 use std::collections::VecDeque;
@@ -321,10 +321,7 @@ impl FilterFunc for ScreenBufferUnit {
 impl Screen for ScreenBuffer {
     fn push(&mut self, value: u8) {
         let dest = &mut self.dest;
-        self.filter.as_mut().push(
-            value,
-            dest,
-        );
+        self.filter.as_mut().push(value, dest);
         self.src_buffer_next[self.src_pos] = value;
         self.src_pos += 1;
     }
