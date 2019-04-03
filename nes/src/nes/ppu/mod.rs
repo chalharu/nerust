@@ -18,6 +18,47 @@ use std::mem;
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
 
+struct DecayableOpenBus {
+    data: u8,
+    decay: [u8; 8],
+}
+
+impl DecayableOpenBus {
+    pub fn new() -> Self {
+        Self {
+            data: 0,
+            decay: [0; 8],
+        }
+    }
+
+    pub fn unite(&mut self, data: OpenBusReadResult) -> u8 {
+        for i in 0..8 {
+            if (data.mask >> i) == 1 {
+                self.decay[i] = 20;
+            }
+        }
+        let result = (self.data & !data.mask) | (data.data & data.mask);
+        self.data = result;
+        result
+    }
+
+    pub fn write(&mut self, data: u8) -> u8 {
+        self.data = data;
+        data
+    }
+
+    pub fn next(&mut self) {
+        let mut result_mask: u8 = 0;
+        for i in 0..8 {
+            if self.decay[i] > 0 {
+                self.decay[i] -= 1;
+                result_mask |= 1 << i;
+            }
+        }
+        self.data &= result_mask;
+    }
+}
+
 struct State {
     control: u8,
     mask: u8,
@@ -237,7 +278,7 @@ pub(crate) struct Core {
     oam_address_high: u8,
     oam_address_low: u8,
     openbus_vram: OpenBus,
-    openbus_io: OpenBus,
+    openbus_io: DecayableOpenBus,
     has_next_sprite: bool,
     // screen_buffer: [u8; 256 * 240],
 }
@@ -282,7 +323,7 @@ impl Core {
             sprite_count: 0,
             sprite_index: 0,
             openbus_vram: OpenBus::new(),
-            openbus_io: OpenBus::new(),
+            openbus_io: DecayableOpenBus::new(),
             has_next_sprite: false,
             // screen_buffer: [0; 256 * 240],
         }
@@ -325,7 +366,7 @@ impl Core {
         let result = match address {
             0x2002 => OpenBusReadResult::new(self.read_status(interrupt), 0b1110_0000),
             0x2004 => OpenBusReadResult::new(self.read_oam(), 0xFF),
-            0x2007 => OpenBusReadResult::new(self.read_data(cartridge), 0xFF),
+            0x2007 => self.read_data(cartridge),
             _ => OpenBusReadResult::new(0, 0),
         };
         OpenBusReadResult::new(self.openbus_io.unite(result), 0xFF)
@@ -363,24 +404,26 @@ impl Core {
         }
     }
 
-    fn read_data(&mut self, cartridge: &mut Cartridge) -> u8 {
+    fn read_data(&mut self, cartridge: &mut Cartridge) -> OpenBusReadResult {
         if self.vram_read_delay > 0 {
-            self.openbus_io.unite(OpenBusReadResult::new(0, 0))
+            OpenBusReadResult::new(0, 0)
         } else {
             self.vram_read_delay = 6;
             let addr = self.state.vram_addr as usize;
             let mut value = self.read_vram(addr, cartridge);
             // emulate buffered reads
-            if (addr & 0x3FFF) < 0x3F00 {
+            let mask = if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
+                0xFF
             } else {
                 // let buffered_data = self.buffered_data;
                 self.buffered_data = value;
                 // value = self.read_palette(addr) | (buffered_data & 0xC0);
                 value = self.read_palette(addr);
-            }
+                0x3F
+            };
             self.increment_address(cartridge);
-            value
+            OpenBusReadResult::new(value, mask)
         }
     }
 
@@ -868,6 +911,7 @@ impl Core {
                 241 => {
                     self.frames += 1;
                     result = true;
+                    self.openbus_io.next();
                     self.render_screen(screen);
                 }
                 NMI_SCAN_LINE => self.set_vertical_blank(interrupt),
