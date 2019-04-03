@@ -425,13 +425,11 @@ impl CpuStates {
     }
 }
 
-struct FetchOpCode {
-    step: usize,
-}
+struct FetchOpCode;
 
 impl FetchOpCode {
     pub fn new() -> Self {
-        Self { step: 0 }
+        Self
     }
 }
 
@@ -444,7 +442,6 @@ impl CpuStepState for FetchOpCode {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -455,7 +452,7 @@ impl CpuStepState for FetchOpCode {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        if self.step == 0 {
+        if core.register.get_opstep() == 1 {
             let code = usize::from(core.memory.read_next(
                 &mut core.register,
                 ppu,
@@ -465,7 +462,6 @@ impl CpuStepState for FetchOpCode {
                 &mut core.interrupt,
             ));
             core.register.set_opcode(code);
-            self.step += 1;
             CpuStepStateEnum::Continue
         } else {
             CpuStepStateEnum::Exit

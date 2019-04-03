@@ -6,13 +6,11 @@
 
 use super::*;
 
-pub(crate) struct ZeroPage {
-    step: usize,
-}
+pub(crate) struct ZeroPage;
 
 impl ZeroPage {
     pub fn new() -> Self {
-        Self { step: 0 }
+        Self
     }
 }
 
@@ -25,7 +23,6 @@ impl CpuStepState for ZeroPage {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -36,8 +33,7 @@ impl CpuStepState for ZeroPage {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 let addr = usize::from(core.memory.read_next(
                     &mut core.register,

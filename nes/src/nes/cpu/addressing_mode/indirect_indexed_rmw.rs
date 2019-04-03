@@ -9,7 +9,6 @@ use super::*;
 pub(crate) struct IndirectIndexedRMW {
     ind_address: usize,
     address_low: u8,
-    step: usize,
 }
 
 impl IndirectIndexedRMW {
@@ -17,7 +16,6 @@ impl IndirectIndexedRMW {
         Self {
             ind_address: 0,
             address_low: 0,
-            step: 0,
         }
     }
 }
@@ -31,7 +29,6 @@ impl CpuStepState for IndirectIndexedRMW {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -42,8 +39,7 @@ impl CpuStepState for IndirectIndexedRMW {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 self.ind_address = usize::from(core.memory.read_next(
                     &mut core.register,

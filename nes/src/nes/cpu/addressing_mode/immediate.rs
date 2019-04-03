@@ -6,11 +6,11 @@
 
 use super::*;
 
-pub(crate) struct Immediate {}
+pub(crate) struct Immediate;
 
 impl Immediate {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 

@@ -6,11 +6,11 @@
 
 use super::*;
 
-pub(crate) struct Implied {}
+pub(crate) struct Implied;
 
 impl Implied {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
