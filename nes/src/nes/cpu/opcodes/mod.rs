@@ -7,16 +7,6 @@
 macro_rules! cpu_step_state_impl {
     ($name:ident) => {
         impl CpuStepState for $name {
-            fn entry(
-                &mut self,
-                _core: &mut Core,
-                _ppu: &mut Ppu,
-                _cartridge: &mut Cartridge,
-                _controller: &mut Controller,
-                _apu: &mut Apu,
-            ) {
-            }
-
             fn exec(
                 &mut self,
                 core: &mut Core,
