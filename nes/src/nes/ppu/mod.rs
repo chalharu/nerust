@@ -44,6 +44,7 @@ impl DecayableOpenBus {
 
     pub fn write(&mut self, data: u8) -> u8 {
         self.data = data;
+        self.decay = [20; 8];
         data
     }
 
