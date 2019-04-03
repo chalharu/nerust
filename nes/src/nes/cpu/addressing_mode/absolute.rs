@@ -8,15 +8,11 @@ use super::*;
 
 pub(crate) struct Absolute {
     temp_address: usize,
-    step: usize,
 }
 
 impl Absolute {
     pub fn new() -> Self {
-        Self {
-            temp_address: 0,
-            step: 0,
-        }
+        Self { temp_address: 0 }
     }
 }
 
@@ -29,7 +25,6 @@ impl CpuStepState for Absolute {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -40,8 +35,7 @@ impl CpuStepState for Absolute {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 self.temp_address = usize::from(core.memory.read_next(
                     &mut core.register,

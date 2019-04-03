@@ -9,7 +9,6 @@ use super::*;
 pub(crate) struct AbsoluteIndirect {
     ind_address: usize,
     address_low: u8,
-    step: usize,
 }
 
 impl AbsoluteIndirect {
@@ -17,7 +16,6 @@ impl AbsoluteIndirect {
         Self {
             ind_address: 0,
             address_low: 0,
-            step: 0,
         }
     }
 }
@@ -31,7 +29,6 @@ impl CpuStepState for AbsoluteIndirect {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) {
-        self.step = 0;
     }
 
     fn exec(
@@ -42,8 +39,7 @@ impl CpuStepState for AbsoluteIndirect {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        self.step += 1;
-        match self.step {
+        match core.register.get_opstep() {
             1 => {
                 self.address_low = core.memory.read_next(
                     &mut core.register,
