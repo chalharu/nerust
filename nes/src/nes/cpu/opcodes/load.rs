@@ -16,10 +16,10 @@ pub(crate) trait Load {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let a = core.memory.read(
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,

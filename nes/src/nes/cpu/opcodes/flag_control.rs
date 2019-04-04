@@ -16,7 +16,7 @@ pub(crate) trait FlagControl {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);

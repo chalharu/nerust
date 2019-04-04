@@ -16,7 +16,7 @@ impl CpuStepState for ZeroPageX {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let addr = usize::from(core.memory.read_next(
                     &mut core.register,
@@ -26,23 +26,23 @@ impl CpuStepState for ZeroPageX {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_opaddr(addr);
+                core.internal_stat.set_address(addr);
             }
             2 => {
                 let pc = usize::from(core.register.get_pc());
                 core.memory.read_dummy_cross(
                     pc,
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 );
-                core.register.set_opaddr(
+                core.internal_stat.set_address(
                     (core
-                        .register
-                        .get_opaddr()
+                        .internal_stat
+                        .get_address()
                         .wrapping_add(usize::from(core.register.get_x())))
                         & 0xFF,
                 );

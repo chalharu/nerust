@@ -16,7 +16,8 @@ impl CpuStepState for Jmp {
         _controller: &mut Controller,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        core.register.set_pc(core.register.get_opaddr() as u16);
+        core.register
+            .set_pc(core.internal_stat.get_address() as u16);
         exit_opcode(core)
     }
 }
@@ -31,7 +32,7 @@ impl CpuStepState for Jsr {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let sp = usize::from(core.register.get_sp());
                 let _ = core.memory.read(
@@ -43,11 +44,11 @@ impl CpuStepState for Jsr {
                     &mut core.interrupt,
                 );
 
-                core.register
-                    .set_op_tempaddr(core.register.get_pc().wrapping_sub(1) as usize);
+                core.internal_stat
+                    .set_tempaddr(core.register.get_pc().wrapping_sub(1) as usize);
             }
             2 => {
-                let hi = (core.register.get_op_tempaddr() >> 8) as u8;
+                let hi = (core.internal_stat.get_tempaddr() >> 8) as u8;
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
                 core.memory.write(
@@ -61,7 +62,7 @@ impl CpuStepState for Jsr {
                 );
             }
             3 => {
-                let low = (core.register.get_op_tempaddr() & 0xFF) as u8;
+                let low = (core.internal_stat.get_tempaddr() & 0xFF) as u8;
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
                 core.memory.write(
@@ -73,7 +74,8 @@ impl CpuStepState for Jsr {
                     apu,
                     &mut core.interrupt,
                 );
-                core.register.set_pc(core.register.get_opaddr() as u16);
+                core.register
+                    .set_pc(core.internal_stat.get_address() as u16);
             }
             _ => {
                 return exit_opcode(core);
@@ -93,7 +95,7 @@ impl CpuStepState for Rts {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -114,14 +116,15 @@ impl CpuStepState for Rts {
             }
             3 => {
                 let sp = usize::from(core.register.get_sp());
-                core.register.set_op_tempaddr(usize::from(core.memory.read(
-                    sp | 0x100,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                )));
+                core.internal_stat
+                    .set_tempaddr(usize::from(core.memory.read(
+                        sp | 0x100,
+                        ppu,
+                        cartridge,
+                        controller,
+                        apu,
+                        &mut core.interrupt,
+                    )));
 
                 core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
             }
@@ -135,11 +138,12 @@ impl CpuStepState for Rts {
                     apu,
                     &mut core.interrupt,
                 );
-                core.register
-                    .set_op_tempaddr(core.register.get_op_tempaddr() | usize::from(high) << 8);
+                core.internal_stat
+                    .set_tempaddr(core.internal_stat.get_tempaddr() | usize::from(high) << 8);
             }
             5 => {
-                core.register.set_pc(core.register.get_op_tempaddr() as u16);
+                core.register
+                    .set_pc(core.internal_stat.get_tempaddr() as u16);
                 core.memory.read_next(
                     &mut core.register,
                     ppu,

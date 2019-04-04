@@ -16,11 +16,11 @@ pub(crate) trait Store {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let data = Self::getter(&core.register);
                 core.memory.write(
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     data,
                     ppu,
                     cartridge,

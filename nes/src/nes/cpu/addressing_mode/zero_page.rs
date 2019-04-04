@@ -16,7 +16,7 @@ impl CpuStepState for ZeroPage {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let addr = usize::from(core.memory.read_next(
                     &mut core.register,
@@ -26,7 +26,7 @@ impl CpuStepState for ZeroPage {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_opaddr(addr);
+                core.internal_stat.set_address(addr);
             }
             _ => {
                 return exit_addressing_mode(core);

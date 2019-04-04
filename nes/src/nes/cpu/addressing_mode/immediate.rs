@@ -18,7 +18,7 @@ impl CpuStepState for Immediate {
     ) -> CpuStepStateEnum {
         let pc = core.register.get_pc();
         core.register.set_pc(pc.wrapping_add(1));
-        core.register.set_opaddr(usize::from(pc));
+        core.internal_stat.set_address(usize::from(pc));
         exit_addressing_mode(core)
     }
 }
