@@ -39,7 +39,7 @@ pub(crate) trait Pull {
                 Self::setter(&mut core.register, value);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -98,7 +98,7 @@ pub(crate) trait Push {
                 push(core, ppu, cartridge, controller, apu, self.load());
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

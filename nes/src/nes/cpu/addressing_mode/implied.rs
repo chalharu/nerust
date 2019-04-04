@@ -17,23 +17,12 @@ impl Implied {
 impl CpuStepState for Implied {
     fn exec(
         &mut self,
-        _core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) -> CpuStepStateEnum {
-        CpuStepStateEnum::Exit
-    }
-
-    fn exit(
-        &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,
         _controller: &mut Controller,
         _apu: &mut Apu,
-    ) -> CpuStatesEnum {
-        core.opcode_tables.get(core.register.get_opcode())
+    ) -> CpuStepStateEnum {
+        exit_addressing_mode(core)
     }
 }

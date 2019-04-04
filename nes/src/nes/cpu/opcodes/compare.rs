@@ -33,7 +33,7 @@ pub(crate) trait Compare {
                 core.register.set_c(a >= b);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

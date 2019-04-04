@@ -34,7 +34,7 @@ pub(crate) trait Arithmetic {
                 core.register.set_a(result);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

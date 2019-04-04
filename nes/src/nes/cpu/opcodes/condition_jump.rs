@@ -77,7 +77,7 @@ pub(crate) trait ConditionJump {
                 self.set_crossed(true);
                 self.set_interrupt(core.interrupt.executing);
                 if !Self::condition(&core.register) {
-                    return CpuStepStateEnum::Exit;
+                    return exit_opcode(core);
                 }
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -90,7 +90,7 @@ pub(crate) trait ConditionJump {
                     if !self.get_interrupt() {
                         core.interrupt.executing = false;
                     }
-                    return CpuStepStateEnum::Exit;
+                    return exit_opcode(core);
                 }
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -98,7 +98,7 @@ pub(crate) trait ConditionJump {
                 core.register.set_pc(core.register.get_opaddr() as u16);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

@@ -39,7 +39,7 @@ impl CpuStepState for Bit {
                 core.register.set_n_from_value(data);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

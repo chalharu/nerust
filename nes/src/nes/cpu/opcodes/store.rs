@@ -31,7 +31,7 @@ pub(crate) trait Store {
                 );
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

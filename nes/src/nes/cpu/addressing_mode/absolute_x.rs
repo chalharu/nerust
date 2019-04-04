@@ -54,7 +54,7 @@ impl CpuStepState for AbsoluteX {
             }
             3 => {
                 if !page_crossed(self.temp_address, core.register.get_opaddr()) {
-                    return CpuStepStateEnum::Exit;
+                    return exit_addressing_mode(core);
                 }
                 // dummy read
                 core.memory.read_dummy_cross(
@@ -68,20 +68,9 @@ impl CpuStepState for AbsoluteX {
                 );
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_addressing_mode(core);
             }
         }
         CpuStepStateEnum::Continue
-    }
-
-    fn exit(
-        &mut self,
-        core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) -> CpuStatesEnum {
-        core.opcode_tables.get(core.register.get_opcode())
     }
 }

@@ -82,7 +82,7 @@ impl CpuStepState for Brk {
             }
             _ => {
                 core.interrupt.executing = false;
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -140,7 +140,7 @@ impl CpuStepState for Rti {
                     .set_pc(u16::from(self.low) | (u16::from(high) << 8));
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -224,7 +224,7 @@ impl CpuStepState for Irq {
             }
             _ => {
                 core.interrupt.executing = false;
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -323,7 +323,7 @@ impl CpuStepState for Reset {
                 core.interrupt.executing = false;
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

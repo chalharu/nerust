@@ -135,7 +135,7 @@ impl Core {
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub(crate) enum CpuStepStateEnum {
     Continue,
-    Exit,
+    Exit(CpuStatesEnum),
 }
 
 pub(crate) trait CpuStepState {
@@ -147,22 +147,8 @@ pub(crate) trait CpuStepState {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum;
-
-    fn exit(
-        &mut self,
-        core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) -> CpuStatesEnum {
-        if core.interrupt.executing {
-            CpuStatesEnum::Irq
-        } else {
-            CpuStatesEnum::FetchOpCode
-        }
-    }
 }
+
 #[derive(PartialEq, Eq, Clone, Copy, Hash, Debug, EnumIter)]
 pub(crate) enum CpuStatesEnum {
     FetchOpCode,
@@ -407,8 +393,8 @@ impl CpuStates {
         let mut machine = &mut self.map[self.state as usize];
         let step = core.register.get_opstep() + 1;
         core.register.set_opstep(step);
-        while let CpuStepStateEnum::Exit = machine.exec(core, ppu, cartridge, controller, apu) {
-            self.state = machine.exit(core, ppu, cartridge, controller, apu);
+        while let CpuStepStateEnum::Exit(s) = machine.exec(core, ppu, cartridge, controller, apu) {
+            self.state = s;
             core.register.set_opstep(1);
             machine = &mut self.map[self.state as usize];
         }
@@ -444,19 +430,8 @@ impl CpuStepState for FetchOpCode {
             core.register.set_opcode(code);
             CpuStepStateEnum::Continue
         } else {
-            CpuStepStateEnum::Exit
+            CpuStepStateEnum::Exit(core.addressing_tables.get(core.register.get_opcode()))
         }
-    }
-
-    fn exit(
-        &mut self,
-        core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) -> CpuStatesEnum {
-        core.addressing_tables.get(core.register.get_opcode())
     }
 }
 
