@@ -8,39 +8,11 @@ use super::*;
 
 macro_rules! condition_jump {
     ($name:ident, $cond:expr) => {
-        pub(crate) struct $name {
-            crossed: bool,
-            interrupt: bool,
-        }
-
-        impl $name {
-            pub fn new() -> Self {
-                Self {
-                    crossed: false,
-                    interrupt: false,
-                }
-            }
-        }
+        pub(crate) struct $name;
 
         impl ConditionJump for $name {
             fn condition(register: &Register) -> bool {
                 $cond(register)
-            }
-
-            fn set_interrupt(&mut self, value: bool) {
-                self.interrupt = value;
-            }
-
-            fn get_interrupt(&self) -> bool {
-                self.interrupt
-            }
-
-            fn set_crossed(&mut self, value: bool) {
-                self.crossed = value;
-            }
-
-            fn get_crossed(&self) -> bool {
-                self.crossed
             }
         }
 
@@ -59,10 +31,6 @@ condition_jump!(Bvs, Register::get_v);
 
 pub(crate) trait ConditionJump {
     fn condition(register: &Register) -> bool;
-    fn set_crossed(&mut self, value: bool);
-    fn get_crossed(&self) -> bool;
-    fn set_interrupt(&mut self, value: bool);
-    fn get_interrupt(&self) -> bool;
 
     fn exec_opcode(
         &mut self,
@@ -74,20 +42,21 @@ pub(crate) trait ConditionJump {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.set_crossed(true);
-                self.set_interrupt(core.interrupt.executing);
+                core.register.set_crossed(true);
+                core.register.set_interrupt(core.interrupt.executing);
                 if !Self::condition(&core.register) {
                     return exit_opcode(core);
                 }
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
                 let pc = core.register.get_pc() as usize;
-                self.set_crossed(page_crossed(core.register.get_opaddr(), pc));
+                core.register
+                    .set_crossed(page_crossed(core.register.get_opaddr(), pc));
             }
             2 => {
-                if !self.get_crossed() {
+                if !core.register.get_crossed() {
                     core.register.set_pc(core.register.get_opaddr() as u16);
-                    if !self.get_interrupt() {
+                    if !core.register.get_interrupt() {
                         core.interrupt.executing = false;
                     }
                     return exit_opcode(core);

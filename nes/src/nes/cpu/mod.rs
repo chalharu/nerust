@@ -259,116 +259,107 @@ pub(crate) struct CpuStates {
 impl CpuStates {
     pub fn new() -> Self {
         let mut map: HashMap<CpuStatesEnum, Box<CpuStepState>> = HashMap::new();
-        map.insert(CpuStatesEnum::Reset, Box::new(Reset::new()));
-        map.insert(CpuStatesEnum::FetchOpCode, Box::new(FetchOpCode::new()));
-        map.insert(CpuStatesEnum::Irq, Box::new(Irq::new()));
-        map.insert(
-            CpuStatesEnum::AbsoluteIndirect,
-            Box::new(AbsoluteIndirect::new()),
-        );
-        map.insert(CpuStatesEnum::AbsoluteXRMW, Box::new(AbsoluteXRMW::new()));
-        map.insert(CpuStatesEnum::AbsoluteX, Box::new(AbsoluteX::new()));
-        map.insert(CpuStatesEnum::AbsoluteYRMW, Box::new(AbsoluteYRMW::new()));
-        map.insert(CpuStatesEnum::AbsoluteY, Box::new(AbsoluteY::new()));
-        map.insert(CpuStatesEnum::Absolute, Box::new(Absolute::new()));
-        map.insert(CpuStatesEnum::Accumulator, Box::new(Accumulator::new()));
-        map.insert(CpuStatesEnum::Immediate, Box::new(Immediate::new()));
-        map.insert(CpuStatesEnum::Implied, Box::new(Implied::new()));
-        map.insert(
-            CpuStatesEnum::IndexedIndirect,
-            Box::new(IndexedIndirect::new()),
-        );
+        map.insert(CpuStatesEnum::Reset, Box::new(Reset));
+        map.insert(CpuStatesEnum::FetchOpCode, Box::new(FetchOpCode));
+        map.insert(CpuStatesEnum::Irq, Box::new(Irq));
+        map.insert(CpuStatesEnum::AbsoluteIndirect, Box::new(AbsoluteIndirect));
+        map.insert(CpuStatesEnum::AbsoluteXRMW, Box::new(AbsoluteXRMW));
+        map.insert(CpuStatesEnum::AbsoluteX, Box::new(AbsoluteX));
+        map.insert(CpuStatesEnum::AbsoluteYRMW, Box::new(AbsoluteYRMW));
+        map.insert(CpuStatesEnum::AbsoluteY, Box::new(AbsoluteY));
+        map.insert(CpuStatesEnum::Absolute, Box::new(Absolute));
+        map.insert(CpuStatesEnum::Accumulator, Box::new(Accumulator));
+        map.insert(CpuStatesEnum::Immediate, Box::new(Immediate));
+        map.insert(CpuStatesEnum::Implied, Box::new(Implied));
+        map.insert(CpuStatesEnum::IndexedIndirect, Box::new(IndexedIndirect));
         map.insert(
             CpuStatesEnum::IndirectIndexedRMW,
-            Box::new(IndirectIndexedRMW::new()),
+            Box::new(IndirectIndexedRMW),
         );
-        map.insert(
-            CpuStatesEnum::IndirectIndexed,
-            Box::new(IndirectIndexed::new()),
-        );
-        map.insert(CpuStatesEnum::Relative, Box::new(Relative::new()));
-        map.insert(CpuStatesEnum::ZeroPageX, Box::new(ZeroPageX::new()));
-        map.insert(CpuStatesEnum::ZeroPageY, Box::new(ZeroPageY::new()));
-        map.insert(CpuStatesEnum::ZeroPage, Box::new(ZeroPage::new()));
-        map.insert(CpuStatesEnum::And, Box::new(And::new()));
-        map.insert(CpuStatesEnum::Eor, Box::new(Eor::new()));
-        map.insert(CpuStatesEnum::Ora, Box::new(Ora::new()));
-        map.insert(CpuStatesEnum::Adc, Box::new(Adc::new()));
-        map.insert(CpuStatesEnum::Sbc, Box::new(Sbc::new()));
-        map.insert(CpuStatesEnum::Bit, Box::new(Bit::new()));
-        map.insert(CpuStatesEnum::Lax, Box::new(Lax::new()));
-        map.insert(CpuStatesEnum::Anc, Box::new(Anc::new()));
-        map.insert(CpuStatesEnum::Alr, Box::new(Alr::new()));
-        map.insert(CpuStatesEnum::Arr, Box::new(Arr::new()));
-        map.insert(CpuStatesEnum::Xaa, Box::new(Xaa::new()));
-        map.insert(CpuStatesEnum::Las, Box::new(Las::new()));
-        map.insert(CpuStatesEnum::Axs, Box::new(Axs::new()));
-        map.insert(CpuStatesEnum::Sax, Box::new(Sax::new()));
-        map.insert(CpuStatesEnum::Tas, Box::new(Tas::new()));
-        map.insert(CpuStatesEnum::Ahx, Box::new(Ahx::new()));
-        map.insert(CpuStatesEnum::Shx, Box::new(Shx::new()));
-        map.insert(CpuStatesEnum::Shy, Box::new(Shy::new()));
-        map.insert(CpuStatesEnum::Cmp, Box::new(Cmp::new()));
-        map.insert(CpuStatesEnum::Cpx, Box::new(Cpx::new()));
-        map.insert(CpuStatesEnum::Cpy, Box::new(Cpy::new()));
-        map.insert(CpuStatesEnum::Bcc, Box::new(Bcc::new()));
-        map.insert(CpuStatesEnum::Bcs, Box::new(Bcs::new()));
-        map.insert(CpuStatesEnum::Beq, Box::new(Beq::new()));
-        map.insert(CpuStatesEnum::Bmi, Box::new(Bmi::new()));
-        map.insert(CpuStatesEnum::Bne, Box::new(Bne::new()));
-        map.insert(CpuStatesEnum::Bpl, Box::new(Bpl::new()));
-        map.insert(CpuStatesEnum::Bvc, Box::new(Bvc::new()));
-        map.insert(CpuStatesEnum::Bvs, Box::new(Bvs::new()));
-        map.insert(CpuStatesEnum::Dex, Box::new(Dex::new()));
-        map.insert(CpuStatesEnum::Dey, Box::new(Dey::new()));
-        map.insert(CpuStatesEnum::Dec, Box::new(Dec::new()));
-        map.insert(CpuStatesEnum::Clc, Box::new(Clc::new()));
-        map.insert(CpuStatesEnum::Cld, Box::new(Cld::new()));
-        map.insert(CpuStatesEnum::Cli, Box::new(Cli::new()));
-        map.insert(CpuStatesEnum::Clv, Box::new(Clv::new()));
-        map.insert(CpuStatesEnum::Sec, Box::new(Sec::new()));
-        map.insert(CpuStatesEnum::Sed, Box::new(Sed::new()));
-        map.insert(CpuStatesEnum::Sei, Box::new(Sei::new()));
-        map.insert(CpuStatesEnum::Inx, Box::new(Inx::new()));
-        map.insert(CpuStatesEnum::Iny, Box::new(Iny::new()));
-        map.insert(CpuStatesEnum::Inc, Box::new(Inc::new()));
-        map.insert(CpuStatesEnum::Brk, Box::new(Brk::new()));
-        map.insert(CpuStatesEnum::Rti, Box::new(Rti::new()));
-        map.insert(CpuStatesEnum::Rts, Box::new(Rts::new()));
-        map.insert(CpuStatesEnum::Jmp, Box::new(Jmp::new()));
-        map.insert(CpuStatesEnum::Jsr, Box::new(Jsr::new()));
-        map.insert(CpuStatesEnum::Lda, Box::new(Lda::new()));
-        map.insert(CpuStatesEnum::Ldx, Box::new(Ldx::new()));
-        map.insert(CpuStatesEnum::Ldy, Box::new(Ldy::new()));
-        map.insert(CpuStatesEnum::Nop, Box::new(Nop::new()));
-        map.insert(CpuStatesEnum::Kil, Box::new(Kil::new()));
-        map.insert(CpuStatesEnum::Isc, Box::new(Isc::new()));
-        map.insert(CpuStatesEnum::Dcp, Box::new(Dcp::new()));
-        map.insert(CpuStatesEnum::Slo, Box::new(Slo::new()));
-        map.insert(CpuStatesEnum::Rla, Box::new(Rla::new()));
-        map.insert(CpuStatesEnum::Sre, Box::new(Sre::new()));
-        map.insert(CpuStatesEnum::Rra, Box::new(Rra::new()));
-        map.insert(CpuStatesEnum::AslAcc, Box::new(AslAcc::new()));
-        map.insert(CpuStatesEnum::AslMem, Box::new(AslMem::new()));
-        map.insert(CpuStatesEnum::LsrAcc, Box::new(LsrAcc::new()));
-        map.insert(CpuStatesEnum::LsrMem, Box::new(LsrMem::new()));
-        map.insert(CpuStatesEnum::RolAcc, Box::new(RolAcc::new()));
-        map.insert(CpuStatesEnum::RolMem, Box::new(RolMem::new()));
-        map.insert(CpuStatesEnum::RorAcc, Box::new(RorAcc::new()));
-        map.insert(CpuStatesEnum::RorMem, Box::new(RorMem::new()));
-        map.insert(CpuStatesEnum::Pla, Box::new(Pla::new()));
-        map.insert(CpuStatesEnum::Plp, Box::new(Plp::new()));
-        map.insert(CpuStatesEnum::Pha, Box::new(Pha::new()));
-        map.insert(CpuStatesEnum::Php, Box::new(Php::new()));
-        map.insert(CpuStatesEnum::Sta, Box::new(Sta::new()));
-        map.insert(CpuStatesEnum::Stx, Box::new(Stx::new()));
-        map.insert(CpuStatesEnum::Sty, Box::new(Sty::new()));
-        map.insert(CpuStatesEnum::Tax, Box::new(Tax::new()));
-        map.insert(CpuStatesEnum::Tay, Box::new(Tay::new()));
-        map.insert(CpuStatesEnum::Tsx, Box::new(Tsx::new()));
-        map.insert(CpuStatesEnum::Txa, Box::new(Txa::new()));
-        map.insert(CpuStatesEnum::Tya, Box::new(Tya::new()));
-        map.insert(CpuStatesEnum::Txs, Box::new(Txs::new()));
+        map.insert(CpuStatesEnum::IndirectIndexed, Box::new(IndirectIndexed));
+        map.insert(CpuStatesEnum::Relative, Box::new(Relative));
+        map.insert(CpuStatesEnum::ZeroPageX, Box::new(ZeroPageX));
+        map.insert(CpuStatesEnum::ZeroPageY, Box::new(ZeroPageY));
+        map.insert(CpuStatesEnum::ZeroPage, Box::new(ZeroPage));
+        map.insert(CpuStatesEnum::And, Box::new(And));
+        map.insert(CpuStatesEnum::Eor, Box::new(Eor));
+        map.insert(CpuStatesEnum::Ora, Box::new(Ora));
+        map.insert(CpuStatesEnum::Adc, Box::new(Adc));
+        map.insert(CpuStatesEnum::Sbc, Box::new(Sbc));
+        map.insert(CpuStatesEnum::Bit, Box::new(Bit));
+        map.insert(CpuStatesEnum::Lax, Box::new(Lax));
+        map.insert(CpuStatesEnum::Anc, Box::new(Anc));
+        map.insert(CpuStatesEnum::Alr, Box::new(Alr));
+        map.insert(CpuStatesEnum::Arr, Box::new(Arr));
+        map.insert(CpuStatesEnum::Xaa, Box::new(Xaa));
+        map.insert(CpuStatesEnum::Las, Box::new(Las));
+        map.insert(CpuStatesEnum::Axs, Box::new(Axs));
+        map.insert(CpuStatesEnum::Sax, Box::new(Sax));
+        map.insert(CpuStatesEnum::Tas, Box::new(Tas));
+        map.insert(CpuStatesEnum::Ahx, Box::new(Ahx));
+        map.insert(CpuStatesEnum::Shx, Box::new(Shx));
+        map.insert(CpuStatesEnum::Shy, Box::new(Shy));
+        map.insert(CpuStatesEnum::Cmp, Box::new(Cmp));
+        map.insert(CpuStatesEnum::Cpx, Box::new(Cpx));
+        map.insert(CpuStatesEnum::Cpy, Box::new(Cpy));
+        map.insert(CpuStatesEnum::Bcc, Box::new(Bcc));
+        map.insert(CpuStatesEnum::Bcs, Box::new(Bcs));
+        map.insert(CpuStatesEnum::Beq, Box::new(Beq));
+        map.insert(CpuStatesEnum::Bmi, Box::new(Bmi));
+        map.insert(CpuStatesEnum::Bne, Box::new(Bne));
+        map.insert(CpuStatesEnum::Bpl, Box::new(Bpl));
+        map.insert(CpuStatesEnum::Bvc, Box::new(Bvc));
+        map.insert(CpuStatesEnum::Bvs, Box::new(Bvs));
+        map.insert(CpuStatesEnum::Dex, Box::new(Dex));
+        map.insert(CpuStatesEnum::Dey, Box::new(Dey));
+        map.insert(CpuStatesEnum::Dec, Box::new(Dec));
+        map.insert(CpuStatesEnum::Clc, Box::new(Clc));
+        map.insert(CpuStatesEnum::Cld, Box::new(Cld));
+        map.insert(CpuStatesEnum::Cli, Box::new(Cli));
+        map.insert(CpuStatesEnum::Clv, Box::new(Clv));
+        map.insert(CpuStatesEnum::Sec, Box::new(Sec));
+        map.insert(CpuStatesEnum::Sed, Box::new(Sed));
+        map.insert(CpuStatesEnum::Sei, Box::new(Sei));
+        map.insert(CpuStatesEnum::Inx, Box::new(Inx));
+        map.insert(CpuStatesEnum::Iny, Box::new(Iny));
+        map.insert(CpuStatesEnum::Inc, Box::new(Inc));
+        map.insert(CpuStatesEnum::Brk, Box::new(Brk));
+        map.insert(CpuStatesEnum::Rti, Box::new(Rti));
+        map.insert(CpuStatesEnum::Rts, Box::new(Rts));
+        map.insert(CpuStatesEnum::Jmp, Box::new(Jmp));
+        map.insert(CpuStatesEnum::Jsr, Box::new(Jsr));
+        map.insert(CpuStatesEnum::Lda, Box::new(Lda));
+        map.insert(CpuStatesEnum::Ldx, Box::new(Ldx));
+        map.insert(CpuStatesEnum::Ldy, Box::new(Ldy));
+        map.insert(CpuStatesEnum::Nop, Box::new(Nop));
+        map.insert(CpuStatesEnum::Kil, Box::new(Kil));
+        map.insert(CpuStatesEnum::Isc, Box::new(Isc));
+        map.insert(CpuStatesEnum::Dcp, Box::new(Dcp));
+        map.insert(CpuStatesEnum::Slo, Box::new(Slo));
+        map.insert(CpuStatesEnum::Rla, Box::new(Rla));
+        map.insert(CpuStatesEnum::Sre, Box::new(Sre));
+        map.insert(CpuStatesEnum::Rra, Box::new(Rra));
+        map.insert(CpuStatesEnum::AslAcc, Box::new(AslAcc));
+        map.insert(CpuStatesEnum::AslMem, Box::new(AslMem));
+        map.insert(CpuStatesEnum::LsrAcc, Box::new(LsrAcc));
+        map.insert(CpuStatesEnum::LsrMem, Box::new(LsrMem));
+        map.insert(CpuStatesEnum::RolAcc, Box::new(RolAcc));
+        map.insert(CpuStatesEnum::RolMem, Box::new(RolMem));
+        map.insert(CpuStatesEnum::RorAcc, Box::new(RorAcc));
+        map.insert(CpuStatesEnum::RorMem, Box::new(RorMem));
+        map.insert(CpuStatesEnum::Pla, Box::new(Pla));
+        map.insert(CpuStatesEnum::Plp, Box::new(Plp));
+        map.insert(CpuStatesEnum::Pha, Box::new(Pha));
+        map.insert(CpuStatesEnum::Php, Box::new(Php));
+        map.insert(CpuStatesEnum::Sta, Box::new(Sta));
+        map.insert(CpuStatesEnum::Stx, Box::new(Stx));
+        map.insert(CpuStatesEnum::Sty, Box::new(Sty));
+        map.insert(CpuStatesEnum::Tax, Box::new(Tax));
+        map.insert(CpuStatesEnum::Tay, Box::new(Tay));
+        map.insert(CpuStatesEnum::Tsx, Box::new(Tsx));
+        map.insert(CpuStatesEnum::Txa, Box::new(Txa));
+        map.insert(CpuStatesEnum::Tya, Box::new(Tya));
+        map.insert(CpuStatesEnum::Txs, Box::new(Txs));
         let map = CpuStatesEnum::iter()
             .map(|x| map.remove(&x).unwrap())
             .collect();
@@ -402,12 +393,6 @@ impl CpuStates {
 }
 
 struct FetchOpCode;
-
-impl FetchOpCode {
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl CpuStepState for FetchOpCode {
     fn exec(

@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Relative;
 
-impl Relative {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Relative {
     fn exec(
         &mut self,

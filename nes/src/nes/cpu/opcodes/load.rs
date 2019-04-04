@@ -43,12 +43,6 @@ macro_rules! load {
     ($name:ident, $func:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Load for $name {
             fn setter(register: &mut Register, value: u8) {
                 ($func)(register, value);

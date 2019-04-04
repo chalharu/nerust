@@ -44,12 +44,6 @@ macro_rules! compare {
     ($name:ident, $comparer:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Compare for $name {
             fn comparer(register: &Register) -> u8 {
                 $comparer(register)

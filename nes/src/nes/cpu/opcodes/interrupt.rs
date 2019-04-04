@@ -6,15 +6,7 @@
 
 use super::*;
 
-pub(crate) struct Brk {
-    low: u8,
-}
-
-impl Brk {
-    pub fn new() -> Self {
-        Self { low: 0 }
-    }
-}
+pub(crate) struct Brk;
 
 impl CpuStepState for Brk {
     fn exec(
@@ -40,12 +32,19 @@ impl CpuStepState for Brk {
             2 => {
                 let pc = core.register.get_pc();
                 let hi = (pc >> 8) as u8;
-                self.low = (pc & 0xFF) as u8;
+                core.register.set_opdata((pc & 0xFF) as u8);
 
                 push(core, ppu, cartridge, controller, apu, hi);
             }
             3 => {
-                push(core, ppu, cartridge, controller, apu, self.low);
+                push(
+                    core,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    core.register.get_opdata(),
+                );
 
                 core.register.set_opaddr(if core.interrupt.nmi {
                     // core.interrupt.nmi = false;
@@ -60,14 +59,14 @@ impl CpuStepState for Brk {
             }
             5 => {
                 core.register.set_i(true);
-                self.low = core.memory.read(
+                core.register.set_opdata(core.memory.read(
                     core.register.get_opaddr(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
+                ));
             }
             6 => {
                 let hi = u16::from(core.memory.read(
@@ -78,7 +77,8 @@ impl CpuStepState for Brk {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_pc((hi << 8) | u16::from(self.low));
+                core.register
+                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
             }
             _ => {
                 core.interrupt.executing = false;
@@ -89,15 +89,7 @@ impl CpuStepState for Brk {
     }
 }
 
-pub(crate) struct Rti {
-    low: u8,
-}
-
-impl Rti {
-    pub fn new() -> Self {
-        Self { low: 0 }
-    }
-}
+pub(crate) struct Rti;
 
 impl CpuStepState for Rti {
     fn exec(
@@ -131,13 +123,13 @@ impl CpuStepState for Rti {
                     .set_p((p & !(RegisterP::BREAK.bits())) | RegisterP::RESERVED.bits());
             }
             4 => {
-                self.low = pull(core, ppu, cartridge, controller, apu);
+                let data = pull(core, ppu, cartridge, controller, apu);
+                core.register.set_opdata(data);
             }
             5 => {
                 let high = pull(core, ppu, cartridge, controller, apu);
-
                 core.register
-                    .set_pc(u16::from(self.low) | (u16::from(high) << 8));
+                    .set_pc(u16::from(core.register.get_opdata()) | (u16::from(high) << 8));
             }
             _ => {
                 return exit_opcode(core);
@@ -147,16 +139,7 @@ impl CpuStepState for Rti {
     }
 }
 
-pub(crate) struct Irq {
-    low: u8,
-    nmi: bool,
-}
-
-impl Irq {
-    pub fn new() -> Self {
-        Self { low: 0, nmi: false }
-    }
-}
+pub(crate) struct Irq;
 
 impl CpuStepState for Irq {
     fn exec(
@@ -179,12 +162,19 @@ impl CpuStepState for Irq {
             3 => {
                 let pc = core.register.get_pc();
                 let hi = (pc >> 8) as u8;
-                self.low = (pc & 0xFF) as u8;
+                core.register.set_opdata((pc & 0xFF) as u8);
                 push(core, ppu, cartridge, controller, apu, hi);
             }
             4 => {
-                push(core, ppu, cartridge, controller, apu, self.low);
-                self.nmi = core.interrupt.nmi;
+                push(
+                    core,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    core.register.get_opdata(),
+                );
+                core.register.set_interrupt(core.interrupt.nmi);
 
                 core.register.set_opaddr(if core.interrupt.nmi {
                     NMI_VECTOR
@@ -199,15 +189,15 @@ impl CpuStepState for Irq {
             }
             6 => {
                 core.register.set_i(true);
-                self.low = core.memory.read(
+                core.register.set_opdata(core.memory.read(
                     core.register.get_opaddr(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
-                if self.nmi {
+                ));
+                if core.register.get_interrupt() {
                     core.interrupt.nmi = false;
                 }
             }
@@ -220,7 +210,8 @@ impl CpuStepState for Irq {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_pc((hi << 8) | u16::from(self.low));
+                core.register
+                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
             }
             _ => {
                 core.interrupt.executing = false;
@@ -231,15 +222,7 @@ impl CpuStepState for Irq {
     }
 }
 
-pub(crate) struct Reset {
-    low: u8,
-}
-
-impl Reset {
-    pub fn new() -> Self {
-        Self { low: 0 }
-    }
-}
+pub(crate) struct Reset;
 
 impl CpuStepState for Reset {
     fn exec(
@@ -301,14 +284,14 @@ impl CpuStepState for Reset {
             }
             6 => {
                 core.register.set_i(true);
-                self.low = core.memory.read(
+                core.register.set_opdata(core.memory.read(
                     RESET_VECTOR,
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
+                ));
             }
             7 => {
                 let hi = u16::from(core.memory.read(
@@ -319,7 +302,8 @@ impl CpuStepState for Reset {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_pc((hi << 8) | u16::from(self.low));
+                core.register
+                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
                 core.interrupt.executing = false;
             }
             _ => {

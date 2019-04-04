@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Bit;
 
-impl Bit {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Bit {
     fn exec(
         &mut self,

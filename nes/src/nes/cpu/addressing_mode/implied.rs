@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Implied;
 
-impl Implied {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Implied {
     fn exec(
         &mut self,

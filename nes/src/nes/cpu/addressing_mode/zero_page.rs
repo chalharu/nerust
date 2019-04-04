@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct ZeroPage;
 
-impl ZeroPage {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for ZeroPage {
     fn exec(
         &mut self,

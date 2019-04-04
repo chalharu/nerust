@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Accumulator;
 
-impl Accumulator {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Accumulator {
     fn exec(
         &mut self,

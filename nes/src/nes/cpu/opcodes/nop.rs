@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Nop;
 
-impl Nop {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Nop {
     fn exec(
         &mut self,
@@ -39,12 +33,6 @@ impl CpuStepState for Nop {
 }
 
 pub(crate) struct Kil;
-
-impl Kil {
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl CpuStepState for Kil {
     fn exec(

@@ -50,12 +50,6 @@ macro_rules! pull {
     ($name:ident, $func:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Pull for $name {
             fn setter(register: &mut Register, value: u8) {
                 $func(register, value);
@@ -77,8 +71,6 @@ pull!(Plp, |r: &mut Register, v: u8| r.set_p(
 
 pub(crate) trait Push {
     fn getter(register: &Register) -> u8;
-    fn store(&mut self, value: u8);
-    fn load(&self) -> u8;
 
     fn exec_opcode(
         &mut self,
@@ -92,10 +84,17 @@ pub(crate) trait Push {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
-                self.store(Self::getter(&core.register));
+                core.register.set_opdata(Self::getter(&core.register));
             }
             2 => {
-                push(core, ppu, cartridge, controller, apu, self.load());
+                push(
+                    core,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    core.register.get_opdata(),
+                );
             }
             _ => {
                 return exit_opcode(core);
@@ -107,27 +106,11 @@ pub(crate) trait Push {
 
 macro_rules! push {
     ($name:ident, $func:expr) => {
-        pub(crate) struct $name {
-            data: u8,
-        }
-
-        impl $name {
-            pub fn new() -> Self {
-                Self { data: 0 }
-            }
-        }
+        pub(crate) struct $name;
 
         impl Push for $name {
             fn getter(register: &Register) -> u8 {
                 $func(register)
-            }
-
-            fn store(&mut self, value: u8) {
-                self.data = value;
-            }
-
-            fn load(&self) -> u8 {
-                self.data
             }
         }
 

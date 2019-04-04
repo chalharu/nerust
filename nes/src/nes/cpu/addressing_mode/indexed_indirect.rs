@@ -6,19 +6,7 @@
 
 use super::*;
 
-pub(crate) struct IndexedIndirect {
-    ind_address: usize,
-    address_low: u8,
-}
-
-impl IndexedIndirect {
-    pub fn new() -> Self {
-        Self {
-            ind_address: 0,
-            address_low: 0,
-        }
-    }
-}
+pub(crate) struct IndexedIndirect;
 
 impl CpuStepState for IndexedIndirect {
     fn exec(
@@ -32,9 +20,14 @@ impl CpuStepState for IndexedIndirect {
         match core.register.get_opstep() {
             1 => {
                 let pc = core.register.get_pc() as usize;
-                self.address_low =
-                    core.memory
-                        .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+                core.register.set_opdata(core.memory.read(
+                    pc,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
             }
             2 => {
                 let _ = core.memory.read_next(
@@ -45,22 +38,25 @@ impl CpuStepState for IndexedIndirect {
                     apu,
                     &mut core.interrupt,
                 );
-                self.ind_address =
-                    usize::from(self.address_low.wrapping_add(core.register.get_x()));
+                core.register.set_opaddr(usize::from(
+                    core.register
+                        .get_opdata()
+                        .wrapping_add(core.register.get_x()),
+                ));
             }
             3 => {
-                self.address_low = core.memory.read(
-                    self.ind_address,
+                core.register.set_opdata(core.memory.read(
+                    core.register.get_opaddr(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
+                ));
             }
             4 => {
                 let address_high = usize::from(core.memory.read(
-                    self.ind_address.wrapping_add(1) & 0xFF,
+                    core.register.get_opaddr().wrapping_add(1) & 0xFF,
                     ppu,
                     cartridge,
                     controller,
@@ -68,7 +64,7 @@ impl CpuStepState for IndexedIndirect {
                     &mut core.interrupt,
                 ));
                 core.register
-                    .set_opaddr((address_high << 8) | usize::from(self.address_low));
+                    .set_opaddr((address_high << 8) | usize::from(core.register.get_opdata()));
             }
             _ => {
                 return exit_addressing_mode(core);

@@ -41,12 +41,6 @@ macro_rules! read {
     ($name:ident, $reader:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Read for $name {
             fn reader(register: &mut Register, value: u8) {
                 $reader(register, value);
@@ -91,13 +85,7 @@ pub(crate) trait Write {
 
 macro_rules! write {
     ($name:ident, $writer:expr) => {
-        pub(crate) struct $name {}
-
-        impl $name {
-            pub fn new() -> Self {
-                Self {}
-            }
-        }
+        pub(crate) struct $name;
 
         impl Write for $name {
             fn writer(register: &mut Register) -> (u8, usize) {
