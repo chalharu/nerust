@@ -341,5 +341,5 @@ impl AddressingModeLut {
 }
 
 fn exit_addressing_mode(core: &mut Core) -> CpuStepStateEnum {
-    CpuStepStateEnum::Exit(core.opcode_tables.get(core.register.get_opcode()))
+    CpuStepStateEnum::Exit(core.opcode_tables.get(core.internal_stat.get_opcode()))
 }

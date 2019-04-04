@@ -16,7 +16,7 @@ impl CpuStepState for AbsoluteIndirect {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let addr = usize::from(core.memory.read_next(
                     &mut core.register,
@@ -26,7 +26,7 @@ impl CpuStepState for AbsoluteIndirect {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_op_tempaddr(addr);
+                core.internal_stat.set_tempaddr(addr);
             }
             2 => {
                 let address_high = usize::from(core.memory.read_next(
@@ -37,32 +37,32 @@ impl CpuStepState for AbsoluteIndirect {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register
-                    .set_opaddr((address_high << 8) | core.register.get_op_tempaddr());
+                core.internal_stat
+                    .set_address((address_high << 8) | core.internal_stat.get_tempaddr());
             }
             3 => {
                 let addr = usize::from(core.memory.read(
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_op_tempaddr(addr);
+                core.internal_stat.set_tempaddr(addr);
             }
             4 => {
                 let address_high = usize::from(core.memory.read(
-                    (core.register.get_opaddr().wrapping_add(1) & 0xFF)
-                        | (core.register.get_opaddr() & 0xFF00),
+                    (core.internal_stat.get_address().wrapping_add(1) & 0xFF)
+                        | (core.internal_stat.get_address() & 0xFF00),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register
-                    .set_opaddr((address_high << 8) | core.register.get_op_tempaddr());
+                core.internal_stat
+                    .set_address((address_high << 8) | core.internal_stat.get_tempaddr());
             }
             _ => {
                 return exit_addressing_mode(core);

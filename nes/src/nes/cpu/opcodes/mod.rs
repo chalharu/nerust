@@ -113,7 +113,7 @@ pub(crate) trait Accumulate {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -139,10 +139,10 @@ pub(crate) trait AccumulateMemory {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
-                core.register.set_opdata(core.memory.read(
-                    core.register.get_opaddr(),
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
@@ -151,12 +151,12 @@ pub(crate) trait AccumulateMemory {
                 ));
             }
             2 => {
-                let data = core.register.get_opdata();
+                let data = core.internal_stat.get_data();
                 let result = (Self::calculator)(&mut core.register, data);
-                core.register.set_opdata(result);
+                core.internal_stat.set_data(result);
                 // dummy write
                 core.memory.write(
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     data,
                     ppu,
                     cartridge,
@@ -167,8 +167,8 @@ pub(crate) trait AccumulateMemory {
             }
             3 => {
                 core.memory.write(
-                    core.register.get_opaddr(),
-                    core.register.get_opdata(),
+                    core.internal_stat.get_address(),
+                    core.internal_stat.get_data(),
                     ppu,
                     cartridge,
                     controller,

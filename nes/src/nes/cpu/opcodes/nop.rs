@@ -16,7 +16,7 @@ impl CpuStepState for Nop {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let pc = core.register.get_pc() as usize;
                 let _ = core
@@ -41,7 +41,7 @@ impl CpuStepState for Kil {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 | 2 => {
                 let pc = core.register.get_pc() as usize;
                 let _ = core

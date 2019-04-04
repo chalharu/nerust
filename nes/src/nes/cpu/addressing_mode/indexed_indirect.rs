@@ -16,10 +16,10 @@ impl CpuStepState for IndexedIndirect {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let pc = core.register.get_pc() as usize;
-                core.register.set_opdata(core.memory.read(
+                core.internal_stat.set_data(core.memory.read(
                     pc,
                     ppu,
                     cartridge,
@@ -37,15 +37,15 @@ impl CpuStepState for IndexedIndirect {
                     apu,
                     &mut core.interrupt,
                 );
-                core.register.set_opaddr(usize::from(
-                    core.register
-                        .get_opdata()
+                core.internal_stat.set_address(usize::from(
+                    core.internal_stat
+                        .get_data()
                         .wrapping_add(core.register.get_x()),
                 ));
             }
             3 => {
-                core.register.set_opdata(core.memory.read(
-                    core.register.get_opaddr(),
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
@@ -55,15 +55,15 @@ impl CpuStepState for IndexedIndirect {
             }
             4 => {
                 let address_high = usize::from(core.memory.read(
-                    core.register.get_opaddr().wrapping_add(1) & 0xFF,
+                    core.internal_stat.get_address().wrapping_add(1) & 0xFF,
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register
-                    .set_opaddr((address_high << 8) | usize::from(core.register.get_opdata()));
+                core.internal_stat
+                    .set_address((address_high << 8) | usize::from(core.internal_stat.get_data()));
             }
             _ => {
                 return exit_addressing_mode(core);

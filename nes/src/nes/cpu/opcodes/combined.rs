@@ -16,10 +16,10 @@ pub(crate) trait Read {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let data = core.memory.read(
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
@@ -51,7 +51,7 @@ macro_rules! read {
 }
 
 pub(crate) trait Write {
-    fn writer(register: &mut Register) -> (u8, usize);
+    fn writer(register: &mut Register, internal_stat: &InternalStat) -> (u8, usize);
 
     fn exec_opcode(
         core: &mut Core,
@@ -60,9 +60,9 @@ pub(crate) trait Write {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
-                let (data, address) = Self::writer(&mut core.register);
+                let (data, address) = Self::writer(&mut core.register, &core.internal_stat);
                 core.memory.write(
                     address,
                     data,
@@ -86,8 +86,8 @@ macro_rules! write {
         pub(crate) struct $name;
 
         impl Write for $name {
-            fn writer(register: &mut Register) -> (u8, usize) {
-                $writer(register)
+            fn writer(register: &mut Register, internal_stat: &InternalStat) -> (u8, usize) {
+                $writer(register, internal_stat)
             }
         }
 
@@ -150,28 +150,28 @@ read!(Axs, |r: &mut Register, v: u8| {
     r.set_c(d <= 0xFF);
 });
 
-write!(Sax, |r: &mut Register| (
+write!(Sax, |r: &mut Register, i: &InternalStat| (
     r.get_a() & r.get_x(),
-    r.get_opaddr()
+    i.get_address()
 ));
 
-write!(Tas, |r: &mut Register| {
+write!(Tas, |r: &mut Register, i: &InternalStat| {
     let sp = r.get_a() & r.get_x();
     r.set_sp(sp);
     (
         sp & ((r.get_pc() >> 8) as u8).wrapping_add(1),
-        r.get_opaddr(),
+        i.get_address(),
     )
 });
 
-write!(Ahx, |r: &mut Register| {
-    let address = r.get_opaddr();
+write!(Ahx, |r: &mut Register, i: &InternalStat| {
+    let address = i.get_address();
     let high = ((address >> 8) as u8).wrapping_add(1);
     (r.get_a() & r.get_x() & high, address)
 });
 
-write!(Shx, |r: &mut Register| {
-    let address = r.get_opaddr();
+write!(Shx, |r: &mut Register, i: &InternalStat| {
+    let address = i.get_address();
     let high = ((address >> 8) as u8).wrapping_add(1);
     let low = address & 0xFF;
     let value = r.get_x() & high;
@@ -179,8 +179,8 @@ write!(Shx, |r: &mut Register| {
     (value, new_addr)
 });
 
-write!(Shy, |r: &mut Register| {
-    let address = r.get_opaddr();
+write!(Shy, |r: &mut Register, i: &InternalStat| {
+    let address = i.get_address();
     let high = ((address >> 8) as u8).wrapping_add(1);
     let low = address & 0xFF;
     let value = r.get_y() & high;

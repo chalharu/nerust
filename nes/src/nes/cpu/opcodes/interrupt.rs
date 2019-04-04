@@ -16,7 +16,7 @@ impl CpuStepState for Brk {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 core.memory.read_next(
@@ -31,7 +31,7 @@ impl CpuStepState for Brk {
             2 => {
                 let pc = core.register.get_pc();
                 let hi = (pc >> 8) as u8;
-                core.register.set_opdata((pc & 0xFF) as u8);
+                core.internal_stat.set_data((pc & 0xFF) as u8);
 
                 push(core, ppu, cartridge, controller, apu, hi);
             }
@@ -42,10 +42,10 @@ impl CpuStepState for Brk {
                     cartridge,
                     controller,
                     apu,
-                    core.register.get_opdata(),
+                    core.internal_stat.get_data(),
                 );
 
-                core.register.set_opaddr(if core.interrupt.nmi {
+                core.internal_stat.set_address(if core.interrupt.nmi {
                     // core.interrupt.nmi = false;
                     NMI_VECTOR
                 } else {
@@ -58,8 +58,8 @@ impl CpuStepState for Brk {
             }
             5 => {
                 core.register.set_i(true);
-                core.register.set_opdata(core.memory.read(
-                    core.register.get_opaddr(),
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
@@ -69,7 +69,7 @@ impl CpuStepState for Brk {
             }
             6 => {
                 let hi = u16::from(core.memory.read(
-                    core.register.get_opaddr() + 1,
+                    core.internal_stat.get_address() + 1,
                     ppu,
                     cartridge,
                     controller,
@@ -77,7 +77,7 @@ impl CpuStepState for Brk {
                     &mut core.interrupt,
                 ));
                 core.register
-                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
+                    .set_pc((hi << 8) | u16::from(core.internal_stat.get_data()));
             }
             _ => {
                 core.interrupt.executing = false;
@@ -98,7 +98,7 @@ impl CpuStepState for Rti {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -122,12 +122,12 @@ impl CpuStepState for Rti {
             }
             4 => {
                 let data = pull(core, ppu, cartridge, controller, apu);
-                core.register.set_opdata(data);
+                core.internal_stat.set_data(data);
             }
             5 => {
                 let high = pull(core, ppu, cartridge, controller, apu);
                 core.register
-                    .set_pc(u16::from(core.register.get_opdata()) | (u16::from(high) << 8));
+                    .set_pc(u16::from(core.internal_stat.get_data()) | (u16::from(high) << 8));
             }
             _ => {
                 return exit_opcode(core);
@@ -147,7 +147,7 @@ impl CpuStepState for Irq {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -159,7 +159,7 @@ impl CpuStepState for Irq {
             3 => {
                 let pc = core.register.get_pc();
                 let hi = (pc >> 8) as u8;
-                core.register.set_opdata((pc & 0xFF) as u8);
+                core.internal_stat.set_data((pc & 0xFF) as u8);
                 push(core, ppu, cartridge, controller, apu, hi);
             }
             4 => {
@@ -169,11 +169,11 @@ impl CpuStepState for Irq {
                     cartridge,
                     controller,
                     apu,
-                    core.register.get_opdata(),
+                    core.internal_stat.get_data(),
                 );
-                core.register.set_interrupt(core.interrupt.nmi);
+                core.internal_stat.set_interrupt(core.interrupt.nmi);
 
-                core.register.set_opaddr(if core.interrupt.nmi {
+                core.internal_stat.set_address(if core.interrupt.nmi {
                     NMI_VECTOR
                 } else {
                     IRQ_VECTOR
@@ -186,21 +186,21 @@ impl CpuStepState for Irq {
             }
             6 => {
                 core.register.set_i(true);
-                core.register.set_opdata(core.memory.read(
-                    core.register.get_opaddr(),
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                if core.register.get_interrupt() {
+                if core.internal_stat.get_interrupt() {
                     core.interrupt.nmi = false;
                 }
             }
             7 => {
                 let hi = u16::from(core.memory.read(
-                    core.register.get_opaddr() + 1,
+                    core.internal_stat.get_address() + 1,
                     ppu,
                     cartridge,
                     controller,
@@ -208,7 +208,7 @@ impl CpuStepState for Irq {
                     &mut core.interrupt,
                 ));
                 core.register
-                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
+                    .set_pc((hi << 8) | u16::from(core.internal_stat.get_data()));
             }
             _ => {
                 core.interrupt.executing = false;
@@ -229,7 +229,7 @@ impl CpuStepState for Reset {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -280,7 +280,7 @@ impl CpuStepState for Reset {
             }
             6 => {
                 core.register.set_i(true);
-                core.register.set_opdata(core.memory.read(
+                core.internal_stat.set_data(core.memory.read(
                     RESET_VECTOR,
                     ppu,
                     cartridge,
@@ -299,7 +299,7 @@ impl CpuStepState for Reset {
                     &mut core.interrupt,
                 ));
                 core.register
-                    .set_pc((hi << 8) | u16::from(core.register.get_opdata()));
+                    .set_pc((hi << 8) | u16::from(core.internal_stat.get_data()));
                 core.interrupt.executing = false;
             }
             _ => {

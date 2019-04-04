@@ -16,7 +16,7 @@ impl CpuStepState for IndirectIndexed {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let addr = usize::from(core.memory.read_next(
                     &mut core.register,
@@ -26,11 +26,11 @@ impl CpuStepState for IndirectIndexed {
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register.set_op_tempaddr(addr);
+                core.internal_stat.set_tempaddr(addr);
             }
             2 => {
-                core.register.set_opdata(core.memory.read(
-                    core.register.get_op_tempaddr(),
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_tempaddr(),
                     ppu,
                     cartridge,
                     controller,
@@ -40,30 +40,33 @@ impl CpuStepState for IndirectIndexed {
             }
             3 => {
                 let address_high = usize::from(core.memory.read(
-                    core.register.get_op_tempaddr().wrapping_add(1) & 0xFF,
+                    core.internal_stat.get_tempaddr().wrapping_add(1) & 0xFF,
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                core.register
-                    .set_op_tempaddr((address_high << 8) | usize::from(core.register.get_opdata()));
-                core.register.set_opaddr(
-                    core.register
-                        .get_op_tempaddr()
+                core.internal_stat
+                    .set_tempaddr((address_high << 8) | usize::from(core.internal_stat.get_data()));
+                core.internal_stat.set_address(
+                    core.internal_stat
+                        .get_tempaddr()
                         .wrapping_add(usize::from(core.register.get_y()))
                         & 0xFFFF,
                 );
             }
             4 => {
-                if !page_crossed(core.register.get_op_tempaddr(), core.register.get_opaddr()) {
+                if !page_crossed(
+                    core.internal_stat.get_tempaddr(),
+                    core.internal_stat.get_address(),
+                ) {
                     return exit_addressing_mode(core);
                 }
                 // dummy read
                 core.memory.read_dummy_cross(
-                    core.register.get_op_tempaddr(),
-                    core.register.get_opaddr(),
+                    core.internal_stat.get_tempaddr(),
+                    core.internal_stat.get_address(),
                     ppu,
                     cartridge,
                     controller,

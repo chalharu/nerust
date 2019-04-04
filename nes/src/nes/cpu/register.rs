@@ -20,14 +20,6 @@ pub(crate) struct Register {
     r: bool, // 0x20
     v: bool, // 0x40
     n: bool, // 0x80
-
-    opcode: usize,
-    opaddr: usize,
-    opstep: usize,
-    op_tempaddr: usize,
-    opdata: u8,
-    crossed: bool,
-    interrupt: bool,
 }
 
 bitflags! {
@@ -60,15 +52,6 @@ impl Register {
             r: true,  // 0x20
             v: false, // 0x40
             n: false, // 0x80
-
-            // inner state
-            opcode: 0,
-            opaddr: 0,
-            opstep: 0,
-            op_tempaddr: 0,
-            opdata: 0,
-            crossed: false,
-            interrupt: false,
         }
     }
 
@@ -195,61 +178,5 @@ impl Register {
     pub fn set_nz_from_value(&mut self, value: u8) {
         self.set_z_from_value(value);
         self.set_n_from_value(value);
-    }
-
-    pub fn set_opcode(&mut self, value: usize) {
-        self.opcode = value;
-    }
-
-    pub fn get_opcode(&self) -> usize {
-        self.opcode
-    }
-
-    pub fn set_opaddr(&mut self, value: usize) {
-        self.opaddr = value;
-    }
-
-    pub fn get_opaddr(&self) -> usize {
-        self.opaddr
-    }
-
-    pub fn set_opstep(&mut self, value: usize) {
-        self.opstep = value;
-    }
-
-    pub fn get_opstep(&self) -> usize {
-        self.opstep
-    }
-
-    pub fn set_op_tempaddr(&mut self, value: usize) {
-        self.op_tempaddr = value;
-    }
-
-    pub fn get_op_tempaddr(&self) -> usize {
-        self.op_tempaddr
-    }
-
-    pub fn set_opdata(&mut self, value: u8) {
-        self.opdata = value;
-    }
-
-    pub fn get_opdata(&self) -> u8 {
-        self.opdata
-    }
-
-    pub fn set_interrupt(&mut self, value: bool) {
-        self.interrupt = value;
-    }
-
-    pub fn get_interrupt(&self) -> bool {
-        self.interrupt
-    }
-
-    pub fn set_crossed(&mut self, value: bool) {
-        self.crossed = value;
-    }
-
-    pub fn get_crossed(&self) -> bool {
-        self.crossed
     }
 }

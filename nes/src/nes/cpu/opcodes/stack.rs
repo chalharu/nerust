@@ -16,7 +16,7 @@ pub(crate) trait Pull {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
@@ -78,11 +78,11 @@ pub(crate) trait Push {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
-                core.register.set_opdata(Self::getter(&core.register));
+                core.internal_stat.set_data(Self::getter(&core.register));
             }
             2 => {
                 push(
@@ -91,7 +91,7 @@ pub(crate) trait Push {
                     cartridge,
                     controller,
                     apu,
-                    core.register.get_opdata(),
+                    core.internal_stat.get_data(),
                 );
             }
             _ => {

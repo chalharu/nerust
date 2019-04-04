@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod addressing_mode;
+mod internal_stat;
 pub mod interrupt;
 mod memory;
 mod oamdma;
@@ -12,6 +13,7 @@ mod opcodes;
 mod register;
 
 use self::addressing_mode::*;
+use self::internal_stat::InternalStat;
 use self::interrupt::{Interrupt, IrqSource};
 use self::memory::Memory;
 use self::oamdma::OamDmaState;
@@ -42,6 +44,7 @@ pub(crate) struct Core {
     addressing_tables: AddressingModeLut,
     memory: Memory,
     register: Register,
+    internal_stat: InternalStat,
     pub(crate) interrupt: Interrupt,
     cycles: u64,
     oam_dma: Option<OamDmaState>,
@@ -54,6 +57,7 @@ impl Core {
             opcode_tables: Opcodes::new(),
             addressing_tables: AddressingModeLut::new(),
             register: Register::new(),
+            internal_stat: InternalStat::new(),
             interrupt: Interrupt::new(),
             memory: Memory::new(),
             cycles: 0,
@@ -67,7 +71,7 @@ impl Core {
         self.oam_dma.as_mut().unwrap().reset();
         self.cpu_states.as_mut().unwrap().reset();
         self.cycles = 0;
-        self.register.set_opstep(1);
+        self.internal_stat.set_step(1);
     }
 
     pub fn step(
@@ -381,11 +385,11 @@ impl CpuStates {
         apu: &mut Apu,
     ) {
         let mut machine = &mut self.map[self.state as usize];
-        let step = core.register.get_opstep() + 1;
-        core.register.set_opstep(step);
+        let step = core.internal_stat.get_step() + 1;
+        core.internal_stat.set_step(step);
         while let CpuStepStateEnum::Exit(s) = machine(core, ppu, cartridge, controller, apu) {
             self.state = s;
-            core.register.set_opstep(1);
+            core.internal_stat.set_step(1);
             machine = &mut self.map[self.state as usize];
         }
     }
@@ -401,7 +405,7 @@ impl CpuStepState for FetchOpCode {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        if core.register.get_opstep() == 1 {
+        if core.internal_stat.get_step() == 1 {
             let code = usize::from(core.memory.read_next(
                 &mut core.register,
                 ppu,
@@ -410,10 +414,10 @@ impl CpuStepState for FetchOpCode {
                 apu,
                 &mut core.interrupt,
             ));
-            core.register.set_opcode(code);
+            core.internal_stat.set_opcode(code);
             CpuStepStateEnum::Continue
         } else {
-            CpuStepStateEnum::Exit(core.addressing_tables.get(core.register.get_opcode()))
+            CpuStepStateEnum::Exit(core.addressing_tables.get(core.internal_stat.get_opcode()))
         }
     }
 }

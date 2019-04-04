@@ -16,7 +16,7 @@ impl CpuStepState for Relative {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
                 let offset = u16::from(core.memory.read_next(
                     &mut core.register,
@@ -27,12 +27,11 @@ impl CpuStepState for Relative {
                     &mut core.interrupt,
                 ));
                 let pc = core.register.get_pc();
-                core.register
-                    .set_opaddr(pc.wrapping_add(offset).wrapping_sub(if offset < 0x80 {
-                        0
-                    } else {
-                        0x100
-                    }) as usize);
+                core.internal_stat.set_address(
+                    pc.wrapping_add(offset)
+                        .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 })
+                        as usize,
+                );
             }
             _ => {
                 return exit_addressing_mode(core);

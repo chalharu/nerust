@@ -39,23 +39,24 @@ pub(crate) trait ConditionJump {
         controller: &mut Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        match core.register.get_opstep() {
+        match core.internal_stat.get_step() {
             1 => {
-                core.register.set_crossed(true);
-                core.register.set_interrupt(core.interrupt.executing);
+                core.internal_stat.set_crossed(true);
+                core.internal_stat.set_interrupt(core.interrupt.executing);
                 if !Self::condition(&core.register) {
                     return exit_opcode(core);
                 }
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
                 let pc = core.register.get_pc() as usize;
-                core.register
-                    .set_crossed(page_crossed(core.register.get_opaddr(), pc));
+                core.internal_stat
+                    .set_crossed(page_crossed(core.internal_stat.get_address(), pc));
             }
             2 => {
-                if !core.register.get_crossed() {
-                    core.register.set_pc(core.register.get_opaddr() as u16);
-                    if !core.register.get_interrupt() {
+                if !core.internal_stat.get_crossed() {
+                    core.register
+                        .set_pc(core.internal_stat.get_address() as u16);
+                    if !core.internal_stat.get_interrupt() {
                         core.interrupt.executing = false;
                     }
                     return exit_opcode(core);
@@ -63,7 +64,8 @@ pub(crate) trait ConditionJump {
                 // dummy read
                 read_dummy_current(core, ppu, cartridge, controller, apu);
 
-                core.register.set_pc(core.register.get_opaddr() as u16);
+                core.register
+                    .set_pc(core.internal_stat.get_address() as u16);
             }
             _ => {
                 return exit_opcode(core);
