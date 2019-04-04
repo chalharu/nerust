@@ -10,7 +10,6 @@ pub(crate) struct AbsoluteX;
 
 impl CpuStepState for AbsoluteX {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

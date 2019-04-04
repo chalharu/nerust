@@ -140,7 +140,6 @@ pub(crate) enum CpuStepStateEnum {
 
 pub(crate) trait CpuStepState {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -251,115 +250,115 @@ pub(crate) enum CpuStatesEnum {
     Txs,
 }
 
+type CpuStepStateFunc =
+    fn(&mut Core, &mut Ppu, &mut Cartridge, &mut Controller, &mut Apu) -> CpuStepStateEnum;
+
 pub(crate) struct CpuStates {
     state: CpuStatesEnum,
-    map: Vec<Box<CpuStepState>>,
+    map: Vec<CpuStepStateFunc>,
 }
 
 impl CpuStates {
     pub fn new() -> Self {
-        let mut map: HashMap<CpuStatesEnum, Box<CpuStepState>> = HashMap::new();
-        map.insert(CpuStatesEnum::Reset, Box::new(Reset));
-        map.insert(CpuStatesEnum::FetchOpCode, Box::new(FetchOpCode));
-        map.insert(CpuStatesEnum::Irq, Box::new(Irq));
-        map.insert(CpuStatesEnum::AbsoluteIndirect, Box::new(AbsoluteIndirect));
-        map.insert(CpuStatesEnum::AbsoluteXRMW, Box::new(AbsoluteXRMW));
-        map.insert(CpuStatesEnum::AbsoluteX, Box::new(AbsoluteX));
-        map.insert(CpuStatesEnum::AbsoluteYRMW, Box::new(AbsoluteYRMW));
-        map.insert(CpuStatesEnum::AbsoluteY, Box::new(AbsoluteY));
-        map.insert(CpuStatesEnum::Absolute, Box::new(Absolute));
-        map.insert(CpuStatesEnum::Accumulator, Box::new(Accumulator));
-        map.insert(CpuStatesEnum::Immediate, Box::new(Immediate));
-        map.insert(CpuStatesEnum::Implied, Box::new(Implied));
-        map.insert(CpuStatesEnum::IndexedIndirect, Box::new(IndexedIndirect));
-        map.insert(
-            CpuStatesEnum::IndirectIndexedRMW,
-            Box::new(IndirectIndexedRMW),
-        );
-        map.insert(CpuStatesEnum::IndirectIndexed, Box::new(IndirectIndexed));
-        map.insert(CpuStatesEnum::Relative, Box::new(Relative));
-        map.insert(CpuStatesEnum::ZeroPageX, Box::new(ZeroPageX));
-        map.insert(CpuStatesEnum::ZeroPageY, Box::new(ZeroPageY));
-        map.insert(CpuStatesEnum::ZeroPage, Box::new(ZeroPage));
-        map.insert(CpuStatesEnum::And, Box::new(And));
-        map.insert(CpuStatesEnum::Eor, Box::new(Eor));
-        map.insert(CpuStatesEnum::Ora, Box::new(Ora));
-        map.insert(CpuStatesEnum::Adc, Box::new(Adc));
-        map.insert(CpuStatesEnum::Sbc, Box::new(Sbc));
-        map.insert(CpuStatesEnum::Bit, Box::new(Bit));
-        map.insert(CpuStatesEnum::Lax, Box::new(Lax));
-        map.insert(CpuStatesEnum::Anc, Box::new(Anc));
-        map.insert(CpuStatesEnum::Alr, Box::new(Alr));
-        map.insert(CpuStatesEnum::Arr, Box::new(Arr));
-        map.insert(CpuStatesEnum::Xaa, Box::new(Xaa));
-        map.insert(CpuStatesEnum::Las, Box::new(Las));
-        map.insert(CpuStatesEnum::Axs, Box::new(Axs));
-        map.insert(CpuStatesEnum::Sax, Box::new(Sax));
-        map.insert(CpuStatesEnum::Tas, Box::new(Tas));
-        map.insert(CpuStatesEnum::Ahx, Box::new(Ahx));
-        map.insert(CpuStatesEnum::Shx, Box::new(Shx));
-        map.insert(CpuStatesEnum::Shy, Box::new(Shy));
-        map.insert(CpuStatesEnum::Cmp, Box::new(Cmp));
-        map.insert(CpuStatesEnum::Cpx, Box::new(Cpx));
-        map.insert(CpuStatesEnum::Cpy, Box::new(Cpy));
-        map.insert(CpuStatesEnum::Bcc, Box::new(Bcc));
-        map.insert(CpuStatesEnum::Bcs, Box::new(Bcs));
-        map.insert(CpuStatesEnum::Beq, Box::new(Beq));
-        map.insert(CpuStatesEnum::Bmi, Box::new(Bmi));
-        map.insert(CpuStatesEnum::Bne, Box::new(Bne));
-        map.insert(CpuStatesEnum::Bpl, Box::new(Bpl));
-        map.insert(CpuStatesEnum::Bvc, Box::new(Bvc));
-        map.insert(CpuStatesEnum::Bvs, Box::new(Bvs));
-        map.insert(CpuStatesEnum::Dex, Box::new(Dex));
-        map.insert(CpuStatesEnum::Dey, Box::new(Dey));
-        map.insert(CpuStatesEnum::Dec, Box::new(Dec));
-        map.insert(CpuStatesEnum::Clc, Box::new(Clc));
-        map.insert(CpuStatesEnum::Cld, Box::new(Cld));
-        map.insert(CpuStatesEnum::Cli, Box::new(Cli));
-        map.insert(CpuStatesEnum::Clv, Box::new(Clv));
-        map.insert(CpuStatesEnum::Sec, Box::new(Sec));
-        map.insert(CpuStatesEnum::Sed, Box::new(Sed));
-        map.insert(CpuStatesEnum::Sei, Box::new(Sei));
-        map.insert(CpuStatesEnum::Inx, Box::new(Inx));
-        map.insert(CpuStatesEnum::Iny, Box::new(Iny));
-        map.insert(CpuStatesEnum::Inc, Box::new(Inc));
-        map.insert(CpuStatesEnum::Brk, Box::new(Brk));
-        map.insert(CpuStatesEnum::Rti, Box::new(Rti));
-        map.insert(CpuStatesEnum::Rts, Box::new(Rts));
-        map.insert(CpuStatesEnum::Jmp, Box::new(Jmp));
-        map.insert(CpuStatesEnum::Jsr, Box::new(Jsr));
-        map.insert(CpuStatesEnum::Lda, Box::new(Lda));
-        map.insert(CpuStatesEnum::Ldx, Box::new(Ldx));
-        map.insert(CpuStatesEnum::Ldy, Box::new(Ldy));
-        map.insert(CpuStatesEnum::Nop, Box::new(Nop));
-        map.insert(CpuStatesEnum::Kil, Box::new(Kil));
-        map.insert(CpuStatesEnum::Isc, Box::new(Isc));
-        map.insert(CpuStatesEnum::Dcp, Box::new(Dcp));
-        map.insert(CpuStatesEnum::Slo, Box::new(Slo));
-        map.insert(CpuStatesEnum::Rla, Box::new(Rla));
-        map.insert(CpuStatesEnum::Sre, Box::new(Sre));
-        map.insert(CpuStatesEnum::Rra, Box::new(Rra));
-        map.insert(CpuStatesEnum::AslAcc, Box::new(AslAcc));
-        map.insert(CpuStatesEnum::AslMem, Box::new(AslMem));
-        map.insert(CpuStatesEnum::LsrAcc, Box::new(LsrAcc));
-        map.insert(CpuStatesEnum::LsrMem, Box::new(LsrMem));
-        map.insert(CpuStatesEnum::RolAcc, Box::new(RolAcc));
-        map.insert(CpuStatesEnum::RolMem, Box::new(RolMem));
-        map.insert(CpuStatesEnum::RorAcc, Box::new(RorAcc));
-        map.insert(CpuStatesEnum::RorMem, Box::new(RorMem));
-        map.insert(CpuStatesEnum::Pla, Box::new(Pla));
-        map.insert(CpuStatesEnum::Plp, Box::new(Plp));
-        map.insert(CpuStatesEnum::Pha, Box::new(Pha));
-        map.insert(CpuStatesEnum::Php, Box::new(Php));
-        map.insert(CpuStatesEnum::Sta, Box::new(Sta));
-        map.insert(CpuStatesEnum::Stx, Box::new(Stx));
-        map.insert(CpuStatesEnum::Sty, Box::new(Sty));
-        map.insert(CpuStatesEnum::Tax, Box::new(Tax));
-        map.insert(CpuStatesEnum::Tay, Box::new(Tay));
-        map.insert(CpuStatesEnum::Tsx, Box::new(Tsx));
-        map.insert(CpuStatesEnum::Txa, Box::new(Txa));
-        map.insert(CpuStatesEnum::Tya, Box::new(Tya));
-        map.insert(CpuStatesEnum::Txs, Box::new(Txs));
+        let mut map: HashMap<CpuStatesEnum, CpuStepStateFunc> = HashMap::new();
+        map.insert(CpuStatesEnum::Reset, Reset::exec);
+        map.insert(CpuStatesEnum::FetchOpCode, FetchOpCode::exec);
+        map.insert(CpuStatesEnum::Irq, Irq::exec);
+        map.insert(CpuStatesEnum::AbsoluteIndirect, AbsoluteIndirect::exec);
+        map.insert(CpuStatesEnum::AbsoluteXRMW, AbsoluteXRMW::exec);
+        map.insert(CpuStatesEnum::AbsoluteX, AbsoluteX::exec);
+        map.insert(CpuStatesEnum::AbsoluteYRMW, AbsoluteYRMW::exec);
+        map.insert(CpuStatesEnum::AbsoluteY, AbsoluteY::exec);
+        map.insert(CpuStatesEnum::Absolute, Absolute::exec);
+        map.insert(CpuStatesEnum::Accumulator, Accumulator::exec);
+        map.insert(CpuStatesEnum::Immediate, Immediate::exec);
+        map.insert(CpuStatesEnum::Implied, Implied::exec);
+        map.insert(CpuStatesEnum::IndexedIndirect, IndexedIndirect::exec);
+        map.insert(CpuStatesEnum::IndirectIndexedRMW, IndirectIndexedRMW::exec);
+        map.insert(CpuStatesEnum::IndirectIndexed, IndirectIndexed::exec);
+        map.insert(CpuStatesEnum::Relative, Relative::exec);
+        map.insert(CpuStatesEnum::ZeroPageX, ZeroPageX::exec);
+        map.insert(CpuStatesEnum::ZeroPageY, ZeroPageY::exec);
+        map.insert(CpuStatesEnum::ZeroPage, ZeroPage::exec);
+        map.insert(CpuStatesEnum::And, And::exec);
+        map.insert(CpuStatesEnum::Eor, Eor::exec);
+        map.insert(CpuStatesEnum::Ora, Ora::exec);
+        map.insert(CpuStatesEnum::Adc, Adc::exec);
+        map.insert(CpuStatesEnum::Sbc, Sbc::exec);
+        map.insert(CpuStatesEnum::Bit, Bit::exec);
+        map.insert(CpuStatesEnum::Lax, Lax::exec);
+        map.insert(CpuStatesEnum::Anc, Anc::exec);
+        map.insert(CpuStatesEnum::Alr, Alr::exec);
+        map.insert(CpuStatesEnum::Arr, Arr::exec);
+        map.insert(CpuStatesEnum::Xaa, Xaa::exec);
+        map.insert(CpuStatesEnum::Las, Las::exec);
+        map.insert(CpuStatesEnum::Axs, Axs::exec);
+        map.insert(CpuStatesEnum::Sax, Sax::exec);
+        map.insert(CpuStatesEnum::Tas, Tas::exec);
+        map.insert(CpuStatesEnum::Ahx, Ahx::exec);
+        map.insert(CpuStatesEnum::Shx, Shx::exec);
+        map.insert(CpuStatesEnum::Shy, Shy::exec);
+        map.insert(CpuStatesEnum::Cmp, Cmp::exec);
+        map.insert(CpuStatesEnum::Cpx, Cpx::exec);
+        map.insert(CpuStatesEnum::Cpy, Cpy::exec);
+        map.insert(CpuStatesEnum::Bcc, Bcc::exec);
+        map.insert(CpuStatesEnum::Bcs, Bcs::exec);
+        map.insert(CpuStatesEnum::Beq, Beq::exec);
+        map.insert(CpuStatesEnum::Bmi, Bmi::exec);
+        map.insert(CpuStatesEnum::Bne, Bne::exec);
+        map.insert(CpuStatesEnum::Bpl, Bpl::exec);
+        map.insert(CpuStatesEnum::Bvc, Bvc::exec);
+        map.insert(CpuStatesEnum::Bvs, Bvs::exec);
+        map.insert(CpuStatesEnum::Dex, Dex::exec);
+        map.insert(CpuStatesEnum::Dey, Dey::exec);
+        map.insert(CpuStatesEnum::Dec, Dec::exec);
+        map.insert(CpuStatesEnum::Clc, Clc::exec);
+        map.insert(CpuStatesEnum::Cld, Cld::exec);
+        map.insert(CpuStatesEnum::Cli, Cli::exec);
+        map.insert(CpuStatesEnum::Clv, Clv::exec);
+        map.insert(CpuStatesEnum::Sec, Sec::exec);
+        map.insert(CpuStatesEnum::Sed, Sed::exec);
+        map.insert(CpuStatesEnum::Sei, Sei::exec);
+        map.insert(CpuStatesEnum::Inx, Inx::exec);
+        map.insert(CpuStatesEnum::Iny, Iny::exec);
+        map.insert(CpuStatesEnum::Inc, Inc::exec);
+        map.insert(CpuStatesEnum::Brk, Brk::exec);
+        map.insert(CpuStatesEnum::Rti, Rti::exec);
+        map.insert(CpuStatesEnum::Rts, Rts::exec);
+        map.insert(CpuStatesEnum::Jmp, Jmp::exec);
+        map.insert(CpuStatesEnum::Jsr, Jsr::exec);
+        map.insert(CpuStatesEnum::Lda, Lda::exec);
+        map.insert(CpuStatesEnum::Ldx, Ldx::exec);
+        map.insert(CpuStatesEnum::Ldy, Ldy::exec);
+        map.insert(CpuStatesEnum::Nop, Nop::exec);
+        map.insert(CpuStatesEnum::Kil, Kil::exec);
+        map.insert(CpuStatesEnum::Isc, Isc::exec);
+        map.insert(CpuStatesEnum::Dcp, Dcp::exec);
+        map.insert(CpuStatesEnum::Slo, Slo::exec);
+        map.insert(CpuStatesEnum::Rla, Rla::exec);
+        map.insert(CpuStatesEnum::Sre, Sre::exec);
+        map.insert(CpuStatesEnum::Rra, Rra::exec);
+        map.insert(CpuStatesEnum::AslAcc, AslAcc::exec);
+        map.insert(CpuStatesEnum::AslMem, AslMem::exec);
+        map.insert(CpuStatesEnum::LsrAcc, LsrAcc::exec);
+        map.insert(CpuStatesEnum::LsrMem, LsrMem::exec);
+        map.insert(CpuStatesEnum::RolAcc, RolAcc::exec);
+        map.insert(CpuStatesEnum::RolMem, RolMem::exec);
+        map.insert(CpuStatesEnum::RorAcc, RorAcc::exec);
+        map.insert(CpuStatesEnum::RorMem, RorMem::exec);
+        map.insert(CpuStatesEnum::Pla, Pla::exec);
+        map.insert(CpuStatesEnum::Plp, Plp::exec);
+        map.insert(CpuStatesEnum::Pha, Pha::exec);
+        map.insert(CpuStatesEnum::Php, Php::exec);
+        map.insert(CpuStatesEnum::Sta, Sta::exec);
+        map.insert(CpuStatesEnum::Stx, Stx::exec);
+        map.insert(CpuStatesEnum::Sty, Sty::exec);
+        map.insert(CpuStatesEnum::Tax, Tax::exec);
+        map.insert(CpuStatesEnum::Tay, Tay::exec);
+        map.insert(CpuStatesEnum::Tsx, Tsx::exec);
+        map.insert(CpuStatesEnum::Txa, Txa::exec);
+        map.insert(CpuStatesEnum::Tya, Tya::exec);
+        map.insert(CpuStatesEnum::Txs, Txs::exec);
         let map = CpuStatesEnum::iter()
             .map(|x| map.remove(&x).unwrap())
             .collect();
@@ -384,7 +383,7 @@ impl CpuStates {
         let mut machine = &mut self.map[self.state as usize];
         let step = core.register.get_opstep() + 1;
         core.register.set_opstep(step);
-        while let CpuStepStateEnum::Exit(s) = machine.exec(core, ppu, cartridge, controller, apu) {
+        while let CpuStepStateEnum::Exit(s) = machine(core, ppu, cartridge, controller, apu) {
             self.state = s;
             core.register.set_opstep(1);
             machine = &mut self.map[self.state as usize];
@@ -396,7 +395,6 @@ struct FetchOpCode;
 
 impl CpuStepState for FetchOpCode {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

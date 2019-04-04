@@ -10,7 +10,6 @@ pub(crate) trait Read {
     fn reader(register: &mut Register, value: u8);
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -55,7 +54,6 @@ pub(crate) trait Write {
     fn writer(register: &mut Register) -> (u8, usize);
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

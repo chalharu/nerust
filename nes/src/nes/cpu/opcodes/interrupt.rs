@@ -10,7 +10,6 @@ pub(crate) struct Brk;
 
 impl CpuStepState for Brk {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -93,7 +92,6 @@ pub(crate) struct Rti;
 
 impl CpuStepState for Rti {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -143,7 +141,6 @@ pub(crate) struct Irq;
 
 impl CpuStepState for Irq {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -226,7 +223,6 @@ pub(crate) struct Reset;
 
 impl CpuStepState for Reset {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

@@ -10,7 +10,6 @@ pub(crate) struct Immediate;
 
 impl CpuStepState for Immediate {
     fn exec(
-        &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,

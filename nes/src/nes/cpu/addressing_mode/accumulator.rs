@@ -10,7 +10,6 @@ pub(crate) struct Accumulator;
 
 impl CpuStepState for Accumulator {
     fn exec(
-        &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,

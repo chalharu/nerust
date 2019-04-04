@@ -10,7 +10,6 @@ pub(crate) struct AbsoluteXRMW;
 
 impl CpuStepState for AbsoluteXRMW {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
