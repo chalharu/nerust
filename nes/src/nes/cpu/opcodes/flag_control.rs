@@ -36,12 +36,6 @@ macro_rules! flag_control {
     ($name:ident, $func:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl FlagControl for $name {
             fn setter(register: &mut Register) {
                 $func(register);

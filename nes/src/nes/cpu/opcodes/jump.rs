@@ -8,12 +8,6 @@ use super::*;
 
 pub(crate) struct Jmp;
 
-impl Jmp {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl CpuStepState for Jmp {
     fn exec(
         &mut self,
@@ -28,15 +22,7 @@ impl CpuStepState for Jmp {
     }
 }
 
-pub(crate) struct Jsr {
-    data: u16,
-}
-
-impl Jsr {
-    pub fn new() -> Self {
-        Self { data: 0 }
-    }
-}
+pub(crate) struct Jsr;
 
 impl CpuStepState for Jsr {
     fn exec(
@@ -59,10 +45,11 @@ impl CpuStepState for Jsr {
                     &mut core.interrupt,
                 );
 
-                self.data = core.register.get_pc().wrapping_sub(1);
+                core.register
+                    .set_op_tempaddr(core.register.get_pc().wrapping_sub(1) as usize);
             }
             2 => {
-                let hi = (self.data >> 8) as u8;
+                let hi = (core.register.get_op_tempaddr() >> 8) as u8;
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
                 core.memory.write(
@@ -76,7 +63,7 @@ impl CpuStepState for Jsr {
                 );
             }
             3 => {
-                let low = (self.data & 0xFF) as u8;
+                let low = (core.register.get_op_tempaddr() & 0xFF) as u8;
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
                 core.memory.write(
@@ -98,15 +85,7 @@ impl CpuStepState for Jsr {
     }
 }
 
-pub(crate) struct Rts {
-    data: u16,
-}
-
-impl Rts {
-    pub fn new() -> Self {
-        Self { data: 0 }
-    }
-}
+pub(crate) struct Rts;
 
 impl CpuStepState for Rts {
     fn exec(
@@ -138,14 +117,14 @@ impl CpuStepState for Rts {
             }
             3 => {
                 let sp = usize::from(core.register.get_sp());
-                self.data = u16::from(core.memory.read(
+                core.register.set_op_tempaddr(usize::from(core.memory.read(
                     sp | 0x100,
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                ));
+                )));
 
                 core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
             }
@@ -159,10 +138,11 @@ impl CpuStepState for Rts {
                     apu,
                     &mut core.interrupt,
                 );
-                self.data |= u16::from(high) << 8;
+                core.register
+                    .set_op_tempaddr(core.register.get_op_tempaddr() | usize::from(high) << 8);
             }
             5 => {
-                core.register.set_pc(self.data);
+                core.register.set_pc(core.register.get_op_tempaddr() as u16);
                 core.memory.read_next(
                     &mut core.register,
                     ppu,

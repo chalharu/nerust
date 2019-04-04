@@ -6,19 +6,7 @@
 
 use super::*;
 
-pub(crate) struct IndirectIndexed {
-    ind_address: usize,
-    address_low: u8,
-}
-
-impl IndirectIndexed {
-    pub fn new() -> Self {
-        Self {
-            ind_address: 0,
-            address_low: 0,
-        }
-    }
-}
+pub(crate) struct IndirectIndexed;
 
 impl CpuStepState for IndirectIndexed {
     fn exec(
@@ -31,7 +19,7 @@ impl CpuStepState for IndirectIndexed {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.ind_address = usize::from(core.memory.read_next(
+                let addr = usize::from(core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
@@ -39,40 +27,43 @@ impl CpuStepState for IndirectIndexed {
                     apu,
                     &mut core.interrupt,
                 ));
+                core.register.set_op_tempaddr(addr);
             }
             2 => {
-                self.address_low = core.memory.read(
-                    self.ind_address,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
-            }
-            3 => {
-                let address_high = usize::from(core.memory.read(
-                    self.ind_address.wrapping_add(1) & 0xFF,
+                core.register.set_opdata(core.memory.read(
+                    core.register.get_op_tempaddr(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
                 ));
-                self.ind_address = (address_high << 8) | usize::from(self.address_low);
+            }
+            3 => {
+                let address_high = usize::from(core.memory.read(
+                    core.register.get_op_tempaddr().wrapping_add(1) & 0xFF,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+                core.register
+                    .set_op_tempaddr((address_high << 8) | usize::from(core.register.get_opdata()));
                 core.register.set_opaddr(
-                    self.ind_address
+                    core.register
+                        .get_op_tempaddr()
                         .wrapping_add(usize::from(core.register.get_y()))
                         & 0xFFFF,
                 );
             }
             4 => {
-                if !page_crossed(self.ind_address, core.register.get_opaddr()) {
+                if !page_crossed(core.register.get_op_tempaddr(), core.register.get_opaddr()) {
                     return exit_addressing_mode(core);
                 }
                 // dummy read
                 core.memory.read_dummy_cross(
-                    self.ind_address,
+                    core.register.get_op_tempaddr(),
                     core.register.get_opaddr(),
                     ppu,
                     cartridge,

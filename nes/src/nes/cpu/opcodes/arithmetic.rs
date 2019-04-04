@@ -45,12 +45,6 @@ macro_rules! arithmetic {
     ($name:ident, $calc:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Arithmetic for $name {
             fn calculator(register: &mut Register, a: u8, b: u8) -> u8 {
                 $calc(register, a, b)

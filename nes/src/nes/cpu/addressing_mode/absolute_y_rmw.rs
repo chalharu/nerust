@@ -6,15 +6,7 @@
 
 use super::*;
 
-pub(crate) struct AbsoluteYRMW {
-    temp_address: usize,
-}
-
-impl AbsoluteYRMW {
-    pub fn new() -> Self {
-        Self { temp_address: 0 }
-    }
-}
+pub(crate) struct AbsoluteYRMW;
 
 impl CpuStepState for AbsoluteYRMW {
     fn exec(
@@ -27,7 +19,7 @@ impl CpuStepState for AbsoluteYRMW {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.temp_address = usize::from(core.memory.read_next(
+                let addr = usize::from(core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
@@ -35,6 +27,7 @@ impl CpuStepState for AbsoluteYRMW {
                     apu,
                     &mut core.interrupt,
                 ));
+                core.register.set_op_tempaddr(addr);
             }
             2 => {
                 let address_high = core.memory.read_next(
@@ -45,9 +38,12 @@ impl CpuStepState for AbsoluteYRMW {
                     apu,
                     &mut core.interrupt,
                 );
-                self.temp_address |= usize::from(address_high) << 8;
+                core.register.set_op_tempaddr(
+                    core.register.get_op_tempaddr() | usize::from(address_high) << 8,
+                );
                 core.register.set_opaddr(
-                    self.temp_address
+                    core.register
+                        .get_op_tempaddr()
                         .wrapping_add(usize::from(core.register.get_y()))
                         & 0xFFFF,
                 );
@@ -55,7 +51,7 @@ impl CpuStepState for AbsoluteYRMW {
             3 => {
                 // dummy read
                 core.memory.read_dummy_cross(
-                    self.temp_address,
+                    core.register.get_op_tempaddr(),
                     core.register.get_opaddr(),
                     ppu,
                     cartridge,

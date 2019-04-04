@@ -6,15 +6,7 @@
 
 use super::*;
 
-pub(crate) struct ZeroPageY {
-    temp_address: usize,
-}
-
-impl ZeroPageY {
-    pub fn new() -> Self {
-        Self { temp_address: 0 }
-    }
-}
+pub(crate) struct ZeroPageY;
 
 impl CpuStepState for ZeroPageY {
     fn exec(
@@ -27,7 +19,7 @@ impl CpuStepState for ZeroPageY {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.temp_address = usize::from(core.memory.read_next(
+                let addr = usize::from(core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
@@ -35,12 +27,13 @@ impl CpuStepState for ZeroPageY {
                     apu,
                     &mut core.interrupt,
                 ));
+                core.register.set_opaddr(addr);
             }
             2 => {
                 let pc = usize::from(core.register.get_pc());
                 core.memory.read_dummy_cross(
                     pc,
-                    self.temp_address,
+                    core.register.get_opaddr(),
                     ppu,
                     cartridge,
                     controller,
@@ -48,8 +41,9 @@ impl CpuStepState for ZeroPageY {
                     &mut core.interrupt,
                 );
                 core.register.set_opaddr(
-                    (self
-                        .temp_address
+                    (core
+                        .register
+                        .get_opaddr()
                         .wrapping_add(usize::from(core.register.get_y())))
                         & 0xFF,
                 );

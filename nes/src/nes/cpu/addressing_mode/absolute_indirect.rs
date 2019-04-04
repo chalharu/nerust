@@ -6,19 +6,7 @@
 
 use super::*;
 
-pub(crate) struct AbsoluteIndirect {
-    ind_address: usize,
-    address_low: u8,
-}
-
-impl AbsoluteIndirect {
-    pub fn new() -> Self {
-        Self {
-            ind_address: 0,
-            address_low: 0,
-        }
-    }
-}
+pub(crate) struct AbsoluteIndirect;
 
 impl CpuStepState for AbsoluteIndirect {
     fn exec(
@@ -31,14 +19,15 @@ impl CpuStepState for AbsoluteIndirect {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.address_low = core.memory.read_next(
+                let addr = usize::from(core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
+                ));
+                core.register.set_op_tempaddr(addr);
             }
             2 => {
                 let address_high = usize::from(core.memory.read_next(
@@ -49,21 +38,24 @@ impl CpuStepState for AbsoluteIndirect {
                     apu,
                     &mut core.interrupt,
                 ));
-                self.ind_address = (address_high << 8) | usize::from(self.address_low);
+                core.register
+                    .set_opaddr((address_high << 8) | core.register.get_op_tempaddr());
             }
             3 => {
-                self.address_low = core.memory.read(
-                    self.ind_address,
+                let addr = usize::from(core.memory.read(
+                    core.register.get_opaddr(),
                     ppu,
                     cartridge,
                     controller,
                     apu,
                     &mut core.interrupt,
-                );
+                ));
+                core.register.set_op_tempaddr(addr);
             }
             4 => {
                 let address_high = usize::from(core.memory.read(
-                    (self.ind_address.wrapping_add(1) & 0xFF) | (self.ind_address & 0xFF00),
+                    (core.register.get_opaddr().wrapping_add(1) & 0xFF)
+                        | (core.register.get_opaddr() & 0xFF00),
                     ppu,
                     cartridge,
                     controller,
@@ -71,7 +63,7 @@ impl CpuStepState for AbsoluteIndirect {
                     &mut core.interrupt,
                 ));
                 core.register
-                    .set_opaddr((address_high << 8) | usize::from(self.address_low));
+                    .set_opaddr((address_high << 8) | core.register.get_op_tempaddr());
             }
             _ => {
                 return exit_addressing_mode(core);

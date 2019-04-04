@@ -25,12 +25,6 @@ macro_rules! accumulate {
     ($name:ident, $getter:expr, $setter:expr, $calc:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Accumulate for $name {
             fn getter(register: &Register) -> u8 {
                 $getter(register)
@@ -51,25 +45,9 @@ macro_rules! accumulate {
 
 macro_rules! accumulate_memory {
     ($name:ident, $calc:expr) => {
-        pub(crate) struct $name {
-            data: u8,
-        }
-
-        impl $name {
-            pub fn new() -> Self {
-                Self { data: 0 }
-            }
-        }
+        pub(crate) struct $name;
 
         impl AccumulateMemory for $name {
-            fn load(&self) -> u8 {
-                self.data
-            }
-
-            fn store(&mut self, value: u8) {
-                self.data = value;
-            }
-
             fn calculator(register: &mut Register, value: u8) -> u8 {
                 $calc(register, value)
             }
@@ -154,8 +132,6 @@ pub(crate) trait Accumulate {
 }
 
 pub(crate) trait AccumulateMemory {
-    fn load(&self) -> u8;
-    fn store(&mut self, value: u8);
     fn calculator(register: &mut Register, value: u8) -> u8;
 
     fn exec_opcode(
@@ -168,7 +144,7 @@ pub(crate) trait AccumulateMemory {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.store(core.memory.read(
+                core.register.set_opdata(core.memory.read(
                     core.register.get_opaddr(),
                     ppu,
                     cartridge,
@@ -178,9 +154,9 @@ pub(crate) trait AccumulateMemory {
                 ));
             }
             2 => {
-                let data = self.load();
+                let data = core.register.get_opdata();
                 let result = (Self::calculator)(&mut core.register, data);
-                self.store(result);
+                core.register.set_opdata(result);
                 // dummy write
                 core.memory.write(
                     core.register.get_opaddr(),
@@ -195,7 +171,7 @@ pub(crate) trait AccumulateMemory {
             3 => {
                 core.memory.write(
                     core.register.get_opaddr(),
-                    self.load(),
+                    core.register.get_opdata(),
                     ppu,
                     cartridge,
                     controller,

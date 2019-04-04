@@ -42,12 +42,6 @@ macro_rules! store {
     ($name:ident, $func:expr) => {
         pub(crate) struct $name;
 
-        impl $name {
-            pub fn new() -> Self {
-                Self
-            }
-        }
-
         impl Store for $name {
             fn getter(register: &Register) -> u8 {
                 $func(register)

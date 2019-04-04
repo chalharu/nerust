@@ -6,15 +6,7 @@
 
 use super::*;
 
-pub(crate) struct Absolute {
-    temp_address: usize,
-}
-
-impl Absolute {
-    pub fn new() -> Self {
-        Self { temp_address: 0 }
-    }
-}
+pub(crate) struct Absolute;
 
 impl CpuStepState for Absolute {
     fn exec(
@@ -27,7 +19,7 @@ impl CpuStepState for Absolute {
     ) -> CpuStepStateEnum {
         match core.register.get_opstep() {
             1 => {
-                self.temp_address = usize::from(core.memory.read_next(
+                let addr = usize::from(core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
@@ -35,6 +27,7 @@ impl CpuStepState for Absolute {
                     apu,
                     &mut core.interrupt,
                 ));
+                core.register.set_opaddr(addr);
             }
             2 => {
                 let address_high = core.memory.read_next(
@@ -46,7 +39,7 @@ impl CpuStepState for Absolute {
                     &mut core.interrupt,
                 );
                 core.register
-                    .set_opaddr(self.temp_address | (usize::from(address_high) << 8));
+                    .set_opaddr(core.register.get_opaddr() | (usize::from(address_high) << 8));
             }
             _ => {
                 return exit_addressing_mode(core);
