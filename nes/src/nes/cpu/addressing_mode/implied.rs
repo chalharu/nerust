@@ -10,7 +10,6 @@ pub(crate) struct Implied;
 
 impl CpuStepState for Implied {
     fn exec(
-        &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,

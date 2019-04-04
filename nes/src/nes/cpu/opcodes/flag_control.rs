@@ -10,7 +10,6 @@ pub(crate) trait FlagControl {
     fn setter(register: &mut Register);
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

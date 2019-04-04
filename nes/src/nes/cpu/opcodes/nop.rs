@@ -10,7 +10,6 @@ pub(crate) struct Nop;
 
 impl CpuStepState for Nop {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -36,7 +35,6 @@ pub(crate) struct Kil;
 
 impl CpuStepState for Kil {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

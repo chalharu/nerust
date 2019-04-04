@@ -10,7 +10,6 @@ pub(crate) struct Relative;
 
 impl CpuStepState for Relative {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

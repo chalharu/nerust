@@ -10,7 +10,6 @@ pub(crate) struct IndirectIndexedRMW;
 
 impl CpuStepState for IndirectIndexedRMW {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

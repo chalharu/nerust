@@ -10,7 +10,6 @@ pub(crate) struct AbsoluteIndirect;
 
 impl CpuStepState for AbsoluteIndirect {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

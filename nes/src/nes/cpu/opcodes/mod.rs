@@ -8,14 +8,13 @@ macro_rules! cpu_step_state_impl {
     ($name:ident) => {
         impl CpuStepState for $name {
             fn exec(
-                &mut self,
                 core: &mut Core,
                 ppu: &mut Ppu,
                 cartridge: &mut Cartridge,
                 controller: &mut Controller,
                 apu: &mut Apu,
             ) -> CpuStepStateEnum {
-                self.exec_opcode(core, ppu, cartridge, controller, apu)
+                Self::exec_opcode(core, ppu, cartridge, controller, apu)
             }
         }
     };
@@ -108,7 +107,6 @@ pub(crate) trait Accumulate {
     fn calculator(register: &mut Register, value: u8) -> u8;
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -135,7 +133,6 @@ pub(crate) trait AccumulateMemory {
     fn calculator(register: &mut Register, value: u8) -> u8;
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

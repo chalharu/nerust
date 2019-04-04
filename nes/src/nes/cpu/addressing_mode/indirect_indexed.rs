@@ -10,7 +10,6 @@ pub(crate) struct IndirectIndexed;
 
 impl CpuStepState for IndirectIndexed {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

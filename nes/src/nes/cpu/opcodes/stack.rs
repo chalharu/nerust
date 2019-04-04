@@ -10,7 +10,6 @@ pub(crate) trait Pull {
     fn setter(register: &mut Register, value: u8);
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -73,7 +72,6 @@ pub(crate) trait Push {
     fn getter(register: &Register) -> u8;
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

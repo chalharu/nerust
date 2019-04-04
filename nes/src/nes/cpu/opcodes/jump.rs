@@ -10,7 +10,6 @@ pub(crate) struct Jmp;
 
 impl CpuStepState for Jmp {
     fn exec(
-        &mut self,
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut Cartridge,
@@ -26,7 +25,6 @@ pub(crate) struct Jsr;
 
 impl CpuStepState for Jsr {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
@@ -89,7 +87,6 @@ pub(crate) struct Rts;
 
 impl CpuStepState for Rts {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

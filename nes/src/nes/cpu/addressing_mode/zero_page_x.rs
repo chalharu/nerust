@@ -10,7 +10,6 @@ pub(crate) struct ZeroPageX;
 
 impl CpuStepState for ZeroPageX {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

@@ -33,7 +33,6 @@ pub(crate) trait ConditionJump {
     fn condition(register: &Register) -> bool;
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

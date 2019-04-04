@@ -10,7 +10,6 @@ pub(crate) trait Load {
     fn setter(register: &mut Register, value: u8);
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

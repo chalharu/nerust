@@ -10,7 +10,6 @@ pub(crate) trait Arithmetic {
     fn calculator(register: &mut Register, a: u8, b: u8) -> u8;
 
     fn exec_opcode(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

@@ -10,7 +10,6 @@ pub(crate) struct AbsoluteYRMW;
 
 impl CpuStepState for AbsoluteYRMW {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

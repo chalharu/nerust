@@ -10,7 +10,6 @@ pub(crate) struct AbsoluteY;
 
 impl CpuStepState for AbsoluteY {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,

@@ -10,7 +10,6 @@ pub(crate) struct Bit;
 
 impl CpuStepState for Bit {
     fn exec(
-        &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
