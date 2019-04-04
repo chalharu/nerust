@@ -30,7 +30,7 @@ pub(crate) trait Read {
                 Self::reader(&mut core.register, data);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -82,7 +82,7 @@ pub(crate) trait Write {
                 );
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

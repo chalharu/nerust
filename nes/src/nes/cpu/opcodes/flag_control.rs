@@ -25,7 +25,7 @@ pub(crate) trait FlagControl {
                 Self::setter(&mut core.register);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

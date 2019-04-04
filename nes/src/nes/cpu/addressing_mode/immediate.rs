@@ -26,17 +26,6 @@ impl CpuStepState for Immediate {
         let pc = core.register.get_pc();
         core.register.set_pc(pc.wrapping_add(1));
         core.register.set_opaddr(usize::from(pc));
-        CpuStepStateEnum::Exit
-    }
-
-    fn exit(
-        &mut self,
-        core: &mut Core,
-        _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
-        _apu: &mut Apu,
-    ) -> CpuStatesEnum {
-        core.opcode_tables.get(core.register.get_opcode())
+        exit_addressing_mode(core)
     }
 }

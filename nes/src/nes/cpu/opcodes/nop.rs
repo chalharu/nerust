@@ -31,7 +31,7 @@ impl CpuStepState for Nop {
                     .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);;
             }
         }
         CpuStepStateEnum::Continue
@@ -63,7 +63,7 @@ impl CpuStepState for Kil {
                     .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

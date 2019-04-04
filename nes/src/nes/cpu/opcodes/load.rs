@@ -32,7 +32,7 @@ pub(crate) trait Load {
                 Self::setter(&mut core.register, a);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

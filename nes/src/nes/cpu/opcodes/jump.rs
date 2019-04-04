@@ -24,7 +24,7 @@ impl CpuStepState for Jmp {
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
         core.register.set_pc(core.register.get_opaddr() as u16);
-        CpuStepStateEnum::Exit
+        exit_opcode(core)
     }
 }
 
@@ -91,7 +91,7 @@ impl CpuStepState for Jsr {
                 core.register.set_pc(core.register.get_opaddr() as u16);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -173,7 +173,7 @@ impl CpuStepState for Rts {
                 );
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

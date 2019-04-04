@@ -116,6 +116,14 @@ pub(crate) use self::store::*;
 pub(crate) use self::transfer::*;
 use super::*;
 
+fn exit_opcode(core: &mut Core) -> CpuStepStateEnum {
+    CpuStepStateEnum::Exit(if core.interrupt.executing {
+        CpuStatesEnum::Irq
+    } else {
+        CpuStatesEnum::FetchOpCode
+    })
+}
+
 pub(crate) trait Accumulate {
     fn getter(register: &Register) -> u8;
     fn setter(register: &mut Register, value: u8);
@@ -138,7 +146,7 @@ pub(crate) trait Accumulate {
                 Self::setter(&mut core.register, result);
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
@@ -196,7 +204,7 @@ pub(crate) trait AccumulateMemory {
                 );
             }
             _ => {
-                return CpuStepStateEnum::Exit;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue
