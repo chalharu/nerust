@@ -169,7 +169,7 @@ impl Core {
         //     self.sample_cycle = 0;
         // }
 
-        self.step_frame(&mut cpu.interrupt, cartridge);
+        self.step_frame(cpu.interrupt_mut(), cartridge);
         self.send_sample(mixer);
     }
 

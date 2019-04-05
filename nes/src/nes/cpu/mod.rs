@@ -13,7 +13,7 @@ mod opcodes;
 mod register;
 
 use self::addressing_mode::*;
-use self::internal_stat::InternalStat;
+use self::internal_stat::{CpuStatesEnum, InternalStat};
 use self::interrupt::{Interrupt, IrqSource};
 use self::memory::Memory;
 use self::oamdma::OamDmaState;
@@ -45,224 +45,23 @@ pub(crate) struct Core {
     memory: Memory,
     register: Register,
     internal_stat: InternalStat,
-    pub(crate) interrupt: Interrupt,
+    interrupt: Interrupt,
     cycles: u64,
     oam_dma: Option<OamDmaState>,
-    cpu_states: Option<CpuStates>,
+    cpu_stepfunc: Vec<CpuStepStateFunc>,
 }
+
+// pub(crate) struct State {
+//     memory: Memory,
+//     register: Register,
+//     internal_stat: InternalStat,
+//     interrupt: Interrupt,
+//     cycles: u64,
+//     oam_dma: OamDmaState,
+//     cpu_states: CpuStates,
+// }
 
 impl Core {
-    pub fn new() -> Self {
-        Self {
-            opcode_tables: Opcodes::new(),
-            addressing_tables: AddressingModeLut::new(),
-            register: Register::new(),
-            internal_stat: InternalStat::new(),
-            interrupt: Interrupt::new(),
-            memory: Memory::new(),
-            cycles: 0,
-            oam_dma: Some(OamDmaState::new()),
-            cpu_states: Some(CpuStates::new()),
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.interrupt.reset();
-        self.oam_dma.as_mut().unwrap().reset();
-        self.cpu_states.as_mut().unwrap().reset();
-        self.cycles = 0;
-        self.internal_stat.set_step(1);
-    }
-
-    pub fn step(
-        &mut self,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) {
-        self.cycles = self.cycles.wrapping_add(1);
-
-        if self.interrupt.dmc_start {
-            self.interrupt.dmc_start = false;
-            self.interrupt.dmc_count = match self.oam_dma.as_ref().unwrap().count() {
-                None => 4,
-                Some(0) => 3,
-                Some(1) => 1,
-                _ => 2,
-            };
-        }
-
-        if self.interrupt.dmc_count > 0 && (self.cycles & 1 == 0) {
-            self.interrupt.dmc_count -= 1;
-            if self.interrupt.dmc_count == 0 {
-                if let Some(addr) = apu.dmc_fill_address() {
-                    let value = self.memory.read(
-                        addr,
-                        ppu,
-                        cartridge,
-                        controller,
-                        apu,
-                        &mut self.interrupt,
-                    );
-                    apu.dmc_fill(value, &mut self.interrupt);
-                }
-            }
-        } else {
-            if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
-                self.oam_dma.as_mut().unwrap().start_transaction(offset);
-            }
-
-            if self.oam_dma.as_ref().unwrap().has_transaction() {
-                let mut oam_dma = ::std::mem::replace(&mut self.oam_dma, None);
-                oam_dma
-                    .as_mut()
-                    .unwrap()
-                    .next(self, ppu, cartridge, controller, apu);
-                self.oam_dma = oam_dma;
-            } else {
-                let mut cpu_states = ::std::mem::replace(&mut self.cpu_states, None);
-                cpu_states
-                    .as_mut()
-                    .unwrap()
-                    .next(self, ppu, cartridge, controller, apu);
-                self.cpu_states = cpu_states;
-                self.interrupt.executing = self.interrupt.detected;
-                self.interrupt.detected = self.interrupt.nmi
-                    || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
-                        && !self.register.get_i());
-            }
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Hash)]
-pub(crate) enum CpuStepStateEnum {
-    Continue,
-    Exit(CpuStatesEnum),
-}
-
-pub(crate) trait CpuStepState {
-    fn exec(
-        core: &mut Core,
-        ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
-        apu: &mut Apu,
-    ) -> CpuStepStateEnum;
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug, EnumIter)]
-pub(crate) enum CpuStatesEnum {
-    FetchOpCode,
-    Reset,
-    Irq,
-    AbsoluteIndirect,
-    AbsoluteXRMW,
-    AbsoluteX,
-    AbsoluteYRMW,
-    AbsoluteY,
-    Absolute,
-    Accumulator,
-    Immediate,
-    Implied,
-    IndexedIndirect,
-    IndirectIndexedRMW,
-    IndirectIndexed,
-    Relative,
-    ZeroPageX,
-    ZeroPageY,
-    ZeroPage,
-    And,
-    Eor,
-    Ora,
-    Adc,
-    Sbc,
-    Bit,
-    Lax,
-    Anc,
-    Alr,
-    Arr,
-    Xaa,
-    Las,
-    Axs,
-    Sax,
-    Tas,
-    Ahx,
-    Shx,
-    Shy,
-    Cmp,
-    Cpx,
-    Cpy,
-    Bcc,
-    Bcs,
-    Beq,
-    Bmi,
-    Bne,
-    Bpl,
-    Bvc,
-    Bvs,
-    Dex,
-    Dey,
-    Dec,
-    Clc,
-    Cld,
-    Cli,
-    Clv,
-    Sec,
-    Sed,
-    Sei,
-    Inx,
-    Iny,
-    Inc,
-    Brk,
-    Rti,
-    Rts,
-    Jmp,
-    Jsr,
-    Lda,
-    Ldx,
-    Ldy,
-    Nop,
-    Kil,
-    Isc,
-    Dcp,
-    Slo,
-    Rla,
-    Sre,
-    Rra,
-    AslAcc,
-    AslMem,
-    LsrAcc,
-    LsrMem,
-    RolAcc,
-    RolMem,
-    RorAcc,
-    RorMem,
-    Pla,
-    Plp,
-    Pha,
-    Php,
-    Sta,
-    Stx,
-    Sty,
-    Tax,
-    Tay,
-    Tsx,
-    Txa,
-    Tya,
-    Txs,
-}
-
-type CpuStepStateFunc =
-    fn(&mut Core, &mut Ppu, &mut Cartridge, &mut Controller, &mut Apu) -> CpuStepStateEnum;
-
-pub(crate) struct CpuStates {
-    state: CpuStatesEnum,
-    map: Vec<CpuStepStateFunc>,
-}
-
-impl CpuStates {
     pub fn new() -> Self {
         let mut map: HashMap<CpuStatesEnum, CpuStepStateFunc> = HashMap::new();
         map.insert(CpuStatesEnum::Reset, Reset::exec);
@@ -363,37 +162,116 @@ impl CpuStates {
         map.insert(CpuStatesEnum::Txa, Txa::exec);
         map.insert(CpuStatesEnum::Tya, Tya::exec);
         map.insert(CpuStatesEnum::Txs, Txs::exec);
-        let map = CpuStatesEnum::iter()
+        let cpu_stepfunc = CpuStatesEnum::iter()
             .map(|x| map.remove(&x).unwrap())
             .collect();
         Self {
-            state: CpuStatesEnum::Reset,
-            map,
+            opcode_tables: Opcodes::new(),
+            addressing_tables: AddressingModeLut::new(),
+            register: Register::new(),
+            internal_stat: InternalStat::new(),
+            interrupt: Interrupt::new(),
+            memory: Memory::new(),
+            cycles: 0,
+            oam_dma: Some(OamDmaState::new()),
+            cpu_stepfunc,
         }
     }
 
     pub fn reset(&mut self) {
-        self.state = CpuStatesEnum::Reset;
+        self.interrupt.reset();
+        self.oam_dma.as_mut().unwrap().reset();
+        self.internal_stat.reset();
+        self.cycles = 0;
     }
 
-    pub fn next(
+    pub fn step(
         &mut self,
-        core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut Cartridge,
         controller: &mut Controller,
         apu: &mut Apu,
     ) {
-        let mut machine = &mut self.map[self.state as usize];
-        let step = core.internal_stat.get_step() + 1;
-        core.internal_stat.set_step(step);
-        while let CpuStepStateEnum::Exit(s) = machine(core, ppu, cartridge, controller, apu) {
-            self.state = s;
-            core.internal_stat.set_step(1);
-            machine = &mut self.map[self.state as usize];
+        self.cycles = self.cycles.wrapping_add(1);
+
+        if self.interrupt.dmc_start {
+            self.interrupt.dmc_start = false;
+            self.interrupt.dmc_count = match self.oam_dma.as_ref().unwrap().count() {
+                None => 4,
+                Some(0) => 3,
+                Some(1) => 1,
+                _ => 2,
+            };
+        }
+
+        if self.interrupt.dmc_count > 0 && (self.cycles & 1 == 0) {
+            self.interrupt.dmc_count -= 1;
+            if self.interrupt.dmc_count == 0 {
+                if let Some(addr) = apu.dmc_fill_address() {
+                    let value = self.memory.read(
+                        addr,
+                        ppu,
+                        cartridge,
+                        controller,
+                        apu,
+                        &mut self.interrupt,
+                    );
+                    apu.dmc_fill(value, &mut self.interrupt);
+                }
+            }
+        } else {
+            if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
+                self.oam_dma.as_mut().unwrap().start_transaction(offset);
+            }
+
+            if self.oam_dma.as_ref().unwrap().has_transaction() {
+                let mut oam_dma = ::std::mem::replace(&mut self.oam_dma, None);
+                oam_dma
+                    .as_mut()
+                    .unwrap()
+                    .next(self, ppu, cartridge, controller, apu);
+                self.oam_dma = oam_dma;
+            } else {
+                let mut machine = &mut self.cpu_stepfunc[self.internal_stat.get_state() as usize];
+                let step = self.internal_stat.get_step() + 1;
+                self.internal_stat.set_step(step);
+                while let CpuStepStateEnum::Exit(s) = machine(self, ppu, cartridge, controller, apu)
+                {
+                    self.internal_stat.set_state(s);
+                    self.internal_stat.set_step(1);
+                    machine = &mut self.cpu_stepfunc[self.internal_stat.get_state() as usize];
+                }
+                self.interrupt.executing = self.interrupt.detected;
+                self.interrupt.detected = self.interrupt.nmi
+                    || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
+                        && !self.register.get_i());
+            }
         }
     }
+
+    pub fn interrupt_mut(&mut self) -> &mut Interrupt {
+        &mut self.interrupt
+    }
 }
+
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
+pub(crate) enum CpuStepStateEnum {
+    Continue,
+    Exit(CpuStatesEnum),
+}
+
+pub(crate) trait CpuStepState {
+    fn exec(
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut Cartridge,
+        controller: &mut Controller,
+        apu: &mut Apu,
+    ) -> CpuStepStateEnum;
+}
+
+type CpuStepStateFunc =
+    fn(&mut Core, &mut Ppu, &mut Cartridge, &mut Controller, &mut Apu) -> CpuStepStateEnum;
 
 struct FetchOpCode;
 

@@ -4,6 +4,114 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Hash, Debug, EnumIter)]
+pub(crate) enum CpuStatesEnum {
+    FetchOpCode,
+    Reset,
+    Irq,
+    AbsoluteIndirect,
+    AbsoluteXRMW,
+    AbsoluteX,
+    AbsoluteYRMW,
+    AbsoluteY,
+    Absolute,
+    Accumulator,
+    Immediate,
+    Implied,
+    IndexedIndirect,
+    IndirectIndexedRMW,
+    IndirectIndexed,
+    Relative,
+    ZeroPageX,
+    ZeroPageY,
+    ZeroPage,
+    And,
+    Eor,
+    Ora,
+    Adc,
+    Sbc,
+    Bit,
+    Lax,
+    Anc,
+    Alr,
+    Arr,
+    Xaa,
+    Las,
+    Axs,
+    Sax,
+    Tas,
+    Ahx,
+    Shx,
+    Shy,
+    Cmp,
+    Cpx,
+    Cpy,
+    Bcc,
+    Bcs,
+    Beq,
+    Bmi,
+    Bne,
+    Bpl,
+    Bvc,
+    Bvs,
+    Dex,
+    Dey,
+    Dec,
+    Clc,
+    Cld,
+    Cli,
+    Clv,
+    Sec,
+    Sed,
+    Sei,
+    Inx,
+    Iny,
+    Inc,
+    Brk,
+    Rti,
+    Rts,
+    Jmp,
+    Jsr,
+    Lda,
+    Ldx,
+    Ldy,
+    Nop,
+    Kil,
+    Isc,
+    Dcp,
+    Slo,
+    Rla,
+    Sre,
+    Rra,
+    AslAcc,
+    AslMem,
+    LsrAcc,
+    LsrMem,
+    RolAcc,
+    RolMem,
+    RorAcc,
+    RorMem,
+    Pla,
+    Plp,
+    Pha,
+    Php,
+    Sta,
+    Stx,
+    Sty,
+    Tax,
+    Tay,
+    Tsx,
+    Txa,
+    Tya,
+    Txs,
+}
+
+impl Default for CpuStatesEnum {
+    fn default() -> Self {
+        CpuStatesEnum::Reset
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct InternalStat {
     opcode: usize,
@@ -13,6 +121,7 @@ pub(crate) struct InternalStat {
     data: u8,
     crossed: bool,
     interrupt: bool,
+    state: CpuStatesEnum,
 }
 
 impl InternalStat {
@@ -25,7 +134,13 @@ impl InternalStat {
             data: 0,
             crossed: false,
             interrupt: false,
+            state: CpuStatesEnum::Reset,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.step = 0;
+        self.state = CpuStatesEnum::Reset;
     }
 
     pub fn set_opcode(&mut self, value: usize) {
@@ -82,5 +197,13 @@ impl InternalStat {
 
     pub fn get_crossed(&self) -> bool {
         self.crossed
+    }
+
+    pub fn set_state(&mut self, value: CpuStatesEnum) {
+        self.state = value;
+    }
+
+    pub fn get_state(&self) -> CpuStatesEnum {
+        self.state
     }
 }
