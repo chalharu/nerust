@@ -7,13 +7,17 @@
 // Mapper 34
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 use crate::nes::cpu::interrupt::Interrupt;
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Nina001 {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
+
+#[typetag::serde]
+impl Cartridge for Nina001 {}
 
 impl Nina001 {
     pub(crate) fn new(data: CartridgeData) -> Self {

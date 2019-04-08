@@ -12,6 +12,7 @@ const TRIANGLE_TABLE: [u8; 32] = [
     13, 14, 15,
 ];
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Triangle {
     duty_value: u8,
     counter_period: u8,

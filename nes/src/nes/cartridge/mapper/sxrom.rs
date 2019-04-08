@@ -7,10 +7,11 @@
 // Mapper 1
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 use crate::nes::cpu::interrupt::Interrupt;
 use crate::nes::MirrorMode;
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct SxRom {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -23,6 +24,9 @@ pub(crate) struct SxRom {
     cycle: u64,
     prev_cycle: u64,
 }
+
+#[typetag::serde]
+impl Cartridge for SxRom {}
 
 impl SxRom {
     pub(crate) fn new(data: CartridgeData) -> Self {

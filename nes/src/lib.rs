@@ -20,3 +20,4 @@ extern crate strum_macros;
 mod glwrap;
 pub mod gui;
 pub mod nes;
+pub mod serialize;

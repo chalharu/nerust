@@ -7,14 +7,18 @@
 // Mapper 3 or 185
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 use crate::nes::cpu::interrupt::Interrupt;
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct CNRom {
     cartridge_data: CartridgeData,
     state: MapperState,
     protect: bool,
 }
+
+#[typetag::serde]
+impl Cartridge for CNRom {}
 
 impl CNRom {
     pub(crate) fn new(data: CartridgeData, protect: bool) -> Self {

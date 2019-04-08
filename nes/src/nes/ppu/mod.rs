@@ -18,6 +18,7 @@ use std::mem;
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
 
+#[derive(Serialize, Deserialize)]
 struct DecayableOpenBus {
     data: u8,
     decay: [u8; 8],
@@ -60,6 +61,7 @@ impl DecayableOpenBus {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct State {
     control: u8,
     mask: u8,
@@ -115,6 +117,7 @@ impl State {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Control {
     name_table: u8,
     increment: bool,
@@ -162,6 +165,8 @@ impl From<u8> for Control {
         }
     }
 }
+
+#[derive(Serialize, Deserialize)]
 struct Mask {
     grayscale: bool,
     show_left_background: bool,
@@ -214,6 +219,7 @@ impl From<u8> for Mask {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Status {
     sprite_zero_hit: bool,
     sprite_overflow: bool,
@@ -236,8 +242,10 @@ impl Status {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Core {
     // memory
+    #[serde(with = "crate::serialize::BigArray")]
     vram: [u8; 2048],
     palette: [u8; 32],
 
@@ -247,6 +255,7 @@ pub(crate) struct Core {
     frames: usize,
     buffered_data: u8,
 
+    #[serde(with = "crate::serialize::BigArray")]
     primary_oam: [u8; 256],
     secondary_oam: [u8; 32],
     secondary_oam_address: u8,
@@ -258,6 +267,7 @@ pub(crate) struct Core {
     current_tile: TileInfo,
     previous_tile: TileInfo,
     next_tile: TileInfo,
+    #[serde(with = "crate::serialize::BigArray")]
     sprites: [SpriteInfo; 64],
     sprite_index: u8,
     sprite_count: u8,

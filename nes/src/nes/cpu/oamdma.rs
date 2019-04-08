@@ -6,7 +6,7 @@
 
 use super::*;
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
     Step0,
     Step1,
@@ -14,6 +14,7 @@ pub(crate) enum OamDmaStateEnumValue {
     None,
 }
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct OamDmaStateValue {
     offset: u8,
     count: u8,
@@ -30,20 +31,26 @@ impl OamDmaStateValue {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct OamDmaState {
+    #[serde(skip, default = "make_state_pool")]
     state_pool: [Box<OamDmaStepState>; OamDmaStateEnumValue::None as usize],
     state: OamDmaStateEnumValue,
     value: OamDmaStateValue,
 }
 
+fn make_state_pool() -> [Box<OamDmaStepState>; OamDmaStateEnumValue::None as usize] {
+    [
+        Box::new(OamDma),
+        Box::new(OamDmaStep1),
+        Box::new(OamDmaStep2),
+    ]
+}
+
 impl OamDmaState {
     pub fn new() -> OamDmaState {
         Self {
-            state_pool: [
-                Box::new(OamDma),
-                Box::new(OamDmaStep1),
-                Box::new(OamDmaStep2),
-            ],
+            state_pool: make_state_pool(),
             state: OamDmaStateEnumValue::None,
             value: OamDmaStateValue::new(),
         }

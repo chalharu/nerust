@@ -484,3 +484,9 @@ impl Opcodes {
         self.0[code]
     }
 }
+
+impl Default for Opcodes {
+    fn default() -> Self {
+        Self::new()
+    }
+}

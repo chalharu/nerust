@@ -21,6 +21,7 @@ use self::ppu::Core as Ppu;
 use self::status::mirror_mode::MirrorMode;
 use failure::Error;
 
+#[derive(Serialize, Deserialize)]
 pub struct Console {
     cpu: Cpu,
     ppu: Ppu,
@@ -77,6 +78,7 @@ impl Console {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct OpenBus {
     data: u8,
 }

@@ -15,6 +15,7 @@ const DUTY_TABLE: [[bool; 8]; 4] = [
     [true, false, false, true, true, true, true, true],
 ];
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Pulse {
     is_first_channel: bool,
     duty_mode: u8,

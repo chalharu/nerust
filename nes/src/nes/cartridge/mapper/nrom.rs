@@ -7,12 +7,16 @@
 // Mapper 0
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct NRom {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
+
+#[typetag::serde]
+impl Cartridge for NRom {}
 
 impl NRom {
     pub(crate) fn new(data: CartridgeData) -> Self {
