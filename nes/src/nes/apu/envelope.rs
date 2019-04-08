@@ -6,6 +6,7 @@
 
 use super::length_counter::{HaveLengthCounter, LengthCounter};
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub(crate) struct EnvelopeDao {
     enabled: bool,
     volume: u8,

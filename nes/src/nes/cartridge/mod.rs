@@ -13,6 +13,7 @@ use crate::nes::MirrorMode;
 use crate::nes::OpenBusReadResult;
 use std::cmp;
 
+#[typetag::serde(tag = "type")]
 pub(crate) trait Cartridge: Mapper {
     fn initialize(&mut self) {
         self.mapper_state_mut().has_battery =
@@ -143,17 +144,23 @@ pub(crate) trait Cartridge: Mapper {
     }
 }
 
-impl<T: Mapper> Cartridge for T {}
+// 本当はこうしたい
+// #[typetag::serde]
+// impl<T: Mapper> Cartridge for T {}
 
-#[derive(Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
 enum MappingMode {
     Ram,
     Rom,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct MapperState {
+    #[serde(with = "crate::serialize::BigArray")]
     program_page_table: [Option<usize>; 256],
+    #[serde(with = "crate::serialize::BigArray")]
     character_page_table: [Option<usize>; 256],
+    #[serde(with = "crate::serialize::BigArray")]
     sram_page_table: [Option<usize>; 256],
     sram: Vec<u8>,
     vram: Vec<u8>,

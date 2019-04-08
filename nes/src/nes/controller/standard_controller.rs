@@ -7,6 +7,7 @@
 use super::Controller;
 use crate::nes::OpenBusReadResult;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StandardController {
     buttons: [Buttons; 2],
     microphone: bool,
@@ -16,6 +17,7 @@ pub struct StandardController {
 }
 
 bitflags! {
+    #[derive(Serialize, Deserialize)]
     pub struct Buttons: u8 {
         const A =      0b0000_0001;
         const B =      0b0000_0010;

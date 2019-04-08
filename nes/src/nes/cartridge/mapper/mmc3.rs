@@ -7,10 +7,11 @@
 // Mapper 4
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{CartridgeData, Cartridge};
 use crate::nes::MirrorMode;
 use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Mmc3 {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -26,6 +27,9 @@ pub(crate) struct Mmc3 {
     cycle: u64,
     prev_cycle: u64,
 }
+
+#[typetag::serde]
+impl Cartridge for Mmc3 {}
 
 impl Mmc3 {
     pub(crate) fn new(data: CartridgeData) -> Self {

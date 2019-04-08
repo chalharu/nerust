@@ -7,14 +7,18 @@
 // Mapper 7
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 use crate::nes::cpu::interrupt::Interrupt;
 use crate::nes::MirrorMode;
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct AxRom {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
+
+#[typetag::serde]
+impl Cartridge for AxRom {}
 
 impl AxRom {
     pub(crate) fn new(data: CartridgeData) -> Self {

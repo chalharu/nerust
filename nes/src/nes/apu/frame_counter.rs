@@ -13,6 +13,7 @@ pub enum FrameType {
     Half,
 }
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub(crate) struct FrameCounter {
     period: bool,
     irq: bool,

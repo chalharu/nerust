@@ -8,7 +8,9 @@ use crate::nes::cpu::{Interrupt, Register};
 use crate::nes::{Apu, Cartridge, Controller, Ppu};
 use crate::nes::{OpenBus, OpenBusReadResult};
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Memory {
+    #[serde(with = "crate::serialize::BigArray")]
     wram: [u8; 2048],
     openbus: OpenBus,
 }

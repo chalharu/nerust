@@ -30,6 +30,7 @@ use crate::nes::{Cartridge, MixerInput};
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
 // const CLOCK_RATE: u64 = 1_789_773;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Core {
     pulse_table: Vec<f32>,
     tnd_table: Vec<f32>,

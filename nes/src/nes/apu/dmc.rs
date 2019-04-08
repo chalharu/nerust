@@ -16,6 +16,7 @@ const DMC_TABLE: [u8; 16] = [
     214, 190, 170, 160, 143, 127, 113, 107, 95, 80, 71, 64, 53, 42, 36, 27,
 ];
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub(crate) struct DMC {
     value: u8,
 

@@ -7,13 +7,17 @@
 // Mapper 34
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::CartridgeData;
+use super::{Cartridge, CartridgeData};
 use crate::nes::cpu::interrupt::Interrupt;
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct BNRom {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
+
+#[typetag::serde]
+impl Cartridge for BNRom {}
 
 impl BNRom {
     pub(crate) fn new(data: CartridgeData) -> Self {
