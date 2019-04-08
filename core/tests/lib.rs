@@ -6,7 +6,7 @@
 
 extern crate crc;
 extern crate hound;
-extern crate nes;
+extern crate rustysole_core;
 extern crate std as core;
 
 #[cfg(test)]
@@ -23,10 +23,10 @@ use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
 use crc::crc64;
-use nes::gui::filterset::FilterType;
-use nes::gui::{LogicalSize, ScreenBuffer};
-use nes::nes::controller::standard_controller::{Buttons, StandardController};
-use nes::nes::{Console, MixerInput};
+use rustysole_core::gui::filterset::FilterType;
+use rustysole_core::gui::{LogicalSize, ScreenBuffer};
+use rustysole_core::nes::controller::standard_controller::{Buttons, StandardController};
+use rustysole_core::nes::{Console, MixerInput};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 

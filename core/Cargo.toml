@@ -1,5 +1,5 @@
 [package]
-name = "nes"
+name = "rustysole_core"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
 edition = '2018'

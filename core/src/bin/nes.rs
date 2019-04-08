@@ -4,11 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate nes;
+extern crate rustysole_core;
 extern crate simple_logger;
 
-use nes::gui::Gui;
-use nes::nes::Console;
+use rustysole_core::gui::Gui;
+use rustysole_core::nes::Console;
 
 fn main() {
     // log initialize
