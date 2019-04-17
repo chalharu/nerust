@@ -4,9 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate crc;
 extern crate hound;
-extern crate rustysole_core;
 extern crate std as core;
 
 #[cfg(test)]
@@ -23,10 +21,12 @@ use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
 use crc::crc64;
-use rustysole_core::gui::filterset::FilterType;
-use rustysole_core::gui::{LogicalSize, ScreenBuffer};
-use rustysole_core::nes::controller::standard_controller::{Buttons, StandardController};
-use rustysole_core::nes::{Console, MixerInput};
+use nerust_core::nes::controller::standard_controller::{Buttons, StandardController};
+use nerust_core::nes::Console;
+use nerust_screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_traits::LogicalSize;
+use nerust_sound_traits::MixerInput;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 

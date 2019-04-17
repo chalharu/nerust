@@ -8,7 +8,6 @@ mod apu;
 mod cartridge;
 pub mod controller;
 mod cpu;
-mod interface;
 mod ppu;
 mod status;
 
@@ -16,10 +15,11 @@ use self::apu::Core as Apu;
 use self::cartridge::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
-pub use self::interface::*;
 use self::ppu::Core as Ppu;
 use self::status::mirror_mode::MirrorMode;
 use failure::Error;
+use nerust_screen_traits::Screen;
+use nerust_sound_traits::MixerInput;
 
 #[derive(Serialize, Deserialize)]
 pub struct Console {

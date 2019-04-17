@@ -21,9 +21,10 @@ use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
 use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
+use crate::nes::Cartridge;
 use crate::nes::Cpu;
 use crate::nes::OpenBusReadResult;
-use crate::nes::{Cartridge, MixerInput};
+use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
