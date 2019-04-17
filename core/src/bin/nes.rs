@@ -4,11 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate rustysole_core;
 extern crate simple_logger;
 
-use rustysole_core::gui::Gui;
-use rustysole_core::nes::Console;
+use nerust_core::gui::Gui;
+use nerust_core::nes::Console;
 
 fn main() {
     // log initialize
@@ -18,7 +17,7 @@ fn main() {
         &mut include_bytes!(concat!(
             "../../../roms/",
             // "samples/sample1.nes",
-            // "tests/Lan Master/Lan_Master.nes",
+            "tests/Lan Master/Lan_Master.nes",
             // "giko005.nes",
             // "giko008.nes",
             // "giko009.nes",
@@ -47,7 +46,7 @@ fn main() {
             // "color_test.nes",
             // "tests/tvpassfail/tv.nes",
             // "apu/test_apu_timers/dmc_pitch.nes",
-            "ppu/ppu_open_bus/ppu_open_bus.nes",
+            // "ppu/ppu_open_bus/ppu_open_bus.nes",
             // "cpu_reset/ram_after_reset.nes",
             // "cpu_reset/registers.nes",
             // "full_palette/full_palette.nes",

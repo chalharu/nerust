@@ -1,0 +1,11 @@
+[package]
+name = "nerust_sound_openal"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+nerust_sound_traits = { version = ">=0.0.0", path="../traits" }
+nerust_soundfilter = { version = ">=0.0.0", path="../../soundfilter" }
+alto =  { version = ">=0.0.0" }
+log = { version = ">=0.0.0", default-features = false }
