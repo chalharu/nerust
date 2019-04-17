@@ -246,7 +246,7 @@ impl Status {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Core {
     // memory
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     vram: [u8; 2048],
     palette: [u8; 32],
 
@@ -256,7 +256,7 @@ pub(crate) struct Core {
     frames: usize,
     buffered_data: u8,
 
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     primary_oam: [u8; 256],
     secondary_oam: [u8; 32],
     secondary_oam_address: u8,
@@ -268,7 +268,7 @@ pub(crate) struct Core {
     current_tile: TileInfo,
     previous_tile: TileInfo,
     next_tile: TileInfo,
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     sprites: [SpriteInfo; 64],
     sprite_index: u8,
     sprite_count: u8,

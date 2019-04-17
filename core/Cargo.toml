@@ -26,6 +26,7 @@ nerust_screen_filter = { version = ">0.0.0", path="../screen/filter" }
 nerust_screen_opengl = { version = ">0.0.0", path="../screen/opengl" }
 nerust_screen_buffer = { version = ">0.0.0", path="../screen/buffer" }
 nerust_timer = { version = ">0.0.0", path="../timer" }
+nerust_serialize = { version = ">0.0.0", path="../serialize" }
 
 [dev-dependencies]
 hound = { version = ">=0.0.0" }

@@ -1,0 +1,13 @@
+[package]
+name = "nerust_serialize"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = '2018'
+
+[dependencies]
+serde = { version = ">=0.0.0", default-features = false }
+
+[dev-dependencies]
+
+[profile.bench]
+debug = true
