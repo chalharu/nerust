@@ -10,7 +10,7 @@ use crate::nes::{OpenBus, OpenBusReadResult};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Memory {
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     wram: [u8; 2048],
     openbus: OpenBus,
 }

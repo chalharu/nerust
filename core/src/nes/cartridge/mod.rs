@@ -156,11 +156,11 @@ enum MappingMode {
 
 #[derive(Serialize, Deserialize)]
 pub struct MapperState {
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     program_page_table: [Option<usize>; 256],
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     character_page_table: [Option<usize>; 256],
-    #[serde(with = "crate::serialize::BigArray")]
+    #[serde(with = "nerust_serialize::BigArray")]
     sram_page_table: [Option<usize>; 256],
     sram: Vec<u8>,
     vram: Vec<u8>,
