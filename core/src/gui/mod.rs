@@ -65,9 +65,10 @@ impl Window {
         let events_loop = EventsLoop::new();
         // create opengl window
         let context = create_window(&events_loop, screen_buffer.physical_size());
-        let view = Some(GlView::new(|symbol| {
+        GlView::load_with(|symbol| {
             context.get_proc_address(symbol) as *const std::ffi::c_void
-        }));
+        });
+        let view = Some(GlView::new());
 
         Self {
             events_loop: Some(events_loop),

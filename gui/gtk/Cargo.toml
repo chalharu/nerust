@@ -1,0 +1,20 @@
+[package]
+name = "nerust_gtk"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gtk = { version = ">=0.6.0", features = ["v3_24"] }
+epoxy = { version = ">=0.0.0" }
+shared_library = { version = ">=0.0.0"}
+nerust_sound_traits = { version = ">0.0.0", path="../../sound/traits" }
+nerust_sound_openal = { version = ">0.0.0", path="../../sound/openal" }
+nerust_screen_traits = { version = ">0.0.0", path="../../screen/traits" }
+nerust_screen_filter = { version = ">0.0.0", path="../../screen/filter" }
+nerust_screen_opengl = { version = ">0.0.0", path="../../screen/opengl" }
+nerust_screen_buffer = { version = ">0.0.0", path="../../screen/buffer" }
+nerust_timer = { version = ">0.0.0", path="../../timer" }
+nerust_core = { version = ">0.0.0", path="../../core" }
+crc = { version = ">=0.0.0" }
+log = { version = ">=0.0.0", default-features = false }

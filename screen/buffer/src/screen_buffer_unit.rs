@@ -43,3 +43,6 @@ impl FilterFunc for ScreenBufferUnit {
 pub fn init_screen_buffer(size: LogicalSize) -> Box<[u8]> {
     allocate(size.width * size.height * 4)
 }
+
+unsafe impl Send for ScreenBufferUnit {}
+unsafe impl Sync for ScreenBufferUnit {}

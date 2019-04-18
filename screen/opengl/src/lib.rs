@@ -34,14 +34,16 @@ pub struct GlView {
 }
 
 impl GlView {
-    pub fn new<F: FnMut(&'static str) -> *const c_void>(get_proc_address: F) -> Self {
-        gl::load_with(get_proc_address);
-
+    pub fn new() -> Self {
         Self {
             tex_name: 0,
             vertex_vbo: 0,
             shader: None,
         }
+    }
+
+    pub fn load_with<F: FnMut(&'static str) -> *const c_void>(get_proc_address: F) {
+        gl::load_with(get_proc_address);
     }
 
     pub fn on_load(&mut self, logical_size: LogicalSize) {
@@ -144,7 +146,7 @@ impl GlView {
         self.shader = Some(shader);
     }
 
-    pub fn on_update(&mut self, screen_buffer: &mut ScreenBuffer) {
+    pub fn on_update(&self, screen_buffer: &ScreenBuffer) {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         // モデルの描画

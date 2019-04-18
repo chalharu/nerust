@@ -16,6 +16,7 @@ pub struct Timer {
     wait_instants: Instant,
     thread_sleep_nanos: Duration,
     frame_wait_nanos: Duration,
+    fps: f32,
 }
 
 impl Timer {
@@ -27,6 +28,7 @@ impl Timer {
             wait_instants,
             thread_sleep_nanos: Duration::from_nanos(Self::FRAME_WAIT_NANOS - 1_000_000),
             frame_wait_nanos: Duration::from_nanos(Self::FRAME_WAIT_NANOS),
+            fps: 0.0,
         }
     }
 
@@ -47,23 +49,25 @@ impl Timer {
             wait_instants = Instant::now();
         }
         self.wait_instants = wait_instants;
-    }
 
-    pub fn as_fps(&mut self) -> f32 {
-        let new_now = Instant::now();
         let len = self.instants.len();
         if len == 0 {
             self.instants.push_back(new_now);
-            return 0.0;
-        }
-        let duration = new_now.duration_since(if len >= Self::CALC_FRAMES {
-            self.instants.pop_front().unwrap()
+            return;
         } else {
-            *self.instants.front().unwrap()
-        });
-        self.instants.push_back(new_now);
-        (1_000_000_000_f64
-            / (duration.as_secs() * 1_000_000_000 + u64::from(duration.subsec_nanos())) as f64
-            * len as f64) as f32
+            let duration = new_now.duration_since(if len >= Self::CALC_FRAMES {
+                self.instants.pop_front().unwrap()
+            } else {
+                *self.instants.front().unwrap()
+            });
+            self.instants.push_back(new_now);
+            self.fps = (1_000_000_000_f64
+                / (duration.as_secs() * 1_000_000_000 + u64::from(duration.subsec_nanos())) as f64
+                * len as f64) as f32;
+        }
+    }
+
+    pub fn as_fps(&mut self) -> f32 {
+        self.fps
     }
 }
