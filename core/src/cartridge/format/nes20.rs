@@ -6,7 +6,7 @@
 
 use super::super::error::CartridgeError;
 use super::CartridgeData;
-use crate::nes::MirrorMode;
+use crate::MirrorMode;
 
 pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     headers: &[u8],

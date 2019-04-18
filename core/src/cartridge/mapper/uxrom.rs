@@ -4,22 +4,22 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// Mapper 34
+// Mapper 2
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::nes::cpu::interrupt::Interrupt;
+use crate::cpu::interrupt::Interrupt;
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct BNRom {
+pub(crate) struct UxRom {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
 
 #[typetag::serde]
-impl Cartridge for BNRom {}
+impl Cartridge for UxRom {}
 
-impl BNRom {
+impl UxRom {
     pub(crate) fn new(data: CartridgeData) -> Self {
         Self {
             cartridge_data: data,
@@ -28,7 +28,7 @@ impl BNRom {
     }
 }
 
-impl CartridgeDataDao for BNRom {
+impl CartridgeDataDao for UxRom {
     fn data_mut(&mut self) -> &mut CartridgeData {
         &mut self.cartridge_data
     }
@@ -37,7 +37,7 @@ impl CartridgeDataDao for BNRom {
     }
 }
 
-impl MapperStateDao for BNRom {
+impl MapperStateDao for UxRom {
     fn mapper_state_mut(&mut self) -> &mut MapperState {
         &mut self.state
     }
@@ -46,9 +46,9 @@ impl MapperStateDao for BNRom {
     }
 }
 
-impl Mapper for BNRom {
+impl Mapper for UxRom {
     fn program_page_len(&self) -> usize {
-        0x8000
+        0x4000
     }
     fn character_page_len(&self) -> usize {
         0x2000
@@ -56,11 +56,17 @@ impl Mapper for BNRom {
 
     fn initialize(&mut self) {
         self.change_program_page(0, 0);
+        let lastpage = (self.data_ref().prog_rom_len() / self.program_page_len()) - 1;
+        self.change_program_page(1, lastpage);
         self.change_character_page(0, 0);
     }
 
     fn name(&self) -> &str {
-        "BNROM (Mapper34) "
+        "UXROM (Mapper2)"
+    }
+
+    fn bus_conflicts(&self) -> bool {
+        self.data_ref().sub_mapper_type() == 2
     }
 
     fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {

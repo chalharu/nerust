@@ -8,9 +8,9 @@ pub mod error;
 pub mod format;
 pub mod mapper;
 use self::format::CartridgeDataDao;
-use crate::nes::cpu::interrupt::Interrupt;
-use crate::nes::MirrorMode;
-use crate::nes::OpenBusReadResult;
+use crate::cpu::interrupt::Interrupt;
+use crate::MirrorMode;
+use crate::OpenBusReadResult;
 use std::cmp;
 
 #[typetag::serde(tag = "type")]

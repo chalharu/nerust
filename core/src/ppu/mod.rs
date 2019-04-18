@@ -9,9 +9,9 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
-use crate::nes::cartridge::Cartridge;
-use crate::nes::cpu::interrupt::Interrupt;
-use crate::nes::{OpenBus, OpenBusReadResult};
+use crate::cartridge::Cartridge;
+use crate::cpu::interrupt::Interrupt;
+use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
 use std::cmp;
 use std::mem;

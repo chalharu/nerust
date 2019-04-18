@@ -20,10 +20,10 @@ use self::length_counter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
-use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
-use crate::nes::Cartridge;
-use crate::nes::Cpu;
-use crate::nes::OpenBusReadResult;
+use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::Cartridge;
+use crate::Cpu;
+use crate::OpenBusReadResult;
 use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ

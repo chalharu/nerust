@@ -8,7 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::nes::cpu::interrupt::Interrupt;
+use crate::cpu::interrupt::Interrupt;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Nina001 {

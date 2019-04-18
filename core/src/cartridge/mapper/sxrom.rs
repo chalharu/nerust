@@ -8,8 +8,8 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::nes::cpu::interrupt::Interrupt;
-use crate::nes::MirrorMode;
+use crate::cpu::interrupt::Interrupt;
+use crate::MirrorMode;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SxRom {

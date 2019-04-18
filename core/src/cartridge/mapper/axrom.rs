@@ -4,22 +4,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// Mapper 2
+// Mapper 7
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::nes::cpu::interrupt::Interrupt;
+use crate::cpu::interrupt::Interrupt;
+use crate::MirrorMode;
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct UxRom {
+pub(crate) struct AxRom {
     cartridge_data: CartridgeData,
     state: MapperState,
 }
 
 #[typetag::serde]
-impl Cartridge for UxRom {}
+impl Cartridge for AxRom {}
 
-impl UxRom {
+impl AxRom {
     pub(crate) fn new(data: CartridgeData) -> Self {
         Self {
             cartridge_data: data,
@@ -28,7 +29,7 @@ impl UxRom {
     }
 }
 
-impl CartridgeDataDao for UxRom {
+impl CartridgeDataDao for AxRom {
     fn data_mut(&mut self) -> &mut CartridgeData {
         &mut self.cartridge_data
     }
@@ -37,7 +38,7 @@ impl CartridgeDataDao for UxRom {
     }
 }
 
-impl MapperStateDao for UxRom {
+impl MapperStateDao for AxRom {
     fn mapper_state_mut(&mut self) -> &mut MapperState {
         &mut self.state
     }
@@ -46,9 +47,9 @@ impl MapperStateDao for UxRom {
     }
 }
 
-impl Mapper for UxRom {
+impl Mapper for AxRom {
     fn program_page_len(&self) -> usize {
-        0x4000
+        0x8000
     }
     fn character_page_len(&self) -> usize {
         0x2000
@@ -56,13 +57,11 @@ impl Mapper for UxRom {
 
     fn initialize(&mut self) {
         self.change_program_page(0, 0);
-        let lastpage = (self.data_ref().prog_rom_len() / self.program_page_len()) - 1;
-        self.change_program_page(1, lastpage);
         self.change_character_page(0, 0);
     }
 
     fn name(&self) -> &str {
-        "UXROM (Mapper2)"
+        "AXROM (Mapper7)"
     }
 
     fn bus_conflicts(&self) -> bool {
@@ -70,6 +69,11 @@ impl Mapper for UxRom {
     }
 
     fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {
-        self.change_program_page(0, usize::from(value));
+        self.change_program_page(0, usize::from(value) & 0x0F);
+        if value & 0x10 == 0x10 {
+            self.set_mirror_mode(MirrorMode::Single1);
+        } else {
+            self.set_mirror_mode(MirrorMode::Single0);
+        }
     }
 }

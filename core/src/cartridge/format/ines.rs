@@ -6,7 +6,7 @@
 
 use super::super::error::CartridgeError;
 use super::CartridgeData;
-use crate::nes::MirrorMode;
+use crate::MirrorMode;
 use std::cmp;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(

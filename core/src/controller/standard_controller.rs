@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Controller;
-use crate::nes::OpenBusReadResult;
+use crate::OpenBusReadResult;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StandardController {
