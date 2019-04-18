@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::nes::cpu::interrupt::*;
-use crate::nes::Cartridge;
+use crate::cpu::interrupt::*;
+use crate::Cartridge;
 use std::mem;
 
 // NTSC

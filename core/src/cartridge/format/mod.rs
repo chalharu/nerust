@@ -7,7 +7,7 @@
 pub mod ines;
 pub mod nes20;
 use super::error::CartridgeError;
-use crate::nes::MirrorMode;
+use crate::MirrorMode;
 use serde_bytes;
 
 #[derive(Serialize, Deserialize, Debug)]

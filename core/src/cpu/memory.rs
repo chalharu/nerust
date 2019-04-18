@@ -4,9 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::nes::cpu::{Interrupt, Register};
-use crate::nes::{Apu, Cartridge, Controller, Ppu};
-use crate::nes::{OpenBus, OpenBusReadResult};
+use crate::cpu::{Interrupt, Register};
+use crate::{Apu, Cartridge, Controller, Ppu};
+use crate::{OpenBus, OpenBusReadResult};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Memory {

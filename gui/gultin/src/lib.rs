@@ -4,8 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::nes::controller::standard_controller::{Buttons, StandardController};
-use crate::nes::Console;
+#[macro_use]
+extern crate log;
+
+use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use nerust_core::Console;
 use crc::crc64;
 use glutin::{
     dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlProfile, GlRequest,

@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
+use crate::cpu::interrupt::{Interrupt, IrqSource};
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum FrameType {

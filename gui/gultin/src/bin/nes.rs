@@ -6,8 +6,8 @@
 
 extern crate simple_logger;
 
-use nerust_core::gui::Gui;
-use nerust_core::nes::Console;
+use nerust_gultin::Gui;
+use nerust_core::Console;
 
 fn main() {
     // log initialize
@@ -15,7 +15,7 @@ fn main() {
 
     let console = Console::new(
         &mut include_bytes!(concat!(
-            "../../../roms/",
+            "../../../../roms/",
             // "samples/sample1.nes",
             "tests/Lan Master/Lan_Master.nes",
             // "giko005.nes",

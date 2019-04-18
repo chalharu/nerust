@@ -8,8 +8,8 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{CartridgeData, Cartridge};
-use crate::nes::MirrorMode;
-use crate::nes::cpu::interrupt::{Interrupt, IrqSource};
+use crate::MirrorMode;
+use crate::cpu::interrupt::{Interrupt, IrqSource};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Mmc3 {
