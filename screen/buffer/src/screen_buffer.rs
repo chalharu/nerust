@@ -14,6 +14,7 @@ use std::mem;
 pub struct ScreenBuffer {
     filter: Box<NesFilter>,
     dest: ScreenBufferUnit,
+    display_buffer: ScreenBufferUnit,
     src_buffer: Box<[u8]>,
     src_buffer_next: Box<[u8]>,
     src_pos: usize,
@@ -28,6 +29,7 @@ impl ScreenBuffer {
 
         Self {
             dest: ScreenBufferUnit::new(filter.logical_size()),
+            display_buffer: ScreenBufferUnit::new(filter.logical_size()),
             filter,
             src_buffer,
             src_buffer_next,
@@ -36,7 +38,7 @@ impl ScreenBuffer {
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        self.dest.as_ptr()
+        self.display_buffer.as_ptr()
     }
 
     pub fn logical_size(&self) -> LogicalSize {
@@ -58,6 +60,7 @@ impl Screen for ScreenBuffer {
 
     fn render(&mut self) {
         mem::swap(&mut self.src_buffer, &mut self.src_buffer_next);
+        mem::swap(&mut self.dest, &mut self.display_buffer);
         self.src_pos = 0;
         self.dest.reset();
     }
@@ -68,3 +71,6 @@ impl Hash for ScreenBuffer {
         self.src_buffer.hash(state);
     }
 }
+
+unsafe impl Send for ScreenBuffer {}
+unsafe impl Sync for ScreenBuffer {}
