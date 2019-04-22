@@ -128,9 +128,9 @@ impl Window {
         self.context.swap_buffers().unwrap();
 
         let title = if self.paused {
-            "Nes -- Paused".to_owned()
+            "Nes -- Paused".to_string()
         } else {
-            format!("Nes")
+            "Nes".to_string()
         };
         self.context.window().set_title(title.as_str());
     }

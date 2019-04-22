@@ -46,7 +46,7 @@ impl EnvelopeDao {
         self.period = 0;
     }
 
-    pub fn get_volume(&self) -> u8 {
+    pub fn get_volume(self) -> u8 {
         if self.enabled {
             self.volume
         } else {
