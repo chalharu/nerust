@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::sync::Arc;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::Console as Core;
+use nerust_core::Core;
 use crc::crc64;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
@@ -169,7 +169,7 @@ fn main() {
     gtk::main();
 }
 
-struct Console<S: Sound + MixerInput> {
+struct Core<S: Sound + MixerInput> {
     core: Core,
     paused: bool,
     speaker: S,
@@ -180,7 +180,7 @@ struct Console<S: Sound + MixerInput> {
     screen_buffer: Arc<ScreenBuffer>,
 }
 
-impl<S: Sound + MixerInput> Console<S> {
+impl<S: Sound + MixerInput> Core<S> {
     pub fn new(core: Core, speaker: S, screen_buffer: Arc<ScreenBuffer>) -> Self {
         Self {
             core,

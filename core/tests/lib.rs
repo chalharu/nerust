@@ -22,7 +22,7 @@ use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
 use crc::crc64;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::Console;
+use nerust_core::Core;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
@@ -38,7 +38,7 @@ impl MixerInput for TestMixer {
 
 struct ScenarioRunner {
     screen_buffer: ScreenBuffer,
-    console: Console,
+    core: Core,
     controller: StandardController,
     mixer: TestMixer,
     frame_counter: u64,
@@ -56,7 +56,7 @@ impl ScenarioRunner {
                     height: 240,
                 },
             ),
-            console: Console::new(input).unwrap(),
+            core: Core::new(input).unwrap(),
             controller: StandardController::new(),
             mixer: TestMixer,
             frame_counter: 0,
@@ -88,7 +88,7 @@ impl ScenarioRunner {
                         };
                     }
                     ScenarioOperation::Reset => {
-                        self.console.reset();
+                        self.core.reset();
                     }
                     ScenarioOperation::StandardControllerInput { code, state } => match code {
                         StandardControllerButtonCode::Pad1(code) => {
@@ -112,7 +112,7 @@ impl ScenarioRunner {
     }
 
     fn on_update(&mut self) {
-        while !self.console.step(
+        while !self.core.step(
             &mut self.screen_buffer,
             &mut self.controller,
             &mut self.mixer,
