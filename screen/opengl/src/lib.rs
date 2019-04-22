@@ -14,7 +14,6 @@ use self::vertex_data::VertexData;
 use gl;
 use gl::types::GLint;
 use nerust_glwrap::*;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
 use std::os::raw::c_void;
 use std::{mem, ptr};
@@ -146,7 +145,7 @@ impl GlView {
         self.shader = Some(shader);
     }
 
-    pub fn on_update(&self, screen_buffer: &ScreenBuffer) {
+    pub fn on_update(&self, logical_size: LogicalSize, screen_ptr: *const u8) {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         // モデルの描画
@@ -155,11 +154,11 @@ impl GlView {
             0,
             0,
             0,
-            screen_buffer.logical_size().width as i32,
-            screen_buffer.logical_size().height as i32,
+            logical_size.width as i32,
+            logical_size.height as i32,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            screen_buffer.as_ptr() as *const c_void,
+            screen_ptr as *const c_void,
         )
         .unwrap();
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
