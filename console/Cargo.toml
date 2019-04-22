@@ -1,0 +1,14 @@
+[package]
+name = "nerust_console"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+crc = { version = ">=0.0.0" }
+nerust_core = { version = ">0.0.0", path="../core" }
+nerust_screen_buffer = { version = ">0.0.0", path="../screen/buffer" }
+nerust_screen_traits = { version = ">0.0.0", path="../screen/traits" }
+nerust_sound_traits = { version = ">0.0.0", path="../sound/traits" }
+nerust_timer = { version = ">0.0.0", path="../timer" }
+log = { version = ">=0.0.0", default-features = false }

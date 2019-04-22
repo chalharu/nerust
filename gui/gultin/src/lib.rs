@@ -4,16 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-extern crate log;
-
-mod async_console;
-
-use async_console::AsyncConsole;
 use glutin::{
     dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlProfile, GlRequest,
     KeyboardInput, PossiblyCurrent, VirtualKeyCode, WindowBuilder, WindowEvent, WindowedContext,
 };
+use nerust_console::Console;
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
@@ -49,7 +44,7 @@ pub struct Window {
     timer: Timer,
     keys: Buttons,
     paused: bool,
-    console: AsyncConsole,
+    console: Console,
     physical_size: PhysicalSize,
     logical_size: LogicalSize,
 }
@@ -76,7 +71,7 @@ impl Window {
         // 512 * 5 = 54ms
         // 256 * 5 = 27ms
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
-        let console = AsyncConsole::new(speaker, screen_buffer);
+        let console = Console::new(speaker, screen_buffer);
 
         Self {
             events_loop: Some(events_loop),
