@@ -7,21 +7,20 @@
 #[macro_use]
 extern crate log;
 
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::Console;
-use crc::crc64;
+mod async_console;
+
+use async_console::AsyncConsole;
 use glutin::{
     dpi, Api, ContextBuilder, DeviceId, ElementState, Event, EventsLoop, GlProfile, GlRequest,
     KeyboardInput, PossiblyCurrent, VirtualKeyCode, WindowBuilder, WindowEvent, WindowedContext,
 };
+use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{Timer, CLOCK_RATE};
-use std::hash::{Hash, Hasher};
 use std::{f64, mem};
 
 fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContext<PossiblyCurrent> {
@@ -42,21 +41,24 @@ fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContex
     unsafe { context.make_current().unwrap() }
 }
 
-struct Window {
+pub struct Window {
     view: Option<GlView>,
     context: WindowedContext<PossiblyCurrent>,
     events_loop: Option<EventsLoop>,
     running: bool,
     timer: Timer,
-    controller: StandardController,
     keys: Buttons,
     paused: bool,
-    frame_counter: u64,
-    screen_buffer: ScreenBuffer,
+    console: AsyncConsole,
+    physical_size: PhysicalSize,
+    logical_size: LogicalSize,
 }
 
 impl Window {
-    fn new() -> Self {
+    pub fn new() -> Self {
+        // glutin initialize
+        let events_loop = EventsLoop::new();
+        // create opengl window
         let screen_buffer = ScreenBuffer::new(
             FilterType::NtscComposite,
             LogicalSize {
@@ -64,14 +66,17 @@ impl Window {
                 height: 240,
             },
         );
-        // glutin initialize
-        let events_loop = EventsLoop::new();
-        // create opengl window
-        let context = create_window(&events_loop, screen_buffer.physical_size());
-        GlView::load_with(|symbol| {
-            context.get_proc_address(symbol) as *const std::ffi::c_void
-        });
+        let physical_size = screen_buffer.physical_size();
+        let logical_size = screen_buffer.logical_size();
+        let context = create_window(&events_loop, physical_size);
+        GlView::load_with(|symbol| context.get_proc_address(symbol) as *const std::ffi::c_void);
         let view = Some(GlView::new());
+
+        // 1024 * 5 = 107ms
+        // 512 * 5 = 54ms
+        // 256 * 5 = 27ms
+        let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
+        let console = AsyncConsole::new(speaker, screen_buffer);
 
         Self {
             events_loop: Some(events_loop),
@@ -79,19 +84,23 @@ impl Window {
             context,
             running: true,
             timer: Timer::new(),
-            controller: StandardController::new(),
             keys: Buttons::empty(),
             paused: false,
-            frame_counter: 0,
-            screen_buffer,
+            console,
+            physical_size,
+            logical_size,
         }
     }
 
-    fn run<S: Sound + MixerInput>(&mut self, mut console: Console, mut speaker: S) {
+    pub fn load(&mut self, data: Vec<u8>) {
+        self.console.load(data);
+    }
+
+    pub fn run(&mut self) {
         self.on_load();
-        speaker.start();
+        self.console.resume();
         while self.running {
-            self.on_update(&mut console, &mut speaker);
+            self.on_update();
             self.timer.wait();
             let mut el = mem::replace(&mut self.events_loop, None);
             el.as_mut().unwrap().poll_events(|event| {
@@ -104,7 +113,7 @@ impl Window {
                             self.on_resize(logical_size);
                         }
                         WindowEvent::KeyboardInput { device_id, input } => {
-                            self.on_keyboard_input(device_id, input, &mut console, &mut speaker);
+                            self.on_keyboard_input(device_id, input);
                         }
                         _ => (),
                     }
@@ -115,37 +124,28 @@ impl Window {
     }
 
     fn on_load(&mut self) {
-        self.view
-            .as_mut()
-            .unwrap()
-            .on_load(self.screen_buffer.logical_size());
+        self.view.as_mut().unwrap().on_load(self.logical_size);
     }
 
-    fn on_update<S: Sound + MixerInput>(&mut self, console: &mut Console, speaker: &mut S) {
-        if !self.paused {
-            while !console.step(&mut self.screen_buffer, &mut self.controller, speaker) {}
-            self.frame_counter += 1;
-        }
-
+    fn on_update(&mut self) {
         self.view
             .as_mut()
             .unwrap()
-            .on_update(&mut self.screen_buffer);
+            .on_update(self.console.logical_size(), self.console.as_ptr());
         self.context.swap_buffers().unwrap();
 
-        let fps = self.timer.as_fps();
         let title = if self.paused {
             "Nes -- Paused".to_owned()
         } else {
-            format!("Nes -- FPS: {:.2}", fps)
+            format!("Nes")
         };
         self.context.window().set_title(title.as_str());
     }
 
     fn on_resize(&mut self, logical_size: dpi::LogicalSize) {
         let dpi_factor = self.context.window().get_hidpi_factor();
-        let rate_x = logical_size.width / f64::from(self.screen_buffer.physical_size().width);
-        let rate_y = logical_size.height / f64::from(self.screen_buffer.physical_size().height);
+        let rate_x = logical_size.width / f64::from(self.physical_size.width);
+        let rate_y = logical_size.height / f64::from(self.physical_size.height);
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;
@@ -160,13 +160,7 @@ impl Window {
         self.view.as_mut().unwrap().on_close();
     }
 
-    fn on_keyboard_input<S: Sound + MixerInput>(
-        &mut self,
-        _device_id: DeviceId,
-        input: KeyboardInput,
-        console: &mut Console,
-        speaker: &mut S,
-    ) {
+    fn on_keyboard_input(&mut self, _device_id: DeviceId, input: KeyboardInput) {
         // とりあえず、pad1のみ次の通りとする。
         // A      -> Z
         // B      -> X
@@ -188,22 +182,15 @@ impl Window {
             Some(VirtualKeyCode::Space) if input.state == ElementState::Pressed => {
                 self.paused = !self.paused;
                 if self.paused {
-                    speaker.pause();
-                    let mut hasher = crc64::Digest::new(crc64::ECMA);
-                    self.screen_buffer.hash(&mut hasher);
-                    info!(
-                        "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
-                        self.frame_counter,
-                        hasher.finish()
-                    );
+                    self.console.pause();
                 } else {
-                    speaker.start();
+                    self.console.resume();
                 }
                 Buttons::empty()
             }
             Some(VirtualKeyCode::Escape) => {
                 if input.state == ElementState::Released {
-                    console.reset();
+                    self.console.reset();
                 }
                 Buttons::empty()
             }
@@ -213,29 +200,12 @@ impl Window {
             ElementState::Pressed => self.keys | code,
             ElementState::Released => self.keys & !code,
         };
-        self.controller.set_pad1(self.keys);
+        self.console.set_pad1(self.keys);
     }
 }
 
 impl Drop for Window {
     fn drop(&mut self) {
         std::mem::replace(&mut self.view, None); // GlViewを先に解放
-    }
-}
-
-pub struct Gui {
-    console: Console,
-}
-
-impl Gui {
-    pub fn new(console: Console) -> Self {
-        Self { console }
-    }
-
-    pub fn run(self) {
-        // 1024 * 5 = 107ms
-        // 512 * 5 = 54ms
-        // 256 * 5 = 27ms
-        Window::new().run(self.console, OpenAl::new(48000, CLOCK_RATE as i32, 128, 20));
     }
 }

@@ -41,6 +41,10 @@ impl ScreenBuffer {
         self.display_buffer.as_ptr()
     }
 
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.display_buffer.as_mut_ptr()
+    }
+
     pub fn logical_size(&self) -> LogicalSize {
         self.filter.logical_size()
     }
