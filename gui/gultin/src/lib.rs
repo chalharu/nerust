@@ -16,6 +16,7 @@ use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::{Timer, CLOCK_RATE};
+use std::mem::ManuallyDrop;
 use std::{f64, mem};
 
 fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContext<PossiblyCurrent> {
@@ -37,7 +38,7 @@ fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContex
 }
 
 pub struct Window {
-    view: Option<GlView>,
+    view: ManuallyDrop<GlView>,
     context: WindowedContext<PossiblyCurrent>,
     events_loop: Option<EventsLoop>,
     running: bool,
@@ -65,7 +66,6 @@ impl Window {
         let logical_size = screen_buffer.logical_size();
         let context = create_window(&events_loop, physical_size);
         GlView::load_with(|symbol| context.get_proc_address(symbol) as *const std::ffi::c_void);
-        let view = Some(GlView::new());
 
         // 1024 * 5 = 107ms
         // 512 * 5 = 54ms
@@ -75,7 +75,7 @@ impl Window {
 
         Self {
             events_loop: Some(events_loop),
-            view,
+            view: ManuallyDrop::new(GlView::new()),
             context,
             running: true,
             timer: Timer::new(),
@@ -119,13 +119,11 @@ impl Window {
     }
 
     fn on_load(&mut self) {
-        self.view.as_mut().unwrap().on_load(self.logical_size);
+        self.view.on_load(self.logical_size);
     }
 
     fn on_update(&mut self) {
         self.view
-            .as_mut()
-            .unwrap()
             .on_update(self.console.logical_size(), self.console.as_ptr());
         self.context.swap_buffers().unwrap();
 
@@ -147,12 +145,12 @@ impl Window {
 
         self.context.resize(logical_size.to_physical(dpi_factor));
 
-        self.view.as_mut().unwrap().on_resize(scale_x, scale_y);
+        self.view.on_resize(scale_x, scale_y);
     }
 
     fn on_close(&mut self) {
         self.running = false;
-        self.view.as_mut().unwrap().on_close();
+        self.view.on_close();
     }
 
     fn on_keyboard_input(&mut self, _device_id: DeviceId, input: KeyboardInput) {
@@ -201,6 +199,8 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        std::mem::replace(&mut self.view, None); // GlViewを先に解放
+        unsafe {
+            ManuallyDrop::drop(&mut self.view);
+        }
     }
 }
