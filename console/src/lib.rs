@@ -4,6 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[macro_use]
+extern crate log;
+
 use crc::crc64;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::Core;
@@ -18,7 +21,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
 
-pub struct AsyncConsole {
+pub struct Console {
     stop_sender: Sender<()>,
     data_sender: Sender<ConsoleData>,
     thread: Option<JoinHandle<()>>,
@@ -27,7 +30,7 @@ pub struct AsyncConsole {
     screen_buffer_ptr: Arc<AtomicPtr<u8>>,
 }
 
-impl AsyncConsole {
+impl Console {
     pub fn new<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         mut screen_buffer: ScreenBuffer,
@@ -47,7 +50,7 @@ impl AsyncConsole {
 
         result.thread = Some(thread::spawn(move || {
             let mut state =
-                AsyncConsoleRunner::new(data_recv, stop_recv, screen_buffer, screen_buffer_ptr);
+                ConsoleRunner::new(data_recv, stop_recv, screen_buffer, screen_buffer_ptr);
 
             state.run(speaker);
         }));
@@ -95,7 +98,7 @@ impl AsyncConsole {
     }
 }
 
-impl Drop for AsyncConsole {
+impl Drop for Console {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
             warn!("Core stop send failed");
@@ -112,7 +115,7 @@ enum ConsoleData {
     Pad1Data(Buttons),
 }
 
-struct AsyncConsoleRunner {
+struct ConsoleRunner {
     timer: Timer,
     controller: StandardController,
     paused: bool,
@@ -124,7 +127,7 @@ struct AsyncConsoleRunner {
     screen_buffer_ptr: Arc<AtomicPtr<u8>>,
 }
 
-impl AsyncConsoleRunner {
+impl ConsoleRunner {
     pub fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
