@@ -6,7 +6,7 @@
 
 use crc::crc64;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::Console;
+use nerust_core::Core;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
@@ -66,31 +66,31 @@ impl AsyncConsole {
 
     pub fn resume(&self) {
         if self.data_sender.send(ConsoleData::Resume).is_err() {
-            warn!("Console resume send failed");
+            warn!("Core resume send failed");
         }
     }
 
     pub fn pause(&self) {
         if self.data_sender.send(ConsoleData::Pause).is_err() {
-            warn!("Console pause send failed");
+            warn!("Core pause send failed");
         }
     }
 
     pub fn set_pad1(&self, data: Buttons) {
         if self.data_sender.send(ConsoleData::Pad1Data(data)).is_err() {
-            warn!("Console pad1 data send failed");
+            warn!("Core pad1 data send failed");
         }
     }
 
     pub fn load(&self, data: Vec<u8>) {
         if self.data_sender.send(ConsoleData::Load(data)).is_err() {
-            warn!("Console load send failed");
+            warn!("Core load send failed");
         }
     }
 
     pub fn reset(&self) {
         if self.data_sender.send(ConsoleData::Reset).is_err() {
-            warn!("Console reset send failed");
+            warn!("Core reset send failed");
         }
     }
 }
@@ -98,7 +98,7 @@ impl AsyncConsole {
 impl Drop for AsyncConsole {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
-            warn!("Console stop send failed");
+            warn!("Core stop send failed");
         }
         mem::replace(&mut self.thread, None).map(JoinHandle::join);
     }
@@ -145,11 +145,11 @@ impl AsyncConsoleRunner {
     }
 
     fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
-        let mut console: Option<Console> = None;
+        let mut core: Option<Core> = None;
         while let Err(_) = self.stop_receiver.try_recv() {
-            if let Some(console) = console.as_mut() {
+            if let Some(core) = core.as_mut() {
                 if !self.paused {
-                    while !console.step(&mut self.screen_buffer, &mut self.controller, &mut speaker)
+                    while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker)
                     {
                     }
                     self.frame_counter += 1;
@@ -163,7 +163,7 @@ impl AsyncConsoleRunner {
             if let Ok(event) = self.data_receiver.try_recv() {
                 match event {
                     ConsoleData::Load(data) => {
-                        console = Console::new(&mut data.into_iter()).ok();
+                        core = Core::new(&mut data.into_iter()).ok();
                     }
                     ConsoleData::Resume => {
                         self.paused = false;
@@ -181,7 +181,7 @@ impl AsyncConsoleRunner {
                         );
                     }
                     ConsoleData::Reset => {
-                        console.as_mut().map(Console::reset).unwrap();
+                        core.as_mut().map(Core::reset).unwrap();
                     }
                     ConsoleData::Pad1Data(data) => {
                         self.controller.set_pad1(data);

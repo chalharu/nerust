@@ -33,15 +33,15 @@ use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
 #[derive(Serialize, Deserialize)]
-pub struct Console {
+pub struct Core {
     cpu: Cpu,
     ppu: Ppu,
     apu: Apu,
     cartridge: Box<Cartridge>,
 }
 
-impl Console {
-    pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Console, Error> {
+impl Core {
+    pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Core, Error> {
         let mut cpu = Cpu::new();
         let mut cartridge = cartridge::try_from(input)?;
         let apu = Apu::new(cpu.interrupt_mut(), cartridge.as_mut());
