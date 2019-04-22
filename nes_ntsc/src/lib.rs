@@ -149,8 +149,8 @@ pub struct NesNtsc {
 impl NesNtsc {
     // phases [i] = cos( i * PI / 6 )
     const PHASES: [f32; 19] = [
-        -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0, 0.866_025, 0.5, 0.0, -0.5, -0.866_025, -1.0,
-        -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0,
+        -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0, 0.866_025, 0.5, 0.0, -0.5, -0.866_025,
+        -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0,
     ];
 
     fn to_angle_sin(color: usize) -> f32 {
@@ -188,16 +188,15 @@ impl NesNtsc {
         // 	float const* to_rgb = impl->to_rgb;
         let y = y - RGB_OFFSET;
         let mut out = Vec::new();
-        for k in 0..BURST_COUNT {
+        for rgb in filter_impl.to_rgb.iter() {
             // Encode yiq into *two* composite signals (to allow control over artifacting).
             // Convolve these with kernels which: filter respective components, apply
             // sharpening, and rescale horizontally. Convert resulting yiq to rgb and pack
             // into integer. Based on algorithm by NewRisingSun.
 
             // pixel_info_t const* pixel = nes_ntsc_pixels;
-            for j in 0..ALIGNMENT_COUNT {
+            for pixel in NES_NTSC_PIXELS.iter() {
                 // negate is -1 when composite starts at odd multiple of 2
-                let pixel = &NES_NTSC_PIXELS[j];
                 let yy = y * filter_impl.fringing * pixel.negate;
                 let ic0 = (i + yy) * pixel.kernel[0];
                 let qc1 = (q + yy) * pixel.kernel[1];
@@ -216,8 +215,7 @@ impl NesNtsc {
                 let mut offset = pixel.offset;
 
                 for _ in 0..RGB_KERNEL_SIZE {
-                    let i =
-                        filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2;
+                    let i = filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2;
                     let q =
                         filter_impl.kernel[offset + 1] * qc1 + filter_impl.kernel[offset + 3] * qc3;
                     let y = filter_impl.kernel[offset + KERNEL_SIZE] * yc0
@@ -234,7 +232,7 @@ impl NesNtsc {
                         offset -= KERNEL_SIZE * 2 * (RESCALE_OUT - 1) + 2;
                     }
 
-                    let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, &filter_impl.to_rgb[k]);
+                    let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, rgb);
                     out.push(Self::pack_rgb(r as u32, g as u32, b as u32).wrapping_sub(RGB_BIAS));
                 }
             }
@@ -254,8 +252,7 @@ impl NesNtsc {
             let p1 = io[i + BURST_SIZE].wrapping_add(RGB_BIAS);
             let p2 = io[i + BURST_SIZE * 2].wrapping_add(RGB_BIAS);
             // merge colors without losing precision
-            io[i] =
-                ((p0 + p1 - ((p0 ^ p1) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
+            io[i] = ((p0 + p1 - ((p0 ^ p1) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
             io[i + BURST_SIZE] =
                 ((p1 + p2 - ((p1 ^ p2) & NES_NTSC_RGB_BUILDER)) >> 1).wrapping_sub(RGB_BIAS);
             io[i + BURST_SIZE * 2] =
@@ -282,7 +279,8 @@ impl NesNtsc {
 
     fn distribute_error(a: usize, b: usize, c: usize, i: usize, error: u32, out: &mut [u32]) {
         let fourth = (((error + 2 * NES_NTSC_RGB_BUILDER) >> 2)
-            & ((RGB_BIAS >> 1).wrapping_sub(NES_NTSC_RGB_BUILDER))).wrapping_sub(RGB_BIAS >> 2);
+            & ((RGB_BIAS >> 1).wrapping_sub(NES_NTSC_RGB_BUILDER)))
+        .wrapping_sub(RGB_BIAS >> 2);
         out[a] = out[a].wrapping_add(fourth);
         out[b] = out[b].wrapping_add(fourth);
         out[c] = out[c].wrapping_add(fourth);
@@ -370,7 +368,8 @@ impl NesNtsc {
                             kernel
                         }
                     }
-                }).flatten()
+                })
+                .flatten()
                 .collect::<Vec<_>>(),
         }
     }

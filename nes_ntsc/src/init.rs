@@ -65,10 +65,12 @@ impl Init {
                             let i = DEFAULT_DECODER[x << 1];
                             let q = DEFAULT_DECODER[(x << 1) + 1];
                             vec![i * acc.1 - q * acc.0, i * acc.0 + q * acc.1]
-                        }).collect::<Vec<_>>();
+                        })
+                        .collect::<Vec<_>>();
                     *acc = rotate_iq(*acc, 0.866_025, -0.5); // +120 degrees
                     Some(result)
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
         };
         Self {
             to_rgb,
@@ -187,7 +189,8 @@ impl Init {
                         *remain = (cur - m, remain.1);
                         Some(result)
                     }))
-                }).flatten()
+                })
+                .flatten()
                 .collect::<Vec<_>>()
         }
     }

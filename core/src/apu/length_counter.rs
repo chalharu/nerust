@@ -79,15 +79,15 @@ impl LengthCounterDao {
         self.halt = self.next_halt;
     }
 
-    pub fn get_value(&self) -> u8 {
+    pub fn get_value(self) -> u8 {
         self.value
     }
 
-    pub fn get_halt(&self) -> bool {
+    pub fn get_halt(self) -> bool {
         self.halt
     }
 
-    pub fn get_status(&self) -> bool {
+    pub fn get_status(self) -> bool {
         self.value > 0
     }
 }
