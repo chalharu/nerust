@@ -1,3 +1,5 @@
+#version 100
+
 uniform mat4 unif_matrix;
 attribute vec2 position;
 attribute vec2 uv;

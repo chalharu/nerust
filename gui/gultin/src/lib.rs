@@ -28,9 +28,9 @@ fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContex
         .with_title("Nes");
     let context = ContextBuilder::new()
         .with_double_buffer(Some(true))
-        .with_gl_profile(GlProfile::Compatibility)
+        .with_gl_profile(GlProfile::Core)
         // .with_vsync(true)
-        .with_gl(GlRequest::Specific(Api::OpenGlEs, (2, 0)))
+        .with_gl(GlRequest::Specific(Api::OpenGl, (3, 2)))
         .build_windowed(window, &events_loop)
         .unwrap();
 
@@ -72,10 +72,12 @@ impl Window {
         // 256 * 5 = 27ms
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
         let console = Console::new(speaker, screen_buffer);
+        let mut view = GlView::new();
+        view.use_vao(true);
 
         Self {
             events_loop: Some(events_loop),
-            view: ManuallyDrop::new(GlView::new()),
+            view: ManuallyDrop::new(view),
             context,
             running: true,
             timer: Timer::new(),
@@ -127,12 +129,6 @@ impl Window {
             .on_update(self.console.logical_size(), self.console.as_ptr());
         self.context.swap_buffers().unwrap();
 
-        let title = if self.paused {
-            "Nes -- Paused".to_string()
-        } else {
-            "Nes".to_string()
-        };
-        self.context.window().set_title(title.as_str());
     }
 
     fn on_resize(&mut self, logical_size: dpi::LogicalSize) {
@@ -174,11 +170,14 @@ impl Window {
             Some(VirtualKeyCode::Right) => Buttons::RIGHT,
             Some(VirtualKeyCode::Space) if input.state == ElementState::Pressed => {
                 self.paused = !self.paused;
-                if self.paused {
+                let title = if self.paused {
                     self.console.pause();
+                    "Nes -- Paused".to_string()
                 } else {
                     self.console.resume();
-                }
+                    "Nes".to_string()
+                };
+                self.context.window().set_title(title.as_str());
                 Buttons::empty()
             }
             Some(VirtualKeyCode::Escape) => {

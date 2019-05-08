@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 gl = { version = ">=0.0.0" }
 failure = { version = ">=0.0.0" }
+log = { version = ">=0.0.0", default-features = false }

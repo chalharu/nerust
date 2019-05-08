@@ -8,8 +8,11 @@
 
 #[macro_use]
 extern crate failure;
+#[macro_use]
+extern crate log;
 
 mod error;
+mod vertex;
 
 use self::error::*;
 use gl;
@@ -20,9 +23,15 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::{ptr, slice, str};
+pub use vertex::*;
 
 fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
     let result = func();
+    gl_get_error()?;
+    Ok(result)
+}
+
+fn gl_get_error() -> Result<(), Error> {
     let mut error_code = unsafe { gl::GetError() };
 
     if error_code != gl::NO_ERROR {
@@ -35,8 +44,9 @@ fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
             }
         }
     }
-    Ok(result)
+    Ok(())
 }
+
 
 pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
@@ -250,6 +260,26 @@ pub fn tex_sub_image_2d(
 
 pub fn draw_arrays(mode: GLenum, first: GLint, count: GLsizei) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
+}
+
+pub fn gen_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::GenVertexArrays(n, arrays) })
+}
+
+pub fn bind_vertex_array(array: GLuint) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::BindVertexArray(array) })
+}
+
+pub fn delete_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::DeleteVertexArrays(n, arrays) })
+}
+
+pub fn generate_mipmap(target: GLenum) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::GenerateMipmap(target) })
+}
+
+pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::Viewport(x, y, width, height) })
 }
 
 fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
