@@ -16,7 +16,8 @@ use gl::types::GLint;
 use nerust_glwrap::*;
 use nerust_screen_traits::LogicalSize;
 use std::os::raw::c_void;
-use std::{mem, ptr};
+use std::ptr;
+use std::rc::Rc;
 
 fn allocate(size: usize) -> Box<[u8]> {
     let mut buffer = Vec::with_capacity(size);
@@ -28,17 +29,25 @@ fn allocate(size: usize) -> Box<[u8]> {
 
 pub struct GlView {
     tex_name: u32,
-    vertex_vbo: u32,
     shader: Option<Shader>,
+    use_vao: bool,
+    vba: Option<VertexArray>,
+    vbo: Option<Rc<VertexBuffer>>,
 }
 
 impl GlView {
     pub fn new() -> Self {
         Self {
             tex_name: 0,
-            vertex_vbo: 0,
             shader: None,
+            use_vao: false,
+            vba: None,
+            vbo: None,
         }
+    }
+
+    pub fn use_vao(&mut self, value: bool) {
+        self.use_vao = value;
     }
 
     pub fn load_with<F: FnMut(&'static str) -> *const c_void>(get_proc_address: F) {
@@ -58,6 +67,11 @@ impl GlView {
         let buffer_width = logical_size.width.next_power_of_two();
         let buffer_height = logical_size.height.next_power_of_two();
 
+        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32).unwrap();
+        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32).unwrap();
+        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+
         {
             tex_image_2d(
                 gl::TEXTURE_2D,
@@ -72,11 +86,6 @@ impl GlView {
             )
             .unwrap();
         }
-
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32).unwrap();
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32).unwrap();
-        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
 
         // vbo
         let vertex_data: [VertexData; 4] = [
@@ -98,19 +107,59 @@ impl GlView {
             ),
         ];
 
-        gen_buffers(1, &mut self.vertex_vbo).unwrap();
-        bind_buffer(gl::ARRAY_BUFFER, self.vertex_vbo).unwrap();
-        buffer_data(
-            gl::ARRAY_BUFFER,
-            mem::size_of_val(&vertex_data) as isize,
-            vertex_data.as_ptr() as *const std::ffi::c_void,
-            gl::STATIC_DRAW,
-        )
-        .unwrap();
+        let vbo = Rc::new(VertexBuffer::from_slice(&vertex_data).unwrap());
+        if self.use_vao {
+            let vbo = vbo.clone();
+            self.vba = Some(
+                VertexArray::new(|vaic| {
+                    vaic.bind_vbo(vbo, |vac| {
+                        vac.attr_pointer(
+                            Attrib {
+                                id: shader.get_attribute("position"),
+                            },
+                            2,
+                            gl::FLOAT,
+                            16,
+                            0,
+                        )?;
+                        vac.attr_pointer(
+                            Attrib {
+                                id: shader.get_attribute("uv"),
+                            },
+                            2,
+                            gl::FLOAT,
+                            16,
+                            8,
+                        )
+                    })
+                })
+                .unwrap(),
+            );
+        } else {
+            // attribute属性を登録
+            vertex_attrib_pointer(
+                shader.get_attribute("position"),
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                16,
+                ptr::null(),
+            )
+            .unwrap();
+            enable_vertex_attrib_array(shader.get_attribute("position")).unwrap();
 
-        // attribute属性を有効にする
-        enable_vertex_attrib_array(shader.get_attribute("position")).unwrap();
-        enable_vertex_attrib_array(shader.get_attribute("uv")).unwrap();
+            vertex_attrib_pointer(
+                shader.get_attribute("uv"),
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                16,
+                8 as *const c_void,
+            )
+            .unwrap();
+            enable_vertex_attrib_array(shader.get_attribute("uv")).unwrap();
+            self.vbo = Some(vbo.clone());
+        }
 
         // uniform属性を設定する
         uniform_matrix_4fv(
@@ -122,30 +171,16 @@ impl GlView {
         .unwrap();
         uniform_1i(shader.get_uniform("texture") as GLint, 0).unwrap();
 
-        // attribute属性を登録
-        vertex_attrib_pointer(
-            shader.get_attribute("position"),
-            2,
-            gl::FLOAT,
-            gl::FALSE,
-            16,
-            ptr::null(),
-        )
-        .unwrap();
-        vertex_attrib_pointer(
-            shader.get_attribute("uv"),
-            2,
-            gl::FLOAT,
-            gl::FALSE,
-            16,
-            8 as *const c_void,
-        )
-        .unwrap();
-        bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
+        // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
     }
 
     pub fn on_update(&self, logical_size: LogicalSize, screen_ptr: *const u8) {
+        if self.use_vao {
+            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+        } else {
+            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+        }
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         // モデルの描画
@@ -165,8 +200,11 @@ impl GlView {
     }
 
     pub fn on_resize(&mut self, scale_x: f32, scale_y: f32) {
-        gen_buffers(1, &mut self.vertex_vbo).unwrap();
-        bind_buffer(gl::ARRAY_BUFFER, self.vertex_vbo).unwrap();
+        if self.use_vao {
+            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+        } else {
+            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+        }
         uniform_matrix_4fv(
             self.shader.as_ref().unwrap().get_uniform("unif_matrix") as GLint,
             1,
@@ -174,11 +212,10 @@ impl GlView {
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
         )
         .unwrap();
-        bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
+        // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
     }
 
     pub fn on_close(&mut self) {
-        delete_buffers(1, &self.vertex_vbo).unwrap();
         delete_textures(1, &self.tex_name).unwrap();
     }
 }
