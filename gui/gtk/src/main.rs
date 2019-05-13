@@ -16,9 +16,11 @@ use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
+use std::fs::File;
+use std::io::{BufReader, Read};
 
 struct State {
-    view: ManuallyDrop<GlView>,
+    view: Option<GlView>,
     running: bool,
     keys: Buttons,
     paused: bool,
@@ -27,24 +29,14 @@ struct State {
     logical_size: LogicalSize,
 }
 
-impl Drop for State {
-    fn drop(&mut self) {
-        unsafe {
-            ManuallyDrop::drop(&mut self.view);
-        }
-    }
-}
-
 impl State {
     pub fn new(screen_buffer: ScreenBuffer) -> Self {
         let physical_size = screen_buffer.physical_size();
         let logical_size = screen_buffer.logical_size();
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
         let console = Console::new(speaker, screen_buffer);
-        let mut view = GlView::new();
-        view.use_vao(true);
         Self {
-            view: ManuallyDrop::new(view),
+            view: None,
             console,
             running: true,
             keys: Buttons::empty(),
@@ -61,33 +53,48 @@ fn main() {
     // log initialize
     simple_logger::init().unwrap();
 
-    let window = gtk::Window::new(gtk::WindowType::Toplevel);
-    window.set_position(gtk::WindowPosition::Center);
+    let ui = include_str!("../resources/window.glade");
+    let builder = gtk::Builder::new_from_string(ui);
 
-    window.set_title("Nes");
-
-    window.set_default_size(1000, 800);
-
-    let gl_area = gtk::GLArea::new();
-    gl_area.set_vexpand(true);
-    gl_area.set_halign(gtk::Align::Fill);
-    gl_area.set_vexpand(true);
-    gl_area.set_valign(gtk::Align::Fill);
-    gl_area.set_required_version(3, 2);
-    // gl_area.set_required_version(2, 0);
-    // gl_area.set_use_es(true);
-    gl_area.set_auto_render(true);
-
+    let window : gtk::Window = builder.get_object("window").unwrap();
     let state: Rc<RefCell<Option<State>>> = Rc::new(RefCell::new(None));
+    let menu_quit : gtk::MenuItem = builder.get_object("menu-quit").unwrap();
+    let menu_open : gtk::MenuItem = builder.get_object("menu-open").unwrap();
+
+    menu_quit.connect_activate(move |_| {
+        gtk::main_quit();
+    });
+
+    window.connect_delete_event(move |_, _| {
+        gtk::main_quit();
+        Inhibit(false)
+    });
+
+    {
+        let state = state.clone();
+        let window = window.clone();
+        menu_open.connect_activate(move |_| {
+            let state = state.clone();
+            let file_chooser_native = gtk::FileChooserNative::new("Open File", Some(&window), gtk::FileChooserAction::Open, "_Open", "_Cancel");
+            file_chooser_native.connect_response(move |file_chooser_native, _| {
+                if let Some(mut f) = file_chooser_native.get_filename().and_then(|f| File::open(f).ok()).map(|f| BufReader::new(f)) {
+                    let mut buf = Vec::new();
+                    f.read_to_end(&mut buf).unwrap();
+                    let mut state = state.borrow_mut();
+                    if let Some(ref mut state) = *state {
+                        state.console.load(buf);
+                        state.console.resume();
+                    }
+                }
+            });
+            file_chooser_native.run();
+        });
+    }
 
     {
         let state = state.clone();
         // FnOnceではなく、Fnを要求するため、moveoutは不可
-        gl_area.connect_realize(move |gl_area| {
-            let rom_data =
-                include_bytes!(concat!("../../../roms/", "tests/Lan Master/Lan_Master.nes",))
-                    .to_vec();
-
+        window.connect_realize(move |_window| {
             let screen_buffer = ScreenBuffer::new(
                 FilterType::NtscComposite,
                 LogicalSize {
@@ -96,6 +103,17 @@ fn main() {
                 },
             );
 
+            let mut state = state.borrow_mut();
+            *state = Some(State::new(screen_buffer));
+        });
+    }
+
+    let gl_area : gtk::GLArea = builder.get_object("glarea").unwrap();
+    {
+        let state = state.clone();
+        gl_area.connect_realize(move |gl_area| {
+            let mut view = GlView::new();
+            view.use_vao(true);
             gl_area.make_current();
             if let Some(e) = gl_area.get_error() {
                 error!("{}", e);
@@ -110,13 +128,9 @@ fn main() {
                 }
             });
             GlView::load_with(epoxy::get_proc_addr);
-
-            let mut state = state.borrow_mut();
-            *state = Some(State::new(screen_buffer));
-            if let Some(ref mut state) = *state {
-                state.console.load(rom_data);
-                state.console.resume();
-                state.view.on_load(state.logical_size);
+            if let Some(ref mut state) = *state.borrow_mut() {
+                view.on_load(state.logical_size);
+                state.view = Some(view);
             }
         });
     }
@@ -130,7 +144,7 @@ fn main() {
             }
             // unsafe {epoxy::Viewport(0, 0, w, h);}
             if let Some(ref mut state) = *state.borrow_mut() {
-                // let dpi_factor = glarea.get_scale_factor();
+                let dpi_factor = gl_area.get_scale_factor();
 
                 let rate_x = f64::from(w) / f64::from(state.physical_size.width);
                 let rate_y = f64::from(h) / f64::from(state.physical_size.height);
@@ -139,7 +153,10 @@ fn main() {
                 let scale_y = (rate / rate_y) as f32;
 
                 // self.context.resize(logical_size.to_physical(dpi_factor));
-                state.view.on_resize(scale_x, scale_y);
+                unsafe {epoxy::Viewport(0, 0, w * dpi_factor, h * dpi_factor);}
+                if let Some(ref mut view) = state.view {
+                    view.on_resize(scale_x, scale_y);
+                }
             }
         });
     }
@@ -157,33 +174,28 @@ fn main() {
         gl_area.connect_unrealize(move |_gl_area| {
             let mut state = state.borrow_mut();
             if let Some(ref mut state) = *state {
-                state.view.on_close();
+                if let Some(ref mut view) = state.view {
+                    view.on_close();
+                }
+                state.view = None;
             }
-            *state = None;
+            // *state = None;
         });
     }
 
     {
-        window.connect_delete_event(move |win, _| {
-            win.destroy();
-            gtk::main_quit();
-            Inhibit(false)
+        let state = state.clone();
+        gl_area.add_tick_callback(move |gl_area, _frame_clock| {
+            render(gl_area.downcast_ref().unwrap(), &state);
+            true
         });
     }
 
-    gl_area.set_can_focus(true);
-    gl_area.grab_focus();
-
-    gl_area.add_tick_callback(move |gl_area, _frame_clock| {
-        render(gl_area.downcast_ref().unwrap(), &state);
-        true
-    });
-
-    window.add(&gl_area);
     window.show_all();
 
     gtk::main();
 }
+
 
 fn render(gl_area: &gtk::GLArea, state: &Rc<RefCell<Option<State>>>) {
     gl_area.make_current();
@@ -191,9 +203,10 @@ fn render(gl_area: &gtk::GLArea, state: &Rc<RefCell<Option<State>>>) {
         error!("{}", e);
     }
     if let Some(ref mut state) = *state.borrow_mut() {
-        state
-            .view
+        if let Some(ref mut view) = state.view {
+            view
             .on_update(state.console.logical_size(), state.console.as_ptr());
+        }
     }
     unsafe {
         epoxy::Flush();
