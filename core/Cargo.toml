@@ -23,6 +23,3 @@ hound = { version = ">=0.0.0" }
 crc = { version = ">=0.0.0" }
 nerust_screen_buffer = { version = ">0.0.0", path="../screen/buffer" }
 nerust_screen_filter = { version = ">0.0.0", path="../screen/filter" }
-
-[profile.bench]
-debug = true
