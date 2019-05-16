@@ -1,0 +1,28 @@
+[package]
+name = "nerust_core"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = '2018'
+
+[dependencies]
+failure = { version = ">=0.0.0" }
+log = { version = ">=0.0.0", default-features = false }
+serde = { version = ">=0.0.0", default-features = false }
+serde_derive = { version = ">=0.0.0", default-features = false }
+serde_bytes = { version = ">=0.0.0" }
+bitflags = { version = ">=0.0.0" }
+strum = { version = ">=0.0.0" }
+strum_macros = { version = ">=0.0.0" }
+typetag = { version = ">=0.0.0" }
+nerust_sound_traits = { version = ">0.0.0", path="../sound/traits" }
+nerust_screen_traits = { version = ">0.0.0", path="../screen/traits" }
+nerust_serialize = { version = ">0.0.0", path="../serialize" }
+
+[dev-dependencies]
+hound = { version = ">=0.0.0" }
+crc = { version = ">=0.0.0" }
+nerust_screen_buffer = { version = ">0.0.0", path="../screen/buffer" }
+nerust_screen_filter = { version = ">0.0.0", path="../screen/filter" }
+
+[profile.bench]
+debug = true
