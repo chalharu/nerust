@@ -46,13 +46,16 @@ impl State {
 }
 
 fn app_activate(app: &gtk::Application) {
-    let ui = include_str!("../resources/ui.xml");
-    let builder = gtk::Builder::new_from_string(ui);
-
+    let builder = gtk::Builder::new_from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.get_object("window").unwrap();
+
     let state: Rc<RefCell<Option<State>>> = Rc::new(RefCell::new(None));
 
-    app.set_menubar(&builder.get_object::<gio::Menu>("menu").unwrap());
+    app.set_menubar(
+        &gtk::Builder::new_from_string(include_str!("../resources/menu.xml"))
+            .get_object::<gio::Menu>("menu")
+            .unwrap(),
+    );
     app.add_window(&window);
 
     let quit_action = gio::SimpleAction::new("quit", None);
@@ -63,6 +66,30 @@ fn app_activate(app: &gtk::Application) {
         });
     }
     app.add_action(&quit_action);
+
+    let about_action = gio::SimpleAction::new("about", None);
+    {
+        let window = window.clone();
+        let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> = Rc::new(RefCell::new(Some(
+            gtk::Builder::new_from_string(include_str!("../resources/about.xml"))
+                .get_object("about")
+                .unwrap(),
+        )));
+        about_action.connect_activate(move |_, _| {
+            let window_about_inner = std::mem::replace(&mut *window_about.borrow_mut(), None);
+            if let Some(window_about_inner) = window_about_inner {
+                window_about_inner.set_transient_for(&window);
+                window_about_inner.run();
+                window_about_inner.destroy();
+                *window_about.borrow_mut() = Some(
+                    gtk::Builder::new_from_string(include_str!("../resources/about.xml"))
+                        .get_object("about")
+                        .unwrap(),
+                );
+            }
+        });
+    }
+    app.add_action(&about_action);
 
     Window::bind(
         app.clone(),
