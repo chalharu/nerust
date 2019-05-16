@@ -1,7 +1,0 @@
-**/target/
-**/*.rs.bk
-**/*.lock
-**/.DS_Store
-.vscode/ipch
-**/*.*~
-**/#*.*#
