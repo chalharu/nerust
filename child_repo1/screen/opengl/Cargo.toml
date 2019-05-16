@@ -1,0 +1,11 @@
+[package]
+name = "nerust_screen_opengl"
+version = "0.1.0"
+authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gl = { version = ">=0.0.0" }
+nerust_glwrap = { version = ">=0.0.0", path="../../glwrap" }
+nerust_screen_traits = { version = ">0.0.0", path="../traits" }
+nerust_screen_buffer = { version = ">0.0.0", path="../buffer" }
