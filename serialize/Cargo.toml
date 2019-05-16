@@ -8,6 +8,3 @@ edition = '2018'
 serde = { version = ">=0.0.0", default-features = false }
 
 [dev-dependencies]
-
-[profile.bench]
-debug = true

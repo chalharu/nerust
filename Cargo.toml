@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "console",
+    "core",
+    "gui/gtk",
+    "gui/gultin",
+    "glwrap",
+    "nes_ntsc",
+    "screen/buffer",
+    "screen/filter",
+    "screen/opengl",
+    "screen/traits",
+    "serialize",
+    "sound/openal",
+    "sound/traits",
+    "soundfilter",
+    "timer"
+]
+
+[profile.bench]
+debug = true
