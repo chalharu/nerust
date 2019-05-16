@@ -6,7 +6,7 @@
  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 -->
 
-# rustysole
+# Nerust
 
 Overview
 
@@ -26,8 +26,8 @@ Overview
 
 ## Licence
 
-[MPL-2.0](https://github.com/chalharu/rustysole/blob/master/LICENCE)
+[MPL-2.0](https://github.com/chalharu/Nerust/blob/master/LICENSE)
 
 ## Author
 
-[chalharu](https://github.com/chalharu)
+[Mitsuharu Seki](https://github.com/chalharu)
