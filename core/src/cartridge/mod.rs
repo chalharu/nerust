@@ -184,6 +184,12 @@ impl MapperState {
     }
 }
 
+impl Default for MapperState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait MapperStateDao {
     fn mapper_state_mut(&mut self) -> &mut MapperState;
     fn mapper_state_ref(&self) -> &MapperState;

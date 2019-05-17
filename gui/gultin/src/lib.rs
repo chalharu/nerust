@@ -128,7 +128,6 @@ impl Window {
         self.view
             .on_update(self.console.logical_size(), self.console.as_ptr());
         self.context.swap_buffers().unwrap();
-
     }
 
     fn on_resize(&mut self, logical_size: dpi::LogicalSize) {
@@ -201,5 +200,11 @@ impl Drop for Window {
         unsafe {
             ManuallyDrop::drop(&mut self.view);
         }
+    }
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self::new()
     }
 }

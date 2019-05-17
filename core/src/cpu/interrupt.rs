@@ -69,3 +69,9 @@ impl Interrupt {
         self.dmc_count = 0;
     }
 }
+
+impl Default for Interrupt {
+    fn default() -> Self {
+        Self::new()
+    }
+}

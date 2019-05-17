@@ -47,7 +47,6 @@ fn gl_get_error() -> Result<(), Error> {
     Ok(())
 }
 
-
 pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }

@@ -117,7 +117,7 @@ impl<'a> VertexArrayContext<'a> {
                 mode,
                 count,
                 data_type,
-                std::ptr::null::<std::ffi::c_void>().offset(offset as isize),
+                std::ptr::null::<std::ffi::c_void>().add(offset),
             )
         })
     }
@@ -141,7 +141,7 @@ impl VertexArrayBufferContext {
                 data_type,
                 gl::FALSE,
                 stride,
-                std::ptr::null::<std::ffi::c_void>().offset(offset as isize),
+                std::ptr::null::<std::ffi::c_void>().add(offset),
             )
         })
     }
@@ -169,7 +169,7 @@ impl VertexBuffer {
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (s.len() * std::mem::size_of::<T>()) as gl::types::GLsizeiptr,
-                std::mem::transmute(s.as_ptr()),
+                s.as_ptr() as _,
                 gl::STATIC_DRAW,
             );
         }
@@ -206,16 +206,13 @@ impl IndexBuffer {
             gl::BufferData(
                 gl::ELEMENT_ARRAY_BUFFER,
                 (s.len() * std::mem::size_of::<T>()) as gl::types::GLsizeiptr,
-                std::mem::transmute(s.as_ptr()),
+                s.as_ptr() as _,
                 gl::STATIC_DRAW,
             );
         }
         gl_get_error()?;
 
-        Ok(IndexBuffer {
-            id: vbo,
-            data_type: data_type,
-        })
+        Ok(IndexBuffer { id: vbo, data_type })
     }
 }
 

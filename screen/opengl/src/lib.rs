@@ -219,3 +219,9 @@ impl GlView {
         delete_textures(1, &self.tex_name).unwrap();
     }
 }
+
+impl Default for GlView {
+    fn default() -> Self {
+        Self::new()
+    }
+}

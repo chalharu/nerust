@@ -932,7 +932,8 @@ impl Core {
                     self.status.sprite_zero_hit = false;
                     self.scan_line = 0;
                 }
-                1...TOTAL_SCAN_LINE => (),
+                x @ 1...TOTAL_SCAN_LINE
+                    if x != 241 && x != NMI_SCAN_LINE && x != TOTAL_SCAN_LINE => {}
                 _ => unreachable!(),
             }
         } else {
