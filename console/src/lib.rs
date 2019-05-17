@@ -152,9 +152,7 @@ impl ConsoleRunner {
         while let Err(_) = self.stop_receiver.try_recv() {
             if let Some(core) = core.as_mut() {
                 if !self.paused {
-                    while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker)
-                    {
-                    }
+                    while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
                     self.frame_counter += 1;
                     self.screen_buffer_ptr.store(
                         self.screen_buffer.as_mut_ptr(),

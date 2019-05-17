@@ -146,26 +146,30 @@ pub struct NesNtsc {
     chunk_size: usize,
 }
 
-impl NesNtsc {
+struct Color(usize);
+
+impl Color {
     // phases [i] = cos( i * PI / 6 )
     const PHASES: [f32; 19] = [
         -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0, 0.866_025, 0.5, 0.0, -0.5, -0.866_025,
         -1.0, -0.866_025, -0.5, 0.0, 0.5, 0.866_025, 1.0,
     ];
 
-    fn to_angle_sin(color: usize) -> f32 {
-        Self::PHASES[color]
+    fn to_angle_sin(&self) -> f32 {
+        Self::PHASES[self.0]
     }
 
-    fn to_angle_cos(color: usize) -> f32 {
-        Self::PHASES[color + 3]
+    fn to_angle_cos(&self) -> f32 {
+        Self::PHASES[self.0 + 3]
     }
+}
 
-    fn yiq_to_rgb_f32(y: f32, i: f32, q: f32, to_rgb: &[f32]) -> (f32, f32, f32) {
+impl NesNtsc {
+    fn yiq_to_rgb_f32(yiq: (f32, f32, f32), to_rgb: &[f32]) -> (f32, f32, f32) {
         (
-            y + to_rgb[0] * i + to_rgb[1] * q,
-            y + to_rgb[2] * i + to_rgb[3] * q,
-            y + to_rgb[4] * i + to_rgb[5] * q,
+            yiq.0 + to_rgb[0] * yiq.1 + to_rgb[1] * yiq.2,
+            yiq.0 + to_rgb[2] * yiq.1 + to_rgb[3] * yiq.2,
+            yiq.0 + to_rgb[4] * yiq.1 + to_rgb[5] * yiq.2,
         )
     }
 
@@ -182,11 +186,12 @@ impl NesNtsc {
     }
 
     // Generate pixel at all burst phases and column alignments
-    fn gen_kernel(filter_impl: &Init, y: f32, mut i: f32, mut q: f32) -> Vec<u32> {
+    fn gen_kernel(filter_impl: &Init, yiq: (f32, f32, f32)) -> Vec<u32> {
         // generate for each scanline burst phase
 
         // 	float const* to_rgb = impl->to_rgb;
-        let y = y - RGB_OFFSET;
+        let y = yiq.0 - RGB_OFFSET;
+        let (_, mut i, mut q) = yiq;
         let mut out = Vec::new();
         for rgb in filter_impl.to_rgb.iter() {
             // Encode yiq into *two* composite signals (to allow control over artifacting).
@@ -215,14 +220,15 @@ impl NesNtsc {
                 let mut offset = pixel.offset;
 
                 for _ in 0..RGB_KERNEL_SIZE {
-                    let i = filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2;
-                    let q =
-                        filter_impl.kernel[offset + 1] * qc1 + filter_impl.kernel[offset + 3] * qc3;
-                    let y = filter_impl.kernel[offset + KERNEL_SIZE] * yc0
-                        + filter_impl.kernel[offset + KERNEL_SIZE + 1] * yc1
-                        + filter_impl.kernel[offset + KERNEL_SIZE + 2] * yc2
-                        + filter_impl.kernel[offset + KERNEL_SIZE + 3] * yc3
-                        + RGB_OFFSET;
+                    let yiq = (
+                        filter_impl.kernel[offset + KERNEL_SIZE] * yc0
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 1] * yc1
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 2] * yc2
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 3] * yc3
+                            + RGB_OFFSET,
+                        filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2,
+                        filter_impl.kernel[offset + 1] * qc1 + filter_impl.kernel[offset + 3] * qc3,
+                    );
 
                     if RESCALE_OUT <= 1 {
                         offset -= 1;
@@ -232,8 +238,11 @@ impl NesNtsc {
                         offset -= KERNEL_SIZE * 2 * (RESCALE_OUT - 1) + 2;
                     }
 
-                    let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, rgb);
-                    out.push(Self::pack_rgb(r as u32, g as u32, b as u32).wrapping_sub(RGB_BIAS));
+                    let rgb = Self::yiq_to_rgb_f32(yiq, rgb);
+                    out.push(
+                        Self::pack_rgb(rgb.0 as u32, rgb.1 as u32, rgb.2 as u32)
+                            .wrapping_sub(RGB_BIAS),
+                    );
                 }
             }
             let iq = rotate_iq((i, q), -0.866_025, -0.5);
@@ -324,35 +333,37 @@ impl NesNtsc {
                     };
 
                     {
-                        let (y, i, q) = {
+                        let yiq = {
                             // Convert raw waveform to YIQ
                             let sat = (high - low) * 0.5;
-                            let i = Self::to_angle_sin(color) * sat;
-                            let q = Self::to_angle_cos(color) * sat;
-                            let y = ((high + low) * 0.5)
-                    // Apply brightness, contrast, and gamma
-                    * (setup.contrast() * 0.5 + 1.0)
-                    // adjustment reduces error when using input palette
-                    + setup.brightness() * 0.5
-                                - 0.5 / 256.0;
+                            let yiq = (
+                                ((high + low) * 0.5)
+                                // Apply brightness, contrast, and gamma
+                                * (setup.contrast() * 0.5 + 1.0)
+                                // adjustment reduces error when using input palette
+                                + setup.brightness() * 0.5
+                                    - 0.5 / 256.0,
+                                Color(color).to_angle_sin() * sat,
+                                Color(color).to_angle_cos() * sat,
+                            );
 
-                            let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, &DEFAULT_DECODER);
+                            let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &DEFAULT_DECODER);
                             // fast approximation of n = pow( n, gamma )
-                            let (y, i, q) = Self::rgb_to_yiq_f32(
+                            let yiq = Self::rgb_to_yiq_f32(
                                 (r * gamma_factor - gamma_factor) * r + r,
                                 (g * gamma_factor - gamma_factor) * g + g,
                                 (b * gamma_factor - gamma_factor) * b + b,
                             );
                             (
-                                y * RGB_UNIT as f32 + RGB_OFFSET,
-                                i * RGB_UNIT as f32,
-                                q * RGB_UNIT as f32,
+                                yiq.0 * RGB_UNIT as f32 + RGB_OFFSET,
+                                yiq.1 * RGB_UNIT as f32,
+                                yiq.2 * RGB_UNIT as f32,
                             )
                         };
 
                         // Generate kernel
                         {
-                            let (r, g, b) = Self::yiq_to_rgb_f32(y, i, q, &filter_impl.to_rgb[0]);
+                            let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &filter_impl.to_rgb[0]);
                             // blue tends to overflow, so clamp it
                             let rgb = Self::pack_rgb(
                                 r as u32,
@@ -360,7 +371,7 @@ impl NesNtsc {
                                 if (b as u32) < 0x3E0 { b as u32 } else { 0x3E0 },
                             );
 
-                            let mut kernel = Self::gen_kernel(&filter_impl, y, i, q);
+                            let mut kernel = Self::gen_kernel(&filter_impl, yiq);
                             if merge_fields {
                                 Self::merge_kernel_fields(&mut kernel);
                             }

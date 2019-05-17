@@ -85,7 +85,7 @@ impl WindowExtend for Window {
             if let Some(mut f) = file_chooser_native
                 .get_filename()
                 .and_then(|f| File::open(f).ok())
-                .map(|f| BufReader::new(f))
+                .map(BufReader::new)
             {
                 let mut buf = Vec::new();
                 f.read_to_end(&mut buf).unwrap();
