@@ -11,6 +11,11 @@
           <attribute name="action">win.open</attribute>
         </item>
         <item>
+          <attribute name="label" translatable="yes">_Close</attribute>
+          <attribute name="icon">gtk-close</attribute>
+          <attribute name="action">win.close</attribute>
+        </item>
+        <item>
           <attribute name="label" translatable="yes">_Info</attribute>
           <attribute name="icon">gtk-info</attribute>
           <attribute name="action">win.info</attribute>

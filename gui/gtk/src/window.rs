@@ -2,9 +2,6 @@ use super::glarea::{GLArea, GLAreaExtend};
 use super::State;
 use gio::prelude::*;
 use gtk::prelude::*;
-use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_traits::LogicalSize;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -14,7 +11,7 @@ pub struct WindowCore {
     application: gtk::Application,
     window: gtk::ApplicationWindow,
     // glarea: GLArea,
-    state: Rc<RefCell<Option<State>>>,
+    state: Rc<RefCell<State>>,
 }
 
 pub type Window = Rc<RefCell<WindowCore>>;
@@ -24,18 +21,21 @@ pub trait WindowExtend {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         glarea: gtk::GLArea,
-        state: Rc<RefCell<Option<State>>>,
+        state: Rc<RefCell<State>>,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
-    fn state(&self) -> Rc<RefCell<Option<State>>>;
+    fn state(&self) -> Rc<RefCell<State>>;
     fn realize(&self);
     fn delete_event(&self) -> bool;
     fn open(&self);
+    fn close(&self);
+    fn pause(&self);
+    fn resume(&self);
 }
 
 impl WindowExtend for Window {
-    fn state(&self) -> Rc<RefCell<Option<State>>> {
+    fn state(&self) -> Rc<RefCell<State>> {
         self.borrow().state.clone()
     }
 
@@ -43,13 +43,13 @@ impl WindowExtend for Window {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         glarea: gtk::GLArea,
-        state: Rc<RefCell<Option<State>>>,
+        state: Rc<RefCell<State>>,
     ) -> Window {
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
             // glarea: GLArea::bind(glarea, state.clone()),
-            state,
+            state: state.clone(),
         }));
         GLArea::bind(glarea, result.state());
         {
@@ -61,13 +61,62 @@ impl WindowExtend for Window {
             window.connect_delete_event(move |_, _| Inhibit(result.delete_event()));
         }
         let open_action = gio::SimpleAction::new("open", None);
+        let close_action = gio::SimpleAction::new("close", None);
+        let pause_action = gio::SimpleAction::new("pause", None);
+        let resume_action = gio::SimpleAction::new("resume", None);
+
+        let update_func = {
+            let close_action = close_action.clone();
+            let pause_action = pause_action.clone();
+            let resume_action = resume_action.clone();
+            move || {
+                close_action.set_enabled(state.borrow_mut().loaded());
+                pause_action.set_enabled(state.borrow_mut().can_pause());
+                resume_action.set_enabled(state.borrow_mut().can_resume());
+            }
+        };
+
         {
             let result = result.clone();
+            let update_func = update_func.clone();
             open_action.connect_activate(move |_, _| {
                 result.open();
+                update_func();
             });
         }
         window.add_action(&open_action);
+
+        {
+            let result = result.clone();
+            let update_func = update_func.clone();
+            close_action.connect_activate(move |_, _| {
+                result.close();
+                update_func();
+            });
+        }
+        window.add_action(&close_action);
+
+        {
+            let result = result.clone();
+            let update_func = update_func.clone();
+            pause_action.connect_activate(move |_, _| {
+                result.pause();
+                update_func();
+            });
+        }
+        window.add_action(&pause_action);
+
+        {
+            let result = result.clone();
+            let update_func = update_func.clone();
+            resume_action.connect_activate(move |_, _| {
+                result.resume();
+                update_func();
+            });
+        }
+        window.add_action(&resume_action);
+
+        update_func();
         window.show_all();
         result
     }
@@ -89,27 +138,25 @@ impl WindowExtend for Window {
             {
                 let mut buf = Vec::new();
                 f.read_to_end(&mut buf).unwrap();
-                let mut state = state.borrow_mut();
-                if let Some(ref mut state) = *state {
-                    state.console.load(buf);
-                    state.console.resume();
-                }
+                state.borrow_mut().load(buf);
             }
         });
         file_chooser_native.run();
     }
 
-    fn realize(&self) {
-        let screen_buffer = ScreenBuffer::new(
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-        );
-
-        *self.state().borrow_mut() = Some(State::new(screen_buffer));
+    fn close(&self) {
+        self.state().borrow_mut().unload();
     }
+
+    fn pause(&self) {
+        self.state().borrow_mut().pause();
+    }
+
+    fn resume(&self) {
+        self.state().borrow_mut().resume();
+    }
+
+    fn realize(&self) {}
 
     fn delete_event(&self) -> bool {
         self.application().quit();

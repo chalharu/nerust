@@ -52,6 +52,17 @@ impl ScreenBuffer {
     pub fn physical_size(&self) -> PhysicalSize {
         self.filter.physical_size()
     }
+
+    pub fn clear(&mut self) {
+        self.dest.clear();
+        self.display_buffer.clear();
+        for b in self.src_buffer.iter_mut() {
+            *b = 0;
+        }
+        for b in self.src_buffer_next.iter_mut() {
+            *b = 0;
+        }
+    }
 }
 
 impl Screen for ScreenBuffer {
