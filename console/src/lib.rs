@@ -91,6 +91,12 @@ impl Console {
         }
     }
 
+    pub fn unload(&self) {
+        if self.data_sender.send(ConsoleData::Unload).is_err() {
+            warn!("Core unload send failed");
+        }
+    }
+
     pub fn reset(&self) {
         if self.data_sender.send(ConsoleData::Reset).is_err() {
             warn!("Core reset send failed");
@@ -113,6 +119,7 @@ enum ConsoleData {
     Pause,
     Reset,
     Pad1Data(Buttons),
+    Unload,
 }
 
 struct ConsoleRunner {
@@ -186,6 +193,11 @@ impl ConsoleRunner {
                     }
                     ConsoleData::Pad1Data(data) => {
                         self.controller.set_pad1(data);
+                    }
+                    ConsoleData::Unload => {
+                        self.paused = false;
+                        core = None;
+                        self.screen_buffer.clear();
                     }
                     // _ => (),
                 }

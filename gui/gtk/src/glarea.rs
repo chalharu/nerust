@@ -8,20 +8,20 @@ use std::rc::Rc;
 
 pub struct GLAreaCore {
     gl_area: gtk::GLArea,
-    state: Rc<RefCell<Option<State>>>,
+    state: Rc<RefCell<State>>,
 }
 
 pub type GLArea = Rc<RefCell<GLAreaCore>>;
 
 pub trait GLAreaExtend {
-    fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<Option<State>>>) -> GLArea;
+    fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea;
     fn realize(&self);
     fn resize(&self, width: i32, height: i32);
     fn render(&self) -> bool;
     fn unrealize(&self);
     fn tick(&self) -> bool;
     fn glarea(&self) -> gtk::GLArea;
-    fn state(&self) -> Rc<RefCell<Option<State>>>;
+    fn state(&self) -> Rc<RefCell<State>>;
 }
 
 impl GLAreaExtend for GLArea {
@@ -29,11 +29,11 @@ impl GLAreaExtend for GLArea {
         self.borrow().gl_area.clone()
     }
 
-    fn state(&self) -> Rc<RefCell<Option<State>>> {
+    fn state(&self) -> Rc<RefCell<State>> {
         self.borrow().state.clone()
     }
 
-    fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<Option<State>>>) -> GLArea {
+    fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea {
         let result = Rc::new(RefCell::new(GLAreaCore {
             gl_area: gl_area.clone(),
             state,
@@ -80,7 +80,9 @@ impl GLAreaExtend for GLArea {
             }
         });
         GlView::load_with(epoxy::get_proc_addr);
-        if let Some(ref mut state) = *self.state().borrow_mut() {
+        {
+            let state = self.state();
+            let mut state = state.borrow_mut();
             view.on_load(state.logical_size);
             state.view = Some(view);
         }
@@ -92,20 +94,18 @@ impl GLAreaExtend for GLArea {
             error!("{}", e);
         }
         // unsafe {epoxy::Viewport(0, 0, w, h);}
-        if let Some(ref mut state) = *self.state().borrow_mut() {
-            // let dpi_factor = self.glarea().get_scale_factor();
+        // let dpi_factor = self.glarea().get_scale_factor();
 
-            let rate_x = f64::from(width) / f64::from(state.physical_size.width);
-            let rate_y = f64::from(height) / f64::from(state.physical_size.height);
-            let rate = f64::min(rate_x, rate_y);
-            let scale_x = (rate / rate_x) as f32;
-            let scale_y = (rate / rate_y) as f32;
+        let rate_x = f64::from(width) / f64::from(self.state().borrow_mut().physical_size.width);
+        let rate_y = f64::from(height) / f64::from(self.state().borrow_mut().physical_size.height);
+        let rate = f64::min(rate_x, rate_y);
+        let scale_x = (rate / rate_x) as f32;
+        let scale_y = (rate / rate_y) as f32;
 
-            // self.context.resize(logical_size.to_physical(dpi_factor));
-            // unsafe {epoxy::Viewport(0, 0, w * dpi_factor, h * dpi_factor);}
-            if let Some(ref mut view) = state.view {
-                view.on_resize(scale_x, scale_y);
-            }
+        // self.context.resize(logical_size.to_physical(dpi_factor));
+        // unsafe {epoxy::Viewport(0, 0, w * dpi_factor, h * dpi_factor);}
+        if let Some(ref mut view) = self.state().borrow_mut().view {
+            view.on_resize(scale_x, scale_y);
         }
     }
 
@@ -117,12 +117,10 @@ impl GLAreaExtend for GLArea {
     fn unrealize(&self) {
         let state = self.state();
         let mut state = state.borrow_mut();
-        if let Some(ref mut state) = *state {
-            if let Some(ref mut view) = state.view {
-                view.on_close();
-            }
-            state.view = None;
+        if let Some(ref mut view) = state.view {
+            view.on_close();
         }
+        state.view = None;
     }
 
     fn tick(&self) -> bool {
@@ -131,14 +129,18 @@ impl GLAreaExtend for GLArea {
     }
 }
 
-fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<Option<State>>>) {
+fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     gl_area.make_current();
     if let Some(e) = gl_area.get_error() {
         error!("{}", e);
     }
-    if let Some(ref mut state) = *state.borrow_mut() {
-        if let Some(ref mut view) = state.view {
-            view.on_update(state.console.logical_size(), state.console.as_ptr());
+    {
+        if let Ok(mut state) = state.try_borrow_mut() {
+            let logical_size = state.console.logical_size();
+            let ptr = state.console.as_ptr();
+            if let Some(ref mut view) = state.view {
+                view.on_update(logical_size, ptr);
+            }
         }
     }
     unsafe {

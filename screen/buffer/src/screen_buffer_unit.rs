@@ -32,6 +32,13 @@ impl ScreenBufferUnit {
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
         self.buffer.as_mut_ptr() as *mut u8
     }
+
+    pub fn clear(&mut self) {
+        for b in self.buffer.iter_mut() {
+            *b = 0;
+        }
+        self.pos = 0;
+    }
 }
 
 impl FilterFunc for ScreenBufferUnit {
