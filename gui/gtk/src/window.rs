@@ -2,6 +2,7 @@ use super::glarea::{GLArea, GLAreaExtend};
 use super::State;
 use gio::prelude::*;
 use gtk::prelude::*;
+use nerust_core::controller::standard_controller::Buttons;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -12,6 +13,7 @@ pub struct WindowCore {
     window: gtk::ApplicationWindow,
     // glarea: GLArea,
     state: Rc<RefCell<State>>,
+    keys: Buttons,
 }
 
 pub type Window = Rc<RefCell<WindowCore>>;
@@ -32,6 +34,12 @@ pub trait WindowExtend {
     fn close(&self);
     fn pause(&self);
     fn resume(&self);
+    fn key_event(&self, key: &gdk::EventKey, enevt: KeyEventState) -> bool;
+}
+
+pub enum KeyEventState {
+    Press,
+    Release,
 }
 
 impl WindowExtend for Window {
@@ -50,6 +58,7 @@ impl WindowExtend for Window {
             window: window.clone(),
             // glarea: GLArea::bind(glarea, state.clone()),
             state: state.clone(),
+            keys: Buttons::empty(),
         }));
         GLArea::bind(glarea, result.state());
         {
@@ -59,6 +68,19 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             window.connect_delete_event(move |_, _| Inhibit(result.delete_event()));
+        }
+
+        {
+            let result = result.clone();
+            window.connect_key_press_event(move |_, event_key| {
+                Inhibit(result.key_event(event_key, KeyEventState::Press))
+            });
+        }
+        {
+            let result = result.clone();
+            window.connect_key_release_event(move |_, event_key| {
+                Inhibit(result.key_event(event_key, KeyEventState::Release))
+            });
         }
         let open_action = gio::SimpleAction::new("open", None);
         let close_action = gio::SimpleAction::new("close", None);
@@ -169,5 +191,35 @@ impl WindowExtend for Window {
 
     fn application(&self) -> gtk::Application {
         self.borrow().application.clone()
+    }
+
+    fn key_event(&self, key: &gdk::EventKey, event: KeyEventState) -> bool {
+        // とりあえず、pad1のみ次の通りとする。
+        // A      -> Z
+        // B      -> X
+        // Select -> C
+        // Start  -> V
+        // Up     -> Up
+        // Down   -> Down
+        // Left   -> Left
+        // Right  -> Right
+        let code = match key.get_keyval() {
+            gdk::enums::key::z => Buttons::A,
+            gdk::enums::key::x => Buttons::B,
+            gdk::enums::key::c => Buttons::SELECT,
+            gdk::enums::key::v => Buttons::START,
+            gdk::enums::key::Up => Buttons::UP,
+            gdk::enums::key::Down => Buttons::DOWN,
+            gdk::enums::key::Left => Buttons::LEFT,
+            gdk::enums::key::Right => Buttons::RIGHT,
+            _ => Buttons::empty(),
+        };
+        let key = self.borrow().keys;
+        self.borrow_mut().keys = match event {
+            KeyEventState::Press => key | code,
+            KeyEventState::Release => key & !code,
+        };
+        self.state().borrow_mut().set_pad1(self.borrow_mut().keys);
+        false
     }
 }

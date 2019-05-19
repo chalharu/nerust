@@ -20,7 +20,6 @@ use std::rc::Rc;
 
 pub struct State {
     view: Option<GlView>,
-    keys: Buttons,
     paused: bool,
     loaded: bool,
     console: Console,
@@ -37,7 +36,6 @@ impl State {
         Self {
             view: None,
             console,
-            keys: Buttons::empty(),
             paused: false,
             loaded: false,
             physical_size,
@@ -80,6 +78,10 @@ impl State {
     pub fn unload(&mut self) {
         self.console.unload();
         self.loaded = false;
+    }
+
+    pub fn set_pad1(&mut self, data: Buttons) {
+        self.console.set_pad1(data)
     }
 }
 
