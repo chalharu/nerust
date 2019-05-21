@@ -124,7 +124,7 @@ impl GLAreaExtend for GLArea {
     }
 
     fn tick(&self) -> bool {
-        render(&self.glarea(), self.state());
+        self.glarea().queue_render();
         true
     }
 }
@@ -146,5 +146,4 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     unsafe {
         epoxy::Flush();
     }
-    gl_area.queue_render();
 }

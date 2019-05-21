@@ -17,7 +17,6 @@ pub use self::setup::Setup;
 use self::setup::SetupValues;
 
 use self::init::Init;
-use std::mem;
 
 const NES_NTSC_PALETTE_SIZE: usize = 64;
 const NES_NTSC_ENTRY_SIZE: usize = 128;
@@ -138,11 +137,11 @@ impl From<u32> for RGB {
 
 pub struct NesNtsc {
     burst: usize,
-    table: Vec<u32>,
+    // table: Vec<u32>,
     width: usize,
     in_chunk_count: usize,
     row_pos: usize,
-    row: Option<NtscRow>,
+    row: NtscRow,
     chunk_size: usize,
 }
 
@@ -312,76 +311,82 @@ impl NesNtsc {
 
         let chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
 
+        let ktable = (0..NES_NTSC_PALETTE_SIZE)
+            .map(|entry| {
+                // Base 64-color generation
+                let level = (entry >> 4) & 3;
+
+                let color = entry & 0x0F;
+                let (low, high) = match color {
+                    0 => (HIGH_LEVELS[level], HIGH_LEVELS[level]),
+                    0x0D => (LOW_LEVELS[level], LOW_LEVELS[level]),
+                    0x0E | 0x0F => (0.0, 0.0),
+                    _ => (LOW_LEVELS[level], HIGH_LEVELS[level]),
+                };
+
+                {
+                    let yiq = {
+                        // Convert raw waveform to YIQ
+                        let sat = (high - low) * 0.5;
+                        let yiq = (
+                            ((high + low) * 0.5)
+                                // Apply brightness, contrast, and gamma
+                                * (setup.contrast() * 0.5 + 1.0)
+                                // adjustment reduces error when using input palette
+                                + setup.brightness() * 0.5
+                                - 0.5 / 256.0,
+                            Color(color).to_angle_sin() * sat,
+                            Color(color).to_angle_cos() * sat,
+                        );
+
+                        let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &DEFAULT_DECODER);
+                        // fast approximation of n = pow( n, gamma )
+                        let yiq = Self::rgb_to_yiq_f32(
+                            (r * gamma_factor - gamma_factor) * r + r,
+                            (g * gamma_factor - gamma_factor) * g + g,
+                            (b * gamma_factor - gamma_factor) * b + b,
+                        );
+                        (
+                            yiq.0 * RGB_UNIT as f32 + RGB_OFFSET,
+                            yiq.1 * RGB_UNIT as f32,
+                            yiq.2 * RGB_UNIT as f32,
+                        )
+                    };
+
+                    // Generate kernel
+                    {
+                        let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &filter_impl.to_rgb[0]);
+                        // blue tends to overflow, so clamp it
+                        let rgb = Self::pack_rgb(
+                            r as u32,
+                            g as u32,
+                            if (b as u32) < 0x3E0 { b as u32 } else { 0x3E0 },
+                        );
+
+                        let mut kernel = Self::gen_kernel(&filter_impl, yiq);
+                        if merge_fields {
+                            Self::merge_kernel_fields(&mut kernel);
+                        }
+                        Self::correct_errors(rgb, &mut kernel);
+                        kernel
+                    }
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>();
         Self {
             chunk_size,
             width,
             burst: 0,
             in_chunk_count: 0,
             row_pos: 0,
-            row: None,
-            table: (0..NES_NTSC_PALETTE_SIZE)
-                .map(|entry| {
-                    // Base 64-color generation
-                    let level = (entry >> 4) & 3;
-
-                    let color = entry & 0x0F;
-                    let (low, high) = match color {
-                        0 => (HIGH_LEVELS[level], HIGH_LEVELS[level]),
-                        0x0D => (LOW_LEVELS[level], LOW_LEVELS[level]),
-                        0x0E | 0x0F => (0.0, 0.0),
-                        _ => (LOW_LEVELS[level], HIGH_LEVELS[level]),
-                    };
-
-                    {
-                        let yiq = {
-                            // Convert raw waveform to YIQ
-                            let sat = (high - low) * 0.5;
-                            let yiq = (
-                                ((high + low) * 0.5)
-                                // Apply brightness, contrast, and gamma
-                                * (setup.contrast() * 0.5 + 1.0)
-                                // adjustment reduces error when using input palette
-                                + setup.brightness() * 0.5
-                                    - 0.5 / 256.0,
-                                Color(color).to_angle_sin() * sat,
-                                Color(color).to_angle_cos() * sat,
-                            );
-
-                            let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &DEFAULT_DECODER);
-                            // fast approximation of n = pow( n, gamma )
-                            let yiq = Self::rgb_to_yiq_f32(
-                                (r * gamma_factor - gamma_factor) * r + r,
-                                (g * gamma_factor - gamma_factor) * g + g,
-                                (b * gamma_factor - gamma_factor) * b + b,
-                            );
-                            (
-                                yiq.0 * RGB_UNIT as f32 + RGB_OFFSET,
-                                yiq.1 * RGB_UNIT as f32,
-                                yiq.2 * RGB_UNIT as f32,
-                            )
-                        };
-
-                        // Generate kernel
-                        {
-                            let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &filter_impl.to_rgb[0]);
-                            // blue tends to overflow, so clamp it
-                            let rgb = Self::pack_rgb(
-                                r as u32,
-                                g as u32,
-                                if (b as u32) < 0x3E0 { b as u32 } else { 0x3E0 },
-                            );
-
-                            let mut kernel = Self::gen_kernel(&filter_impl, yiq);
-                            if merge_fields {
-                                Self::merge_kernel_fields(&mut kernel);
-                            }
-                            Self::correct_errors(rgb, &mut kernel);
-                            kernel
-                        }
-                    }
-                })
-                .flatten()
-                .collect::<Vec<_>>(),
+            row: NtscRow::new(
+                0,
+                NES_NTSC_BLACK,
+                NES_NTSC_BLACK,
+                NES_NTSC_BLACK,
+                ktable.into_boxed_slice(),
+            ),
         }
     }
 
@@ -398,39 +403,34 @@ impl NesNtsc {
         ((source - 1) / NES_NTSC_IN_CHUNK + 1) * NES_NTSC_OUT_CHUNK
     }
 
+    #[inline]
     fn rgb_out<F: FnMut(RGB)>(&mut self, in_chunk: usize, value: u8, next_func: &mut F) {
         match in_chunk {
             0 => {
-                self.row.as_mut().unwrap().color_in(0, value);
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 0));
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 1));
+                self.row.color_in(0, value);
+                next_func(self.row.rgb_out(0));
+                next_func(self.row.rgb_out(1));
             }
             1 => {
-                self.row.as_mut().unwrap().color_in(1, value);
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 2));
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 3));
+                self.row.color_in(1, value);
+                next_func(self.row.rgb_out(2));
+                next_func(self.row.rgb_out(3));
             }
             2 => {
-                self.row.as_mut().unwrap().color_in(2, value);
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 4));
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 5));
-                next_func(self.row.as_ref().unwrap().rgb_out(&self.table, 6));
+                self.row.color_in(2, value);
+                next_func(self.row.rgb_out(4));
+                next_func(self.row.rgb_out(5));
+                next_func(self.row.rgb_out(6));
             }
             _ => unreachable!(),
         }
     }
 
+    #[inline]
     pub fn push<F: FnMut(RGB)>(&mut self, value: u8, next_func: &mut F) {
         if self.row_pos == 0 {
-            mem::replace(
-                &mut self.row,
-                Some(NtscRow::new(
-                    self.burst,
-                    NES_NTSC_BLACK,
-                    NES_NTSC_BLACK,
-                    value,
-                )),
-            );
+            self.row
+                .update(self.burst, NES_NTSC_BLACK, NES_NTSC_BLACK, value);
         } else {
             let chunk_count = self.in_chunk_count;
             self.rgb_out(chunk_count, value, next_func);
@@ -468,11 +468,18 @@ struct NtscRow {
     kernel: [usize; 3],
     kernelx: [usize; 3],
     ktable_offset: usize,
+    ktable: Box<[u32]>,
 }
 
 impl NtscRow {
     // NES_NTSC_BEGIN_ROW
-    pub(crate) fn new(burst: usize, pixel0: u8, pixel1: u8, pixel2: u8) -> Self {
+    pub(crate) fn new(
+        burst: usize,
+        pixel0: u8,
+        pixel1: u8,
+        pixel2: u8,
+        ktable: Box<[u32]>,
+    ) -> Self {
         let ktable_offset = burst * NES_NTSC_BURST_SIZE;
         let kernel0 = Self::entry_impl(ktable_offset, pixel0);
         Self {
@@ -485,37 +492,86 @@ impl NtscRow {
             ],
             ktable_offset,
             // pixel: [pixel0, pixel1, pixel2],
+            ktable,
         }
     }
 
+    #[inline]
+    pub(crate) fn update(&mut self, burst: usize, pixel0: u8, pixel1: u8, pixel2: u8) {
+        let ktable_offset = burst * NES_NTSC_BURST_SIZE;
+        let kernel0 = Self::entry_impl(ktable_offset, pixel0);
+        self.kernelx = [0, kernel0, kernel0];
+        self.kernel = [
+            kernel0,
+            Self::entry_impl(ktable_offset, pixel1),
+            Self::entry_impl(ktable_offset, pixel2),
+        ];
+        self.ktable_offset = ktable_offset;
+    }
+
     // NES_NTSC_ENTRY_
+    #[inline]
     fn entry_impl(ktable_offset: usize, n: u8) -> usize {
         ktable_offset + usize::from(n) * NES_NTSC_ENTRY_SIZE
     }
 
-    pub fn rgb_out(&self, input: &[u32], x: usize) -> RGB {
-        RGB::from(Self::rgb_out_impl(Self::clamp_impl(
-            input[self.kernel[0] + x]
-                .wrapping_add(input[self.kernel[1] + (x + 12) % 7 + 14])
-                .wrapping_add(input[self.kernel[2] + (x + 10) % 7 + 28])
-                .wrapping_add(input[self.kernelx[0] + (x + 7) % 14])
-                .wrapping_add(input[self.kernelx[1] + (x + 5) % 7 + 21])
-                .wrapping_add(input[self.kernelx[2] + (x + 3) % 7 + 35]),
-        )))
+    #[inline]
+    pub fn rgb_out(&self, x: usize) -> RGB {
+        // RGB::from(Self::rgb_out_impl(Self::clamp_impl(
+        //     (self.ktable[self.kernel[0] + x]
+        //         + (self.ktable[self.kernel[1] + (x + 12) % 7 + 14])
+        //         + (self.ktable[self.kernel[2] + (x + 10) % 7 + 28])
+        //         + (self.ktable[self.kernelx[0] + (x + 7) % 14])
+        //         + (self.ktable[self.kernelx[1] + (x + 5) % 7 + 21])
+        //         + (self.ktable[self.kernelx[2] + (x + 3) % 7 + 35]))
+        //         .0,
+        // )))
+        RGB::from(Self::rgb_out_impl(Self::clamp_impl(unsafe {
+            self.ktable
+                .get_unchecked(self.kernel.get_unchecked(0) + x)
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernel.get_unchecked(1) + (x + 12) % 7 + 14),
+                )
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernel.get_unchecked(2) + (x + 10) % 7 + 28),
+                )
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernelx.get_unchecked(0) + (x + 7) % 14),
+                )
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernelx.get_unchecked(1) + (x + 5) % 7 + 21),
+                )
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernelx.get_unchecked(2) + (x + 3) % 7 + 35),
+                )
+        })))
     }
 
     // common ntsc macros
+    #[inline]
     fn clamp_impl(io: u32) -> u32 {
         let sub = io >> 9 & NES_NTSC_CLAMP_MASK;
         let clamp = NES_NTSC_CLAMP_ADD - sub;
         (io | clamp) & (clamp - sub)
     }
 
+    #[inline]
     fn rgb_out_impl(raw: u32) -> u32 {
         ((raw >> 5) & 0x00FF_0000) | ((raw >> 3) & 0xFF00) | ((raw >> 1) & 0xFF)
     }
 
     // NES_NTSC_COLOR_IN
+    #[inline]
     pub fn color_in(&mut self, in_index: usize, color_in: u8) {
         self.kernelx[in_index] = self.kernel[in_index];
         self.kernel[in_index] = Self::entry_impl(self.ktable_offset, color_in);

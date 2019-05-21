@@ -5,7 +5,7 @@ authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-glutin = { version = ">=0.21.0-rc3" }
+glutin = { version = ">=0.21.0" }
 nerust_console = { version = ">0.0.0", path="../../console" }
 nerust_core = { version = ">0.0.0", path="../../core" }
 nerust_screen_buffer = { version = ">0.0.0", path="../../screen/buffer" }
@@ -15,3 +15,4 @@ nerust_screen_traits = { version = ">0.0.0", path="../../screen/traits" }
 nerust_sound_openal = { version = ">0.0.0", path="../../sound/openal" }
 nerust_timer = { version = ">0.0.0", path="../../timer" }
 simple_logger = { version = ">=0.0.0" }
+clap = { version = ">=0" }

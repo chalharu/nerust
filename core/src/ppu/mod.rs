@@ -369,6 +369,7 @@ impl Core {
         self.has_next_sprite = false;
     }
 
+    #[inline]
     pub fn read_register(
         &mut self,
         address: usize,
@@ -384,6 +385,7 @@ impl Core {
         OpenBusReadResult::new(self.openbus_io.unite(result), 0xFF)
     }
 
+    #[inline]
     fn read_status(&mut self, interrupt: &mut Interrupt) -> u8 {
         self.state.write_toggle = false;
         self.mask.blue_tint = false;
@@ -403,6 +405,7 @@ impl Core {
         result
     }
 
+    #[inline]
     fn read_oam(&mut self) -> u8 {
         if self.scan_line <= 240 && self.render_executing {
             if self.cycle >= 257 && self.cycle <= 320 {
@@ -416,6 +419,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn read_data(&mut self, cartridge: &mut Cartridge) -> OpenBusReadResult {
         if self.vram_read_delay > 0 {
             OpenBusReadResult::new(0, 0)
@@ -439,6 +443,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn increment_address(&mut self, cartridge: &mut Cartridge) {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
@@ -450,6 +455,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn increment_x(&mut self) {
         if self.state.vram_addr & 0x1F == 0x1F {
             self.state.vram_addr = (self.state.vram_addr & 0xFFE0) ^ 0x0400;
@@ -458,6 +464,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn increment_y(&mut self) {
         if self.state.vram_addr & 0x7000 != 0x7000 {
             self.state.vram_addr = self.state.vram_addr.wrapping_add(0x1000);
@@ -475,6 +482,7 @@ impl Core {
         }
     }
 
+    #[inline]
     pub fn read_vram(&mut self, mut address: usize, cartridge: &mut Cartridge) -> u8 {
         address &= 0x3FFF;
         cartridge.vram_address_change(address);
@@ -492,18 +500,22 @@ impl Core {
         self.openbus_vram.unite(result)
     }
 
+    #[inline]
     fn palette_address(address: usize) -> usize {
         address & if address & 0x13 == 0x10 { 0x0F } else { 0x1F }
     }
 
+    #[inline]
     fn read_palette(&self, address: usize) -> u8 {
         self.palette[Self::palette_address(address)]
     }
 
+    #[inline]
     fn write_palette(&mut self, address: usize, value: u8) {
         self.palette[Self::palette_address(address)] = value & 0x3F;
     }
 
+    #[inline]
     pub fn write_register(
         &mut self,
         address: usize,
@@ -524,6 +536,7 @@ impl Core {
         self.openbus_io.write(value);
     }
 
+    #[inline]
     fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
         let prev_nmi_output = self.control.nmi_output;
 
@@ -544,14 +557,17 @@ impl Core {
         }
     }
 
+    #[inline]
     fn write_mask(&mut self, value: u8) {
         self.mask = Mask::from(value);
     }
 
+    #[inline]
     fn write_oam_address(&mut self, value: u8) {
         self.state.oam_address = value;
     }
 
+    #[inline]
     fn write_oam_data(&mut self, value: u8) {
         if self.scan_line > 240 || !self.render_executing {
             self.primary_oam[usize::from(self.state.oam_address)] =
@@ -566,6 +582,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn write_scroll(&mut self, value: u8) {
         if self.state.write_toggle {
             self.state.temp_vram_addr = (self.state.temp_vram_addr & !0x73E0)
@@ -579,6 +596,7 @@ impl Core {
         self.state.write_toggle = !self.state.write_toggle;
     }
 
+    #[inline]
     fn write_address(&mut self, value: u8) {
         if self.state.write_toggle {
             self.state.temp_vram_addr = (self.state.temp_vram_addr & 0xFF00) | u16::from(value);
@@ -591,6 +609,7 @@ impl Core {
         self.state.write_toggle = !self.state.write_toggle;
     }
 
+    #[inline]
     fn write_data(&mut self, value: u8, cartridge: &mut Cartridge, interrupt: &mut Interrupt) {
         let addr = (self.state.vram_addr & 0x3FFF) as usize;
 
@@ -602,6 +621,7 @@ impl Core {
         self.increment_address(cartridge);
     }
 
+    #[inline]
     fn write_vram(
         &mut self,
         mut address: usize,
@@ -620,6 +640,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn fetch_name_table_byte(&mut self, cartridge: &mut Cartridge) {
         self.previous_tile = mem::replace(&mut self.current_tile, self.next_tile);
         self.state.low_bit_shift |= u16::from(self.next_tile.low_byte);
@@ -634,6 +655,7 @@ impl Core {
                 };
     }
 
+    #[inline]
     fn fetch_attribute_table_byte(&mut self, cartridge: &mut Cartridge) {
         let v = self.state.vram_addr as usize;
         let address = self.state.attribute_address();
@@ -641,14 +663,17 @@ impl Core {
         self.next_tile.palette_offset = ((self.read_vram(address, cartridge) >> shift) & 3) << 2;
     }
 
+    #[inline]
     fn fetch_low_tile_byte(&mut self, cartridge: &mut Cartridge) {
         self.next_tile.low_byte = self.read_vram(self.next_tile.tile_addr as usize, cartridge);
     }
 
+    #[inline]
     fn fetch_high_tile_byte(&mut self, cartridge: &mut Cartridge) {
         self.next_tile.high_byte = self.read_vram(self.next_tile.tile_addr as usize + 8, cartridge);
     }
 
+    #[inline]
     fn fetch_tile(&mut self, cartridge: &mut Cartridge) {
         if self.render_executing {
             match self.cycle & 7 {
@@ -661,6 +686,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn tile_address(&self, tile: u8, offset: u16) -> usize {
         let tile = usize::from(tile);
         let offset = usize::from(offset);
@@ -673,6 +699,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn fetch_sprite_pattern(&mut self, cartridge: &mut Cartridge) {
         let position_y = u16::from(self.secondary_oam[usize::from(self.sprite_index) << 2]);
         let tile = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 1];
@@ -719,21 +746,25 @@ impl Core {
         self.sprite_index += 1;
     }
 
+    #[inline]
     fn show_background(&self) -> bool {
         (self.cycle > 300 || self.mask.show_background)
             && (self.cycle > 8 || self.mask.show_left_background)
     }
 
+    #[inline]
     fn show_sprite(&self) -> bool {
         (self.cycle > 300 || self.mask.show_sprites)
             && (self.cycle > 8 || self.mask.show_left_sprites)
     }
 
+    #[inline]
     fn background_pixel(&self) -> u8 {
         ((((self.state.low_bit_shift << self.state.x_scroll) & 0x8000) >> 15)
             | (((self.state.high_bit_shift << self.state.x_scroll) & 0x8000) >> 14)) as u8
     }
 
+    #[inline]
     fn evaluate_pixel(&mut self) -> u8 {
         let bg = if self.show_background() {
             self.background_pixel()
@@ -786,6 +817,7 @@ impl Core {
         bg_result_func(self)
     }
 
+    #[inline]
     fn render_pixel<S: Screen>(&mut self, screen: &mut S) {
         let color = if self.render_executing || ((self.state.vram_addr & 0x3F00) == 0) {
             usize::from(self.evaluate_pixel())
@@ -796,6 +828,7 @@ impl Core {
         // self.screen_buffer[(self.cycle as usize - 1) + (self.scan_line as usize - 1) * 256]
     }
 
+    #[inline]
     fn render_screen<S: Screen>(&mut self, screen: &mut S) {
         screen.render();
         // self.screen_buffer.iter().forEach(screen.push);
@@ -902,6 +935,7 @@ impl Core {
         }
     }
 
+    #[inline]
     fn set_vertical_blank(&mut self, interrupt: &mut Interrupt) {
         self.status.nmi_occurred = true;
         if self.control.nmi_output {

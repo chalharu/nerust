@@ -17,5 +17,5 @@ members = [
     "timer"
 ]
 
-[profile.bench]
+[profile.release]
 debug = true
