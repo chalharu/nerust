@@ -9,11 +9,11 @@ mod screen_buffer_unit;
 
 pub use screen_buffer::ScreenBuffer;
 
-fn allocate(size: usize) -> Box<[u8]> {
+fn allocate<T: Default + Clone>(size: usize) -> Box<[T]> {
     // let mut buffer = Vec::with_capacity(size);
     // unsafe {
     //     buffer.set_len(size);
     // }
-    let buffer = vec![0; size];
+    let buffer = vec![T::default(); size];
     buffer.into_boxed_slice()
 }
