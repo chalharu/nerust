@@ -8,21 +8,40 @@
 
 # Nerust
 
-Overview
-
-## Description
-
-## Demo
-
-## VS.
-
-## Requirement
+An NES emulator written in Rust
 
 ## Usage
 
-## Install
+### Non GTK+ (glutin) Version
 
-## Contribution
+#### Dependencies
+
+Cargo
+Rust
+
+#### Build
+
+cargo build -p nerust_glutin --release
+
+#### Run
+
+target/release/nerust [Rom File Path]
+
+### Non GTK+ Version
+
+#### Dependencies
+
+Cargo
+Rust
+GTK+3 v3.16 or greater.
+
+#### Build
+
+cargo build -p nerust_gtk --release
+
+#### Run
+
+target/release/nerust_gtk
 
 ## Licence
 
