@@ -3,7 +3,7 @@ members = [
     "console",
     "core",
     "gui/gtk",
-    "gui/gultin",
+    "gui/glutin",
     "glwrap",
     "nes_ntsc",
     "screen/buffer",
