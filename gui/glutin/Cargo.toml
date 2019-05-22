@@ -1,5 +1,5 @@
 [package]
-name = "nerust_gultin"
+name = "nerust_glutin"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
 edition = "2018"

@@ -8,7 +8,7 @@
 extern crate clap;
 
 use clap::{App, Arg};
-use nerust_gultin::Window;
+use nerust_glutin::Window;
 use simple_logger;
 use std::fs::File;
 use std::io::{BufReader, Read};
