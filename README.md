@@ -16,32 +16,57 @@ An NES emulator written in Rust
 
 #### Dependencies
 
-Cargo
-Rust
+- Cargo
+- Rust
 
 #### Build
 
+```sh
 cargo build -p nerust_glutin --release
+```
 
 #### Run
 
+```sh
 target/release/nerust [Rom File Path]
+```
 
 ### Non GTK+ Version
 
 #### Dependencies
 
-Cargo
-Rust
-GTK+3 v3.16 or greater.
+- Cargo
+- Rust
+- GTK+3 v3.16 or greater.
 
 #### Build
 
+```sh
 cargo build -p nerust_gtk --release
+```
 
 #### Run
 
+```sh
 target/release/nerust_gtk
+```
+
+## Support Mappers
+
+- NRom (Mapper 0)
+- MMC1 SxRom (Mapper 1)
+- UxRom (Mapper 2)
+- CnRom (Mapper 3, Mapper 185)
+- AxRom (Mapper 7)
+- BnRom (Mapper 34)
+- NINA-001 (Mapper 34)
+
+## To-Do
+
+- Load & Save
+- Android support
+- Other Mappers
+- Network multiplay
 
 ## Licence
 
