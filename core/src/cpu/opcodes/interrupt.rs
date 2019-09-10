@@ -12,8 +12,8 @@ impl CpuStepState for Brk {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -94,8 +94,8 @@ impl CpuStepState for Rti {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -143,8 +143,8 @@ impl CpuStepState for Irq {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -225,8 +225,8 @@ impl CpuStepState for Reset {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {

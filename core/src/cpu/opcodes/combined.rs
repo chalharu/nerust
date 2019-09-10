@@ -12,8 +12,8 @@ pub(crate) trait Read {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -56,8 +56,8 @@ pub(crate) trait Write {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {

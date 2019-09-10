@@ -373,7 +373,7 @@ impl Core {
     pub fn read_register(
         &mut self,
         address: usize,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> OpenBusReadResult {
         let result = match address {
@@ -420,7 +420,7 @@ impl Core {
     }
 
     #[inline]
-    fn read_data(&mut self, cartridge: &mut Cartridge) -> OpenBusReadResult {
+    fn read_data(&mut self, cartridge: &mut dyn Cartridge) -> OpenBusReadResult {
         if self.vram_read_delay > 0 {
             OpenBusReadResult::new(0, 0)
         } else {
@@ -444,7 +444,7 @@ impl Core {
     }
 
     #[inline]
-    fn increment_address(&mut self, cartridge: &mut Cartridge) {
+    fn increment_address(&mut self, cartridge: &mut dyn Cartridge) {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
                 (self.state.vram_addr + if self.control.increment { 32 } else { 1 }) & 0x7FFF;
@@ -483,12 +483,12 @@ impl Core {
     }
 
     #[inline]
-    pub fn read_vram(&mut self, mut address: usize, cartridge: &mut Cartridge) -> u8 {
+    pub fn read_vram(&mut self, mut address: usize, cartridge: &mut dyn Cartridge) -> u8 {
         address &= 0x3FFF;
         cartridge.vram_address_change(address);
         let result = match address {
-            0...0x1FFF => cartridge.read(address),
-            0x2000...0x3FFF => OpenBusReadResult::new(
+            0..=0x1FFF => cartridge.read(address),
+            0x2000..=0x3FFF => OpenBusReadResult::new(
                 self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF],
                 0xFF,
             ),
@@ -520,7 +520,7 @@ impl Core {
         &mut self,
         address: usize,
         value: u8,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) {
         match address {
@@ -610,7 +610,7 @@ impl Core {
     }
 
     #[inline]
-    fn write_data(&mut self, value: u8, cartridge: &mut Cartridge, interrupt: &mut Interrupt) {
+    fn write_data(&mut self, value: u8, cartridge: &mut dyn Cartridge, interrupt: &mut Interrupt) {
         let addr = (self.state.vram_addr & 0x3FFF) as usize;
 
         if addr < 0x3F00 {
@@ -626,14 +626,14 @@ impl Core {
         &mut self,
         mut address: usize,
         value: u8,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) {
         address &= 0x3FFF;
         cartridge.vram_address_change(address);
         match address {
-            0...0x1FFF => cartridge.write(address, value, interrupt),
-            0x2000...0x3FFF => {
+            0..=0x1FFF => cartridge.write(address, value, interrupt),
+            0x2000..=0x3FFF => {
                 self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF] = value
             }
             _ => error!("unhandled ppu memory write at address: 0x{:04X}", address),
@@ -641,7 +641,7 @@ impl Core {
     }
 
     #[inline]
-    fn fetch_name_table_byte(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_name_table_byte(&mut self, cartridge: &mut dyn Cartridge) {
         self.previous_tile = mem::replace(&mut self.current_tile, self.next_tile);
         self.state.low_bit_shift |= u16::from(self.next_tile.low_byte);
         self.state.high_bit_shift |= u16::from(self.next_tile.high_byte);
@@ -656,7 +656,7 @@ impl Core {
     }
 
     #[inline]
-    fn fetch_attribute_table_byte(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_attribute_table_byte(&mut self, cartridge: &mut dyn Cartridge) {
         let v = self.state.vram_addr as usize;
         let address = self.state.attribute_address();
         let shift = ((v >> 4) & 4) | (v & 2);
@@ -664,17 +664,17 @@ impl Core {
     }
 
     #[inline]
-    fn fetch_low_tile_byte(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_low_tile_byte(&mut self, cartridge: &mut dyn Cartridge) {
         self.next_tile.low_byte = self.read_vram(self.next_tile.tile_addr as usize, cartridge);
     }
 
     #[inline]
-    fn fetch_high_tile_byte(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_high_tile_byte(&mut self, cartridge: &mut dyn Cartridge) {
         self.next_tile.high_byte = self.read_vram(self.next_tile.tile_addr as usize + 8, cartridge);
     }
 
     #[inline]
-    fn fetch_tile(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_tile(&mut self, cartridge: &mut dyn Cartridge) {
         if self.render_executing {
             match self.cycle & 7 {
                 1 => self.fetch_name_table_byte(cartridge),
@@ -700,7 +700,7 @@ impl Core {
     }
 
     #[inline]
-    fn fetch_sprite_pattern(&mut self, cartridge: &mut Cartridge) {
+    fn fetch_sprite_pattern(&mut self, cartridge: &mut dyn Cartridge) {
         let position_y = u16::from(self.secondary_oam[usize::from(self.sprite_index) << 2]);
         let tile = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 1];
         let attribute = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 2];
@@ -837,7 +837,7 @@ impl Core {
     fn evaluate_sprites(&mut self) {
         if self.render_executing {
             match self.cycle {
-                0...64 => {
+                0..=64 => {
                     self.oam_read_buffer = 0xFF;
                     self.secondary_oam[usize::from(self.cycle - 1) >> 1] = 0xFF;
                     return;
@@ -946,7 +946,7 @@ impl Core {
     pub(crate) fn step<S: Screen>(
         &mut self,
         screen: &mut S,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> bool {
         let mut result = false;
@@ -966,7 +966,7 @@ impl Core {
                     self.status.sprite_zero_hit = false;
                     self.scan_line = 0;
                 }
-                x @ 1...TOTAL_SCAN_LINE
+                x @ 1..=TOTAL_SCAN_LINE
                     if x != 241 && x != NMI_SCAN_LINE && x != TOTAL_SCAN_LINE => {}
                 _ => unreachable!(),
             }
@@ -974,7 +974,7 @@ impl Core {
             self.cycle += 1;
             if self.scan_line <= 240 {
                 match self.cycle {
-                    1...256 => {
+                    1..=256 => {
                         self.fetch_tile(cartridge);
                         if self.post_render_executing && self.cycle.trailing_zeros() >= 3 {
                             self.increment_x();
@@ -1001,7 +1001,7 @@ impl Core {
                             }
                         }
                     }
-                    257...320 => {
+                    257..=320 => {
                         if self.cycle == 257 {
                             self.sprite_index = 0;
                             self.has_next_sprite = false;
@@ -1042,7 +1042,7 @@ impl Core {
                             self.increment_x();
                         }
                     }
-                    322...327 | 329...335 => {
+                    322..=327 | 329..=335 => {
                         self.fetch_tile(cartridge);
                     }
                     337 => {

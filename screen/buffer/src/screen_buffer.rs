@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 pub struct ScreenBuffer {
-    filter: Box<NesFilter>,
+    filter: Box<dyn NesFilter>,
     dest: ScreenBufferUnit,
     display_buffer: ScreenBufferUnit,
     src_buffer: Box<[u8]>,

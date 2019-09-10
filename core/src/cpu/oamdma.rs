@@ -34,12 +34,12 @@ impl OamDmaStateValue {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct OamDmaState {
     #[serde(skip, default = "make_state_pool")]
-    state_pool: [Box<OamDmaStepState>; OamDmaStateEnumValue::None as usize],
+    state_pool: [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as usize],
     state: OamDmaStateEnumValue,
     value: OamDmaStateValue,
 }
 
-fn make_state_pool() -> [Box<OamDmaStepState>; OamDmaStateEnumValue::None as usize] {
+fn make_state_pool() -> [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as usize] {
     [
         Box::new(OamDma),
         Box::new(OamDmaStep1),
@@ -74,8 +74,8 @@ impl OamDmaState {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) {
         self.state = self.state_pool[self.state as usize].next(
@@ -102,8 +102,8 @@ pub(crate) trait OamDmaStepState {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue;
@@ -116,8 +116,8 @@ impl OamDmaStepState for OamDma {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
         _value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
@@ -138,8 +138,8 @@ impl OamDmaStepState for OamDmaStep1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
@@ -162,8 +162,8 @@ impl OamDmaStepState for OamDmaStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {

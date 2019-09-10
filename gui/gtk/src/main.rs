@@ -98,9 +98,9 @@ fn app_activate(app: &gtk::Application) {
     ))));
 
     app.set_menubar(
-        &gtk::Builder::new_from_string(include_str!("../resources/menu.xml"))
+        gtk::Builder::new_from_string(include_str!("../resources/menu.xml"))
             .get_object::<gio::Menu>("menu")
-            .unwrap(),
+            .as_ref(),
     );
     app.add_window(&window);
 
@@ -128,7 +128,7 @@ fn app_activate(app: &gtk::Application) {
         about_action.connect_activate(move |_, _| {
             let window_about_inner = std::mem::replace(&mut *window_about.borrow_mut(), None);
             if let Some(window_about_inner) = window_about_inner {
-                window_about_inner.set_transient_for(&window);
+                window_about_inner.set_transient_for(Some(&window));
                 window_about_inner.run();
                 window_about_inner.destroy();
                 *window_about.borrow_mut() = create_about_dialog();
@@ -149,8 +149,11 @@ fn main() {
     // log initialize
     simple_logger::init().unwrap();
 
-    let app = gtk::Application::new("com.github.chalharu", gio::ApplicationFlags::HANDLES_OPEN)
-        .expect("Application start up error");
+    let app = gtk::Application::new(
+        Some("com.github.chalharu"),
+        gio::ApplicationFlags::HANDLES_OPEN,
+    )
+    .expect("Application start up error");
 
     app.connect_activate(app_activate);
 

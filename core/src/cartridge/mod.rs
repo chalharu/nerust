@@ -43,9 +43,9 @@ pub(crate) trait Cartridge: Mapper {
 
     fn read(&self, address: usize) -> OpenBusReadResult {
         match address {
-            0...0x1FFF => self.read_character(address),
-            0x6000...0x7FFF => Cartridge::read_ram(self, address - 0x6000),
-            0x8000...0xFFFF => self.read_program(address - 0x8000),
+            0..=0x1FFF => self.read_character(address),
+            0x6000..=0x7FFF => Cartridge::read_ram(self, address - 0x6000),
+            0x8000..=0xFFFF => self.read_program(address - 0x8000),
             _ => {
                 error!("unhandled mapper read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
@@ -90,9 +90,9 @@ pub(crate) trait Cartridge: Mapper {
 
     fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         match address {
-            0...0x1FFF => self.write_character(address, value),
-            0x6000...0x7FFF => Cartridge::write_ram(self, address, value, interrupt),
-            0x8000...0xFFFF => self.write_program(address, value, interrupt),
+            0..=0x1FFF => self.write_character(address, value),
+            0x6000..=0x7FFF => Cartridge::write_ram(self, address, value, interrupt),
+            0x8000..=0xFFFF => self.write_program(address, value, interrupt),
             _ => {
                 error!("unhandled mapper write at address: 0x{:04X}", address);
             }
@@ -350,7 +350,7 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
 pub(crate) fn try_from<I: Iterator<Item = u8>>(
     input: &mut I,
-) -> Result<Box<Cartridge>, error::CartridgeError> {
+) -> Result<Box<dyn Cartridge>, error::CartridgeError> {
     let mut result = mapper::try_from(format::CartridgeData::try_from(input)?);
     if let Ok(ref mut r) = result {
         Cartridge::initialize(r.as_mut());

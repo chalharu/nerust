@@ -194,8 +194,8 @@ impl Core {
     pub fn step(
         &mut self,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) {
         self.cycles = self.cycles.wrapping_add(1);
@@ -270,14 +270,14 @@ pub(crate) trait CpuStepState {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum;
 }
 
 type CpuStepStateFunc =
-    fn(&mut Core, &mut Ppu, &mut Cartridge, &mut Controller, &mut Apu) -> CpuStepStateEnum;
+    fn(&mut Core, &mut Ppu, &mut dyn Cartridge, &mut dyn Controller, &mut Apu) -> CpuStepStateEnum;
 
 struct FetchOpCode;
 
@@ -285,8 +285,8 @@ impl CpuStepState for FetchOpCode {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         if core.internal_stat.get_step() == 1 {
@@ -309,8 +309,8 @@ impl CpuStepState for FetchOpCode {
 fn push(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Cartridge,
-    controller: &mut Controller,
+    cartridge: &mut dyn Cartridge,
+    controller: &mut dyn Controller,
     apu: &mut Apu,
     value: u8,
 ) {
@@ -330,8 +330,8 @@ fn push(
 fn pull(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Cartridge,
-    controller: &mut Controller,
+    cartridge: &mut dyn Cartridge,
+    controller: &mut dyn Controller,
     apu: &mut Apu,
 ) -> u8 {
     let sp = core.register.get_sp().wrapping_add(1);
@@ -349,8 +349,8 @@ fn pull(
 fn read_dummy_current(
     core: &mut Core,
     ppu: &mut Ppu,
-    cartridge: &mut Cartridge,
-    controller: &mut Controller,
+    cartridge: &mut dyn Cartridge,
+    controller: &mut dyn Controller,
     apu: &mut Apu,
 ) {
     let pc = usize::from(core.register.get_pc());

@@ -9,7 +9,7 @@ mod filters;
 use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
 
 pub trait NesFilter {
-    fn push(&mut self, value: u8, filter_func: &mut FilterFunc);
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
 
     fn logical_size(&self) -> LogicalSize;
     fn physical_size(&self) -> PhysicalSize;
@@ -20,7 +20,7 @@ pub trait FilterFunc {
 }
 
 impl<F: filters::FilterUnit<Input = u8, Output = RGB>> NesFilter for F {
-    fn push(&mut self, value: u8, filter_func: &mut FilterFunc) {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc) {
         filters::FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
     }
 

@@ -198,8 +198,7 @@ impl ConsoleRunner {
                         self.paused = false;
                         core = None;
                         self.screen_buffer.clear();
-                    }
-                    // _ => (),
+                    } // _ => (),
                 }
             }
         }

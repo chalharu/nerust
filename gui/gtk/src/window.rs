@@ -145,11 +145,11 @@ impl WindowExtend for Window {
 
     fn open(&self) {
         let file_chooser_native = gtk::FileChooserNative::new(
-            "Open File",
+            Some("Open File"),
             Some(&self.window()),
             gtk::FileChooserAction::Open,
-            "_Open",
-            "_Cancel",
+            Some("_Open"),
+            Some("_Cancel"),
         );
         let state = self.state();
         file_chooser_native.connect_response(move |file_chooser_native, _| {

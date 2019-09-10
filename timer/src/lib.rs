@@ -53,7 +53,6 @@ impl Timer {
         let len = self.instants.len();
         if len == 0 {
             self.instants.push_back(new_now);
-            return;
         } else {
             let duration = new_now.duration_since(if len >= Self::CALC_FRAMES {
                 self.instants.pop_front().unwrap()

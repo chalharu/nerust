@@ -72,7 +72,7 @@ impl FrameCounter {
                     self.cycle = 0;
                     FrameType::None
                 }
-                0...7456 | 7458...14912 | 14914...22370 | 22372...37280 => FrameType::None,
+                0..=7456 | 7458..=14912 | 14914..=22370 | 22372..=37280 => FrameType::None,
                 _ => unreachable!(),
             }
         } else {
@@ -93,7 +93,7 @@ impl FrameCounter {
                     self.cycle = 0;
                     FrameType::None
                 }
-                0...7456 | 7458...14912 | 14914...22370 | 22372...29827 => FrameType::None,
+                0..=7456 | 7458..=14912 | 14914..=22370 | 22372..=29827 => FrameType::None,
                 _ => unreachable!(),
             }
         };
