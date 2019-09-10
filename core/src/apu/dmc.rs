@@ -159,7 +159,7 @@ impl DMC {
         }
     }
 
-    pub fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut Cartridge) {
+    pub fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         if self.timer.step_timer() {
             if self.enabled {
                 self.step_shifter();
@@ -172,7 +172,7 @@ impl DMC {
         }
     }
 
-    pub fn step_reader(&mut self, interrupt: &mut Interrupt, _cartridge: &mut Cartridge) {
+    pub fn step_reader(&mut self, interrupt: &mut Interrupt, _cartridge: &mut dyn Cartridge) {
         if self.bit_count == 0 {
             self.bit_count = 8;
             if self.need_buffer {

@@ -12,8 +12,8 @@ impl CpuStepState for Jmp {
     fn exec(
         core: &mut Core,
         _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
+        _cartridge: &mut dyn Cartridge,
+        _controller: &mut dyn Controller,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
         core.register
@@ -28,8 +28,8 @@ impl CpuStepState for Jsr {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -91,8 +91,8 @@ impl CpuStepState for Rts {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {

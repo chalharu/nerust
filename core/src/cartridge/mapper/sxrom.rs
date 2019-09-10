@@ -46,10 +46,10 @@ impl SxRom {
 
     fn write_register_inner(&mut self, address: usize, value: u8) {
         match address {
-            0...0x1FFF => self.write_control(value),
-            0x2000...0x3FFF => self.write_char_bank_0(value),
-            0x4000...0x5FFF => self.write_char_bank_1(value),
-            0x6000...0x7FFF => self.write_prog_bank(value),
+            0..=0x1FFF => self.write_control(value),
+            0x2000..=0x3FFF => self.write_char_bank_0(value),
+            0x4000..=0x5FFF => self.write_char_bank_1(value),
+            0x6000..=0x7FFF => self.write_prog_bank(value),
             _ => {}
         }
     }

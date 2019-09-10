@@ -37,7 +37,7 @@ pub struct Core {
     cpu: Cpu,
     ppu: Ppu,
     apu: Apu,
-    cartridge: Box<Cartridge>,
+    cartridge: Box<dyn Cartridge>,
 }
 
 impl Core {
@@ -63,7 +63,7 @@ impl Core {
     pub fn step<S: Screen, M: MixerInput>(
         &mut self,
         screen: &mut S,
-        controller: &mut Controller,
+        controller: &mut dyn Controller,
         mixer: &mut M,
     ) -> bool {
         // 1CPUサイクルにつき、APUは1、PPUはNTSC=>3,PAL=>3.2となる

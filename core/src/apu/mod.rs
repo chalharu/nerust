@@ -51,7 +51,7 @@ impl Core {
     pub(crate) fn new(
         // sample_rate: u32,
         interrupt: &mut Interrupt,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
     ) -> Self {
         // let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
         // let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
@@ -80,7 +80,7 @@ impl Core {
         result
     }
 
-    pub(crate) fn reset(&mut self, interrupt: &mut Interrupt, cartridge: &mut Cartridge) {
+    pub(crate) fn reset(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         self.pulse1.reset();
         self.pulse2.reset();
         self.triangle.reset();
@@ -90,7 +90,7 @@ impl Core {
         self.initialize(interrupt, cartridge);
     }
 
-    fn initialize(&mut self, interrupt: &mut Interrupt, cartridge: &mut Cartridge) {
+    fn initialize(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         for _ in 0..4 {
             self.step_frame(interrupt, cartridge);
         }
@@ -146,7 +146,7 @@ impl Core {
         self.dmc.fill_address()
     }
 
-    fn step_frame(&mut self, interrupt: &mut Interrupt, cartridge: &mut Cartridge) {
+    fn step_frame(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         match self.frame_counter.step_frame_counter(interrupt) {
             FrameType::Half => {
                 self.quarter_frame();
@@ -161,7 +161,7 @@ impl Core {
     pub(crate) fn step<M: MixerInput>(
         &mut self,
         cpu: &mut Cpu,
-        cartridge: &mut Cartridge,
+        cartridge: &mut dyn Cartridge,
         mixer: &mut M,
     ) {
         // let cycle1 = self.sample_cycle;
@@ -198,7 +198,7 @@ impl Core {
         self.step_length();
     }
 
-    fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut Cartridge) {
+    fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
         self.noise.step_length_counter();

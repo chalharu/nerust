@@ -12,8 +12,8 @@ impl CpuStepState for IndirectIndexed {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {

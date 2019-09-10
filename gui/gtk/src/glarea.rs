@@ -58,7 +58,7 @@ impl GLAreaExtend for GLArea {
         }
         {
             let result = result.clone();
-            gl_area.add_tick_callback(move |_gl_area, _frame_clock| result.tick());
+            gl_area.add_tick_callback(move |_gl_area, _frame_clock| Continue(result.tick()));
         }
         result
     }

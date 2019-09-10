@@ -24,7 +24,7 @@ use super::error::CartridgeError;
 use super::format::CartridgeData;
 use super::Cartridge;
 
-pub(crate) fn try_from(data: CartridgeData) -> Result<Box<Cartridge>, CartridgeError> {
+pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
     match data.mapper_type() {
         0 => Ok(Box::new(NRom::new(data))),
         1 => Ok(Box::new(SxRom::new(data))),

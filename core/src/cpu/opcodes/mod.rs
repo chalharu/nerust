@@ -10,8 +10,8 @@ macro_rules! cpu_step_state_impl {
             fn exec(
                 core: &mut Core,
                 ppu: &mut Ppu,
-                cartridge: &mut Cartridge,
-                controller: &mut Controller,
+                cartridge: &mut dyn Cartridge,
+                controller: &mut dyn Controller,
                 apu: &mut Apu,
             ) -> CpuStepStateEnum {
                 Self::exec_opcode(core, ppu, cartridge, controller, apu)
@@ -109,8 +109,8 @@ pub(crate) trait Accumulate {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -135,8 +135,8 @@ pub(crate) trait AccumulateMemory {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut Cartridge,
-        controller: &mut Controller,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {

@@ -81,7 +81,7 @@ impl FilterUnit for NesNtsc {
     fn eval_physical_size(source: PhysicalSize) -> PhysicalSize {
         PhysicalSize {
             width: nes_ntsc::NesNtsc::output_width(source.width as usize) as f32,
-            height: source.height * 2 as f32,
+            height: source.height * 2_f32,
         }
     }
 }

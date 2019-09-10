@@ -12,8 +12,8 @@ impl CpuStepState for Immediate {
     fn exec(
         core: &mut Core,
         _ppu: &mut Ppu,
-        _cartridge: &mut Cartridge,
-        _controller: &mut Controller,
+        _cartridge: &mut dyn Cartridge,
+        _controller: &mut dyn Controller,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
         let pc = core.register.get_pc();
