@@ -9,7 +9,7 @@ use gl::types::*;
 use std::fmt;
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Fail)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, failure::Fail)]
 pub enum ErrorKind {
     #[fail(display = "An enumeration parameter is not a legal enumeration for that function.")]
     InvalidEnum,
@@ -56,11 +56,11 @@ impl From<GLuint> for ErrorKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Fail)]
+#[derive(Debug, Clone, PartialEq, Eq, failure::Fail)]
 pub struct Error(Vec<ErrorKind>);
 
 impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.0.is_empty() {
             write!(f, "{}", self.0[0])?;
             for e in self.0.iter().skip(1) {

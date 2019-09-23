@@ -4,34 +4,34 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct TimerDao {
     value: u16,
     period: u16,
 }
 
 impl TimerDao {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             value: 0,
             period: 0,
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.value = 0;
         self.period = 0;
     }
 
-    pub fn set_period(&mut self, period: u16) {
+    pub(crate) fn set_period(&mut self, period: u16) {
         self.period = period;
     }
 
-    pub fn set_value(&mut self, value: u16) {
+    pub(crate) fn set_value(&mut self, value: u16) {
         self.value = value;
     }
 
-    pub fn step_timer(&mut self) -> bool {
+    pub(crate) fn step_timer(&mut self) -> bool {
         if self.value == 0 {
             self.value = self.period;
             true
@@ -41,7 +41,7 @@ impl TimerDao {
         }
     }
 
-    pub fn get_period(&mut self) -> u16 {
+    pub(crate) fn get_period(&mut self) -> u16 {
         self.period
     }
 }

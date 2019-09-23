@@ -31,8 +31,8 @@ use nerust_sound_traits::MixerInput;
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
 // const CLOCK_RATE: u64 = 1_789_773;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Core {
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+pub(crate) struct Core {
     pulse_table: Vec<f32>,
     tnd_table: Vec<f32>,
     // filter: ChaindFilter<ChaindFilter<PassFilter, PassFilter>, PassFilter>,
@@ -104,7 +104,7 @@ impl Core {
         match address {
             0x4015 => OpenBusReadResult::new(self.read_status(interrupt), !0x20),
             _ => {
-                error!("unhandled apu register read at address: 0x{:04X}", address);
+                log::error!("unhandled apu register read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
             }
         }
@@ -134,7 +134,7 @@ impl Core {
             0x400F => self.noise.write_length(value),
             0x4015 => self.write_control(value, interrupt),
             0x4017 => self.frame_counter.write_frame_counter(value, interrupt),
-            _ => error!("unhandled apu register write at address: 0x{:04X}", address),
+            _ => log::error!("unhandled apu register write at address: 0x{:04X}", address),
         }
     }
 
@@ -175,14 +175,14 @@ impl Core {
         self.send_sample(mixer);
     }
 
-    pub fn send_sample<M: MixerInput>(&self, mixer: &mut M) {
+    pub(crate) fn send_sample<M: MixerInput>(&self, mixer: &mut M) {
         mixer.push(self.output());
         // let output = self.output();
         // let filtered = self.filter.step(output);
         // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
     }
 
-    pub fn output(&self) -> f32 {
+    pub(crate) fn output(&self) -> f32 {
         self.pulse_table[usize::from(self.pulse1.output()) + usize::from(self.pulse2.output())]
             + self.tnd_table[3 * usize::from(self.triangle.output())
                 + 2 * usize::from(self.noise.output())

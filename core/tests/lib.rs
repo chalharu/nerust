@@ -4,11 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate hound;
-extern crate std as core;
-
-#[cfg(test)]
-#[macro_use]
 mod macros;
 
 mod apu;
@@ -91,17 +86,17 @@ impl ScenarioRunner {
                         self.core.reset();
                     }
                     ScenarioOperation::StandardControllerInput { code, state } => match code {
-                        StandardControllerButtonCode::Pad1(code) => {
+                        Pad1(code) => {
                             self.pad1 = match state {
-                                PadState::Pressed => self.pad1 | Buttons::from(code),
-                                PadState::Released => self.pad1 & !(Buttons::from(code)),
+                                Pressed => self.pad1 | Buttons::from(code),
+                                Released => self.pad1 & !(Buttons::from(code)),
                             };
                             self.controller.set_pad1(self.pad1);
                         }
                         StandardControllerButtonCode::Pad2(code) => {
                             self.pad2 = match state {
-                                PadState::Pressed => self.pad2 | Buttons::from(code),
-                                PadState::Released => self.pad2 & !(Buttons::from(code)),
+                                Pressed => self.pad2 | Buttons::from(code),
+                                Released => self.pad2 & !(Buttons::from(code)),
                             };
                             self.controller.set_pad2(self.pad2);
                         }
@@ -136,14 +131,14 @@ enum ButtonCode {
 impl From<ButtonCode> for Buttons {
     fn from(v: ButtonCode) -> Self {
         match v {
-            ButtonCode::A => Buttons::A,
-            ButtonCode::B => Buttons::B,
-            ButtonCode::SELECT => Buttons::SELECT,
-            ButtonCode::START => Buttons::START,
-            ButtonCode::UP => Buttons::UP,
-            ButtonCode::DOWN => Buttons::DOWN,
-            ButtonCode::LEFT => Buttons::LEFT,
-            ButtonCode::RIGHT => Buttons::RIGHT,
+            A => Buttons::A,
+            B => Buttons::B,
+            SELECT => Buttons::SELECT,
+            START => Buttons::START,
+            UP => Buttons::UP,
+            DOWN => Buttons::DOWN,
+            LEFT => Buttons::LEFT,
+            RIGHT => Buttons::RIGHT,
         }
     }
 }
@@ -173,13 +168,13 @@ enum ScenarioOperation {
     },
 }
 impl ScenarioOperation {
-    pub fn check_screen(hash: u64) -> Self {
+    pub(crate) fn check_screen(hash: u64) -> Self {
         ScenarioOperation::CheckScreen { hash }
     }
-    pub fn standard_controller(code: StandardControllerButtonCode, state: PadState) -> Self {
+    pub(crate) fn standard_controller(code: StandardControllerButtonCode, state: PadState) -> Self {
         ScenarioOperation::StandardControllerInput { code, state }
     }
-    pub fn reset() -> Self {
+    pub(crate) fn reset() -> Self {
         ScenarioOperation::Reset
     }
 }
@@ -191,16 +186,16 @@ struct ScenarioLeaf {
 }
 
 impl ScenarioLeaf {
-    pub fn new(frame_number: u64, operation: ScenarioOperation) -> Self {
+    pub(crate) fn new(frame_number: u64, operation: ScenarioOperation) -> Self {
         Self {
             frame_number,
             operation,
         }
     }
-    pub fn check_screen(frame_number: u64, hash: u64) -> Self {
+    pub(crate) fn check_screen(frame_number: u64, hash: u64) -> Self {
         Self::new(frame_number, ScenarioOperation::check_screen(hash))
     }
-    pub fn standard_controller(
+    pub(crate) fn standard_controller(
         frame_number: u64,
         code: StandardControllerButtonCode,
         state: PadState,
@@ -210,7 +205,7 @@ impl ScenarioLeaf {
             ScenarioOperation::standard_controller(code, state),
         )
     }
-    pub fn reset(frame_number: u64) -> Self {
+    pub(crate) fn reset(frame_number: u64) -> Self {
         Self::new(frame_number, ScenarioOperation::reset())
     }
 }
@@ -218,7 +213,7 @@ impl ScenarioLeaf {
 struct Scenario(Vec<ScenarioLeaf>);
 
 impl Scenario {
-    pub fn new(senarios: &[ScenarioLeaf]) -> Self {
+    pub(crate) fn new(senarios: &[ScenarioLeaf]) -> Self {
         Scenario(senarios.to_vec())
     }
 }
@@ -228,7 +223,7 @@ impl Scenario {
 
 //     #[test]
 //     fn flowing_palette() {
-//         test!(
+//         run_test!(
 //             "full_palette/flowing_palette.nes",
 //             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
@@ -236,7 +231,7 @@ impl Scenario {
 
 //     #[test]
 //     fn full_palette_smooth() {
-//         test!(
+//         run_test!(
 //             "full_palette/full_palette_smooth.nes",
 //             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
@@ -244,7 +239,7 @@ impl Scenario {
 
 //     #[test]
 //     fn full_palette() {
-//         test!(
+//         run_test!(
 //             "full_palette/full_palette.nes",
 //             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
@@ -256,7 +251,7 @@ impl Scenario {
 
 //     #[test]
 //     fn demo_ntsc() {
-//         test!(
+//         run_test!(
 //             "nmi_sync/demo_ntsc.nes",
 //             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );
@@ -264,7 +259,7 @@ impl Scenario {
 
 //     #[test]
 //     fn demo_pal() {
-//         test!(
+//         run_test!(
 //             "nmi_sync/demo_pal.nes",
 //             ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
 //         );

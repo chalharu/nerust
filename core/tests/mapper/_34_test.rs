@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn _34_test_1() {
-    test!(
+    run_test!(
         "mapper/34_test_src/34_test_1.nes",
         ScenarioLeaf::check_screen(70, 0x4656_955C_2419_76B9)
     );
@@ -16,7 +16,7 @@ fn _34_test_1() {
 
 #[test]
 fn _34_test_2() {
-    test!(
+    run_test!(
         "mapper/34_test_src/34_test_2.nes",
         ScenarioLeaf::check_screen(70, 0x00C9_497C_3EC4_44FF)
     );

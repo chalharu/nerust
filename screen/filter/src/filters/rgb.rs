@@ -18,12 +18,13 @@ const PALETTE: [u32; 64] = [
     0xE4_E594, 0xCF_EF96, 0xBD_F4AB, 0xB3_F3CC, 0xB5_EBF2, 0xB8_B8B8, 0x00_0000, 0x00_0000,
 ];
 
-pub struct NesRgb {
+#[derive(Debug)]
+pub(crate) struct NesRgb {
     source: LogicalSize,
 }
 
 impl NesRgb {
-    pub fn new(source: LogicalSize) -> Self {
+    pub(crate) fn new(source: LogicalSize) -> Self {
         Self { source }
     }
 }

@@ -5,7 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #[allow(unused_macros)]
-macro_rules! test{
+#[macro_export]
+macro_rules! run_test{
     ($filename:expr, $( $x:expr ),+) => {
         let mut runner = $crate::ScenarioRunner::new(
             &mut include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../roms/", $filename))

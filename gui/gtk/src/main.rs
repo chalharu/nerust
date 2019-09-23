@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 mod glarea;
 mod window;
 
@@ -18,7 +15,8 @@ use nerust_timer::CLOCK_RATE;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub struct State {
+#[derive(Debug)]
+pub(crate) struct State {
     view: Option<GlView>,
     paused: bool,
     loaded: bool,
@@ -28,7 +26,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(screen_buffer: ScreenBuffer) -> Self {
+    pub(crate) fn new(screen_buffer: ScreenBuffer) -> Self {
         let physical_size = screen_buffer.physical_size();
         let logical_size = screen_buffer.logical_size();
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
@@ -43,44 +41,44 @@ impl State {
         }
     }
 
-    pub fn pause(&mut self) {
+    pub(crate) fn pause(&mut self) {
         self.console.pause();
         self.paused = true;
     }
 
-    pub fn paused(&self) -> bool {
+    pub(crate) fn paused(&self) -> bool {
         self.paused
     }
 
-    pub fn can_pause(&self) -> bool {
+    pub(crate) fn can_pause(&self) -> bool {
         !self.paused && self.loaded
     }
 
-    pub fn resume(&mut self) {
+    pub(crate) fn resume(&mut self) {
         self.console.resume();
         self.paused = false;
     }
 
-    pub fn can_resume(&self) -> bool {
+    pub(crate) fn can_resume(&self) -> bool {
         self.paused && self.loaded
     }
 
-    pub fn load(&mut self, data: Vec<u8>) {
+    pub(crate) fn load(&mut self, data: Vec<u8>) {
         self.console.load(data);
         self.loaded = true;
         self.resume();
     }
 
-    pub fn loaded(&self) -> bool {
+    pub(crate) fn loaded(&self) -> bool {
         self.loaded
     }
 
-    pub fn unload(&mut self) {
+    pub(crate) fn unload(&mut self) {
         self.console.unload();
         self.loaded = false;
     }
 
-    pub fn set_pad1(&mut self, data: Buttons) {
+    pub(crate) fn set_pad1(&mut self, data: Buttons) {
         self.console.set_pad1(data)
     }
 }
@@ -107,7 +105,7 @@ fn app_activate(app: &gtk::Application) {
     let quit_action = gio::SimpleAction::new("quit", None);
     {
         let app = app.clone();
-        quit_action.connect_activate(move |_, _| {
+        let _ = quit_action.connect_activate(move |_, _| {
             app.quit();
         });
     }
@@ -125,11 +123,11 @@ fn app_activate(app: &gtk::Application) {
         let window = window.clone();
         let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> =
             Rc::new(RefCell::new(create_about_dialog()));
-        about_action.connect_activate(move |_, _| {
+        let _ = about_action.connect_activate(move |_, _| {
             let window_about_inner = std::mem::replace(&mut *window_about.borrow_mut(), None);
             if let Some(window_about_inner) = window_about_inner {
                 window_about_inner.set_transient_for(Some(&window));
-                window_about_inner.run();
+                let _ = window_about_inner.run();
                 window_about_inner.destroy();
                 *window_about.borrow_mut() = create_about_dialog();
             }
@@ -137,7 +135,7 @@ fn app_activate(app: &gtk::Application) {
     }
     app.add_action(&about_action);
 
-    Window::bind(
+    let _ = Window::bind(
         app.clone(),
         window,
         builder.get_object("glarea").unwrap(),
@@ -155,7 +153,7 @@ fn main() {
     )
     .expect("Application start up error");
 
-    app.connect_activate(app_activate);
+    let _ = app.connect_activate(app_activate);
 
-    app.run(&std::env::args().collect::<Vec<_>>());
+    let _ = app.run(&std::env::args().collect::<Vec<_>>());
 }

@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn serom() {
-    test!(
+    run_test!(
         "mapper/serom/serom.nes",
         ScenarioLeaf::check_screen(20, 0x66F3_C603_B111_9162)
     );

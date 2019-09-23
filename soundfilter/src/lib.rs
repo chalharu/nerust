@@ -16,6 +16,7 @@ pub trait Filter {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct IirFilter {
     b0: f32,
     b1: f32,
@@ -70,6 +71,7 @@ impl Filter for IirFilter {
     }
 }
 
+#[derive(Debug)]
 pub struct ChaindFilter<F1: Filter, F2: Filter> {
     filter1: F1,
     filter2: F2,

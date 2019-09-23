@@ -7,7 +7,7 @@
 use super::Controller;
 use crate::OpenBusReadResult;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
 pub struct StandardController {
     buttons: [Buttons; 2],
     microphone: bool,
@@ -16,8 +16,8 @@ pub struct StandardController {
     strobe: bool,
 }
 
-bitflags! {
-    #[derive(Serialize, Deserialize)]
+bitflags::bitflags! {
+    #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
     pub struct Buttons: u8 {
         const A =      0b0000_0001;
         const B =      0b0000_0010;
@@ -92,7 +92,7 @@ impl Controller for StandardController {
                 0x1F,
             ),
             _ => {
-                error!("unhandled controller read at address: 0x{:04X}", address);
+                log::error!("unhandled controller read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
             }
         }

@@ -7,18 +7,18 @@
 use super::*;
 use std::f32;
 
-pub struct Init {
-    pub to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],
+pub(crate) struct Init {
+    pub(crate) to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],
     // to_float: Vec<f32>,        // [f32; GAMMA_SIZE],
     // contrast: f32,
     // brightness: f32,
-    pub artifacts: f32,
-    pub fringing: f32,
-    pub kernel: Vec<f32>, // [f32; RESCALE_OUT * KERNEL_SIZE * 2]
+    pub(crate) artifacts: f32,
+    pub(crate) fringing: f32,
+    pub(crate) kernel: Vec<f32>, // [f32; RESCALE_OUT * KERNEL_SIZE * 2]
 }
 
 impl Init {
-    pub fn new(setup: &Setup) -> Self {
+    pub(crate) fn new(setup: &Setup) -> Self {
         // let brightness = setup.brightness as f32 * (RGB_UNIT >> 1) as f32 + RGB_OFFSET;
         // let contrast = (setup.contrast as f32 + 1.0) * (RGB_UNIT >> 1) as f32;
 
@@ -168,13 +168,13 @@ impl Init {
         }
 
         {
-            trace!("luma:");
+            log::trace!("luma:");
             for k in kernels[KERNEL_SIZE..].iter() {
-                trace!("{}", k);
+                log::trace!("{}", k);
             }
-            trace!("chroma:");
+            log::trace!("chroma:");
             for k in kernels[..KERNEL_SIZE].iter() {
-                trace!("{}", k);
+                log::trace!("{}", k);
             }
         }
 

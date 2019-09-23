@@ -19,21 +19,21 @@ use std::mem;
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct DecayableOpenBus {
     data: u8,
     decay: [u8; 8],
 }
 
 impl DecayableOpenBus {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             data: 0,
             decay: [0; 8],
         }
     }
 
-    pub fn unite(&mut self, data: OpenBusReadResult) -> u8 {
+    pub(crate) fn unite(&mut self, data: OpenBusReadResult) -> u8 {
         for i in 0..8 {
             if (data.mask >> i) == 1 {
                 self.decay[i] = 20;
@@ -44,13 +44,13 @@ impl DecayableOpenBus {
         result
     }
 
-    pub fn write(&mut self, data: u8) -> u8 {
+    pub(crate) fn write(&mut self, data: u8) -> u8 {
         self.data = data;
         self.decay = [20; 8];
         data
     }
 
-    pub fn next(&mut self) {
+    pub(crate) fn next(&mut self) {
         let mut result_mask: u8 = 0;
         for i in 0..8 {
             if self.decay[i] > 0 {
@@ -62,7 +62,7 @@ impl DecayableOpenBus {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct State {
     control: u8,
     mask: u8,
@@ -78,7 +78,7 @@ struct State {
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             control: 0,
             mask: 0,
@@ -92,7 +92,7 @@ impl State {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.control = 0;
         self.mask = 0;
         self.oam_address = 0;
@@ -118,7 +118,7 @@ impl State {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct Control {
     name_table: u8,
     increment: bool,
@@ -130,7 +130,7 @@ struct Control {
 }
 
 impl Control {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             name_table: 0,
             increment: false,
@@ -142,7 +142,7 @@ impl Control {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.name_table = 0;
         self.increment = false;
         self.sprite_table = false;
@@ -167,7 +167,7 @@ impl From<u8> for Control {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct Mask {
     grayscale: bool,
     show_left_background: bool,
@@ -180,7 +180,7 @@ struct Mask {
 }
 
 impl Mask {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             grayscale: false,
             show_left_background: false,
@@ -193,7 +193,7 @@ impl Mask {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.grayscale = false;
         self.show_left_background = false;
         self.show_left_sprites = false;
@@ -220,7 +220,7 @@ impl From<u8> for Mask {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct Status {
     sprite_zero_hit: bool,
     sprite_overflow: bool,
@@ -228,7 +228,7 @@ struct Status {
 }
 
 impl Status {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             sprite_zero_hit: false,
             sprite_overflow: false,
@@ -236,14 +236,14 @@ impl Status {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.sprite_zero_hit = false;
         self.sprite_overflow = false;
         self.nmi_occurred = false;
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Core {
     // memory
     #[serde(with = "nerust_serialize::BigArray")]
@@ -296,7 +296,7 @@ pub(crate) struct Core {
 }
 
 impl Core {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             vram: [0; 2048],
             palette: [
@@ -341,7 +341,7 @@ impl Core {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.vram = [0; 2048];
         self.palette = [
             0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00,
@@ -370,7 +370,7 @@ impl Core {
     }
 
     #[inline]
-    pub fn read_register(
+    pub(crate) fn read_register(
         &mut self,
         address: usize,
         cartridge: &mut dyn Cartridge,
@@ -448,7 +448,7 @@ impl Core {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
                 (self.state.vram_addr + if self.control.increment { 32 } else { 1 }) & 0x7FFF;
-            self.read_vram(self.state.vram_addr as usize, cartridge);
+            let _ = self.read_vram(self.state.vram_addr as usize, cartridge);
         } else {
             self.increment_x();
             self.increment_y();
@@ -483,7 +483,7 @@ impl Core {
     }
 
     #[inline]
-    pub fn read_vram(&mut self, mut address: usize, cartridge: &mut dyn Cartridge) -> u8 {
+    pub(crate) fn read_vram(&mut self, mut address: usize, cartridge: &mut dyn Cartridge) -> u8 {
         address &= 0x3FFF;
         cartridge.vram_address_change(address);
         let result = match address {
@@ -493,7 +493,7 @@ impl Core {
                 0xFF,
             ),
             _ => {
-                error!("unhandled ppu memory read at address: 0x{:04X}", address);
+                log::error!("unhandled ppu memory read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
             }
         };
@@ -516,7 +516,7 @@ impl Core {
     }
 
     #[inline]
-    pub fn write_register(
+    pub(crate) fn write_register(
         &mut self,
         address: usize,
         value: u8,
@@ -533,7 +533,7 @@ impl Core {
             0x2007 => self.write_data(value, cartridge, interrupt),
             _ => {}
         }
-        self.openbus_io.write(value);
+        let _ = self.openbus_io.write(value);
     }
 
     #[inline]
@@ -636,7 +636,7 @@ impl Core {
             0x2000..=0x3FFF => {
                 self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF] = value
             }
-            _ => error!("unhandled ppu memory write at address: 0x{:04X}", address),
+            _ => log::error!("unhandled ppu memory write at address: 0x{:04X}", address),
         }
     }
 
@@ -1014,10 +1014,12 @@ impl Core {
                             self.state.oam_address = 0;
                             match self.cycle & 7 {
                                 1 => {
-                                    self.read_vram(self.state.name_table_address(), cartridge);
+                                    let _ =
+                                        self.read_vram(self.state.name_table_address(), cartridge);
                                 }
                                 3 => {
-                                    self.read_vram(self.state.attribute_address(), cartridge);
+                                    let _ =
+                                        self.read_vram(self.state.attribute_address(), cartridge);
                                 }
                                 4 => self.fetch_sprite_pattern(cartridge),
                                 _ => (),
@@ -1047,13 +1049,13 @@ impl Core {
                     }
                     337 => {
                         if self.render_executing {
-                            self.read_vram(self.state.name_table_address(), cartridge);
+                            let _ = self.read_vram(self.state.name_table_address(), cartridge);
                         }
                     }
                     338 => (),
                     339 => {
                         if self.render_executing {
-                            self.read_vram(self.state.name_table_address(), cartridge);
+                            let _ = self.read_vram(self.state.name_table_address(), cartridge);
                             if self.scan_line == 0 && (self.frames & 1) != 0 {
                                 self.cycle += 1;
                             }

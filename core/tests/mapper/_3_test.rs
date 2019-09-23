@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn _3_test_0() {
     // TODO: テストROMに　PRG RAMの表示が必ずYESとなるバグがあるように見受けられる
-    test!(
+    run_test!(
         "mapper/3_test_src/3_test_0.nes",
         ScenarioLeaf::check_screen(50, 0xE3E5_E7C7_A502_A3DD)
     );
@@ -18,7 +18,7 @@ fn _3_test_0() {
 #[test]
 fn _3_test_1() {
     // TODO: テストROMに　PRG RAMの表示が必ずYESとなるバグがあるように見受けられる
-    test!(
+    run_test!(
         "mapper/3_test_src/3_test_1.nes",
         ScenarioLeaf::check_screen(50, 0xE3E5_E7C7_A502_A3DD)
     );
@@ -27,7 +27,7 @@ fn _3_test_1() {
 #[test]
 fn _3_test_2() {
     // TODO: テストROMに　PRG RAMの表示が必ずYESとなるバグがあるように見受けられる
-    test!(
+    run_test!(
         "mapper/3_test_src/3_test_2.nes",
         ScenarioLeaf::check_screen(50, 0x14F4_F5CC_EB46_665A)
     );

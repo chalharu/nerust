@@ -4,9 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-extern crate log;
-
 use crc::crc64;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::Core;
@@ -21,6 +18,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
 
+#[derive(Debug)]
 pub struct Console {
     stop_sender: Sender<()>,
     data_sender: Sender<ConsoleData>,
@@ -64,42 +62,42 @@ impl Console {
 
     pub fn as_ptr(&self) -> *const u8 {
         self.screen_buffer_ptr
-            .load(std::sync::atomic::Ordering::SeqCst) as *const u8
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn resume(&self) {
         if self.data_sender.send(ConsoleData::Resume).is_err() {
-            warn!("Core resume send failed");
+            log::warn!("Core resume send failed");
         }
     }
 
     pub fn pause(&self) {
         if self.data_sender.send(ConsoleData::Pause).is_err() {
-            warn!("Core pause send failed");
+            log::warn!("Core pause send failed");
         }
     }
 
     pub fn set_pad1(&self, data: Buttons) {
         if self.data_sender.send(ConsoleData::Pad1Data(data)).is_err() {
-            warn!("Core pad1 data send failed");
+            log::warn!("Core pad1 data send failed");
         }
     }
 
     pub fn load(&self, data: Vec<u8>) {
         if self.data_sender.send(ConsoleData::Load(data)).is_err() {
-            warn!("Core load send failed");
+            log::warn!("Core load send failed");
         }
     }
 
     pub fn unload(&self) {
         if self.data_sender.send(ConsoleData::Unload).is_err() {
-            warn!("Core unload send failed");
+            log::warn!("Core unload send failed");
         }
     }
 
     pub fn reset(&self) {
         if self.data_sender.send(ConsoleData::Reset).is_err() {
-            warn!("Core reset send failed");
+            log::warn!("Core reset send failed");
         }
     }
 }
@@ -107,9 +105,9 @@ impl Console {
 impl Drop for Console {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
-            warn!("Core stop send failed");
+            log::warn!("Core stop send failed");
         }
-        mem::replace(&mut self.thread, None).map(JoinHandle::join);
+        let _ = mem::replace(&mut self.thread, None).map(JoinHandle::join);
     }
 }
 
@@ -135,7 +133,7 @@ struct ConsoleRunner {
 }
 
 impl ConsoleRunner {
-    pub fn new(
+    pub(crate) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
         screen_buffer: ScreenBuffer,
@@ -182,7 +180,7 @@ impl ConsoleRunner {
                         speaker.pause();
                         let mut hasher = crc64::Digest::new(crc64::ECMA);
                         self.screen_buffer.hash(&mut hasher);
-                        info!(
+                        log::info!(
                             "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
                             self.frame_counter,
                             hasher.finish()

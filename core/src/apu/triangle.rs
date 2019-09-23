@@ -12,7 +12,7 @@ const TRIANGLE_TABLE: [u8; 32] = [
     13, 14, 15,
 ];
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Triangle {
     duty_value: u8,
     counter_period: u8,
@@ -44,7 +44,7 @@ impl HaveTimerDao for Triangle {
 }
 
 impl Triangle {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             duty_value: 0,
             counter_reload: false,
@@ -57,7 +57,7 @@ impl Triangle {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.length_counter.soft_reset();
         self.timer.reset();
         self.duty_value = 0;
@@ -67,18 +67,18 @@ impl Triangle {
         self.counter_value = 0;
     }
 
-    pub fn write_control(&mut self, value: u8) {
+    pub(crate) fn write_control(&mut self, value: u8) {
         self.counter_control = (value & 0x80) != 0;
         self.counter_period = value & 0x7F;
         self.length_counter.set_halt(self.counter_control);
     }
 
-    pub fn write_timer_low(&mut self, value: u8) {
+    pub(crate) fn write_timer_low(&mut self, value: u8) {
         let period = self.timer.get_period();
         self.timer.set_period((period & 0xFF00) | u16::from(value));
     }
 
-    pub fn write_timer_high(&mut self, value: u8) {
+    pub(crate) fn write_timer_high(&mut self, value: u8) {
         self.length_counter.set_load(value >> 3);
         let period = self.timer.get_period();
         self.timer
@@ -86,7 +86,7 @@ impl Triangle {
         self.counter_reload = true;
     }
 
-    pub fn step_timer(&mut self) {
+    pub(crate) fn step_timer(&mut self) {
         if self.timer.step_timer() && self.length_counter.get_status() && self.counter_value > 0 {
             self.duty_value = (self.duty_value + 1) & 0x1F;
             if self.timer.get_period() > 1 {
@@ -94,7 +94,7 @@ impl Triangle {
             }
         }
     }
-    pub fn step_counter(&mut self) {
+    pub(crate) fn step_counter(&mut self) {
         if self.counter_reload {
             self.counter_value = self.counter_period;
         } else if self.counter_value > 0 {
@@ -105,7 +105,7 @@ impl Triangle {
         }
     }
 
-    pub fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         self.output_value
     }
 }

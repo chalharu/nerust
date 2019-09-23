@@ -6,11 +6,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate log;
-
 mod error;
 mod vertex;
 
@@ -51,6 +46,7 @@ pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }
 
+#[derive(Debug)]
 pub struct Shader {
     program: GLuint,
     attributes: HashMap<String, GLuint>,
@@ -305,7 +301,7 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
         )
         .unwrap();
         let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
-        result.insert(name, i);
+        let _ = result.insert(name, i);
     }
     unsafe { free(name_buf, BUF_SIZE as usize) };
     result
@@ -335,7 +331,7 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLuint> {
         )
         .unwrap();
         let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
-        result.insert(name, i);
+        let _ = result.insert(name, i);
     }
 
     unsafe { free(name_buf, BUF_SIZE as usize) };

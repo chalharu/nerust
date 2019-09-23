@@ -4,17 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate strum_macros;
-
 mod apu;
 mod cartridge;
 pub mod controller;
@@ -32,7 +21,7 @@ use failure::Error;
 use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub struct Core {
     cpu: Cpu,
     ppu: Ppu,
@@ -89,23 +78,24 @@ impl Core {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
 struct OpenBus {
     data: u8,
 }
 
 impl OpenBus {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { data: 0 }
     }
 
-    pub fn unite(&mut self, data: OpenBusReadResult) -> u8 {
+    pub(crate) fn unite(&mut self, data: OpenBusReadResult) -> u8 {
         let result = (self.data & !data.mask) | (data.data & data.mask);
         self.data = result;
         result
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct OpenBusReadResult {
     pub data: u8,
     pub mask: u8,

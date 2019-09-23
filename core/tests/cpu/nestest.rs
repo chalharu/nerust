@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn nestest() {
-    test!(
+    run_test!(
         "cpu/nestest.nes",
         ScenarioLeaf::check_screen(15, 0x4640_33EF_DAB1_1D8E),
         ScenarioLeaf::standard_controller(15, Pad1(START), Pressed),

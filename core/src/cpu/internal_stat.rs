@@ -4,7 +4,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Hash, Debug, EnumIter)]
+#[derive(
+    serde_derive::Serialize,
+    serde_derive::Deserialize,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Hash,
+    Debug,
+    strum_macros::EnumIter,
+)]
 pub(crate) enum CpuStatesEnum {
     FetchOpCode,
     Reset,
@@ -112,7 +122,7 @@ impl Default for CpuStatesEnum {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub(crate) struct InternalStat {
     opcode: usize,
     address: usize,
@@ -125,7 +135,7 @@ pub(crate) struct InternalStat {
 }
 
 impl InternalStat {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             opcode: 0,
             address: 0,
@@ -138,72 +148,72 @@ impl InternalStat {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.step = 0;
         self.state = CpuStatesEnum::Reset;
     }
 
-    pub fn set_opcode(&mut self, value: usize) {
+    pub(crate) fn set_opcode(&mut self, value: usize) {
         self.opcode = value;
     }
 
-    pub fn get_opcode(&self) -> usize {
+    pub(crate) fn get_opcode(&self) -> usize {
         self.opcode
     }
 
-    pub fn set_address(&mut self, value: usize) {
+    pub(crate) fn set_address(&mut self, value: usize) {
         self.address = value;
     }
 
-    pub fn get_address(&self) -> usize {
+    pub(crate) fn get_address(&self) -> usize {
         self.address
     }
 
-    pub fn set_step(&mut self, value: usize) {
+    pub(crate) fn set_step(&mut self, value: usize) {
         self.step = value;
     }
 
-    pub fn get_step(&self) -> usize {
+    pub(crate) fn get_step(&self) -> usize {
         self.step
     }
 
-    pub fn set_tempaddr(&mut self, value: usize) {
+    pub(crate) fn set_tempaddr(&mut self, value: usize) {
         self.tempaddr = value;
     }
 
-    pub fn get_tempaddr(&self) -> usize {
+    pub(crate) fn get_tempaddr(&self) -> usize {
         self.tempaddr
     }
 
-    pub fn set_data(&mut self, value: u8) {
+    pub(crate) fn set_data(&mut self, value: u8) {
         self.data = value;
     }
 
-    pub fn get_data(&self) -> u8 {
+    pub(crate) fn get_data(&self) -> u8 {
         self.data
     }
 
-    pub fn set_interrupt(&mut self, value: bool) {
+    pub(crate) fn set_interrupt(&mut self, value: bool) {
         self.interrupt = value;
     }
 
-    pub fn get_interrupt(&self) -> bool {
+    pub(crate) fn get_interrupt(&self) -> bool {
         self.interrupt
     }
 
-    pub fn set_crossed(&mut self, value: bool) {
+    pub(crate) fn set_crossed(&mut self, value: bool) {
         self.crossed = value;
     }
 
-    pub fn get_crossed(&self) -> bool {
+    pub(crate) fn get_crossed(&self) -> bool {
         self.crossed
     }
 
-    pub fn set_state(&mut self, value: CpuStatesEnum) {
+    pub(crate) fn set_state(&mut self, value: CpuStatesEnum) {
         self.state = value;
     }
 
-    pub fn get_state(&self) -> CpuStatesEnum {
+    pub(crate) fn get_state(&self) -> CpuStatesEnum {
         self.state
     }
 }

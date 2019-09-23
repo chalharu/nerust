@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn test_ppu_read_buffer() {
-    test!(
+    run_test!(
         "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
         ScenarioLeaf::check_screen(1300, 0x4D1B_0F97_B207_4269)
     );

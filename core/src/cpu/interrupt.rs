@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-bitflags! {
-    #[derive(Serialize, Deserialize)]
+bitflags::bitflags! {
+    #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
     pub(crate) struct IrqSource: u8 {
         const EXTERNAL = 0b0000_0001;
         const FRAME_COUNTER = 0b0000_0010;
@@ -15,7 +15,7 @@ bitflags! {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Interrupt {
     pub nmi: bool,
     pub executing: bool,

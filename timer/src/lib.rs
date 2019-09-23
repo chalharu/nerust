@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 pub const CLOCK_RATE: usize = 1_789_773;
 
+#[derive(Debug)]
 pub struct Timer {
     instants: VecDeque<Instant>,
     wait_instants: Instant,

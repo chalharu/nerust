@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn test_cpu_exec_space_ppuio() {
-    test!(
+    run_test!(
         "cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes",
         ScenarioLeaf::check_screen(45, 0xFA8F_4E7F_0ECD_D92F)
     );
@@ -16,7 +16,7 @@ fn test_cpu_exec_space_ppuio() {
 
 #[test]
 fn test_cpu_exec_space_apu() {
-    test!(
+    run_test!(
         "cpu/cpu_exec_space/test_cpu_exec_space_apu.nes",
         ScenarioLeaf::check_screen(295, 0x3A0C_2ED9_AA73_D9F4)
     );

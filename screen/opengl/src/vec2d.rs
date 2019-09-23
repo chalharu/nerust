@@ -5,14 +5,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #[repr(packed)]
-#[derive(Copy, Clone)]
-pub struct Vec2D {
-    pub x: f32,
-    pub y: f32,
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct Vec2D {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
 }
 
 impl Vec2D {
-    pub fn new(x: f32, y: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
 }

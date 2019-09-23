@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub(crate) struct Register {
     pc: u16,
     sp: u8,
@@ -22,7 +22,7 @@ pub(crate) struct Register {
     n: bool, // 0x80
 }
 
-bitflags! {
+bitflags::bitflags! {
     pub struct RegisterP: u8 {
         const CARRY = 0b0000_0001;
         const ZERO = 0b0000_0010;
@@ -36,7 +36,7 @@ bitflags! {
 }
 
 impl Register {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             pc: 0,
             sp: 0,
@@ -55,40 +55,40 @@ impl Register {
         }
     }
 
-    pub fn get_pc(&self) -> u16 {
+    pub(crate) fn get_pc(&self) -> u16 {
         self.pc
     }
-    pub fn get_sp(&self) -> u8 {
+    pub(crate) fn get_sp(&self) -> u8 {
         self.sp
     }
-    pub fn get_a(&self) -> u8 {
+    pub(crate) fn get_a(&self) -> u8 {
         self.a
     }
-    pub fn get_x(&self) -> u8 {
+    pub(crate) fn get_x(&self) -> u8 {
         self.x
     }
-    pub fn get_y(&self) -> u8 {
+    pub(crate) fn get_y(&self) -> u8 {
         self.y
     }
-    pub fn get_c(&self) -> bool {
+    pub(crate) fn get_c(&self) -> bool {
         self.c
     }
-    pub fn get_z(&self) -> bool {
+    pub(crate) fn get_z(&self) -> bool {
         self.z
     }
-    pub fn get_i(&self) -> bool {
+    pub(crate) fn get_i(&self) -> bool {
         self.i
     }
-    pub fn get_v(&self) -> bool {
+    pub(crate) fn get_v(&self) -> bool {
         self.v
     }
     // pub fn get_b(&self) -> bool {
     //     self.b
     // }
-    pub fn get_n(&self) -> bool {
+    pub(crate) fn get_n(&self) -> bool {
         self.n
     }
-    pub fn get_p(&self) -> u8 {
+    pub(crate) fn get_p(&self) -> u8 {
         ((if self.c {
             RegisterP::CARRY
         } else {
@@ -125,37 +125,37 @@ impl Register {
         .bits()
     }
 
-    pub fn set_pc(&mut self, value: u16) {
+    pub(crate) fn set_pc(&mut self, value: u16) {
         self.pc = value;
     }
-    pub fn set_sp(&mut self, value: u8) {
+    pub(crate) fn set_sp(&mut self, value: u8) {
         self.sp = value;
     }
-    pub fn set_a(&mut self, value: u8) {
+    pub(crate) fn set_a(&mut self, value: u8) {
         self.a = value;
     }
-    pub fn set_x(&mut self, value: u8) {
+    pub(crate) fn set_x(&mut self, value: u8) {
         self.x = value;
     }
-    pub fn set_y(&mut self, value: u8) {
+    pub(crate) fn set_y(&mut self, value: u8) {
         self.y = value;
     }
-    pub fn set_c(&mut self, value: bool) {
+    pub(crate) fn set_c(&mut self, value: bool) {
         self.c = value;
     }
-    pub fn set_i(&mut self, value: bool) {
+    pub(crate) fn set_i(&mut self, value: bool) {
         self.i = value;
     }
-    pub fn set_d(&mut self, value: bool) {
+    pub(crate) fn set_d(&mut self, value: bool) {
         self.d = value;
     }
     // pub fn set_b(&mut self, value: bool) {
     //     self.b = value;
     // }
-    pub fn set_v(&mut self, value: bool) {
+    pub(crate) fn set_v(&mut self, value: bool) {
         self.v = value;
     }
-    pub fn set_p(&mut self, value: u8) {
+    pub(crate) fn set_p(&mut self, value: u8) {
         let reg_p = RegisterP::from_bits(value).unwrap();
         self.c = reg_p.contains(RegisterP::CARRY);
         self.z = reg_p.contains(RegisterP::ZERO);
@@ -167,15 +167,15 @@ impl Register {
         self.n = reg_p.contains(RegisterP::NEGATIVE);
     }
 
-    pub fn set_z_from_value(&mut self, value: u8) {
+    pub(crate) fn set_z_from_value(&mut self, value: u8) {
         self.z = value == 0;
     }
 
-    pub fn set_n_from_value(&mut self, value: u8) {
+    pub(crate) fn set_n_from_value(&mut self, value: u8) {
         self.n = value & 0x80 != 0;
     }
 
-    pub fn set_nz_from_value(&mut self, value: u8) {
+    pub(crate) fn set_nz_from_value(&mut self, value: u8) {
         self.set_z_from_value(value);
         self.set_n_from_value(value);
     }

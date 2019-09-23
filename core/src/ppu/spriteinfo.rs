@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, Default)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone, Default)]
 pub(crate) struct SpriteInfo {
     pub(crate) low_byte: u8,
     pub(crate) high_byte: u8,
@@ -16,7 +16,7 @@ pub(crate) struct SpriteInfo {
 }
 
 impl SpriteInfo {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             low_byte: 0,
             high_byte: 0,

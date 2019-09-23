@@ -37,6 +37,7 @@ fn create_window(events_loop: &EventsLoop, size: PhysicalSize) -> WindowedContex
     unsafe { context.make_current().unwrap() }
 }
 
+#[derive(Debug)]
 pub struct Window {
     view: ManuallyDrop<GlView>,
     context: WindowedContext<PossiblyCurrent>,
@@ -116,7 +117,7 @@ impl Window {
                     }
                 }
             });
-            mem::replace(&mut self.events_loop, el);
+            let _ = mem::replace(&mut self.events_loop, el);
         }
     }
 

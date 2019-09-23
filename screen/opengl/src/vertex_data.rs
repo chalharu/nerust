@@ -7,14 +7,14 @@
 use super::Vec2D;
 
 #[repr(packed)]
-#[derive(Copy, Clone)]
-pub struct VertexData {
-    pub position: Vec2D,
-    pub uv: Vec2D,
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct VertexData {
+    pub(crate) position: Vec2D,
+    pub(crate) uv: Vec2D,
 }
 
 impl VertexData {
-    pub fn new(position: Vec2D, uv: Vec2D) -> Self {
+    pub(crate) fn new(position: Vec2D, uv: Vec2D) -> Self {
         Self { position, uv }
     }
 }

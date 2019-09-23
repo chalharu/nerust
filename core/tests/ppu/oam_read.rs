@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn oam_read() {
-    test!(
+    run_test!(
         "ppu/oam_read/oam_read.nes",
         ScenarioLeaf::check_screen(30, 0x09D0_3496_0D5B_F704)
     );

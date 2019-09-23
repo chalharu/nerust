@@ -9,7 +9,7 @@
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct NRom {
     cartridge_data: CartridgeData,
     state: MapperState,

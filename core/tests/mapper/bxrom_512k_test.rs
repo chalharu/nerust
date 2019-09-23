@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn bxrom_512k_test() {
-    test!(
+    run_test!(
         "mapper/bxrom_512k_test.nes",
         ScenarioLeaf::check_screen(15, 0x56C4_FA7D_D5BF_D57B),
         ScenarioLeaf::check_screen(45, 0x187F_9846_2E73_7C08),
