@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn palette_ram() {
-    test!(
+    run_test!(
         "ppu/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
         ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
     );
@@ -16,7 +16,7 @@ fn palette_ram() {
 
 #[test]
 fn power_up_palette() {
-    test!(
+    run_test!(
         "ppu/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
         ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
     );
@@ -24,7 +24,7 @@ fn power_up_palette() {
 
 #[test]
 fn sprite_ram() {
-    test!(
+    run_test!(
         "ppu/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
         ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
     );
@@ -32,7 +32,7 @@ fn sprite_ram() {
 
 #[test]
 fn vbl_clear_time() {
-    test!(
+    run_test!(
         "ppu/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
         ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
     );
@@ -40,7 +40,7 @@ fn vbl_clear_time() {
 
 #[test]
 fn vram_access() {
-    test!(
+    run_test!(
         "ppu/blargg_ppu_tests_2005.09.15b/vram_access.nes",
         ScenarioLeaf::check_screen(30, 0xE31E_B517_2247_2E30)
     );

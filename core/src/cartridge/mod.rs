@@ -4,9 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub mod error;
-pub mod format;
-pub mod mapper;
+pub(crate) mod error;
+pub(crate) mod format;
+pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
 use crate::cpu::interrupt::Interrupt;
 use crate::MirrorMode;
@@ -47,7 +47,7 @@ pub(crate) trait Cartridge: Mapper {
             0x6000..=0x7FFF => Cartridge::read_ram(self, address - 0x6000),
             0x8000..=0xFFFF => self.read_program(address - 0x8000),
             _ => {
-                error!("unhandled mapper read at address: 0x{:04X}", address);
+                log::error!("unhandled mapper read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
             }
         }
@@ -94,7 +94,7 @@ pub(crate) trait Cartridge: Mapper {
             0x6000..=0x7FFF => Cartridge::write_ram(self, address, value, interrupt),
             0x8000..=0xFFFF => self.write_program(address, value, interrupt),
             _ => {
-                error!("unhandled mapper write at address: 0x{:04X}", address);
+                log::error!("unhandled mapper write at address: 0x{:04X}", address);
             }
         }
     }
@@ -148,13 +148,13 @@ pub(crate) trait Cartridge: Mapper {
 // #[typetag::serde]
 // impl<T: Mapper> Cartridge for T {}
 
-#[derive(Serialize, Deserialize, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 enum MappingMode {
     Ram,
     Rom,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MapperState {
     #[serde(with = "nerust_serialize::BigArray")]
     program_page_table: [Option<usize>; 256],

@@ -64,7 +64,7 @@ mod condition_jump;
 mod decrement;
 mod flag_control;
 mod increment;
-pub mod interrupt;
+pub(crate) mod interrupt;
 mod jump;
 mod load;
 mod nop;
@@ -187,7 +187,7 @@ pub(crate) trait AccumulateMemory {
 pub(crate) struct Opcodes([CpuStatesEnum; 256]);
 
 impl Opcodes {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Opcodes([
             // 0x00
             CpuStatesEnum::Brk,
@@ -480,7 +480,7 @@ impl Opcodes {
         ])
     }
 
-    pub fn get(&self, code: usize) -> CpuStatesEnum {
+    pub(crate) fn get(&self, code: usize) -> CpuStatesEnum {
         self.0[code]
     }
 }

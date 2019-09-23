@@ -1,5 +1,3 @@
-extern crate jni;
-
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;

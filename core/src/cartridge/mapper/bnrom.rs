@@ -10,7 +10,7 @@ use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
 use crate::cpu::interrupt::Interrupt;
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct BNRom {
     cartridge_data: CartridgeData,
     state: MapperState,

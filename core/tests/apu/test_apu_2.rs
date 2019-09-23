@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn test_1() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_1.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -16,7 +16,7 @@ fn test_1() {
 
 #[test]
 fn test_2() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_2.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -24,7 +24,7 @@ fn test_2() {
 
 #[test]
 fn test_3() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_3.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -32,7 +32,7 @@ fn test_3() {
 
 #[test]
 fn test_4() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_4.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -40,7 +40,7 @@ fn test_4() {
 
 #[test]
 fn test_5() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_5.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -48,7 +48,7 @@ fn test_5() {
 
 #[test]
 fn test_6() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_6.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -56,7 +56,7 @@ fn test_6() {
 
 #[test]
 fn test_7() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_7.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -64,7 +64,7 @@ fn test_7() {
 
 #[test]
 fn test_8() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_8.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -72,7 +72,7 @@ fn test_8() {
 
 #[test]
 fn test_9() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_9.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -80,7 +80,7 @@ fn test_9() {
 
 #[test]
 fn test_10() {
-    test!(
+    run_test!(
         "apu/test_apu_2/test_10.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );

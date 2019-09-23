@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn ppu_sprite_overflow() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_overflow/ppu_sprite_overflow.nes",
         ScenarioLeaf::check_screen(480, 0x9026_DAD6_5555_ECA0)
     );

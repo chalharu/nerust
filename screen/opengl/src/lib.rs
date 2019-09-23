@@ -27,6 +27,7 @@ fn allocate(size: usize) -> Box<[u8]> {
     buffer.into_boxed_slice()
 }
 
+#[derive(Debug)]
 pub struct GlView {
     tex_name: u32,
     shader: Option<Shader>,
@@ -82,7 +83,7 @@ impl GlView {
                 0,
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                allocate(buffer_width * buffer_height * 4).as_ptr() as *const std::ffi::c_void,
+                allocate(buffer_width * buffer_height * 4).as_ptr() as *const _,
             )
             .unwrap();
         }

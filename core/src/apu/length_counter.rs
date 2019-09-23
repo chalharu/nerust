@@ -9,7 +9,7 @@ const LENGTH_TABLE: [u8; 32] = [
     0x0C, 0x10, 0x18, 0x12, 0x30, 0x14, 0x60, 0x16, 0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E,
 ];
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct LengthCounterDao {
     next_halt: bool,
     halt: bool,
@@ -20,7 +20,7 @@ pub(crate) struct LengthCounterDao {
 }
 
 impl LengthCounterDao {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             next_halt: false,
             halt: false,
@@ -31,18 +31,18 @@ impl LengthCounterDao {
         }
     }
 
-    pub fn set_halt(&mut self, halt: bool) {
+    pub(crate) fn set_halt(&mut self, halt: bool) {
         self.next_halt = halt;
     }
 
-    pub fn set_load(&mut self, value: u8) {
+    pub(crate) fn set_load(&mut self, value: u8) {
         if self.enabled {
             self.next_value = LENGTH_TABLE[usize::from(value)];
             self.prev_value = self.value;
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.enabled = false;
         self.halt = false;
         self.next_halt = false;
@@ -51,24 +51,24 @@ impl LengthCounterDao {
         self.prev_value = 0;
     }
 
-    pub fn soft_reset(&mut self) {
+    pub(crate) fn soft_reset(&mut self) {
         self.enabled = false;
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_enabled(&mut self, enabled: bool) {
         if !enabled {
             self.value = 0;
         }
         self.enabled = enabled;
     }
 
-    pub fn step_frame(&mut self) {
+    pub(crate) fn step_frame(&mut self) {
         if !self.halt && self.value > 0 {
             self.value -= 1;
         }
     }
 
-    pub fn step(&mut self) {
+    pub(crate) fn step(&mut self) {
         if self.next_value > 0 {
             if self.value == self.prev_value {
                 self.value = self.next_value;
@@ -79,15 +79,15 @@ impl LengthCounterDao {
         self.halt = self.next_halt;
     }
 
-    pub fn get_value(self) -> u8 {
+    pub(crate) fn get_value(self) -> u8 {
         self.value
     }
 
-    pub fn get_halt(self) -> bool {
+    pub(crate) fn get_halt(self) -> bool {
         self.halt
     }
 
-    pub fn get_status(self) -> bool {
+    pub(crate) fn get_status(self) -> bool {
         self.value > 0
     }
 }

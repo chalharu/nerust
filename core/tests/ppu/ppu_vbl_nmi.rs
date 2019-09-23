@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn ppu_vbl_nmi() {
-    test!(
+    run_test!(
         "ppu/ppu_vbl_nmi/ppu_vbl_nmi.nes",
         ScenarioLeaf::check_screen(1640, 0xEB57_E169_78E4_5540)
     );

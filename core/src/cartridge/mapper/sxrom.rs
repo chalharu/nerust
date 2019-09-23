@@ -11,7 +11,7 @@ use super::{Cartridge, CartridgeData};
 use crate::cpu::interrupt::Interrupt;
 use crate::MirrorMode;
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
     cartridge_data: CartridgeData,
     state: MapperState,

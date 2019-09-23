@@ -14,7 +14,7 @@ const NOISE_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Noise {
     mode: bool,
     shift_register: u16,
@@ -62,7 +62,7 @@ impl HaveTimerDao for Noise {
 }
 
 impl Noise {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             mode: false,
             shift_register: 1,
@@ -72,7 +72,7 @@ impl Noise {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.length_counter.reset();
         self.envelope.reset();
         self.timer.reset();
@@ -81,24 +81,24 @@ impl Noise {
         self.shift_register = 1;
     }
 
-    pub fn write_control(&mut self, value: u8) {
+    pub(crate) fn write_control(&mut self, value: u8) {
         self.length_counter.set_halt((value & 0x20) != 0);
         self.envelope.set_enabled((value & 0x10) == 0);
         self.envelope.set_period(value & 0x0F);
     }
 
-    pub fn write_period(&mut self, value: u8) {
+    pub(crate) fn write_period(&mut self, value: u8) {
         self.mode = (value & 0x80) != 0;
         self.timer
             .set_period(NOISE_TABLE[usize::from(value & 0x0F)] - 1);
     }
 
-    pub fn write_length(&mut self, value: u8) {
+    pub(crate) fn write_length(&mut self, value: u8) {
         self.length_counter.set_load(value >> 3);
         self.envelope.restart();
     }
 
-    pub fn step_timer(&mut self) {
+    pub(crate) fn step_timer(&mut self) {
         if self.timer.step_timer() {
             self.shift_register = (self.shift_register >> 1)
                 | (((self.shift_register & 1)
@@ -107,7 +107,7 @@ impl Noise {
         }
     }
 
-    pub fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         if (self.shift_register & 1) != 0 {
             0
         } else {

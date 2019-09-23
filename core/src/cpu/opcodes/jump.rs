@@ -144,7 +144,7 @@ impl CpuStepState for Rts {
             5 => {
                 core.register
                     .set_pc(core.internal_stat.get_tempaddr() as u16);
-                core.memory.read_next(
+                let _ = core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,

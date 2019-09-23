@@ -6,7 +6,7 @@
 
 use super::length_counter::{HaveLengthCounter, LengthCounter};
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct EnvelopeDao {
     enabled: bool,
     volume: u8,
@@ -16,7 +16,7 @@ pub(crate) struct EnvelopeDao {
 }
 
 impl EnvelopeDao {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             enabled: false,
             volume: 0,
@@ -26,19 +26,19 @@ impl EnvelopeDao {
         }
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    pub fn set_period(&mut self, value: u8) {
+    pub(crate) fn set_period(&mut self, value: u8) {
         self.period = value;
     }
 
-    pub fn restart(&mut self) {
+    pub(crate) fn restart(&mut self) {
         self.start = true;
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.enabled = false;
         self.start = false;
         self.volume = 0;
@@ -46,7 +46,7 @@ impl EnvelopeDao {
         self.period = 0;
     }
 
-    pub fn get_volume(self) -> u8 {
+    pub(crate) fn get_volume(self) -> u8 {
         if self.enabled {
             self.volume
         } else {
@@ -54,7 +54,7 @@ impl EnvelopeDao {
         }
     }
 
-    pub fn step_frame(&mut self, loop_: bool) {
+    pub(crate) fn step_frame(&mut self, loop_: bool) {
         if self.start {
             self.volume = 15;
             self.value = self.period;

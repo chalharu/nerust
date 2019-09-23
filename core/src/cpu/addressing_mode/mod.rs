@@ -42,7 +42,7 @@ use super::*;
 pub(crate) struct AddressingModeLut([CpuStatesEnum; 256]);
 
 impl AddressingModeLut {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         AddressingModeLut([
             // 0x00
             CpuStatesEnum::Implied,
@@ -335,7 +335,7 @@ impl AddressingModeLut {
         ])
     }
 
-    pub fn get(&self, code: usize) -> CpuStatesEnum {
+    pub(crate) fn get(&self, code: usize) -> CpuStatesEnum {
         self.0[code]
     }
 }

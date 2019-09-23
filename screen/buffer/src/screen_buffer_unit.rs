@@ -8,13 +8,14 @@ use super::allocate;
 use nerust_screen_filter::FilterFunc;
 use nerust_screen_traits::{LogicalSize, RGB};
 
-pub struct ScreenBufferUnit {
+#[derive(Debug)]
+pub(crate) struct ScreenBufferUnit {
     buffer: Box<[u32]>,
     pos: usize,
 }
 
 impl ScreenBufferUnit {
-    pub fn new(size: LogicalSize) -> Self {
+    pub(crate) fn new(size: LogicalSize) -> Self {
         Self {
             buffer: init_screen_buffer(size),
             pos: 0,
@@ -22,22 +23,22 @@ impl ScreenBufferUnit {
     }
 
     #[inline]
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.pos = 0;
     }
 
     #[inline]
-    pub fn as_ptr(&self) -> *const u8 {
-        self.buffer.as_ptr() as *const u32 as *const u8
+    pub(crate) fn as_ptr(&self) -> *const u8 {
+        self.buffer.as_ptr() as *const u8
     }
 
     #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
         self.buffer.as_mut_ptr() as *mut u8
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         for b in self.buffer.iter_mut() {
             *b = 0;
         }
@@ -57,7 +58,7 @@ impl FilterFunc for ScreenBufferUnit {
 }
 
 #[inline]
-pub fn init_screen_buffer(size: LogicalSize) -> Box<[u32]> {
+pub(crate) fn init_screen_buffer(size: LogicalSize) -> Box<[u32]> {
     allocate(size.width * size.height)
 }
 

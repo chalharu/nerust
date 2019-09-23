@@ -6,6 +6,7 @@
 
 // Image parameters, ranging from -1.0 to 1.0. Actual internal values shown
 // in parenthesis and should remain fairly stable in future versions.
+#[derive(Debug, Clone, Copy)]
 pub enum Setup {
     RGB,
     Composite,
@@ -26,7 +27,7 @@ pub enum Setup {
     },
 }
 
-pub trait SetupValues {
+pub(crate) trait SetupValues {
     // Basic parameters
     fn hue(&self) -> f32; // -1 = -180 degrees     +1 = +180 degrees
     fn saturation(&self) -> f32; // -1 = grayscale (0.0)  +1 = oversaturated colors (2.0)

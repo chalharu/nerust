@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn bntest_aorom() {
-    test!(
+    run_test!(
         "mapper/bntest/bntest_aorom.nes",
         ScenarioLeaf::check_screen(15, 0xAD9D_23DD_8E57_3B19)
     );
@@ -16,7 +16,7 @@ fn bntest_aorom() {
 
 #[test]
 fn bntest_h() {
-    test!(
+    run_test!(
         "mapper/bntest/bntest_h.nes",
         ScenarioLeaf::check_screen(15, 0x8108_A6D2_A9D9_C28A)
     );
@@ -24,7 +24,7 @@ fn bntest_h() {
 
 #[test]
 fn bntest_v() {
-    test!(
+    run_test!(
         "mapper/bntest/bntest_v.nes",
         ScenarioLeaf::check_screen(15, 0x4E34_969E_C01E_A621)
     );

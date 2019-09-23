@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn ppu_open_bus() {
-    test!(
+    run_test!(
         "ppu/ppu_open_bus/ppu_open_bus.nes",
         ScenarioLeaf::check_screen(267, 0x0EB5_F7F2_316C_5604)
     );

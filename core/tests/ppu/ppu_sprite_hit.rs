@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn ppu_sprite_hit() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/ppu_sprite_hit.nes",
         ScenarioLeaf::check_screen(800, 0xEB57_E169_78E4_5540)
     );
@@ -16,7 +16,7 @@ fn ppu_sprite_hit() {
 
 #[test]
 fn _01_basics() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/01-basics.nes",
         ScenarioLeaf::check_screen(60, 0x10C1_27D0_9E7F_0585)
     );
@@ -24,7 +24,7 @@ fn _01_basics() {
 
 #[test]
 fn _02_alignment() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/02-alignment.nes",
         ScenarioLeaf::check_screen(85, 0xB288_39BA_DFF7_5598)
     );
@@ -32,7 +32,7 @@ fn _02_alignment() {
 
 #[test]
 fn _03_corners() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/03-corners.nes",
         ScenarioLeaf::check_screen(55, 0xA01E_C12C_BB5B_AA86)
     );
@@ -40,7 +40,7 @@ fn _03_corners() {
 
 #[test]
 fn _04_flip() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/04-flip.nes",
         ScenarioLeaf::check_screen(40, 0x2748_0614_E261_6F04)
     );
@@ -48,7 +48,7 @@ fn _04_flip() {
 
 #[test]
 fn _05_left_clip() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/05-left_clip.nes",
         ScenarioLeaf::check_screen(52, 0xDAF2_913B_574D_EFED)
     );
@@ -56,7 +56,7 @@ fn _05_left_clip() {
 
 #[test]
 fn _06_right_edge() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/06-right_edge.nes",
         ScenarioLeaf::check_screen(45, 0xB453_214D_284B_A5DE)
     );
@@ -64,7 +64,7 @@ fn _06_right_edge() {
 
 #[test]
 fn _07_screen_bottom() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/07-screen_bottom.nes",
         ScenarioLeaf::check_screen(50, 0xC6F8_94DB_61A5_E7C4)
     );
@@ -72,7 +72,7 @@ fn _07_screen_bottom() {
 
 #[test]
 fn _08_double_height() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/08-double_height.nes",
         ScenarioLeaf::check_screen(40, 0x7336_D45B_93EF_0C23)
     );
@@ -80,7 +80,7 @@ fn _08_double_height() {
 
 #[test]
 fn _09_timing() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/09-timing.nes",
         ScenarioLeaf::check_screen(200, 0xC3F2_0913_7CAA_75E2)
     );
@@ -88,7 +88,7 @@ fn _09_timing() {
 
 #[test]
 fn _10_timing_order() {
-    test!(
+    run_test!(
         "ppu/ppu_sprite_hit/rom_singles/10-timing_order.nes",
         ScenarioLeaf::check_screen(90, 0x7B94_8A10_ACE7_0AD0)
     );

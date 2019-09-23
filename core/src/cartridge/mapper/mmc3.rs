@@ -11,7 +11,7 @@ use super::{CartridgeData, Cartridge};
 use crate::MirrorMode;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mmc3 {
     cartridge_data: CartridgeData,
     state: MapperState,

@@ -19,7 +19,7 @@ impl CpuStepState for Brk {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                core.memory.read_next(
+                let _ = core.memory.read_next(
                     &mut core.register,
                     ppu,
                     cartridge,
@@ -245,7 +245,7 @@ impl CpuStepState for Reset {
             3 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                core.memory.read(
+                let _ = core.memory.read(
                     0x100 | sp,
                     ppu,
                     cartridge,
@@ -257,7 +257,7 @@ impl CpuStepState for Reset {
             4 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                core.memory.read(
+                let _ = core.memory.read(
                     0x100 | sp,
                     ppu,
                     cartridge,
@@ -269,7 +269,7 @@ impl CpuStepState for Reset {
             5 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                core.memory.read(
+                let _ = core.memory.read(
                     0x100 | sp,
                     ppu,
                     cartridge,

@@ -10,6 +10,7 @@ use gl::types::{GLenum, GLint, GLsizei, GLuint};
 use std;
 use std::rc::Rc;
 
+#[derive(Debug)]
 pub struct VertexArray {
     vao: VertexArrayVAO,
 
@@ -19,6 +20,7 @@ pub struct VertexArray {
     ibo_ref: Option<Rc<IndexBuffer>>,
 }
 
+#[derive(Debug)]
 struct VertexArrayVAO {
     id: GLuint,
 }
@@ -26,14 +28,14 @@ struct VertexArrayVAO {
 impl Drop for VertexArrayVAO {
     fn drop(&mut self) {
         gl_error_handle(|| unsafe { gl::DeleteVertexArrays(1, &self.id) })
-            .unwrap_or_else(|x| warn!("{}", x));
+            .unwrap_or_else(|x| log::warn!("{}", x));
     }
 }
 
 impl VertexArray {
     pub fn new<F>(cb: F) -> Result<VertexArray, Error>
     where
-        F: FnOnce(&mut VertexArrayInitContext) -> Result<(), Error>,
+        F: FnOnce(&mut VertexArrayInitContext<'_>) -> Result<(), Error>,
     {
         let mut vao = 0;
         unsafe {
@@ -61,7 +63,7 @@ impl VertexArray {
 
     pub fn bind_vao<F>(&self, cb: F) -> Result<(), Error>
     where
-        F: FnOnce(&VertexArrayContext) -> Result<(), Error>,
+        F: FnOnce(&VertexArrayContext<'_>) -> Result<(), Error>,
     {
         gl_error_handle(|| unsafe { gl::BindVertexArray(self.vao.id) })?;
         gl_get_error()?;
@@ -78,10 +80,11 @@ impl VertexArray {
     }
 }
 
+#[derive(Debug)]
 pub struct VertexArrayInitContext<'a> {
     va: &'a mut VertexArray,
 }
-impl<'a> VertexArrayInitContext<'a> {
+impl VertexArrayInitContext<'_> {
     pub fn bind_vbo<F>(&mut self, vbo: Rc<VertexBuffer>, cb: F) -> Result<(), Error>
     where
         F: FnOnce(VertexArrayBufferContext) -> Result<(), Error>,
@@ -98,10 +101,11 @@ impl<'a> VertexArrayInitContext<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct VertexArrayContext<'a> {
     va: &'a VertexArray,
 }
-impl<'a> VertexArrayContext<'a> {
+impl VertexArrayContext<'_> {
     pub fn draw_arrays(&self, mode: GLuint, first: GLint, count: GLsizei) -> Result<(), Error> {
         gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
     }
@@ -123,6 +127,7 @@ impl<'a> VertexArrayContext<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct VertexArrayBufferContext;
 impl VertexArrayBufferContext {
     pub fn attr_pointer(
@@ -147,6 +152,7 @@ impl VertexArrayBufferContext {
     }
 }
 
+#[derive(Debug)]
 pub struct VertexBuffer {
     pub id: GLuint,
 }
@@ -154,7 +160,7 @@ pub struct VertexBuffer {
 impl Drop for VertexBuffer {
     fn drop(&mut self) {
         gl_error_handle(|| unsafe { gl::DeleteBuffers(1, &self.id) })
-            .unwrap_or_else(|x| warn!("{}", x));
+            .unwrap_or_else(|x| log::warn!("{}", x));
     }
 }
 
@@ -179,6 +185,7 @@ impl VertexBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct IndexBuffer {
     id: GLuint,
     data_type: GLenum,
@@ -187,7 +194,7 @@ pub struct IndexBuffer {
 impl Drop for IndexBuffer {
     fn drop(&mut self) {
         gl_error_handle(|| unsafe { gl::DeleteBuffers(1, &self.id) })
-            .unwrap_or_else(|x| warn!("{}", x));
+            .unwrap_or_else(|x| log::warn!("{}", x));
     }
 }
 
@@ -216,7 +223,7 @@ impl IndexBuffer {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Attrib {
     pub id: GLuint,
 }

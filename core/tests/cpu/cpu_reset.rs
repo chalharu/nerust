@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn ram_after_reset() {
-    test!(
+    run_test!(
         "cpu/cpu_reset/ram_after_reset.nes",
         ScenarioLeaf::check_screen(155, 0x4403_54DC_C93B_0821),
         ScenarioLeaf::reset(156),
@@ -18,7 +18,7 @@ fn ram_after_reset() {
 
 #[test]
 fn registers() {
-    test!(
+    run_test!(
         "cpu/cpu_reset/registers.nes",
         ScenarioLeaf::check_screen(155, 0x4403_54DC_C93B_0821),
         ScenarioLeaf::reset(156),

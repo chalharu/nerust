@@ -15,7 +15,7 @@ const DUTY_TABLE: [[bool; 8]; 4] = [
     [true, false, false, true, true, true, true, true],
 ];
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Pulse {
     is_first_channel: bool,
     duty_mode: u8,
@@ -71,7 +71,7 @@ impl HaveTimerDao for Pulse {
 }
 
 impl Pulse {
-    pub fn new(is_first_channel: bool) -> Self {
+    pub(crate) fn new(is_first_channel: bool) -> Self {
         Self {
             is_first_channel,
             duty_mode: 0,
@@ -90,7 +90,7 @@ impl Pulse {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.length_counter.reset();
         self.envelope.reset();
         self.timer.reset();
@@ -108,14 +108,14 @@ impl Pulse {
         self.sweep();
     }
 
-    pub fn write_control(&mut self, value: u8) {
+    pub(crate) fn write_control(&mut self, value: u8) {
         self.length_counter.set_halt((value & 0x20) != 0);
         self.envelope.set_enabled((value & 0x10) == 0);
         self.envelope.set_period(value & 0x0F);
         self.duty_mode = (value >> 6) & 3;
     }
 
-    pub fn write_sweep(&mut self, value: u8) {
+    pub(crate) fn write_sweep(&mut self, value: u8) {
         self.sweep_enabled = (value & 0x80) != 0;
         self.sweep_period = ((value >> 4) & 7) + 1;
         self.sweep_negate = (value & 0x08) != 0;
@@ -130,24 +130,24 @@ impl Pulse {
         self.sweep();
     }
 
-    pub fn write_timer_low(&mut self, value: u8) {
+    pub(crate) fn write_timer_low(&mut self, value: u8) {
         self.set_period((self.period & 0xFF00) | u16::from(value));
     }
 
-    pub fn write_timer_high(&mut self, value: u8) {
+    pub(crate) fn write_timer_high(&mut self, value: u8) {
         self.length_counter.set_load(value >> 3);
         self.set_period((self.period & 0xFF) | (u16::from(value & 7) << 8));
         self.duty_value = 0;
         self.envelope.restart();
     }
 
-    pub fn step_timer(&mut self) {
+    pub(crate) fn step_timer(&mut self) {
         if self.timer.step_timer() {
             self.duty_value = self.duty_value.wrapping_sub(1) & 7;
         }
     }
 
-    pub fn step_sweep(&mut self) {
+    pub(crate) fn step_sweep(&mut self) {
         self.sweep_value = self.sweep_value.wrapping_sub(1);
         if self.sweep_value == 0 {
             if self.sweep_enabled
@@ -177,7 +177,7 @@ impl Pulse {
         }
     }
 
-    pub fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         if (self.period < 8 || (!self.sweep_negate && self.sweep_target_period > 0x7FF))
             || !DUTY_TABLE[usize::from(self.duty_mode)][usize::from(self.duty_value)]
         {

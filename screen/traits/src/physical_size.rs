@@ -6,7 +6,7 @@
 
 use super::logical_size::LogicalSize;
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub struct PhysicalSize {
     pub width: f32,
     pub height: f32,

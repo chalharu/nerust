@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub mod ntsc;
-pub mod rgb;
+pub(crate) mod ntsc;
+pub(crate) mod rgb;
 
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 
@@ -40,6 +40,7 @@ pub trait FilterUnit {
     }
 }
 
+#[derive(Debug)]
 pub struct Combine<T: FilterUnit, U: FilterUnit<Input = T::Output>> {
     filter1: T,
     filter2: U,

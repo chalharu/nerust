@@ -46,7 +46,7 @@ macro_rules! big_array {
                     {
                         type Value = [T; $len];
 
-                        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                             formatter.write_str(concat!("an array of length ", $len))
                         }
 

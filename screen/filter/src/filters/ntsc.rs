@@ -7,7 +7,8 @@
 use super::FilterUnit;
 use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
 
-pub struct NesNtsc {
+#[derive(Debug)]
+pub(crate) struct NesNtsc {
     ntsc: nes_ntsc::NesNtsc,
     source: LogicalSize,
 }
@@ -27,21 +28,21 @@ impl NesNtsc {
     //     }
     // }
 
-    pub fn composite(source: LogicalSize) -> Self {
+    pub(crate) fn composite(source: LogicalSize) -> Self {
         Self {
             ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::Composite, source.width),
             source,
         }
     }
 
-    pub fn svideo(source: LogicalSize) -> Self {
+    pub(crate) fn svideo(source: LogicalSize) -> Self {
         Self {
             ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::SVideo, source.width),
             source,
         }
     }
 
-    pub fn rgb(source: LogicalSize) -> Self {
+    pub(crate) fn rgb(source: LogicalSize) -> Self {
         Self {
             ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::RGB, source.width),
             source,

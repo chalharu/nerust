@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn test_9() {
-    test!(
+    run_test!(
         "apu/test_apu_m/test_9.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -16,7 +16,7 @@ fn test_9() {
 
 #[test]
 fn test_10() {
-    test!(
+    run_test!(
         "apu/test_apu_m/test_10.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );
@@ -24,7 +24,7 @@ fn test_10() {
 
 #[test]
 fn test_11() {
-    test!(
+    run_test!(
         "apu/test_apu_m/test_11.nes",
         ScenarioLeaf::check_screen(50, 0x5A53_08AE_5AE1_0624)
     );

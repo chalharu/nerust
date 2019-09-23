@@ -6,7 +6,7 @@
 
 use super::*;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
     Step0,
     Step1,
@@ -14,7 +14,7 @@ pub(crate) enum OamDmaStateEnumValue {
     None,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct OamDmaStateValue {
     offset: u8,
     count: u8,
@@ -22,7 +22,7 @@ pub(crate) struct OamDmaStateValue {
 }
 
 impl OamDmaStateValue {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             offset: 0,
             count: 0,
@@ -31,7 +31,7 @@ impl OamDmaStateValue {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct OamDmaState {
     #[serde(skip, default = "make_state_pool")]
     state_pool: [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as usize],
@@ -48,7 +48,7 @@ fn make_state_pool() -> [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as
 }
 
 impl OamDmaState {
-    pub fn new() -> OamDmaState {
+    pub(crate) fn new() -> OamDmaState {
         Self {
             state_pool: make_state_pool(),
             state: OamDmaStateEnumValue::None,
@@ -56,21 +56,21 @@ impl OamDmaState {
         }
     }
 
-    pub fn has_transaction(&self) -> bool {
+    pub(crate) fn has_transaction(&self) -> bool {
         self.state != OamDmaStateEnumValue::None
     }
 
-    pub fn start_transaction(&mut self, offset: u8) {
+    pub(crate) fn start_transaction(&mut self, offset: u8) {
         self.state = OamDmaStateEnumValue::Step0;
         self.value.offset = offset;
         self.value.count = 255;
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.state = OamDmaStateEnumValue::None;
     }
 
-    pub fn next(
+    pub(crate) fn next(
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
@@ -88,7 +88,7 @@ impl OamDmaState {
         );
     }
 
-    pub fn count(&self) -> Option<u8> {
+    pub(crate) fn count(&self) -> Option<u8> {
         if self.state == OamDmaStateEnumValue::None {
             None
         } else {

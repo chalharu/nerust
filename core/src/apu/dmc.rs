@@ -16,7 +16,7 @@ const DMC_TABLE: [u8; 16] = [
     214, 190, 170, 160, 143, 127, 113, 107, 95, 80, 71, 64, 53, 42, 36, 27,
 ];
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct DMC {
     value: u8,
 
@@ -46,7 +46,7 @@ impl HaveTimerDao for DMC {
 }
 
 impl DMC {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             shift_register: 0,
             bit_count: 0,
@@ -65,7 +65,7 @@ impl DMC {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.timer.reset();
         let period = (u16::from(DMC_TABLE[0]) << 1) - 1;
         self.timer.set_period(period);
@@ -74,7 +74,7 @@ impl DMC {
         self.irq = false;
     }
 
-    pub fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
+    pub(crate) fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = (value & 0x80) != 0;
         self.is_loop = (value & 0x40) != 0;
         self.timer
@@ -84,7 +84,7 @@ impl DMC {
         }
     }
 
-    pub fn write_value(&mut self, value: u8) {
+    pub(crate) fn write_value(&mut self, value: u8) {
         let prev_value = mem::replace(&mut self.value, value & 0x7F);
         self.prev_reg_value = self.value;
 
@@ -102,15 +102,15 @@ impl DMC {
         }
     }
 
-    pub fn write_address(&mut self, value: u8) {
+    pub(crate) fn write_address(&mut self, value: u8) {
         self.sample_address = 0xC000 | (u16::from(value) << 6);
     }
 
-    pub fn write_length(&mut self, value: u8) {
+    pub(crate) fn write_length(&mut self, value: u8) {
         self.sample_length = 1 | (u16::from(value) << 4);
     }
 
-    pub fn set_enabled(&mut self, enabled: bool, interrupt: &mut Interrupt) {
+    pub(crate) fn set_enabled(&mut self, enabled: bool, interrupt: &mut Interrupt) {
         if !enabled {
             self.length_value = 0;
         } else if self.length_value == 0 {
@@ -121,12 +121,12 @@ impl DMC {
         }
     }
 
-    pub fn restart(&mut self) {
+    pub(crate) fn restart(&mut self) {
         self.current_address = self.sample_address;
         self.length_value = self.sample_length;
     }
 
-    pub fn fill_address(&self) -> Option<usize> {
+    pub(crate) fn fill_address(&self) -> Option<usize> {
         if self.get_status() {
             Some(self.current_address as usize)
         } else {
@@ -134,11 +134,11 @@ impl DMC {
         }
     }
 
-    pub fn get_status(&self) -> bool {
+    pub(crate) fn get_status(&self) -> bool {
         self.length_value > 0
     }
 
-    pub fn fill(&mut self, value: u8, interrupt: &mut Interrupt) {
+    pub(crate) fn fill(&mut self, value: u8, interrupt: &mut Interrupt) {
         if self.length_value > 0 {
             self.read_buffer = value;
             self.need_buffer = false;
@@ -159,7 +159,7 @@ impl DMC {
         }
     }
 
-    pub fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         if self.timer.step_timer() {
             if self.enabled {
                 self.step_shifter();
@@ -172,7 +172,11 @@ impl DMC {
         }
     }
 
-    pub fn step_reader(&mut self, interrupt: &mut Interrupt, _cartridge: &mut dyn Cartridge) {
+    pub(crate) fn step_reader(
+        &mut self,
+        interrupt: &mut Interrupt,
+        _cartridge: &mut dyn Cartridge,
+    ) {
         if self.bit_count == 0 {
             self.bit_count = 8;
             if self.need_buffer {
@@ -186,7 +190,7 @@ impl DMC {
         }
     }
 
-    pub fn step_shifter(&mut self) {
+    pub(crate) fn step_shifter(&mut self) {
         if (self.shift_register & 1) != 0 {
             if self.value <= 125 {
                 self.value += 2;
@@ -198,7 +202,7 @@ impl DMC {
         self.shift_register >>= 1;
     }
 
-    pub fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         self.value
     }
 }

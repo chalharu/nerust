@@ -4,12 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-extern crate lazy_static;
-
-#[macro_use]
-extern crate log;
-
 mod init;
 mod setup;
 
@@ -92,7 +86,7 @@ fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
 }
 
 // 3 input pixels -> 8 composite samples
-lazy_static! {
+lazy_static::lazy_static! {
     static ref NES_NTSC_PIXELS: [PixelInfo; ALIGNMENT_COUNT] = [
         pixel_offset(-4, -9, [1.0, 1.0, 0.6667, 0.0]),
         pixel_offset(-2, -7, [0.3333, 1.0, 1.0, 0.3333]),
@@ -135,6 +129,7 @@ impl From<u32> for RGB {
 //     }
 // }
 
+#[derive(Debug)]
 pub struct NesNtsc {
     burst: usize,
     // table: Vec<u32>,
@@ -516,7 +511,7 @@ impl NtscRow {
     }
 
     #[inline]
-    pub fn rgb_out(&self, x: usize) -> RGB {
+    pub(crate) fn rgb_out(&self, x: usize) -> RGB {
         // RGB::from(Self::rgb_out_impl(Self::clamp_impl(
         //     (self.ktable[self.kernel[0] + x]
         //         + (self.ktable[self.kernel[1] + (x + 12) % 7 + 14])
@@ -572,7 +567,7 @@ impl NtscRow {
 
     // NES_NTSC_COLOR_IN
     #[inline]
-    pub fn color_in(&mut self, in_index: usize, color_in: u8) {
+    pub(crate) fn color_in(&mut self, in_index: usize, color_in: u8) {
         self.kernelx[in_index] = self.kernel[in_index];
         self.kernel[in_index] = Self::entry_impl(self.ktable_offset, color_in);
     }

@@ -42,13 +42,13 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
             1 => Ok(Box::new(Nina001::new(data))),
             2 => Ok(Box::new(BNRom::new(data))),
             n => {
-                error!("unknown mapper 34 sub type : {}", n);
+                log::error!("unknown mapper 34 sub type : {}", n);
                 Err(CartridgeError::DataError)
             }
         },
         185 => Ok(Box::new(CNRom::new(data, true))),
         n => {
-            error!("unknown mapper type : {}", n);
+            log::error!("unknown mapper type : {}", n);
             Err(CartridgeError::DataError)
         }
     }

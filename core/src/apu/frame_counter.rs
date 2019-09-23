@@ -6,14 +6,14 @@
 
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub enum FrameType {
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Eq, PartialEq)]
+pub(crate) enum FrameType {
     None,
     Quarter,
     Half,
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct FrameCounter {
     period: bool,
     irq: bool,
@@ -25,7 +25,7 @@ pub(crate) struct FrameCounter {
 }
 
 impl FrameCounter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             period: false,
             irq: true,
@@ -37,13 +37,13 @@ impl FrameCounter {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.soft_reset();
         self.period = false;
         self.new_value = 0;
     }
 
-    pub fn soft_reset(&mut self) {
+    pub(crate) fn soft_reset(&mut self) {
         self.irq = true;
         self.write_counter = 3;
         self.new_value = if self.period { 0x80 } else { 0 };
@@ -58,7 +58,7 @@ impl FrameCounter {
         }
     }
 
-    pub fn step_frame_counter(&mut self, interrupt: &mut Interrupt) -> FrameType {
+    pub(crate) fn step_frame_counter(&mut self, interrupt: &mut Interrupt) -> FrameType {
         self.clock_cycle = self.clock_cycle.wrapping_add(1);
         self.cycle += 1;
 
@@ -124,7 +124,7 @@ impl FrameCounter {
         result
     }
 
-    pub fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
+    pub(crate) fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = ((value >> 6) & 1) == 0;
         self.new_value = value;
         if (self.clock_cycle & 1) != 0 {

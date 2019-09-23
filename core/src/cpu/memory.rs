@@ -8,7 +8,7 @@ use crate::cpu::{Interrupt, Register};
 use crate::{Apu, Cartridge, Controller, Ppu};
 use crate::{OpenBus, OpenBusReadResult};
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Memory {
     #[serde(with = "nerust_serialize::BigArray")]
     wram: [u8; 2048],
@@ -16,14 +16,14 @@ pub(crate) struct Memory {
 }
 
 impl Memory {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             wram: [0; 2048],
             openbus: OpenBus::new(),
         }
     }
 
-    pub fn read_next(
+    pub(crate) fn read_next(
         &mut self,
         register: &mut Register,
         ppu: &mut Ppu,
@@ -37,7 +37,7 @@ impl Memory {
         self.read(pc as usize, ppu, cartridge, controller, apu, interrupt)
     }
 
-    pub fn read(
+    pub(crate) fn read(
         &mut self,
         address: usize,
         ppu: &mut Ppu,
@@ -54,7 +54,7 @@ impl Memory {
             0x4000..=0x4014 | 0x4018..=0x5FFF => OpenBusReadResult::new(0, 0), // TODO: I/O registers
             0x6000..=0xFFFF => cartridge.read(address),
             _ => {
-                error!("unhandled cpu memory read at address: 0x{:04X}", address);
+                log::error!("unhandled cpu memory read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
             }
         };
@@ -62,7 +62,7 @@ impl Memory {
         self.openbus.unite(result)
     }
 
-    pub fn read_dummy_cross(
+    pub(crate) fn read_dummy_cross(
         &mut self,
         address: usize,
         new_address: usize,
@@ -82,7 +82,7 @@ impl Memory {
         );
     }
 
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         address: usize,
         value: u8,
@@ -105,7 +105,7 @@ impl Memory {
             0x4018..=0x5FFF => (), // TODO: I/O registers
             0x6000..=0xFFFF => cartridge.write(address, value, interrupt),
             _ => {
-                error!("unhandled cpu memory write at address: 0x{:04X}", address);
+                log::error!("unhandled cpu memory write at address: 0x{:04X}", address);
             }
         }
         interrupt.write = true;

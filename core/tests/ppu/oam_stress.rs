@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn oam_stress() {
-    test!(
+    run_test!(
         "ppu/oam_stress/oam_stress.nes",
         ScenarioLeaf::check_screen(1740, 0x8657_96B2_97C3_0C6B)
     );

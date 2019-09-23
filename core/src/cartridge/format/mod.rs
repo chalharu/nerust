@@ -4,13 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub mod ines;
-pub mod nes20;
+pub(crate) mod ines;
+pub(crate) mod nes20;
 use super::error::CartridgeError;
 use crate::MirrorMode;
 use serde_bytes;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub struct CartridgeData {
     #[serde(with = "serde_bytes")]
     prog_rom: Vec<u8>,

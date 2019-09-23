@@ -6,14 +6,14 @@ use std::cell::RefCell;
 use std::ptr;
 use std::rc::Rc;
 
-pub struct GLAreaCore {
+pub(crate) struct GLAreaCore {
     gl_area: gtk::GLArea,
     state: Rc<RefCell<State>>,
 }
 
-pub type GLArea = Rc<RefCell<GLAreaCore>>;
+pub(crate) type GLArea = Rc<RefCell<GLAreaCore>>;
 
-pub trait GLAreaExtend {
+pub(crate) trait GLAreaExtend {
     fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea;
     fn realize(&self);
     fn resize(&self, width: i32, height: i32);
@@ -40,25 +40,26 @@ impl GLAreaExtend for GLArea {
         }));
         {
             let result = result.clone();
-            gl_area.connect_realize(move |_gl_area| result.realize());
+            let _ = gl_area.connect_realize(move |_gl_area| result.realize());
         }
         {
             let result = result.clone();
-            gl_area.connect_resize(move |_gl_area, w, h| {
+            let _ = gl_area.connect_resize(move |_gl_area, w, h| {
                 result.resize(w, h);
             });
         }
         {
             let result = result.clone();
-            gl_area.connect_render(move |_gl_area, _context| Inhibit(result.render()));
+            let _ = gl_area.connect_render(move |_gl_area, _context| Inhibit(result.render()));
         }
         {
             let result = result.clone();
-            gl_area.connect_unrealize(move |_gl_area| result.unrealize());
+            let _ = gl_area.connect_unrealize(move |_gl_area| result.unrealize());
         }
         {
             let result = result.clone();
-            gl_area.add_tick_callback(move |_gl_area, _frame_clock| Continue(result.tick()));
+            let _ =
+                gl_area.add_tick_callback(move |_gl_area, _frame_clock| Continue(result.tick()));
         }
         result
     }
@@ -68,13 +69,13 @@ impl GLAreaExtend for GLArea {
         view.use_vao(true);
         self.glarea().make_current();
         if let Some(e) = self.glarea().get_error() {
-            error!("{}", e);
+            log::error!("{}", e);
         }
         epoxy::load_with(|s| unsafe {
             match DynamicLibrary::open(None).unwrap().symbol(s) {
                 Ok(v) => v,
                 Err(e) => {
-                    error!("{}", e);
+                    log::error!("{}", e);
                     ptr::null()
                 }
             }
@@ -91,7 +92,7 @@ impl GLAreaExtend for GLArea {
     fn resize(&self, width: i32, height: i32) {
         self.glarea().make_current();
         if let Some(e) = self.glarea().get_error() {
-            error!("{}", e);
+            log::error!("{}", e);
         }
         // unsafe {epoxy::Viewport(0, 0, w, h);}
         // let dpi_factor = self.glarea().get_scale_factor();
@@ -132,7 +133,7 @@ impl GLAreaExtend for GLArea {
 fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     gl_area.make_current();
     if let Some(e) = gl_area.get_error() {
-        error!("{}", e);
+        log::error!("{}", e);
     }
     {
         if let Ok(mut state) = state.try_borrow_mut() {

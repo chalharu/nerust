@@ -4,9 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[macro_use]
-extern crate log;
-
 mod resampler;
 
 use self::resampler::{Resampler, SimpleDownSampler};
@@ -18,6 +15,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, i16, mem, thread};
 
+#[derive(Debug)]
 struct FadeBuffer {
     data_receiver: Receiver<f32>,
     fade_width: usize,
@@ -30,7 +28,7 @@ struct FadeBuffer {
 }
 
 impl FadeBuffer {
-    pub fn new(data_receiver: Receiver<f32>, fade_width: usize) -> Self {
+    pub(crate) fn new(data_receiver: Receiver<f32>, fade_width: usize) -> Self {
         // 必ず lut[0] = 0 とする
         let hannning_fadein_window_lut = (0..fade_width)
             .map(|x| 0.5 - ((x as f64 * f64::consts::PI / fade_width as f64).cos() * 0.5) as f32)
@@ -106,7 +104,7 @@ struct OpenAlState {
 }
 
 impl OpenAlState {
-    pub fn new(
+    pub(crate) fn new(
         sample_rate: i32,
         buffer_width: usize,
         buffer_count: usize,
@@ -126,7 +124,7 @@ impl OpenAlState {
             }) {
             Some(src)
         } else {
-            error!("No OpenAL implementation present!");
+            log::error!("No OpenAL implementation present!");
             None
         };
         Self {
@@ -194,6 +192,7 @@ impl OpenAlState {
     }
 }
 
+#[derive(Debug)]
 pub struct OpenAl {
     stop_sender: Sender<()>,
     playing_sender: Sender<bool>,
@@ -243,13 +242,13 @@ impl OpenAl {
 impl Sound for OpenAl {
     fn pause(&mut self) {
         if self.playing_sender.send(false).is_err() {
-            warn!("OpenAL channel (playing) send failed");
+            log::warn!("OpenAL channel (playing) send failed");
         }
     }
 
     fn start(&mut self) {
         if self.playing_sender.send(true).is_err() {
-            warn!("OpenAL channel (playing) send failed");
+            log::warn!("OpenAL channel (playing) send failed");
         }
     }
 }
@@ -263,7 +262,7 @@ impl MixerInput for OpenAl {
                 .send(self.filter.step(resampled_data * 2.0 - 1.0))
                 .is_err()
             {
-                warn!("OpenAL channel (data) send failed");
+                log::warn!("OpenAL channel (data) send failed");
             }
         }
     }
@@ -272,8 +271,8 @@ impl MixerInput for OpenAl {
 impl Drop for OpenAl {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
-            warn!("OpenAL channel (stop) send failed");
+            log::warn!("OpenAL channel (stop) send failed");
         }
-        mem::replace(&mut self.thread, None).map(JoinHandle::join);
+        let _ = mem::replace(&mut self.thread, None).map(JoinHandle::join);
     }
 }

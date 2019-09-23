@@ -7,11 +7,12 @@
 use nerust_soundfilter::{Filter, IirFilter};
 use std::f32;
 
-pub trait Resampler {
+pub(crate) trait Resampler {
     fn step(&mut self, data: f32) -> Option<f32>;
 }
 
 // LPFで出力周波数以上を除去
+#[derive(Debug)]
 pub(crate) struct SimpleDownSampler {
     rate: f64,
     cycle: f64,
@@ -20,7 +21,7 @@ pub(crate) struct SimpleDownSampler {
 }
 
 impl SimpleDownSampler {
-    pub fn new(source_rate: f64, destination_rate: f64) -> Self {
+    pub(crate) fn new(source_rate: f64, destination_rate: f64) -> Self {
         let rate = source_rate / destination_rate;
         let filter = IirFilter::get_lowpass_filter(source_rate as f32, destination_rate as f32);
         Self {

@@ -33,6 +33,7 @@ impl<F: filters::FilterUnit<Input = u8, Output = RGB>> NesFilter for F {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum FilterType {
     None,
     NtscRGB,
@@ -41,8 +42,8 @@ pub enum FilterType {
 }
 
 impl FilterType {
-    pub fn generate(&self, size: LogicalSize) -> Box<dyn NesFilter> {
-        match *self {
+    pub fn generate(self, size: LogicalSize) -> Box<dyn NesFilter> {
+        match self {
             FilterType::None => Box::new(filters::rgb::NesRgb::new(size)),
             FilterType::NtscRGB => Box::new(filters::ntsc::NesNtsc::rgb(size)),
             FilterType::NtscComposite => Box::new(filters::ntsc::NesNtsc::composite(size)),
