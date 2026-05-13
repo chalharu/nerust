@@ -2,22 +2,23 @@
 name = "nerust_gtk"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
 gtk = { version = "0.18.2", features = ["v3_24"] }
-gio = { version = "0.22.6"}
-gdk = { version = "0.18.2"}
+gio = { version = "0.22.6" }
+gdk = { version = "0.18.2" }
 epoxy = { version = "0.1.0" }
 gl = { version = "0.14.0" }
-shared_library = { version = "0.1.9"}
-nerust_console = { version = ">0.0.0", path="../../console" }
-nerust_core = { version = ">0.0.0", path="../../core" }
-nerust_screen_buffer = { version = ">0.0.0", path="../../screen/buffer" }
-nerust_screen_filter = { version = ">0.0.0", path="../../screen/filter" }
-nerust_screen_opengl = { version = ">0.0.0", path="../../screen/opengl" }
-nerust_screen_traits = { version = ">0.0.0", path="../../screen/traits" }
-nerust_sound_openal = { version = ">0.0.0", path="../../sound/openal" }
-nerust_timer = { version = ">0.0.0", path="../../timer" }
+shared_library = { version = "0.1.9" }
+nerust_console = { version = ">0.0.0", path = "../../console" }
+nerust_core = { version = ">0.0.0", path = "../../core" }
+nerust_screen_buffer = { version = ">0.0.0", path = "../../screen/buffer" }
+nerust_screen_filter = { version = ">0.0.0", path = "../../screen/filter" }
+nerust_screen_opengl = { version = ">0.0.0", path = "../../screen/opengl" }
+nerust_screen_traits = { version = ">0.0.0", path = "../../screen/traits" }
+nerust_sound_openal = { version = ">0.0.0", path = "../../sound/openal" }
+nerust_timer = { version = ">0.0.0", path = "../../timer" }
 simple_logger = { version = "5.2.0" }
 log = { version = "0.4.29", default-features = false }

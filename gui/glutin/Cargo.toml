@@ -2,6 +2,7 @@
 name = "nerust_glutin"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
@@ -9,13 +10,13 @@ glutin = { version = "0.32.3" }
 glutin-winit = { version = "0.5.0" }
 raw-window-handle = { version = "0.6.2" }
 winit = { version = "0.30.12" }
-nerust_console = { version = ">0.0.0", path="../../console" }
-nerust_core = { version = ">0.0.0", path="../../core" }
-nerust_screen_buffer = { version = ">0.0.0", path="../../screen/buffer" }
-nerust_screen_filter = { version = ">0.0.0", path="../../screen/filter" }
-nerust_screen_opengl = { version = ">0.0.0", path="../../screen/opengl" }
-nerust_screen_traits = { version = ">0.0.0", path="../../screen/traits" }
-nerust_sound_openal = { version = ">0.0.0", path="../../sound/openal" }
-nerust_timer = { version = ">0.0.0", path="../../timer" }
+nerust_console = { version = ">0.0.0", path = "../../console" }
+nerust_core = { version = ">0.0.0", path = "../../core" }
+nerust_screen_buffer = { version = ">0.0.0", path = "../../screen/buffer" }
+nerust_screen_filter = { version = ">0.0.0", path = "../../screen/filter" }
+nerust_screen_opengl = { version = ">0.0.0", path = "../../screen/opengl" }
+nerust_screen_traits = { version = ">0.0.0", path = "../../screen/traits" }
+nerust_sound_openal = { version = ">0.0.0", path = "../../sound/openal" }
+nerust_timer = { version = ">0.0.0", path = "../../timer" }
 simple_logger = { version = "5.2.0" }
 clap = { version = "4.6.1" }

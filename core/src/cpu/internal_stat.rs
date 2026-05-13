@@ -13,10 +13,12 @@
     Copy,
     Hash,
     Debug,
+    Default,
     strum_macros::EnumIter,
 )]
 pub(crate) enum CpuStatesEnum {
     FetchOpCode,
+    #[default]
     Reset,
     Irq,
     AbsoluteIndirect,
@@ -114,12 +116,6 @@ pub(crate) enum CpuStatesEnum {
     Txa,
     Tya,
     Txs,
-}
-
-impl Default for CpuStatesEnum {
-    fn default() -> Self {
-        CpuStatesEnum::Reset
-    }
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]

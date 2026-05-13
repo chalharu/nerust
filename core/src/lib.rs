@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::too_many_arguments, clippy::upper_case_acronyms)]
+
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -17,9 +19,10 @@ use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
 use self::status::mirror_mode::MirrorMode;
-use failure::Error;
 use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
+
+pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub struct Core {

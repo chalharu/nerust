@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::upper_case_acronyms)]
+
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -83,7 +85,7 @@ impl ScenarioRunner {
 
     fn run(&mut self, scenario: Scenario) {
         let mut tmpscenario = scenario.0.clone();
-        tmpscenario.sort_by(|a, b| a.frame_number.cmp(&b.frame_number));
+        tmpscenario.sort_by_key(|a| a.frame_number);
         let mut scenario = VecDeque::from(tmpscenario);
 
         while !scenario.is_empty() {
@@ -94,13 +96,13 @@ impl ScenarioRunner {
                         let mut hasher = Crc64Hasher::new();
                         self.screen_buffer.hash(&mut hasher);
                         if hasher.finish() != hash {
-                            panic!(format!(
+                            panic!(
                                 "assertion failed: `(left == right)` \
                                  (left: `0x{:016X}`, right: `0x{:016X}` frame: {})",
                                 hasher.finish(),
                                 hash,
                                 self.frame_counter
-                            ));
+                            );
                         };
                     }
                     ScenarioOperation::Reset => {
