@@ -6,7 +6,7 @@ license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
-nerust_sound_traits = { version = ">=0.0.0", path = "../traits" }
-nerust_soundfilter = { version = ">=0.0.0", path = "../../soundfilter" }
-alto = { version = "3.0.4" }
-log = { version = "0.4.29", default-features = false }
+nerust_sound_traits = { version = "=0.1.0", path = "../traits" }
+nerust_soundfilter = { version = "=0.1.0", path = "../../soundfilter" }
+alto = { version = "=3.0.4" }
+log = { version = "=0.4.29", default-features = false }

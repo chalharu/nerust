@@ -9,4 +9,4 @@ edition = "2018"
 crate_type = ["cdylib"]
 
 [dependencies]
-jni = { version = "0.22.4" }
+jni = { version = "=0.22.4" }

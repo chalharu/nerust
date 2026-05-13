@@ -6,6 +6,6 @@ license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
-serde = { version = "1.0.228", default-features = false }
+serde = { version = "=1.0.228", default-features = false }
 
 [dev-dependencies]
