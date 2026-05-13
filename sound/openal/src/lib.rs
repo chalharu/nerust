@@ -13,7 +13,7 @@ use nerust_soundfilter::{Filter, NesFilter};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use std::{f64, i16, mem, thread};
+use std::{f64, thread};
 
 #[derive(Debug)]
 struct FadeBuffer {
@@ -116,11 +116,11 @@ impl OpenAlState {
             .and_then(|alto| alto.open(None))
             .and_then(|dev| dev.new_context(None))
             .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
-            .and_then(|(mut src, mut ctx)| {
+            .map(|(mut src, mut ctx)| {
                 for _ in 0..buffer_count {
                     Self::add_buffer(&mut ctx, &mut src, sample_rate, buffer_width);
                 }
-                Ok(src)
+                src
             }) {
             Some(src)
         } else {
@@ -159,7 +159,7 @@ impl OpenAlState {
         buffer.clear();
         for d in fade_buffer.take(len) {
             buffer.push(Mono {
-                center: (d * f32::from(i16::max_value())) as i16,
+                center: (d * f32::from(i16::MAX)) as i16,
             });
         }
         buf.set_data(buffer, sample_rate).unwrap();
@@ -222,7 +222,7 @@ impl OpenAl {
                 data_recv,
                 buffer_width,
             );
-            while let Err(_) = stop_recv.try_recv() {
+            while stop_recv.try_recv().is_err() {
                 state.step();
                 thread::sleep(Duration::from_millis(1));
             }
@@ -273,6 +273,6 @@ impl Drop for OpenAl {
         if self.stop_sender.send(()).is_err() {
             log::warn!("OpenAL channel (stop) send failed");
         }
-        let _ = mem::replace(&mut self.thread, None).map(JoinHandle::join);
+        let _ = self.thread.take().map(JoinHandle::join);
     }
 }

@@ -1,0 +1,76 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": [
+		"config:recommended",
+		":disableRateLimiting",
+		":dependencyDashboard"
+	],
+	"timezone": "Asia/Tokyo",
+	"configMigration": true,
+	"configWarningReuseIssue": false,
+	"labels": ["renovate"],
+	"rebaseWhen": "behind-base-branch",
+	"pruneStaleBranches": true,
+	"separateMajorMinor": true,
+	"separateMinorPatch": true,
+	"separateMultipleMajor": true,
+	"separateMultipleMinor": true,
+	"automerge": true,
+	"automergeStrategy": "auto",
+	"platformAutomerge": false,
+	"pinDigests": true,
+	"internalChecksFilter": "none",
+	"prCreation": "immediate",
+	"vulnerabilityAlerts": {
+		"enabled": true,
+		"labels": ["renovate", "security"],
+		"minimumReleaseAge": null
+	},
+	"lockFileMaintenance": {
+		"enabled": true
+	},
+	"rangeStrategy": "pin",
+	"minimumReleaseAge": "3 days",
+	"minimumReleaseAgeBehaviour": "timestamp-required",
+	"packageRules": [
+		{
+			"description": "Disable release-age checks for update types without upstream release timestamps.",
+			"matchUpdateTypes": [
+				"digest",
+				"pin",
+				"pinDigest",
+				"lockFileMaintenance",
+				"lockFileUpdate",
+				"rollback",
+				"bump",
+				"replacement"
+			],
+			"minimumReleaseAge": null
+		},
+		{
+			"description": "Use the custom stability-days check for non-Docker Hub Docker registries without release timestamps.",
+			"matchDatasources": ["docker"],
+			"matchPackageNames": [
+				"/^[^\\/]+[.:][^\\/]+\\//",
+				"!/^index\\.docker\\.io\\//",
+				"!/^docker\\.io\\//",
+				"!/^registry-1\\.docker\\.io\\//"
+			],
+			"minimumReleaseAge": null,
+			"addLabels": ["renovate-wait-3d"]
+		}
+	],
+	"customManagers": [
+		{
+			"customType": "regex",
+			"description": "Update renovate-version in the Renovate workflow",
+			"managerFilePatterns": ["/(^|/)\\.github/workflows/renovate\\.ya?ml$/"],
+			"matchStrings": [
+				"(?:^|\\n)\\s+renovate-version:\\s*['\"]?(?<currentValue>[^\\s'\"]+)['\"]?\\s*(?:\\n|$)"
+			],
+			"datasourceTemplate": "docker",
+			"depNameTemplate": "ghcr.io/renovatebot/renovate",
+			"versioningTemplate": "docker"
+		}
+	]
+}

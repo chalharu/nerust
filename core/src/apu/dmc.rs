@@ -88,11 +88,7 @@ impl DMC {
         let prev_value = mem::replace(&mut self.value, value & 0x7F);
         self.prev_reg_value = self.value;
 
-        let output_diff = if self.value > prev_value {
-            self.value - prev_value
-        } else {
-            prev_value - self.value
-        };
+        let output_diff = self.value.abs_diff(prev_value);
         if output_diff > 50 {
             if self.value > prev_value {
                 self.value -= output_diff >> 1;

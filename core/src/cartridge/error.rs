@@ -4,13 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, failure::Fail)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CartridgeError {
-    #[fail(display = "data integrity error in data")]
+    #[error("data integrity error in data")]
     DataError,
-    #[fail(display = "file ends unexpectedly")]
+    #[error("file ends unexpectedly")]
     UnexpectedEof,
     #[allow(dead_code)]
-    #[fail(display = "unexpected error")]
+    #[error("unexpected error")]
     Unexpected,
 }

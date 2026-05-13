@@ -2,9 +2,10 @@
 name = "nerust_glwrap"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
-gl = { version = ">=0.0.0" }
-failure = { version = ">=0.0.0" }
-log = { version = ">=0.0.0", default-features = false }
+gl = { version = "=0.14.0" }
+log = { version = "=0.4.29", default-features = false }
+thiserror = { version = "=2.0.18" }

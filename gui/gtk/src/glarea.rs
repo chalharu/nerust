@@ -1,4 +1,5 @@
 use super::State;
+use gtk::glib;
 use gtk::prelude::*;
 use nerust_screen_opengl::GlView;
 use shared_library::dynamic_library::DynamicLibrary;
@@ -50,7 +51,8 @@ impl GLAreaExtend for GLArea {
         }
         {
             let result = result.clone();
-            let _ = gl_area.connect_render(move |_gl_area, _context| Inhibit(result.render()));
+            let _ = gl_area
+                .connect_render(move |_gl_area, _context| glib::Propagation::from(result.render()));
         }
         {
             let result = result.clone();
@@ -58,8 +60,9 @@ impl GLAreaExtend for GLArea {
         }
         {
             let result = result.clone();
-            let _ =
-                gl_area.add_tick_callback(move |_gl_area, _frame_clock| Continue(result.tick()));
+            let _ = gl_area.add_tick_callback(move |_gl_area, _frame_clock| {
+                glib::ControlFlow::from(result.tick())
+            });
         }
         result
     }
@@ -68,7 +71,7 @@ impl GLAreaExtend for GLArea {
         let mut view = GlView::new();
         view.use_vao(true);
         self.glarea().make_current();
-        if let Some(e) = self.glarea().get_error() {
+        if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
         }
         epoxy::load_with(|s| unsafe {
@@ -91,7 +94,7 @@ impl GLAreaExtend for GLArea {
 
     fn resize(&self, width: i32, height: i32) {
         self.glarea().make_current();
-        if let Some(e) = self.glarea().get_error() {
+        if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
         }
         // unsafe {epoxy::Viewport(0, 0, w, h);}
@@ -132,7 +135,7 @@ impl GLAreaExtend for GLArea {
 
 fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     gl_area.make_current();
-    if let Some(e) = gl_area.get_error() {
+    if let Some(e) = gl_area.error() {
         log::error!("{}", e);
     }
     {

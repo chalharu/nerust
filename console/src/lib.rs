@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crc::crc64;
+use crc::{Crc, Digest, CRC_64_XZ};
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::Core;
 use nerust_screen_buffer::ScreenBuffer;
@@ -15,8 +15,29 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicPtr;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::thread;
 use std::thread::JoinHandle;
-use std::{mem, thread};
+
+// The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
+const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+
+struct Crc64Hasher(Digest<'static, u64>);
+
+impl Crc64Hasher {
+    fn new() -> Self {
+        Self(CRC64_LEGACY_ECMA.digest())
+    }
+}
+
+impl Hasher for Crc64Hasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.clone().finalize()
+    }
+}
 
 #[derive(Debug)]
 pub struct Console {
@@ -107,7 +128,7 @@ impl Drop for Console {
         if self.stop_sender.send(()).is_err() {
             log::warn!("Core stop send failed");
         }
-        let _ = mem::replace(&mut self.thread, None).map(JoinHandle::join);
+        let _ = self.thread.take().map(JoinHandle::join);
     }
 }
 
@@ -154,7 +175,7 @@ impl ConsoleRunner {
 
     fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
         let mut core: Option<Core> = None;
-        while let Err(_) = self.stop_receiver.try_recv() {
+        while self.stop_receiver.try_recv().is_err() {
             if let Some(core) = core.as_mut() {
                 if !self.paused {
                     while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
@@ -178,7 +199,7 @@ impl ConsoleRunner {
                     ConsoleData::Pause => {
                         self.paused = true;
                         speaker.pause();
-                        let mut hasher = crc64::Digest::new(crc64::ECMA);
+                        let mut hasher = Crc64Hasher::new();
                         self.screen_buffer.hash(&mut hasher);
                         log::info!(
                             "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",

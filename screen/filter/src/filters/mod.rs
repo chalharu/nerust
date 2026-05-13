@@ -52,7 +52,7 @@ impl<T: FilterUnit, U: FilterUnit<Input = T::Output>> FilterUnit for Combine<T, 
 
     fn push<F: FnMut(Self::Output)>(&mut self, value: Self::Input, next_func: &mut F) {
         let f2 = &mut self.filter2;
-        (&mut self.filter1).push(value, &mut |x| f2.push(x, next_func));
+        self.filter1.push(value, &mut |x| f2.push(x, next_func));
     }
 
     fn source_logical_size(&self) -> LogicalSize {
