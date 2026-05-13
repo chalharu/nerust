@@ -12,9 +12,12 @@ use std::rc::Rc;
 pub(crate) struct WindowCore {
     application: gtk::Application,
     window: gtk::ApplicationWindow,
-    // glarea: GLArea,
     state: Rc<RefCell<State>>,
     keys: Buttons,
+    open_dialog: Option<gtk::FileChooserNative>,
+    close_action: gio::SimpleAction,
+    pause_action: gio::SimpleAction,
+    resume_action: gio::SimpleAction,
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -30,12 +33,13 @@ pub(crate) trait WindowExtend {
     fn application(&self) -> gtk::Application;
     fn state(&self) -> Rc<RefCell<State>>;
     fn realize(&self);
-    fn delete_event(&self) -> bool;
+    fn close_request(&self) -> bool;
     fn open(&self);
     fn close(&self);
     fn pause(&self);
     fn resume(&self);
-    fn key_event(&self, key: &gdk::EventKey, enevt: KeyEventState) -> bool;
+    fn update_actions(&self);
+    fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
 }
 
 pub(crate) enum KeyEventState {
@@ -54,14 +58,20 @@ impl WindowExtend for Window {
         glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
     ) -> Window {
+        let close_action = gio::SimpleAction::new("close", None);
+        let pause_action = gio::SimpleAction::new("pause", None);
+        let resume_action = gio::SimpleAction::new("resume", None);
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
-            // glarea: GLArea::bind(glarea, state.clone()),
             state: state.clone(),
             keys: Buttons::empty(),
+            open_dialog: None,
+            close_action: close_action.clone(),
+            pause_action: pause_action.clone(),
+            resume_action: resume_action.clone(),
         }));
-        let _ = GLArea::bind(glarea, result.state());
+        let _ = GLArea::bind(glarea.clone(), result.state());
         {
             let result = result.clone();
             let _ = window.connect_realize(move |_window| result.realize());
@@ -69,79 +79,61 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = window
-                .connect_delete_event(move |_, _| glib::Propagation::from(result.delete_event()));
+                .connect_close_request(move |_| glib::Propagation::from(result.close_request()));
         }
 
+        let key_controller = gtk::EventControllerKey::new();
         {
             let result = result.clone();
-            let _ = window.connect_key_press_event(move |_, event_key| {
-                glib::Propagation::from(result.key_event(event_key, KeyEventState::Press))
+            let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
+                glib::Propagation::from(result.key_event(key, KeyEventState::Press))
             });
         }
         {
             let result = result.clone();
-            let _ = window.connect_key_release_event(move |_, event_key| {
-                glib::Propagation::from(result.key_event(event_key, KeyEventState::Release))
+            let _ = key_controller.connect_key_released(move |_, key, _, _| {
+                result.key_event(key, KeyEventState::Release);
             });
         }
+        window.add_controller(key_controller);
+
         let open_action = gio::SimpleAction::new("open", None);
-        let close_action = gio::SimpleAction::new("close", None);
-        let pause_action = gio::SimpleAction::new("pause", None);
-        let resume_action = gio::SimpleAction::new("resume", None);
-
-        let update_func = {
-            let close_action = close_action.clone();
-            let pause_action = pause_action.clone();
-            let resume_action = resume_action.clone();
-            move || {
-                close_action.set_enabled(state.borrow_mut().loaded());
-                pause_action.set_enabled(state.borrow_mut().can_pause());
-                resume_action.set_enabled(state.borrow_mut().can_resume());
-            }
-        };
 
         {
             let result = result.clone();
-            let update_func = update_func.clone();
             let _ = open_action.connect_activate(move |_, _| {
                 result.open();
-                update_func();
             });
         }
         window.add_action(&open_action);
 
         {
             let result = result.clone();
-            let update_func = update_func.clone();
             let _ = close_action.connect_activate(move |_, _| {
                 result.close();
-                update_func();
             });
         }
         window.add_action(&close_action);
 
         {
             let result = result.clone();
-            let update_func = update_func.clone();
             let _ = pause_action.connect_activate(move |_, _| {
                 result.pause();
-                update_func();
             });
         }
         window.add_action(&pause_action);
 
         {
             let result = result.clone();
-            let update_func = update_func.clone();
             let _ = resume_action.connect_activate(move |_, _| {
                 result.resume();
-                update_func();
             });
         }
         window.add_action(&resume_action);
 
-        update_func();
-        window.show_all();
+        result.update_actions();
+        window.present();
+        let _ = glarea.grab_focus();
         result
     }
 
@@ -153,36 +145,53 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
-        let state = self.state();
-        let _ = file_chooser_native.connect_response(move |file_chooser_native, _| {
-            if let Some(mut f) = file_chooser_native
-                .filename()
-                .and_then(|f| File::open(f).ok())
-                .map(BufReader::new)
-            {
-                let mut buf = Vec::new();
-                let _ = f.read_to_end(&mut buf).unwrap();
-                state.borrow_mut().load(buf);
+        let result = self.clone();
+        let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
+            if response == gtk::ResponseType::Accept {
+                if let Some(mut f) = file_chooser_native
+                    .file()
+                    .and_then(|f| f.path())
+                    .and_then(|f| File::open(f).ok())
+                    .map(BufReader::new)
+                {
+                    let mut buf = Vec::new();
+                    let _ = f.read_to_end(&mut buf).unwrap();
+                    result.state().borrow_mut().load(buf);
+                }
+            }
+
+            file_chooser_native.hide();
+            result.borrow_mut().open_dialog = None;
+            result.update_actions();
+
+            if let Some(root) = result.window().focus() {
+                let _ = root.grab_focus();
+            } else {
+                let _ = result.window().grab_focus();
             }
         });
-        let _ = file_chooser_native.run();
+        self.borrow_mut().open_dialog = Some(file_chooser_native.clone());
+        file_chooser_native.show();
     }
 
     fn close(&self) {
         self.state().borrow_mut().unload();
+        self.update_actions();
     }
 
     fn pause(&self) {
         self.state().borrow_mut().pause();
+        self.update_actions();
     }
 
     fn resume(&self) {
         self.state().borrow_mut().resume();
+        self.update_actions();
     }
 
     fn realize(&self) {}
 
-    fn delete_event(&self) -> bool {
+    fn close_request(&self) -> bool {
         self.application().quit();
         false
     }
@@ -195,7 +204,19 @@ impl WindowExtend for Window {
         self.borrow().application.clone()
     }
 
-    fn key_event(&self, key: &gdk::EventKey, event: KeyEventState) -> bool {
+    fn update_actions(&self) {
+        self.borrow()
+            .close_action
+            .set_enabled(self.state().borrow().loaded());
+        self.borrow()
+            .pause_action
+            .set_enabled(self.state().borrow().can_pause());
+        self.borrow()
+            .resume_action
+            .set_enabled(self.state().borrow().can_resume());
+    }
+
+    fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
         // とりあえず、pad1のみ次の通りとする。
         // A      -> Z
         // B      -> X
@@ -205,15 +226,15 @@ impl WindowExtend for Window {
         // Down   -> Down
         // Left   -> Left
         // Right  -> Right
-        let code = match key.keyval() {
-            gdk::keys::constants::z => Buttons::A,
-            gdk::keys::constants::x => Buttons::B,
-            gdk::keys::constants::c => Buttons::SELECT,
-            gdk::keys::constants::v => Buttons::START,
-            gdk::keys::constants::Up => Buttons::UP,
-            gdk::keys::constants::Down => Buttons::DOWN,
-            gdk::keys::constants::Left => Buttons::LEFT,
-            gdk::keys::constants::Right => Buttons::RIGHT,
+        let code = match key {
+            gdk::Key::z => Buttons::A,
+            gdk::Key::x => Buttons::B,
+            gdk::Key::c => Buttons::SELECT,
+            gdk::Key::v => Buttons::START,
+            gdk::Key::Up => Buttons::UP,
+            gdk::Key::Down => Buttons::DOWN,
+            gdk::Key::Left => Buttons::LEFT,
+            gdk::Key::Right => Buttons::RIGHT,
             _ => Buttons::empty(),
         };
         let key = self.borrow().keys;
@@ -221,7 +242,7 @@ impl WindowExtend for Window {
             KeyEventState::Press => key | code,
             KeyEventState::Release => key & !code,
         };
-        self.state().borrow_mut().set_pad1(self.borrow_mut().keys);
+        self.state().borrow_mut().set_pad1(self.borrow().keys);
         false
     }
 }

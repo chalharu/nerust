@@ -31,21 +31,21 @@ cargo build -p nerust_glutin --release
 target/release/nerust [Rom File Path]
 ```
 
-### GTK3 Frontend
+### GTK4 Frontend
 
-#### GTK3 dependencies
+#### GTK4 dependencies
 
 - Cargo
 - Rust
-- GTK+3 v3.16 or greater
+- GTK 4.0 or greater
 
-#### Build GTK3
+#### Build GTK4
 
 ```sh
 cargo build -p nerust_gtk --release
 ```
 
-#### Run GTK3
+#### Run GTK4
 
 ```sh
 target/release/nerust_gtk

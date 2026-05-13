@@ -49,12 +49,12 @@ bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
 crc = { version = "=3.4.0" }
 epoxy = { version = "=0.1.0" }
-gdk = { version = "=0.18.2" }
+gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }
 gl = { version = "=0.14.0" }
 glutin = { version = "=0.32.3" }
 glutin-winit = { version = "=0.5.0" }
-gtk = { version = "=0.18.2", features = ["v3_24"] }
+gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
 lazy_static = { version = "=1.5.0" }
 log = { version = "=0.4.29", default-features = false }

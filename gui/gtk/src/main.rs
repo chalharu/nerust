@@ -3,6 +3,7 @@ mod window;
 
 use self::window::{Window, WindowExtend};
 use gtk::gio;
+use gtk::glib;
 use gtk::prelude::*;
 use nerust_console::Console;
 use nerust_core::controller::standard_controller::Buttons;
@@ -87,6 +88,9 @@ impl State {
 fn app_activate(app: &gtk::Application) {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
+    let menu = gtk::Builder::from_string(include_str!("../resources/menu.xml"))
+        .object::<gio::Menu>("menu")
+        .unwrap();
 
     let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(ScreenBuffer::new(
         FilterType::NtscComposite,
@@ -96,12 +100,9 @@ fn app_activate(app: &gtk::Application) {
         },
     ))));
 
-    app.set_menubar(
-        gtk::Builder::from_string(include_str!("../resources/menu.xml"))
-            .object::<gio::Menu>("menu")
-            .as_ref(),
-    );
+    app.set_menubar(Some(&menu));
     app.add_window(&window);
+    window.set_show_menubar(true);
 
     let quit_action = gio::SimpleAction::new("quit", None);
     {
@@ -112,26 +113,32 @@ fn app_activate(app: &gtk::Application) {
     }
     app.add_action(&quit_action);
 
-    fn create_about_dialog() -> Option<gtk::AboutDialog> {
-        Some(
-            gtk::Builder::from_string(include_str!("../resources/about.xml"))
-                .object("about")
-                .unwrap(),
-        )
+    fn create_about_dialog() -> gtk::AboutDialog {
+        gtk::Builder::from_string(include_str!("../resources/about.xml"))
+            .object("about")
+            .unwrap()
     }
     let about_action = gio::SimpleAction::new("about", None);
     {
         let window = window.clone();
-        let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> =
-            Rc::new(RefCell::new(create_about_dialog()));
+        let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> = Rc::new(RefCell::new(None));
         let _ = about_action.connect_activate(move |_, _| {
-            let window_about_inner = window_about.borrow_mut().take();
-            if let Some(window_about_inner) = window_about_inner {
-                window_about_inner.set_transient_for(Some(&window));
-                let _ = window_about_inner.run();
-                window_about_inner.close();
-                *window_about.borrow_mut() = create_about_dialog();
+            if let Some(dialog) = window_about.borrow().as_ref() {
+                dialog.present();
+                return;
             }
+
+            let dialog = create_about_dialog();
+            dialog.set_transient_for(Some(&window));
+
+            let window_about_on_close = window_about.clone();
+            let _ = dialog.connect_close_request(move |_| {
+                *window_about_on_close.borrow_mut() = None;
+                glib::Propagation::Proceed
+            });
+
+            dialog.present();
+            *window_about.borrow_mut() = Some(dialog);
         });
     }
     app.add_action(&about_action);
