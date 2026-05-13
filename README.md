@@ -14,18 +14,18 @@ An NES emulator written in Rust
 
 ### Glutin Frontend
 
-#### Dependencies
+#### Glutin dependencies
 
 - Cargo
 - Rust
 
-#### Build
+#### Build Glutin
 
 ```sh
 cargo build -p nerust_glutin --release
 ```
 
-#### Run
+#### Run Glutin
 
 ```sh
 target/release/nerust [Rom File Path]
@@ -33,19 +33,19 @@ target/release/nerust [Rom File Path]
 
 ### GTK3 Frontend
 
-#### Dependencies
+#### GTK3 dependencies
 
 - Cargo
 - Rust
 - GTK+3 v3.16 or greater
 
-#### Build
+#### Build GTK3
 
 ```sh
 cargo build -p nerust_gtk --release
 ```
 
-#### Run
+#### Run GTK3
 
 ```sh
 target/release/nerust_gtk
