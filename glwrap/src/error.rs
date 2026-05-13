@@ -9,33 +9,33 @@ use gl::types::*;
 use std::fmt;
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, failure::Fail)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ErrorKind {
-    #[fail(display = "An enumeration parameter is not a legal enumeration for that function.")]
+    #[error("An enumeration parameter is not a legal enumeration for that function.")]
     InvalidEnum,
-    #[fail(display = "A value parameter is not a legal value for that function.")]
+    #[error("A value parameter is not a legal value for that function.")]
     InvalidValue,
-    #[fail(
-        display = "The set of state for a command is not legal for the parameters given to that command."
+    #[error(
+        "The set of state for a command is not legal for the parameters given to that command."
     )]
     InvalidOperation,
-    #[fail(display = "Stack pushing operation cannot be done")]
+    #[error("Stack pushing operation cannot be done")]
     StackOverflow,
-    #[fail(display = "Stack popping operation cannot be done")]
+    #[error("Stack popping operation cannot be done")]
     StackUnderflow,
-    #[fail(
-        display = "Performing an operation that can allocate memory, and the memory cannot be allocated."
+    #[error(
+        "Performing an operation that can allocate memory, and the memory cannot be allocated."
     )]
     OutOfMemory,
-    #[fail(
-        display = "Doing anything that would attempt to read from or write/render to a framebuffer that is not complete."
+    #[error(
+        "Doing anything that would attempt to read from or write/render to a framebuffer that is not complete."
     )]
     InvalidFramebufferOperation,
-    #[fail(display = "OpenGL context has been lost")]
+    #[error("OpenGL context has been lost")]
     ContextLost,
-    // #[fail(display = "Table too large")]
+    // #[error("Table too large")]
     // TableTooLarge,
-    #[fail(display = "unexpected error: 0x{:04X}", _0)]
+    #[error("unexpected error: 0x{0:04X}")]
     Unexpected(GLuint),
 }
 
@@ -56,8 +56,10 @@ impl From<GLuint> for ErrorKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, failure::Fail)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(Vec<ErrorKind>);
+
+impl std::error::Error for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

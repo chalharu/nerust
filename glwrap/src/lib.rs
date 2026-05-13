@@ -4,7 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![allow(clippy::too_many_arguments)]
+#![allow(
+    clippy::manual_slice_size_calculation,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::single_component_path_imports,
+    clippy::too_many_arguments,
+    clippy::uninit_vec
+)]
 
 mod error;
 mod vertex;

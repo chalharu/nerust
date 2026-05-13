@@ -8,7 +8,6 @@ pub(crate) mod ines;
 pub(crate) mod nes20;
 use super::error::CartridgeError;
 use crate::MirrorMode;
-use serde_bytes;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub struct CartridgeData {

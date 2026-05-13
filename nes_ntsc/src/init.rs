@@ -102,7 +102,7 @@ impl Init {
                 let angle = to_angle * (i as f32 - KERNEL_HALF as f32);
 
                 // instability occurs at center point with rolloff very close to 1.0
-                if KERNEL_HALF != i || pow_a_n > 1.056 || pow_a_n < 0.981 {
+                if KERNEL_HALF != i || !(0.981..=1.056).contains(&pow_a_n) {
                     let rolloff_cos_a = rolloff * angle.cos();
                     let num = 1.0 - rolloff_cos_a - pow_a_n * (maxh * angle).cos()
                         + pow_a_n * rolloff * ((maxh - 1.0) * angle).cos();

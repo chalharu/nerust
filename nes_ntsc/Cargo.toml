@@ -2,6 +2,7 @@
 name = "nes_ntsc"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+license = "MPL-2.0"
 
 [dependencies]
 lazy_static = { version = "1.5.0" }

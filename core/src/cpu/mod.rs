@@ -231,12 +231,12 @@ impl Core {
                 }
             }
         } else {
-            if let Some(offset) = ::std::mem::replace(&mut self.interrupt.oam_dma, None) {
+            if let Some(offset) = self.interrupt.oam_dma.take() {
                 self.oam_dma.as_mut().unwrap().start_transaction(offset);
             }
 
             if self.oam_dma.as_ref().unwrap().has_transaction() {
-                let mut oam_dma = ::std::mem::replace(&mut self.oam_dma, None);
+                let mut oam_dma = self.oam_dma.take();
                 oam_dma
                     .as_mut()
                     .unwrap()

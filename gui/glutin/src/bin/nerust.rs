@@ -6,7 +6,6 @@
 
 use clap::{Arg, Command};
 use nerust_glutin::Window;
-use simple_logger;
 use std::fs::File;
 use std::io::{BufReader, Read};
 

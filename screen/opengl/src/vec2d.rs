@@ -4,8 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
 pub(crate) struct Vec2D {
     pub(crate) x: f32,
     pub(crate) y: f32,

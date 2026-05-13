@@ -68,9 +68,8 @@ impl WindowExtend for Window {
         }
         {
             let result = result.clone();
-            let _ = window.connect_delete_event(move |_, _| {
-                glib::Propagation::from(result.delete_event())
-            });
+            let _ = window
+                .connect_delete_event(move |_, _| glib::Propagation::from(result.delete_event()));
         }
 
         {

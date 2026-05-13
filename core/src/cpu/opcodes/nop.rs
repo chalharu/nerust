@@ -24,7 +24,7 @@ impl CpuStepState for Nop {
                     .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
             }
             _ => {
-                return exit_opcode(core);;
+                return exit_opcode(core);
             }
         }
         CpuStepStateEnum::Continue

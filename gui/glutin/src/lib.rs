@@ -22,9 +22,9 @@ use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::{Timer, CLOCK_RATE};
 use raw_window_handle::HasWindowHandle;
+use std::f64;
 use std::ffi::CString;
 use std::num::NonZeroU32;
-use std::f64;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -66,11 +66,7 @@ fn create_gl_context(window: &WinitWindow, gl_config: &Config) -> NotCurrentCont
 fn create_window(
     event_loop: &ActiveEventLoop,
     size: PhysicalSize,
-) -> (
-    WinitWindow,
-    PossiblyCurrentContext,
-    Surface<WindowSurface>,
-) {
+) -> (WinitWindow, PossiblyCurrentContext, Surface<WindowSurface>) {
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder =
         DisplayBuilder::new().with_window_attributes(Some(create_window_attributes(size)));
@@ -107,10 +103,8 @@ fn create_window(
         gl_display.get_proc_address(symbol.as_c_str()).cast()
     });
 
-    let _ = gl_surface.set_swap_interval(
-        &gl_context,
-        SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
-    );
+    let _ =
+        gl_surface.set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
     (window, gl_context, gl_surface)
 }
@@ -213,8 +207,8 @@ impl Window {
         let rate_x = physical_size.width as f32 / self.physical_size.width;
         let rate_y = physical_size.height as f32 / self.physical_size.height;
         let rate = f32::min(rate_x, rate_y);
-        let scale_x = (rate / rate_x) as f32;
-        let scale_y = (rate / rate_y) as f32;
+        let scale_x = rate / rate_x;
+        let scale_y = rate / rate_y;
 
         self.view.as_mut().unwrap().on_resize(scale_x, scale_y);
     }

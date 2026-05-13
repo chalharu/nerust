@@ -6,8 +6,9 @@
 
 use super::Vec2D;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
 pub(crate) struct VertexData {
     pub(crate) position: Vec2D,
     pub(crate) uv: Vec2D,
