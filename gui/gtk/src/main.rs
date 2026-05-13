@@ -2,7 +2,7 @@ mod glarea;
 mod window;
 
 use self::window::{Window, WindowExtend};
-use gio::prelude::*;
+use gtk::gio;
 use gtk::prelude::*;
 use nerust_console::Console;
 use nerust_core::controller::standard_controller::Buttons;
@@ -84,8 +84,8 @@ impl State {
 }
 
 fn app_activate(app: &gtk::Application) {
-    let builder = gtk::Builder::new_from_string(include_str!("../resources/ui.xml"));
-    let window: gtk::ApplicationWindow = builder.get_object("window").unwrap();
+    let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
+    let window: gtk::ApplicationWindow = builder.object("window").unwrap();
 
     let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(ScreenBuffer::new(
         FilterType::NtscComposite,
@@ -96,8 +96,8 @@ fn app_activate(app: &gtk::Application) {
     ))));
 
     app.set_menubar(
-        gtk::Builder::new_from_string(include_str!("../resources/menu.xml"))
-            .get_object::<gio::Menu>("menu")
+        gtk::Builder::from_string(include_str!("../resources/menu.xml"))
+            .object::<gio::Menu>("menu")
             .as_ref(),
     );
     app.add_window(&window);
@@ -113,8 +113,8 @@ fn app_activate(app: &gtk::Application) {
 
     fn create_about_dialog() -> Option<gtk::AboutDialog> {
         Some(
-            gtk::Builder::new_from_string(include_str!("../resources/about.xml"))
-                .get_object("about")
+            gtk::Builder::from_string(include_str!("../resources/about.xml"))
+                .object("about")
                 .unwrap(),
         )
     }
@@ -128,7 +128,7 @@ fn app_activate(app: &gtk::Application) {
             if let Some(window_about_inner) = window_about_inner {
                 window_about_inner.set_transient_for(Some(&window));
                 let _ = window_about_inner.run();
-                window_about_inner.destroy();
+                window_about_inner.close();
                 *window_about.borrow_mut() = create_about_dialog();
             }
         });
@@ -138,7 +138,7 @@ fn app_activate(app: &gtk::Application) {
     let _ = Window::bind(
         app.clone(),
         window,
-        builder.get_object("glarea").unwrap(),
+        builder.object("glarea").unwrap(),
         state,
     );
 }
@@ -150,10 +150,9 @@ fn main() {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
-    )
-    .expect("Application start up error");
+    );
 
     let _ = app.connect_activate(app_activate);
 
-    let _ = app.run(&std::env::args().collect::<Vec<_>>());
+    let _ = app.run();
 }

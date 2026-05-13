@@ -7,5 +7,5 @@ edition = "2018"
 [dependencies]
 nerust_sound_traits = { version = ">=0.0.0", path="../traits" }
 nerust_soundfilter = { version = ">=0.0.0", path="../../soundfilter" }
-alto =  { version = ">=0.0.0" }
-log = { version = ">=0.0.0", default-features = false }
+alto =  { version = "3.0.4" }
+log = { version = "0.4.29", default-features = false }
