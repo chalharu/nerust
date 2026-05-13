@@ -1,5 +1,5 @@
-use super::glarea::{GLArea, GLAreaExtend};
 use super::State;
+use super::glarea::{GLArea, GLAreaExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;

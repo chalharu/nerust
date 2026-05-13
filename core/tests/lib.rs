@@ -1,5 +1,3 @@
-#![allow(dead_code, clippy::upper_case_acronyms)]
-
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -17,9 +15,9 @@ mod ppu;
 use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
-use crc::{Crc, Digest, CRC_64_XZ};
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core::Core;
+use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
@@ -140,6 +138,11 @@ impl ScenarioRunner {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[allow(
+    dead_code,
+    clippy::upper_case_acronyms,
+    reason = "scenario DSL keeps NES button names and future pad inputs"
+)]
 enum ButtonCode {
     A,
     B,
@@ -167,9 +170,9 @@ impl From<ButtonCode> for Buttons {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code, reason = "scenario DSL supports both controllers")]
 enum StandardControllerButtonCode {
     Pad1(ButtonCode),
-    #[allow(dead_code)]
     Pad2(ButtonCode),
 }
 

@@ -379,7 +379,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
   This Source Code Form is "Incompatible With Secondary Licenses", as
   defined by the Mozilla Public License, v. 2.0. </property>
-    <property name="authors">Mitsuharu Seki</property>
+    <property name="authors">chalharu</property>
     <property name="logo_icon_name">application-x-executable</property>
     <property name="license_type">custom</property>
     <child>
