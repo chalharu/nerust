@@ -6,21 +6,21 @@ license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]
-log = { version = "0.4.29", default-features = false }
-serde = { version = "1.0.228", default-features = false }
-serde_derive = { version = "1.0.228", default-features = false }
-serde_bytes = { version = "0.11.19" }
-bitflags = { version = "2.11.1", features = ["serde"] }
-strum = { version = "0.28.0" }
-strum_macros = { version = "0.28.0" }
-thiserror = { version = "2.0.18" }
-typetag = { version = "0.2.21" }
-nerust_sound_traits = { version = ">0.0.0", path = "../sound/traits" }
-nerust_screen_traits = { version = ">0.0.0", path = "../screen/traits" }
-nerust_serialize = { version = ">0.0.0", path = "../serialize" }
+log = { version = "=0.4.29", default-features = false }
+serde = { version = "=1.0.228", default-features = false }
+serde_derive = { version = "=1.0.228", default-features = false }
+serde_bytes = { version = "=0.11.19" }
+bitflags = { version = "=2.11.1", features = ["serde"] }
+strum = { version = "=0.28.0" }
+strum_macros = { version = "=0.28.0" }
+thiserror = { version = "=2.0.18" }
+typetag = { version = "=0.2.21" }
+nerust_sound_traits = { version = "=0.1.0", path = "../sound/traits" }
+nerust_screen_traits = { version = "=0.1.0", path = "../screen/traits" }
+nerust_serialize = { version = "=0.1.0", path = "../serialize" }
 
 [dev-dependencies]
-hound = { version = "3.5.1" }
-crc = { version = "3.4.0" }
-nerust_screen_buffer = { version = ">0.0.0", path = "../screen/buffer" }
-nerust_screen_filter = { version = ">0.0.0", path = "../screen/filter" }
+hound = { version = "=3.5.1" }
+crc = { version = "=3.4.0" }
+nerust_screen_buffer = { version = "=0.1.0", path = "../screen/buffer" }
+nerust_screen_filter = { version = "=0.1.0", path = "../screen/filter" }
