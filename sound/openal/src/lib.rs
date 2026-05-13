@@ -10,7 +10,7 @@ use self::resampler::{Resampler, SimpleDownSampler};
 use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_soundfilter::{Filter, NesFilter};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
@@ -256,14 +256,13 @@ impl Sound for OpenAl {
 impl MixerInput for OpenAl {
     // 0.0 ~ 1.0 => -1.0 ~ 1.0
     fn push(&mut self, data: f32) {
-        if let Some(resampled_data) = self.resampler.step(data) {
-            if self
+        if let Some(resampled_data) = self.resampler.step(data)
+            && self
                 .data_sender
                 .send(self.filter.step(resampled_data * 2.0 - 1.0))
                 .is_err()
-            {
-                log::warn!("OpenAL channel (data) send failed");
-            }
+        {
+            log::warn!("OpenAL channel (data) send failed");
         }
     }
 }

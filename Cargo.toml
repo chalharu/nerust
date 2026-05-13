@@ -1,4 +1,5 @@
 [workspace]
+resolver = "3"
 members = [
   "console",
   "core",
@@ -35,3 +36,49 @@ default-members = [
 
 [profile.release]
 debug = true
+
+[workspace.package]
+version = "0.1.0"
+authors = ["chalharu"]
+license = "MPL-2.0"
+edition = "2024"
+
+[workspace.dependencies]
+alto = { version = "=3.0.4" }
+bitflags = { version = "=2.11.1", features = ["serde"] }
+clap = { version = "=4.6.1" }
+crc = { version = "=3.4.0" }
+epoxy = { version = "=0.1.0" }
+gdk = { version = "=0.18.2" }
+gio = { version = "=0.22.6" }
+gl = { version = "=0.14.0" }
+glutin = { version = "=0.32.3" }
+glutin-winit = { version = "=0.5.0" }
+gtk = { version = "=0.18.2", features = ["v3_24"] }
+hound = { version = "=3.5.1" }
+lazy_static = { version = "=1.5.0" }
+log = { version = "=0.4.29", default-features = false }
+nerust_console = { version = "=0.1.0", path = "console" }
+nerust_core = { version = "=0.1.0", path = "core" }
+nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
+nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
+nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
+nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }
+nerust_screen_traits = { version = "=0.1.0", path = "screen/traits" }
+nerust_serialize = { version = "=0.1.0", path = "serialize" }
+nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
+nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }
+nerust_soundfilter = { version = "=0.1.0", path = "soundfilter" }
+nerust_timer = { version = "=0.1.0", path = "timer" }
+nes_ntsc = { version = "=0.1.0", path = "nes_ntsc" }
+raw-window-handle = { version = "=0.6.2" }
+serde = { version = "=1.0.228", default-features = false }
+serde_bytes = { version = "=0.11.19" }
+serde_derive = { version = "=1.0.228", default-features = false }
+shared_library = { version = "=0.1.9" }
+simple_logger = { version = "=5.2.0" }
+strum = { version = "=0.28.0" }
+strum_macros = { version = "=0.28.0" }
+thiserror = { version = "=2.0.18" }
+typetag = { version = "=0.2.21" }
+winit = { version = "=0.30.13" }
