@@ -4,10 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{gl_error_handle, gl_get_error, Error};
-use gl;
+use super::{Error, gl_error_handle, gl_get_error};
 use gl::types::{GLenum, GLint, GLsizei, GLuint};
-use std;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -174,7 +172,7 @@ impl VertexBuffer {
         unsafe {
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (s.len() * std::mem::size_of::<T>()) as gl::types::GLsizeiptr,
+                std::mem::size_of_val(s) as gl::types::GLsizeiptr,
                 s.as_ptr() as _,
                 gl::STATIC_DRAW,
             );
@@ -212,7 +210,7 @@ impl IndexBuffer {
         unsafe {
             gl::BufferData(
                 gl::ELEMENT_ARRAY_BUFFER,
-                (s.len() * std::mem::size_of::<T>()) as gl::types::GLsizeiptr,
+                std::mem::size_of_val(s) as gl::types::GLsizeiptr,
                 s.as_ptr() as _,
                 gl::STATIC_DRAW,
             );

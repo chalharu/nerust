@@ -1,4 +1,7 @@
-#![allow(dead_code, clippy::too_many_arguments, clippy::upper_case_acronyms)]
+#![allow(
+    dead_code,
+    reason = "emulator components include future mapper/APU hooks"
+)]
 
 // Copyright (c) 2018 Mitsuharu Seki
 //

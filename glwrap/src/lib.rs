@@ -4,14 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![allow(
-    clippy::manual_slice_size_calculation,
-    clippy::not_unsafe_ptr_arg_deref,
-    clippy::single_component_path_imports,
-    clippy::too_many_arguments,
-    clippy::uninit_vec
-)]
-
 mod error;
 mod raw;
 mod vertex;
@@ -21,7 +13,7 @@ use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
 pub use raw::*;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::{ptr, slice, str};
+use std::{ptr, str};
 pub use vertex::*;
 
 fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
@@ -83,17 +75,6 @@ impl Shader {
     }
 }
 
-unsafe fn alloc<T>(len: usize) -> *mut T {
-    let mut vec = Vec::<T>::with_capacity(len);
-    vec.set_len(len);
-    Box::into_raw(vec.into_boxed_slice()) as *mut T
-}
-
-unsafe fn free<T>(raw: *mut T, len: usize) {
-    let s = slice::from_raw_parts_mut(raw, len);
-    let _ = Box::from_raw(s);
-}
-
 fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
     let mut count: GLint = 0;
     get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).unwrap();
@@ -101,7 +82,7 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
     const BUF_SIZE: GLsizei = 16;
-    let name_buf = unsafe { alloc::<GLchar>(BUF_SIZE as usize) };
+    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -114,13 +95,16 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
             &mut length,
             &mut size,
             &mut ty,
-            name_buf,
+            name_buf.as_mut_ptr(),
         )
         .unwrap();
-        let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
+        let name = String::from(
+            unsafe { CStr::from_ptr(name_buf.as_ptr()) }
+                .to_str()
+                .unwrap(),
+        );
         let _ = result.insert(name, i);
     }
-    unsafe { free(name_buf, BUF_SIZE as usize) };
     result
 }
 
@@ -131,7 +115,7 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLuint> {
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
     const BUF_SIZE: GLsizei = 16;
-    let name_buf = unsafe { alloc::<GLchar>(BUF_SIZE as usize) };
+    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -144,15 +128,33 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLuint> {
             &mut length,
             &mut size,
             &mut ty,
-            name_buf,
+            name_buf.as_mut_ptr(),
         )
         .unwrap();
-        let name = String::from(unsafe { CStr::from_ptr(name_buf) }.to_str().unwrap());
+        let name = String::from(
+            unsafe { CStr::from_ptr(name_buf.as_ptr()) }
+                .to_str()
+                .unwrap(),
+        );
         let _ = result.insert(name, i);
     }
 
-    unsafe { free(name_buf, BUF_SIZE as usize) };
     result
+}
+
+fn info_log_buffer(len: GLint) -> Vec<u8> {
+    vec![0; usize::try_from(len).expect("OpenGL info log length must be non-negative")]
+}
+
+fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> &str {
+    let written =
+        usize::try_from(written).expect("OpenGL written info log length must be non-negative");
+    let written = written.min(buf.len());
+    buf.truncate(written);
+    if buf.last() == Some(&0) {
+        let _ = buf.pop();
+    }
+    str::from_utf8(buf.as_slice()).expect("OpenGL info log not valid utf8")
 }
 
 fn compile_shader(src: &str, ty: GLenum) -> GLuint {
@@ -168,18 +170,10 @@ fn compile_shader(src: &str, ty: GLenum) -> GLuint {
         if status != GLint::from(gl::TRUE) {
             let mut len = 0;
             gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
-            let mut buf = Vec::with_capacity(len as usize);
-            buf.set_len((len as usize) - 1); // subtract 1 to skip the trailing null character
-            gl::GetShaderInfoLog(
-                shader,
-                len,
-                ptr::null_mut(),
-                buf.as_mut_ptr() as *mut GLchar,
-            );
-            panic!(
-                "{}",
-                str::from_utf8(&buf).expect("ShaderInfoLog not valid utf8")
-            );
+            let mut written = 0;
+            let mut buf = info_log_buffer(len);
+            gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr() as *mut GLchar);
+            panic!("{}", trim_info_log(&mut buf, written));
         }
     }
     shader
@@ -198,18 +192,10 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
         if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
             get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).unwrap();
-            let mut buf = Vec::with_capacity(len as usize);
-            buf.set_len((len as usize) - 1); // subtract 1 to skip the trailing null character
-            gl::GetProgramInfoLog(
-                program,
-                len,
-                ptr::null_mut(),
-                buf.as_mut_ptr() as *mut GLchar,
-            );
-            panic!(
-                "{}",
-                str::from_utf8(&buf).expect("ProgramInfoLog not valid utf8")
-            );
+            let mut written = 0;
+            let mut buf = info_log_buffer(len);
+            gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr() as *mut GLchar);
+            panic!("{}", trim_info_log(&mut buf, written));
         }
         program
     }

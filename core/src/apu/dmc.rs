@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::cpu::interrupt::*;
 use crate::Cartridge;
+use crate::cpu::interrupt::*;
 use std::mem;
 
 // NTSC
@@ -17,6 +17,10 @@ const DMC_TABLE: [u8; 16] = [
 ];
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[allow(
+    clippy::upper_case_acronyms,
+    reason = "DMC is the established NES APU channel name"
+)]
 pub(crate) struct DMC {
     value: u8,
 
