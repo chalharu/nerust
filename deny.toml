@@ -18,7 +18,11 @@ ignore = [
   "RUSTSEC-2024-0370",
 ]
 
+[bans]
+multiple-versions = "allow"
+
 [licenses]
+unused-allowed-license = "allow"
 allow = [
   "0BSD",
   "Apache-2.0",
