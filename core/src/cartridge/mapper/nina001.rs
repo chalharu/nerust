@@ -64,7 +64,7 @@ impl Mapper for Nina001 {
     }
 
     fn register_addr(&self, address: usize) -> bool {
-        address >= 0x7FFD && address <= 0x7FFF
+        (0x7FFD..=0x7FFF).contains(&address)
     }
 
     fn write_register(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {

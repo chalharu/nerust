@@ -2,6 +2,7 @@
 name = "nerust_sound_traits"
 version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
+license = "MPL-2.0"
 edition = "2018"
 
 [dependencies]

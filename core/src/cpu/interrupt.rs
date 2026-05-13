@@ -5,7 +5,13 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 bitflags::bitflags! {
-    #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+        Debug,
+        Clone,
+        Copy,
+    )]
     pub(crate) struct IrqSource: u8 {
         const EXTERNAL = 0b0000_0001;
         const FRAME_COUNTER = 0b0000_0010;

@@ -11,7 +11,6 @@ mod vertex_data;
 use self::mat4::Mat4;
 use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
-use gl;
 use gl::types::GLint;
 use nerust_glwrap::*;
 use nerust_screen_traits::LogicalSize;
@@ -20,11 +19,7 @@ use std::ptr;
 use std::rc::Rc;
 
 fn allocate(size: usize) -> Box<[u8]> {
-    let mut buffer = Vec::with_capacity(size);
-    unsafe {
-        buffer.set_len(size);
-    }
-    buffer.into_boxed_slice()
+    vec![0; size].into_boxed_slice()
 }
 
 #[derive(Debug)]

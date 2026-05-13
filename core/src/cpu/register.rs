@@ -23,6 +23,7 @@ pub(crate) struct Register {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
     pub struct RegisterP: u8 {
         const CARRY = 0b0000_0001;
         const ZERO = 0b0000_0010;

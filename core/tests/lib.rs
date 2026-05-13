@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::upper_case_acronyms)]
+
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -15,7 +17,7 @@ mod ppu;
 use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
-use crc::crc64;
+use crc::{Crc, Digest, CRC_64_XZ};
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::Core;
 use nerust_screen_buffer::ScreenBuffer;
@@ -24,6 +26,27 @@ use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::MixerInput;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
+
+// The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
+const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+
+struct Crc64Hasher(Digest<'static, u64>);
+
+impl Crc64Hasher {
+    fn new() -> Self {
+        Self(CRC64_LEGACY_ECMA.digest())
+    }
+}
+
+impl Hasher for Crc64Hasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.clone().finalize()
+    }
+}
 
 struct TestMixer;
 
@@ -62,7 +85,7 @@ impl ScenarioRunner {
 
     fn run(&mut self, scenario: Scenario) {
         let mut tmpscenario = scenario.0.clone();
-        tmpscenario.sort_by(|a, b| a.frame_number.cmp(&b.frame_number));
+        tmpscenario.sort_by_key(|a| a.frame_number);
         let mut scenario = VecDeque::from(tmpscenario);
 
         while !scenario.is_empty() {
@@ -70,16 +93,16 @@ impl ScenarioRunner {
             while !scenario.is_empty() && scenario[0].frame_number == self.frame_counter {
                 match scenario.pop_front().unwrap().operation {
                     ScenarioOperation::CheckScreen { hash } => {
-                        let mut hasher = crc64::Digest::new(crc64::ECMA);
+                        let mut hasher = Crc64Hasher::new();
                         self.screen_buffer.hash(&mut hasher);
                         if hasher.finish() != hash {
-                            panic!(format!(
+                            panic!(
                                 "assertion failed: `(left == right)` \
                                  (left: `0x{:016X}`, right: `0x{:016X}` frame: {})",
                                 hasher.finish(),
                                 hash,
                                 self.frame_counter
-                            ));
+                            );
                         };
                     }
                     ScenarioOperation::Reset => {

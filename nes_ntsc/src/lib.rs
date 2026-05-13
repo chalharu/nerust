@@ -307,7 +307,7 @@ impl NesNtsc {
         let chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
 
         let ktable = (0..NES_NTSC_PALETTE_SIZE)
-            .map(|entry| {
+            .flat_map(|entry| {
                 // Base 64-color generation
                 let level = (entry >> 4) & 3;
 
@@ -367,7 +367,6 @@ impl NesNtsc {
                     }
                 }
             })
-            .flatten()
             .collect::<Vec<_>>();
         Self {
             chunk_size,
