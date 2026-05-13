@@ -8,8 +8,8 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::cpu::interrupt::Interrupt;
 use crate::MirrorMode;
+use crate::cpu::interrupt::Interrupt;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -193,10 +193,6 @@ impl Mapper for SxRom {
         // MMC1A, MMC1BであればWRAMを有効にする必要がある。
 
         self.write_control(0x0C);
-    }
-
-    fn name(&self) -> &str {
-        "MMC1 SXROM (Mapper1)"
     }
 
     fn bus_conflicts(&self) -> bool {

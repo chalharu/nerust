@@ -12,7 +12,7 @@ An NES emulator written in Rust
 
 ## Usage
 
-### Non GTK+ (glutin) Version
+### glutin Frontend
 
 #### Dependencies
 
@@ -31,27 +31,24 @@ cargo build -p nerust_glutin --release
 target/release/nerust [Rom File Path]
 ```
 
-### Non GTK+ Version
-
-#### Dependencies
-
-- Cargo
-- Rust
-- GTK+3 v3.16 or greater.
-
-#### Build
+Audio is optional to keep the default workspace build free of native audio
+requirements. To build the glutin frontend with audio, enable the `audio`
+feature:
 
 ```sh
-cargo build -p nerust_gtk --release
+cargo build -p nerust_glutin --release --features audio
 ```
 
-#### Run
+On Linux, the audio feature uses `cpal` and requires ALSA development files to
+be available on the system.
 
-```sh
-target/release/nerust_gtk
-```
+### GTK Frontend
 
-## Support Mappers
+The legacy GTK3 frontend was removed from the active Cargo workspace because
+the GTK3 Rust bindings are no longer maintained. Use the glutin frontend for
+the maintained desktop build.
+
+## Supported Mappers
 
 - NRom (Mapper 0)
 - MMC1 SxRom (Mapper 1)
@@ -68,10 +65,10 @@ target/release/nerust_gtk
 - Other Mappers
 - Network multiplay
 
-## Licence
+## License
 
 [MPL-2.0](https://github.com/chalharu/Nerust/blob/master/LICENSE)
 
 ## Author
 
-[Mitsuharu Seki](https://github.com/chalharu)
+[chalharu](https://github.com/chalharu)

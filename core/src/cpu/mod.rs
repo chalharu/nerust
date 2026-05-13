@@ -217,18 +217,13 @@ impl Core {
 
         if self.interrupt.dmc_count > 0 && (self.cycles & 1 == 0) {
             self.interrupt.dmc_count -= 1;
-            if self.interrupt.dmc_count == 0 {
-                if let Some(addr) = apu.dmc_fill_address() {
-                    let value = self.memory.read(
-                        addr,
-                        ppu,
-                        cartridge,
-                        controller,
-                        apu,
-                        &mut self.interrupt,
-                    );
-                    apu.dmc_fill(value, &mut self.interrupt);
-                }
+            if self.interrupt.dmc_count == 0
+                && let Some(addr) = apu.dmc_fill_address()
+            {
+                let value =
+                    self.memory
+                        .read(addr, ppu, cartridge, controller, apu, &mut self.interrupt);
+                apu.dmc_fill(value, &mut self.interrupt);
             }
         } else {
             if let Some(offset) = self.interrupt.oam_dma.take() {

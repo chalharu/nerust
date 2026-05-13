@@ -1,5 +1,3 @@
-#![allow(dead_code, clippy::upper_case_acronyms)]
-
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -17,9 +15,9 @@ mod ppu;
 use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
-use crc::{Crc, Digest, CRC_64_XZ};
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core::Core;
+use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
@@ -61,7 +59,6 @@ struct ScenarioRunner {
     mixer: TestMixer,
     frame_counter: u64,
     pad1: Buttons,
-    pad2: Buttons,
 }
 
 impl ScenarioRunner {
@@ -79,7 +76,6 @@ impl ScenarioRunner {
             mixer: TestMixer,
             frame_counter: 0,
             pad1: Buttons::empty(),
-            pad2: Buttons::empty(),
         }
     }
 
@@ -116,13 +112,6 @@ impl ScenarioRunner {
                             };
                             self.controller.set_pad1(self.pad1);
                         }
-                        StandardControllerButtonCode::Pad2(code) => {
-                            self.pad2 = match state {
-                                Pressed => self.pad2 | Buttons::from(code),
-                                Released => self.pad2 & !(Buttons::from(code)),
-                            };
-                            self.controller.set_pad2(self.pad2);
-                        }
                     },
                 }
             }
@@ -141,27 +130,15 @@ impl ScenarioRunner {
 
 #[derive(Debug, Copy, Clone)]
 enum ButtonCode {
-    A,
-    B,
-    SELECT,
-    START,
-    UP,
-    DOWN,
-    LEFT,
-    RIGHT,
+    Select,
+    Start,
 }
 
 impl From<ButtonCode> for Buttons {
     fn from(v: ButtonCode) -> Self {
         match v {
-            A => Buttons::A,
-            B => Buttons::B,
-            SELECT => Buttons::SELECT,
-            START => Buttons::START,
-            UP => Buttons::UP,
-            DOWN => Buttons::DOWN,
-            LEFT => Buttons::LEFT,
-            RIGHT => Buttons::RIGHT,
+            Select => Buttons::SELECT,
+            Start => Buttons::START,
         }
     }
 }
@@ -169,8 +146,6 @@ impl From<ButtonCode> for Buttons {
 #[derive(Debug, Copy, Clone)]
 enum StandardControllerButtonCode {
     Pad1(ButtonCode),
-    #[allow(dead_code)]
-    Pad2(ButtonCode),
 }
 
 #[derive(Debug, Copy, Clone)]

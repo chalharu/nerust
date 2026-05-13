@@ -8,9 +8,9 @@ pub(crate) mod error;
 pub(crate) mod format;
 pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
-use crate::cpu::interrupt::Interrupt;
 use crate::MirrorMode;
 use crate::OpenBusReadResult;
+use crate::cpu::interrupt::Interrupt;
 use std::cmp;
 
 #[typetag::serde(tag = "type")]
@@ -100,10 +100,10 @@ pub(crate) trait Cartridge: Mapper {
     }
 
     fn write_character(&mut self, address: usize, value: u8) {
-        if self.mapper_state_ref().character_mapping_mode == MappingMode::Ram {
-            if let Some(addr) = self.character_address(address) {
-                self.mapper_state_mut().vram[addr] = value;
-            }
+        if self.mapper_state_ref().character_mapping_mode == MappingMode::Ram
+            && let Some(addr) = self.character_address(address)
+        {
+            self.mapper_state_mut().vram[addr] = value;
         }
     }
 
@@ -196,7 +196,6 @@ pub trait MapperStateDao {
 }
 
 pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
-    fn name(&self) -> &str;
     fn program_page_len(&self) -> usize;
     fn character_page_len(&self) -> usize;
     fn initialize(&mut self);
@@ -208,35 +207,14 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
         address >= 0x8000
     }
 
-    #[allow(unused_variables)]
-    fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {}
+    fn write_register(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
 
     fn battery_default(&self) -> bool {
         false
     }
 
-    fn save_len_default(&self) -> usize {
-        if self.battery_default() {
-            0x2000
-        } else {
-            0
-        }
-    }
-
     fn ram_len_default(&self) -> usize {
-        if self.battery_default() {
-            0x2000
-        } else {
-            0
-        }
-    }
-
-    fn ram_page_len_default(&self) -> usize {
-        if self.battery_default() {
-            0x2000
-        } else {
-            0
-        }
+        if self.battery_default() { 0x2000 } else { 0 }
     }
 
     fn character_ram_page_len_default(&self) -> usize {
@@ -344,8 +322,7 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn step(&mut self) {}
 
-    #[allow(unused_variables)]
-    fn vram_address_change(&mut self, address: usize) {}
+    fn vram_address_change(&mut self, _address: usize) {}
 }
 
 pub(crate) fn try_from<I: Iterator<Item = u8>>(

@@ -58,8 +58,4 @@ impl Mapper for NRom {
         self.change_program_page(1, 1);
         self.change_character_page(0, 0);
     }
-
-    fn name(&self) -> &str {
-        "NROM (Mapper0)"
-    }
 }

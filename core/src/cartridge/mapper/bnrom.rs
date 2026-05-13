@@ -59,10 +59,6 @@ impl Mapper for BNRom {
         self.change_character_page(0, 0);
     }
 
-    fn name(&self) -> &str {
-        "BNROM (Mapper34) "
-    }
-
     fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {
         self.change_program_page(0, usize::from(value));
     }

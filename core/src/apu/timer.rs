@@ -45,34 +45,3 @@ impl TimerDao {
         self.period
     }
 }
-
-pub(crate) trait HaveTimerDao {
-    fn timer_dao(&self) -> &TimerDao;
-    fn timer_dao_mut(&mut self) -> &mut TimerDao;
-}
-
-pub(crate) trait Timer: HaveTimerDao {
-    fn reset(&mut self) {
-        self.timer_dao_mut().reset()
-    }
-
-    fn set_period(&mut self, period: u16) {
-        self.timer_dao_mut().set_period(period)
-    }
-
-    fn set_timer(&mut self, value: u16) {
-        self.timer_dao_mut().set_value(value)
-    }
-
-    fn step_timer(&mut self) -> bool {
-        self.timer_dao_mut().step_timer()
-    }
-}
-
-impl<T: HaveTimerDao> Timer for T {}
-
-pub(crate) trait HaveTimer {
-    type Timer: Timer;
-    fn timer(&self) -> &Self::Timer;
-    fn timer_mut(&mut self) -> &mut Self::Timer;
-}

@@ -1,5 +1,3 @@
-#![allow(dead_code, clippy::too_many_arguments, clippy::upper_case_acronyms)]
-
 // Copyright (c) 2018 Mitsuharu Seki
 //
 // This Source Code Form is subject to the terms of the Mozilla Public

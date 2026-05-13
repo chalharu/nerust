@@ -34,15 +34,6 @@ impl HaveLengthCounterDao for Triangle {
     }
 }
 
-impl HaveTimerDao for Triangle {
-    fn timer_dao(&self) -> &TimerDao {
-        &self.timer
-    }
-    fn timer_dao_mut(&mut self) -> &mut TimerDao {
-        &mut self.timer
-    }
-}
-
 impl Triangle {
     pub(crate) fn new() -> Self {
         Self {

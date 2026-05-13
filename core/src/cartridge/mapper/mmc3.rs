@@ -186,25 +186,9 @@ impl Mapper for Mmc3 {
         0x0400
     }
 
-    fn save_len_default(&self) -> usize {
-        if self.data_ref().sub_mapper_type() == 1 {
-            0x0400
-        } else {
-            0x2000
-        }
-    }
-
     fn ram_len_default(&self) -> usize {
         if self.data_ref().sub_mapper_type() == 1 {
             0x0400
-        } else {
-            0x2000
-        }
-    }
-
-    fn ram_page_len_default(&self) -> usize {
-        if self.data_ref().sub_mapper_type() == 1 {
-            0x0200
         } else {
             0x2000
         }
@@ -215,10 +199,6 @@ impl Mapper for Mmc3 {
     }
     fn initialize(&mut self) {
         self.write_control(0x0C);
-    }
-
-    fn name(&self) -> &str {
-        "MMC3 (Mapper4)"
     }
 
     fn bus_conflicts(&self) -> bool {
@@ -243,7 +223,5 @@ impl Mapper for Mmc3 {
         self.cycle += 1;
     }
 
-    fn vram_address_change(&mut self, address: usize) {
-
-    }
+    fn vram_address_change(&mut self, _address: usize) {}
 }

@@ -8,8 +8,8 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::cpu::interrupt::Interrupt;
 use crate::MirrorMode;
+use crate::cpu::interrupt::Interrupt;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct AxRom {
@@ -58,10 +58,6 @@ impl Mapper for AxRom {
     fn initialize(&mut self) {
         self.change_program_page(0, 0);
         self.change_character_page(0, 0);
-    }
-
-    fn name(&self) -> &str {
-        "AXROM (Mapper7)"
     }
 
     fn bus_conflicts(&self) -> bool {

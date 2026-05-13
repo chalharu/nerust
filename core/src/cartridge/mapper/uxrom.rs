@@ -61,10 +61,6 @@ impl Mapper for UxRom {
         self.change_character_page(0, 0);
     }
 
-    fn name(&self) -> &str {
-        "UXROM (Mapper2)"
-    }
-
     fn bus_conflicts(&self) -> bool {
         self.data_ref().sub_mapper_type() == 2
     }

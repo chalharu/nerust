@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::cpu::interrupt::*;
 use crate::Cartridge;
+use crate::cpu::interrupt::*;
 use std::mem;
 
 // NTSC
@@ -17,7 +17,7 @@ const DMC_TABLE: [u8; 16] = [
 ];
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
-pub(crate) struct DMC {
+pub(crate) struct Dmc {
     value: u8,
 
     sample_address: u16,
@@ -36,16 +36,7 @@ pub(crate) struct DMC {
     timer: TimerDao,
 }
 
-impl HaveTimerDao for DMC {
-    fn timer_dao(&self) -> &TimerDao {
-        &self.timer
-    }
-    fn timer_dao_mut(&mut self) -> &mut TimerDao {
-        &mut self.timer
-    }
-}
-
-impl DMC {
+impl Dmc {
     pub(crate) fn new() -> Self {
         Self {
             shift_register: 0,

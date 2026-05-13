@@ -2,27 +2,12 @@
 targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
-ignore = [
-  # The latest GTK3 bindings are unmaintained; a GTK4 port is outside this dependency refresh.
-  "RUSTSEC-2024-0412",
-  "RUSTSEC-2024-0413",
-  "RUSTSEC-2024-0415",
-  "RUSTSEC-2024-0416",
-  "RUSTSEC-2024-0418",
-  "RUSTSEC-2024-0419",
-  "RUSTSEC-2024-0420",
-  # The latest alto/OpenAL dependency stack still pulls these crates transitively.
-  "RUSTSEC-2021-0134",
-  "RUSTSEC-2022-0040",
-  # GTK3 macro dependencies have no patched release in the GTK3 line.
-  "RUSTSEC-2024-0370",
-]
+ignore = []
 
 [bans]
-multiple-versions = "allow"
+multiple-versions = "warn"
 
 [licenses]
-unused-allowed-license = "allow"
 allow = [
   "0BSD",
   "Apache-2.0",

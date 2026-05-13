@@ -1,12 +1,12 @@
 [package]
 name = "rust"
-version = "0.1.0"
-authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
-license = "MPL-2.0"
-edition = "2018"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [lib]
-crate_type = ["cdylib"]
+crate-type = ["cdylib"]
 
 [dependencies]
-jni = { version = "=0.22.4" }
+jni.workspace = true

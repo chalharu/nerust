@@ -56,18 +56,6 @@ impl HaveLengthCounter for Pulse {
     fn length_counter(&self) -> &Self::LengthCounter {
         self
     }
-    fn length_counter_mut(&mut self) -> &mut Self::LengthCounter {
-        self
-    }
-}
-
-impl HaveTimerDao for Pulse {
-    fn timer_dao(&self) -> &TimerDao {
-        &self.timer
-    }
-    fn timer_dao_mut(&mut self) -> &mut TimerDao {
-        &mut self.timer
-    }
 }
 
 impl Pulse {

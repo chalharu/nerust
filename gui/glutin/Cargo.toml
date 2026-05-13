@@ -1,22 +1,26 @@
 [package]
 name = "nerust_glutin"
-version = "0.1.0"
-authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
-license = "MPL-2.0"
-edition = "2018"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+audio = ["nerust_sound_openal/cpal"]
 
 [dependencies]
-glutin = { version = "=0.32.3" }
-glutin-winit = { version = "=0.5.0" }
-raw-window-handle = { version = "=0.6.2" }
-winit = { version = "=0.30.12" }
-nerust_console = { version = "=0.1.0", path = "../../console" }
-nerust_core = { version = "=0.1.0", path = "../../core" }
-nerust_screen_buffer = { version = "=0.1.0", path = "../../screen/buffer" }
-nerust_screen_filter = { version = "=0.1.0", path = "../../screen/filter" }
-nerust_screen_opengl = { version = "=0.1.0", path = "../../screen/opengl" }
-nerust_screen_traits = { version = "=0.1.0", path = "../../screen/traits" }
-nerust_sound_openal = { version = "=0.1.0", path = "../../sound/openal" }
-nerust_timer = { version = "=0.1.0", path = "../../timer" }
-simple_logger = { version = "=5.2.0" }
-clap = { version = "=4.6.1" }
+clap.workspace = true
+glutin.workspace = true
+glutin-winit.workspace = true
+nerust_console.workspace = true
+nerust_core.workspace = true
+nerust_screen_buffer.workspace = true
+nerust_screen_filter.workspace = true
+nerust_screen_opengl.workspace = true
+nerust_screen_traits.workspace = true
+nerust_sound_openal.workspace = true
+nerust_timer.workspace = true
+raw-window-handle.workspace = true
+simple_logger.workspace = true
+winit.workspace = true

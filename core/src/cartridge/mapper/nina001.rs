@@ -59,10 +59,6 @@ impl Mapper for Nina001 {
         self.change_character_page(0, 0);
     }
 
-    fn name(&self) -> &str {
-        "NINA-001 (Mapper34) "
-    }
-
     fn register_addr(&self, address: usize) -> bool {
         (0x7FFD..=0x7FFF).contains(&address)
     }

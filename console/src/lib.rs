@@ -4,17 +4,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crc::{Crc, Digest, CRC_64_XZ};
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core::Core;
+use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::Timer;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::AtomicPtr;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::atomic::AtomicPtr;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -176,15 +176,15 @@ impl ConsoleRunner {
     fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
         let mut core: Option<Core> = None;
         while self.stop_receiver.try_recv().is_err() {
-            if let Some(core) = core.as_mut() {
-                if !self.paused {
-                    while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
-                    self.frame_counter += 1;
-                    self.screen_buffer_ptr.store(
-                        self.screen_buffer.as_mut_ptr(),
-                        std::sync::atomic::Ordering::SeqCst,
-                    );
-                }
+            if let Some(core) = core.as_mut()
+                && !self.paused
+            {
+                while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
+                self.frame_counter += 1;
+                self.screen_buffer_ptr.store(
+                    self.screen_buffer.as_mut_ptr(),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
             }
             self.timer.wait();
             if let Ok(event) = self.data_receiver.try_recv() {

@@ -143,10 +143,6 @@ impl CartridgeData {
     pub(crate) fn has_battery(&self) -> bool {
         self.has_battery
     }
-
-    pub(crate) fn trainer(&self) -> &[u8] {
-        &self.trainer
-    }
 }
 
 pub trait CartridgeDataDao {

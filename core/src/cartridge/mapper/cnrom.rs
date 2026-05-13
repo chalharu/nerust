@@ -65,14 +65,6 @@ impl Mapper for CNRom {
         self.protect || self.data_ref().sub_mapper_type() == 2
     }
 
-    fn name(&self) -> &str {
-        if self.protect {
-            "CNROM (Mapper3) "
-        } else {
-            "CNROM (Mapper185)"
-        }
-    }
-
     fn character_openbus_default(&self) -> Option<u8> {
         Some(0xFF)
     }

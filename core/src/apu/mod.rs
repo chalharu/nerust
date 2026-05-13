@@ -13,17 +13,17 @@ mod pulse;
 mod timer;
 mod triangle;
 
-use self::dmc::DMC;
+use self::dmc::Dmc;
 use self::envelope::*;
 use self::frame_counter::*;
 use self::length_counter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
-use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::Cartridge;
 use crate::Cpu;
 use crate::OpenBusReadResult;
+use crate::cpu::interrupt::{Interrupt, IrqSource};
 use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ
@@ -41,7 +41,7 @@ pub(crate) struct Core {
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
-    dmc: DMC,
+    dmc: Dmc,
     // sample_cycle: u64,
     // sample_reset_cycle: u64,
     frame_counter: FrameCounter,
@@ -71,7 +71,7 @@ impl Core {
             pulse2: Pulse::new(false),
             triangle: Triangle::new(),
             noise: Noise::new(),
-            dmc: DMC::new(),
+            dmc: Dmc::new(),
             // sample_cycle: 0,
             // sample_reset_cycle,
             frame_counter: FrameCounter::new(),

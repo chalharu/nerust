@@ -93,9 +93,3 @@ pub(crate) trait Envelope: HaveEnvelopeDao + HaveLengthCounter {
 }
 
 impl<T: HaveEnvelopeDao + HaveLengthCounter> Envelope for T {}
-
-pub(crate) trait HaveEnvelope {
-    type Envelope: Envelope;
-    fn envelope(&self) -> &Self::Envelope;
-    fn envelope_mut(&mut self) -> &mut Self::Envelope;
-}
