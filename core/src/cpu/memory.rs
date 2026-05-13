@@ -62,6 +62,10 @@ impl Memory {
         self.openbus.unite(result)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "CPU bus reads need access to every attached device"
+    )]
     pub(crate) fn read_dummy_cross(
         &mut self,
         address: usize,
@@ -82,6 +86,10 @@ impl Memory {
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "CPU bus writes need access to every attached device"
+    )]
     pub(crate) fn write(
         &mut self,
         address: usize,

@@ -46,6 +46,7 @@ impl State {
         self.paused = true;
     }
 
+    #[allow(dead_code, reason = "reserved for GTK menu state bindings")]
     pub(crate) fn paused(&self) -> bool {
         self.paused
     }
@@ -124,7 +125,7 @@ fn app_activate(app: &gtk::Application) {
         let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> =
             Rc::new(RefCell::new(create_about_dialog()));
         let _ = about_action.connect_activate(move |_, _| {
-            let window_about_inner = std::mem::replace(&mut *window_about.borrow_mut(), None);
+            let window_about_inner = window_about.borrow_mut().take();
             if let Some(window_about_inner) = window_about_inner {
                 window_about_inner.set_transient_for(Some(&window));
                 let _ = window_about_inner.run();

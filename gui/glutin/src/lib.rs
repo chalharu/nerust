@@ -20,7 +20,7 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_timer::{Timer, CLOCK_RATE};
+use nerust_timer::{CLOCK_RATE, Timer};
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;

@@ -4,7 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{gl_error_handle, Error};
+#![expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "this module intentionally mirrors pointer-based OpenGL C APIs"
+)]
+
+use super::{Error, gl_error_handle};
 use gl::types::{
     GLbitfield, GLboolean, GLchar, GLenum, GLfloat, GLint, GLsizei, GLsizeiptr, GLuint,
 };
@@ -54,6 +59,10 @@ pub fn bind_texture(target: GLenum, texture: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BindTexture(target, texture) })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "OpenGL texture upload parameters map directly to the C API"
+)]
 pub fn tex_image_2d(
     target: GLenum,
     level: GLint,
@@ -156,6 +165,10 @@ pub fn vertex_attrib_pointer(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "OpenGL texture upload parameters map directly to the C API"
+)]
 pub fn tex_sub_image_2d(
     target: GLenum,
     level: GLint,

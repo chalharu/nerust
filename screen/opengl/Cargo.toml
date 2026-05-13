@@ -1,12 +1,12 @@
 [package]
 name = "nerust_screen_opengl"
-version = "0.1.0"
-authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
-license = "MPL-2.0"
-edition = "2018"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [dependencies]
-gl = { version = "=0.14.0" }
-nerust_glwrap = { version = "=0.1.0", path = "../../glwrap" }
-nerust_screen_traits = { version = "=0.1.0", path = "../traits" }
-nerust_screen_buffer = { version = "=0.1.0", path = "../buffer" }
+gl.workspace = true
+nerust_glwrap.workspace = true
+nerust_screen_buffer.workspace = true
+nerust_screen_traits.workspace = true

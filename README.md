@@ -12,46 +12,46 @@ An NES emulator written in Rust
 
 ## Usage
 
-### Non GTK+ (glutin) Version
+### Glutin Frontend
 
-#### Dependencies
+#### Glutin dependencies
 
 - Cargo
 - Rust
 
-#### Build
+#### Build Glutin
 
 ```sh
 cargo build -p nerust_glutin --release
 ```
 
-#### Run
+#### Run Glutin
 
 ```sh
 target/release/nerust [Rom File Path]
 ```
 
-### Non GTK+ Version
+### GTK3 Frontend
 
-#### Dependencies
+#### GTK3 dependencies
 
 - Cargo
 - Rust
-- GTK+3 v3.16 or greater.
+- GTK+3 v3.16 or greater
 
-#### Build
+#### Build GTK3
 
 ```sh
 cargo build -p nerust_gtk --release
 ```
 
-#### Run
+#### Run GTK3
 
 ```sh
 target/release/nerust_gtk
 ```
 
-## Support Mappers
+## Supported Mappers
 
 - NRom (Mapper 0)
 - MMC1 SxRom (Mapper 1)
@@ -68,10 +68,10 @@ target/release/nerust_gtk
 - Other Mappers
 - Network multiplay
 
-## Licence
+## License
 
 [MPL-2.0](https://github.com/chalharu/Nerust/blob/master/LICENSE)
 
 ## Author
 
-[Mitsuharu Seki](https://github.com/chalharu)
+[chalharu](https://github.com/chalharu)

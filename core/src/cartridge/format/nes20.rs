@@ -32,11 +32,7 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
         1 << (6 + (pram_length_data & 0x0F))
     };
     let vram_length = if vram_length_data & 0xF0 == 0 {
-        if crom_length != 0 {
-            0
-        } else {
-            0x2000
-        }
+        if crom_length != 0 { 0 } else { 0x2000 }
     } else {
         1 << (6 + (vram_length_data >> 4))
     };
