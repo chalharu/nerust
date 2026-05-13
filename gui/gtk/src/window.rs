@@ -1,6 +1,7 @@
 use super::glarea::{GLArea, GLAreaExtend};
 use super::State;
-use gio::prelude::*;
+use gtk::gio;
+use gtk::glib;
 use gtk::prelude::*;
 use nerust_core::controller::standard_controller::Buttons;
 use std::cell::RefCell;
@@ -67,19 +68,21 @@ impl WindowExtend for Window {
         }
         {
             let result = result.clone();
-            let _ = window.connect_delete_event(move |_, _| Inhibit(result.delete_event()));
+            let _ = window.connect_delete_event(move |_, _| {
+                glib::Propagation::from(result.delete_event())
+            });
         }
 
         {
             let result = result.clone();
             let _ = window.connect_key_press_event(move |_, event_key| {
-                Inhibit(result.key_event(event_key, KeyEventState::Press))
+                glib::Propagation::from(result.key_event(event_key, KeyEventState::Press))
             });
         }
         {
             let result = result.clone();
             let _ = window.connect_key_release_event(move |_, event_key| {
-                Inhibit(result.key_event(event_key, KeyEventState::Release))
+                glib::Propagation::from(result.key_event(event_key, KeyEventState::Release))
             });
         }
         let open_action = gio::SimpleAction::new("open", None);
@@ -154,7 +157,7 @@ impl WindowExtend for Window {
         let state = self.state();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, _| {
             if let Some(mut f) = file_chooser_native
-                .get_filename()
+                .filename()
                 .and_then(|f| File::open(f).ok())
                 .map(BufReader::new)
             {
@@ -203,15 +206,15 @@ impl WindowExtend for Window {
         // Down   -> Down
         // Left   -> Left
         // Right  -> Right
-        let code = match key.get_keyval() {
-            gdk::enums::key::z => Buttons::A,
-            gdk::enums::key::x => Buttons::B,
-            gdk::enums::key::c => Buttons::SELECT,
-            gdk::enums::key::v => Buttons::START,
-            gdk::enums::key::Up => Buttons::UP,
-            gdk::enums::key::Down => Buttons::DOWN,
-            gdk::enums::key::Left => Buttons::LEFT,
-            gdk::enums::key::Right => Buttons::RIGHT,
+        let code = match key.keyval() {
+            gdk::keys::constants::z => Buttons::A,
+            gdk::keys::constants::x => Buttons::B,
+            gdk::keys::constants::c => Buttons::SELECT,
+            gdk::keys::constants::v => Buttons::START,
+            gdk::keys::constants::Up => Buttons::UP,
+            gdk::keys::constants::Down => Buttons::DOWN,
+            gdk::keys::constants::Left => Buttons::LEFT,
+            gdk::keys::constants::Right => Buttons::RIGHT,
             _ => Buttons::empty(),
         };
         let key = self.borrow().keys;

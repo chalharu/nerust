@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use nerust_glutin::Window;
 use simple_logger;
 use std::fs::File;
@@ -14,22 +14,18 @@ fn main() {
     // log initialize
     simple_logger::init().unwrap();
 
-    let app = App::new(clap::crate_name!())
-        .version(clap::crate_version!())
-        .author(clap::crate_authors!())
-        .about(clap::crate_description!())
-        .arg(
-            Arg::with_name("filename")
-                .help("Rom file name")
-                .required(true),
-        );
+    let app = Command::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
+        .arg(Arg::new("filename").help("Rom file name").required(true));
 
     // 引数を解析
     let matches = app.get_matches();
 
     // paが指定されていれば値を表示
     if let Some(mut f) = matches
-        .value_of("filename")
+        .get_one::<String>("filename")
         .and_then(|f| File::open(f).ok())
         .map(BufReader::new)
     {

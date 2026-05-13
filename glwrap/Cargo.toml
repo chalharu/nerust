@@ -5,6 +5,6 @@ authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-gl = { version = ">=0.0.0" }
-failure = { version = ">=0.0.0" }
-log = { version = ">=0.0.0", default-features = false }
+gl = { version = "0.14.0" }
+failure = { version = "0.1.8" }
+log = { version = "0.4.29", default-features = false }

@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["Mitsuharu Seki <mitsu1986@gmail.com>"]
 
 [dependencies]
-lazy_static = { version = ">=0.0.0" }
-log = { version = ">=0.0.0", default-features = false }
+lazy_static = { version = "1.5.0" }
+log = { version = "0.4.29", default-features = false }

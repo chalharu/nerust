@@ -17,7 +17,13 @@ pub struct StandardController {
 }
 
 bitflags::bitflags! {
-    #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+        Debug,
+        Clone,
+        Copy,
+    )]
     pub struct Buttons: u8 {
         const A =      0b0000_0001;
         const B =      0b0000_0010;

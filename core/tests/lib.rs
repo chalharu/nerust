@@ -15,7 +15,7 @@ mod ppu;
 use self::ButtonCode::*;
 use self::PadState::{Pressed, Released};
 use self::StandardControllerButtonCode::Pad1;
-use crc::crc64;
+use crc::{Crc, Digest, CRC_64_XZ};
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::Core;
 use nerust_screen_buffer::ScreenBuffer;
@@ -24,6 +24,27 @@ use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::MixerInput;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
+
+// The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
+const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+
+struct Crc64Hasher(Digest<'static, u64>);
+
+impl Crc64Hasher {
+    fn new() -> Self {
+        Self(CRC64_LEGACY_ECMA.digest())
+    }
+}
+
+impl Hasher for Crc64Hasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.clone().finalize()
+    }
+}
 
 struct TestMixer;
 
@@ -70,7 +91,7 @@ impl ScenarioRunner {
             while !scenario.is_empty() && scenario[0].frame_number == self.frame_counter {
                 match scenario.pop_front().unwrap().operation {
                     ScenarioOperation::CheckScreen { hash } => {
-                        let mut hasher = crc64::Digest::new(crc64::ECMA);
+                        let mut hasher = Crc64Hasher::new();
                         self.screen_buffer.hash(&mut hasher);
                         if hasher.finish() != hash {
                             panic!(format!(
