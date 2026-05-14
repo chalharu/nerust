@@ -54,6 +54,7 @@ impl GlView {
     pub fn on_load(&mut self, logical_size: LogicalSize) {
         let shader = compile_shader_program();
         shader.use_program();
+        clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         // テクスチャのセットアップ
         gen_textures(1, &mut self.tex_name).unwrap();
@@ -173,6 +174,8 @@ impl GlView {
     }
 
     pub fn on_update(&self, logical_size: LogicalSize, screen_ptr: *const u8) {
+        self.shader.as_ref().unwrap().use_program();
+        bind_texture(gl::TEXTURE_2D, self.tex_name).unwrap();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
         } else {
@@ -196,12 +199,20 @@ impl GlView {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
 
-    pub fn on_resize(&mut self, scale_x: f32, scale_y: f32) {
+    pub fn on_resize(
+        &mut self,
+        scale_x: f32,
+        scale_y: f32,
+        viewport_width: i32,
+        viewport_height: i32,
+    ) {
+        self.shader.as_ref().unwrap().use_program();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
         } else {
             bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
         }
+        viewport(0, 0, viewport_width, viewport_height).unwrap();
         uniform_matrix_4fv(
             self.shader.as_ref().unwrap().get_uniform("unif_matrix"),
             1,
