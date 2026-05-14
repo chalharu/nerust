@@ -164,10 +164,11 @@ impl WindowExtend for Window {
             result.borrow_mut().open_dialog = None;
             result.update_actions();
 
-            if let Some(root) = result.window().focus() {
+            let window = result.window();
+            if let Some(root) = gtk::prelude::GtkWindowExt::focus(&window) {
                 let _ = root.grab_focus();
             } else {
-                let _ = result.window().grab_focus();
+                let _ = window.grab_focus();
             }
         });
         self.borrow_mut().open_dialog = Some(file_chooser_native.clone());
