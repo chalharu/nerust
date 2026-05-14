@@ -1374,6 +1374,7 @@ name = "nerust_screen_opengl"
 version = "0.1.0"
 dependencies = [
  "gl",
+ "log",
  "nerust_glwrap",
  "nerust_screen_buffer",
  "nerust_screen_traits",
