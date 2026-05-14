@@ -9,6 +9,8 @@ use nerust_screen_filter::FilterFunc;
 use nerust_screen_traits::{LogicalSize, RGB};
 use std::{mem, slice};
 
+const OPAQUE_BLACK: u32 = 0xFF00_0000;
+
 #[derive(Debug)]
 pub(crate) struct ScreenBufferUnit {
     buffer: Box<[u32]>,
@@ -17,10 +19,12 @@ pub(crate) struct ScreenBufferUnit {
 
 impl ScreenBufferUnit {
     pub(crate) fn new(size: LogicalSize) -> Self {
-        Self {
+        let mut result = Self {
             buffer: init_screen_buffer(size),
             pos: 0,
-        }
+        };
+        result.clear();
+        result
     }
 
     #[inline]
@@ -44,7 +48,7 @@ impl ScreenBufferUnit {
     #[inline]
     pub(crate) fn clear(&mut self) {
         for b in self.buffer.iter_mut() {
-            *b = 0;
+            *b = OPAQUE_BLACK;
         }
         self.pos = 0;
     }
@@ -54,8 +58,10 @@ impl FilterFunc for ScreenBufferUnit {
     #[inline]
     fn filter_func(&mut self, color: RGB) {
         unsafe {
-            *(self.buffer.get_unchecked_mut(self.pos)) =
-                u32::from(color.red) | u32::from(color.green) << 8 | u32::from(color.blue) << 16;
+            *(self.buffer.get_unchecked_mut(self.pos)) = OPAQUE_BLACK
+                | u32::from(color.red)
+                | u32::from(color.green) << 8
+                | u32::from(color.blue) << 16;
         }
         self.pos += 1;
     }

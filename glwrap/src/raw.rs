@@ -127,14 +127,14 @@ pub fn buffer_data(
     gl_error_handle(|| unsafe { gl::BufferData(target, size, data, usage) })
 }
 
-// pub fn clear_color(
-//     red: GLfloat,
-//     green: GLfloat,
-//     blue: GLfloat,
-//     alpha: GLfloat,
-// ) -> Result<(), Error> {
-//     gl_error_handle(|| unsafe { gl::ClearColor(red, green, blue, alpha) })
-// }
+pub fn clear_color(
+    red: GLfloat,
+    green: GLfloat,
+    blue: GLfloat,
+    alpha: GLfloat,
+) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::ClearColor(red, green, blue, alpha) })
+}
 
 // pub fn clear_depth(depth: GLdouble) -> Result<(), Error> {
 //     gl_error_handle(|| unsafe { gl::ClearDepth(depth) })
