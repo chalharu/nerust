@@ -179,7 +179,7 @@ impl ConsoleRunner {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
+                core.run_frame(&mut self.screen_buffer, &mut self.controller, &mut speaker);
                 self.frame_counter += 1;
                 self.screen_buffer_ptr.store(
                     self.screen_buffer.as_mut_ptr(),

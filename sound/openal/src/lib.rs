@@ -15,6 +15,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
 
+const CORE_AUDIO_OVERSAMPLE: u32 = 4;
+
 #[derive(Debug)]
 struct FadeBuffer {
     data_receiver: Receiver<f32>,
@@ -199,6 +201,7 @@ pub struct OpenAl {
     data_sender: Sender<f32>,
     filter: NesFilter,
     thread: Option<JoinHandle<()>>,
+    source_sample_rate: u32,
     resampler: SimpleDownSampler,
 }
 
@@ -209,6 +212,13 @@ impl OpenAl {
         buffer_width: usize,
         buffer_count: usize,
     ) -> Self {
+        let mixer_sample_rate =
+            u32::try_from(sample_rate).expect("OpenAL sample_rate must be non-negative");
+        let requested_source_rate =
+            u32::try_from(output_rate).expect("OpenAL output_rate must be non-negative");
+        let source_sample_rate = requested_source_rate
+            .min(mixer_sample_rate.saturating_mul(CORE_AUDIO_OVERSAMPLE))
+            .max(mixer_sample_rate);
         let filter = NesFilter::new(sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
@@ -234,7 +244,11 @@ impl OpenAl {
             data_sender,
             stop_sender,
             thread: Some(thread),
-            resampler: SimpleDownSampler::new(f64::from(output_rate), f64::from(sample_rate)),
+            source_sample_rate,
+            resampler: SimpleDownSampler::new(
+                f64::from(source_sample_rate),
+                f64::from(mixer_sample_rate),
+            ),
         }
     }
 }
@@ -264,6 +278,10 @@ impl MixerInput for OpenAl {
         {
             log::warn!("OpenAL channel (data) send failed");
         }
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.source_sample_rate
     }
 }
 
