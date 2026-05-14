@@ -25,6 +25,26 @@ struct DecayableOpenBus {
     decay: [u8; 8],
 }
 
+#[cfg(test)]
+mod tests {
+    use super::Core;
+
+    #[test]
+    fn background_color_zero_uses_universal_backdrop() {
+        assert_eq!(Core::background_palette_index(0x00, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x04, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x08, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x0C, 0), 0x00);
+    }
+
+    #[test]
+    fn background_color_nonzero_keeps_palette_offset() {
+        assert_eq!(Core::background_palette_index(0x04, 1), 0x05);
+        assert_eq!(Core::background_palette_index(0x08, 2), 0x0A);
+        assert_eq!(Core::background_palette_index(0x0C, 3), 0x0F);
+    }
+}
+
 impl DecayableOpenBus {
     pub(crate) fn new() -> Self {
         Self {
@@ -765,6 +785,11 @@ impl Core {
     }
 
     #[inline]
+    fn background_palette_index(palette_offset: u8, bg: u8) -> u8 {
+        if bg == 0 { 0 } else { palette_offset + bg }
+    }
+
+    #[inline]
     fn evaluate_pixel(&mut self) -> u8 {
         let bg = if self.show_background() {
             self.background_pixel()
@@ -772,15 +797,12 @@ impl Core {
             0
         };
 
-        let bg_result_func = |s: &mut Self| {
-            (if u16::from(s.state.x_scroll) + ((s.cycle - 1) & 0x07) < 8 {
-                s.previous_tile
-            } else {
-                s.current_tile
-            })
-            .palette_offset
-                + bg
+        let bg_tile = if u16::from(self.state.x_scroll) + ((self.cycle - 1) & 0x07) < 8 {
+            self.previous_tile
+        } else {
+            self.current_tile
         };
+        let bg_result = Self::background_palette_index(bg_tile.palette_offset, bg);
 
         if self.show_sprite() & self.has_next_sprite {
             for i in 0..self.sprite_count {
@@ -807,14 +829,14 @@ impl Core {
                             return if bg == 0 || !s.priority {
                                 s.palette_offset + sprite_color
                             } else {
-                                bg_result_func(self)
+                                bg_result
                             };
                         }
                     }
                 }
             }
         }
-        bg_result_func(self)
+        bg_result
     }
 
     #[inline]
