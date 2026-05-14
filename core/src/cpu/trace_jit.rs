@@ -5,7 +5,7 @@ use cranelift_codegen::isa::CallConv;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use std::marker::PhantomData;
+use std::collections::VecDeque;
 use std::mem;
 
 const STATE_X_OFFSET: i32 = mem::offset_of!(TraceCpuState, x) as i32;
@@ -14,6 +14,8 @@ const STATE_PC_OFFSET: i32 = mem::offset_of!(TraceCpuState, pc) as i32;
 const STATE_CYCLES_OFFSET: i32 = mem::offset_of!(TraceCpuState, cycles) as i32;
 
 type TraceFn = unsafe extern "C" fn(*mut TraceCpuState);
+const GUARDED_TRACE_LEN: usize = 3;
+const MAX_CACHED_TRACES: usize = 16;
 
 #[repr(C)]
 pub(crate) struct TraceCpuState {
@@ -24,7 +26,7 @@ pub(crate) struct TraceCpuState {
 }
 
 impl TraceCpuState {
-    fn new(pc: u16, x: u8, p: u8) -> Self {
+    pub(crate) fn new(pc: u16, x: u8, p: u8) -> Self {
         Self {
             x: u64::from(x),
             p: u64::from(p),
@@ -73,6 +75,41 @@ impl TracePlan {
             },
         })
     }
+
+    fn guard_bytes(&self) -> [u8; GUARDED_TRACE_LEN] {
+        match &self.exit {
+            TraceExit::BranchLoop {
+                branch_pc,
+                taken_pc,
+                fallthrough_pc,
+                ..
+            } => {
+                debug_assert_eq!(*branch_pc, self.entry_pc.wrapping_add(1));
+                [0xCA, 0xD0, taken_pc.wrapping_sub(*fallthrough_pc) as u8]
+            }
+        }
+    }
+
+    fn fallthrough_pc(&self) -> u16 {
+        match &self.exit {
+            TraceExit::BranchLoop { fallthrough_pc, .. } => *fallthrough_pc,
+        }
+    }
+
+    pub(crate) fn cycles_for_x(&self, x: u8) -> u64 {
+        let iterations = if x == 0 { 256 } else { u64::from(x) };
+        match &self.exit {
+            TraceExit::BranchLoop {
+                taken_cycles,
+                fallthrough_cycles,
+                ..
+            } => {
+                let loop_cycles = 2 + u64::from(*taken_cycles);
+                let exit_cycles = 2 + u64::from(*fallthrough_cycles);
+                (iterations - 1) * loop_cycles + exit_cycles
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,12 +134,15 @@ pub(crate) enum BranchCondition {
     NotZero,
 }
 
-pub(crate) struct CompiledTrace<'compiler> {
+pub(crate) struct CompiledTrace {
+    // Keep the JIT module alive for as long as the function pointer can be
+    // called. This intentionally avoids a self-referential CPU cache: each
+    // cached trace owns the module that owns its finalized code.
+    _module: JITModule,
     func: TraceFn,
-    _module: PhantomData<&'compiler JITModule>,
 }
 
-impl CompiledTrace<'_> {
+impl CompiledTrace {
     fn run(&self, state: &mut TraceCpuState) {
         // SAFETY: TraceCompiler creates functions with exactly this ABI and the
         // generated IR only touches the supplied TraceCpuState.
@@ -110,25 +150,14 @@ impl CompiledTrace<'_> {
     }
 }
 
-pub(crate) struct TraceCompiler {
-    module: JITModule,
-    next_func_id: u32,
-}
+pub(crate) struct TraceCompiler;
 
 impl TraceCompiler {
     pub(crate) fn new() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names())
-            .expect("Cranelift JIT builder should initialize");
-        Self {
-            module: JITModule::new(builder),
-            next_func_id: 0,
-        }
+        Self
     }
 
-    pub(crate) fn compile<'compiler>(
-        &'compiler mut self,
-        plan: &TracePlan,
-    ) -> Option<CompiledTrace<'compiler>> {
+    pub(crate) fn compile(&mut self, plan: &TracePlan) -> Option<CompiledTrace> {
         match (&plan.ops[..], &plan.exit) {
             (
                 [TraceOp::Dex],
@@ -139,27 +168,26 @@ impl TraceCompiler {
                     fallthrough_cycles,
                     ..
                 },
-            ) => self.compile_dex_bne_loop(*fallthrough_pc, *taken_cycles, *fallthrough_cycles),
+            ) => Self::compile_dex_bne_loop(*fallthrough_pc, *taken_cycles, *fallthrough_cycles),
             _ => None,
         }
     }
 
     fn compile_dex_bne_loop(
-        &mut self,
         fallthrough_pc: u16,
         taken_cycles: u8,
         fallthrough_cycles: u8,
-    ) -> Option<CompiledTrace<'_>> {
-        let pointer_type = self.module.target_config().pointer_type();
-        let mut ctx = self.module.make_context();
-        ctx.func.signature.call_conv = CallConv::triple_default(self.module.isa().triple());
+    ) -> Option<CompiledTrace> {
+        let builder = JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
+        let mut module = JITModule::new(builder);
+        let pointer_type = module.target_config().pointer_type();
+        let mut ctx = module.make_context();
+        ctx.func.signature.call_conv = CallConv::triple_default(module.isa().triple());
         ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        ctx.func.name = UserFuncName::user(0, self.next_func_id);
-        let name = format!("trace_jit_x_loop_{}", self.next_func_id);
-        self.next_func_id = self.next_func_id.wrapping_add(1);
-        let func_id = self
-            .module
-            .declare_function(&name, Linkage::Local, &ctx.func.signature)
+        ctx.func.name = UserFuncName::user(0, 0);
+        let name = "trace_jit_x_loop";
+        let func_id = module
+            .declare_function(name, Linkage::Local, &ctx.func.signature)
             .ok()?;
 
         let mut builder_context = FunctionBuilderContext::new();
@@ -212,15 +240,15 @@ impl TraceCompiler {
         builder.seal_all_blocks();
         builder.finalize();
 
-        self.module.define_function(func_id, &mut ctx).ok()?;
-        self.module.clear_context(&mut ctx);
-        self.module.finalize_definitions().ok()?;
-        let code = self.module.get_finalized_function(func_id);
+        module.define_function(func_id, &mut ctx).ok()?;
+        module.clear_context(&mut ctx);
+        module.finalize_definitions().ok()?;
+        let code = module.get_finalized_function(func_id);
         Some(CompiledTrace {
             // SAFETY: The finalized Cranelift function was declared and built
             // with the same ABI as TraceFn.
             func: unsafe { mem::transmute::<*const u8, TraceFn>(code) },
-            _module: PhantomData,
+            _module: module,
         })
     }
 }
@@ -228,6 +256,119 @@ impl TraceCompiler {
 impl Default for TraceCompiler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+struct CachedTrace {
+    entry_pc: u16,
+    guard_bytes: [u8; GUARDED_TRACE_LEN],
+    plan: TracePlan,
+    trace: CompiledTrace,
+}
+
+pub(crate) struct TraceRun {
+    pub(crate) pc_to_fetch: u16,
+    pub(crate) x: u8,
+    pub(crate) p: u8,
+    pub(crate) cycles: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct TraceJit {
+    cache: VecDeque<CachedTrace>,
+}
+
+impl TraceJit {
+    pub(crate) fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    pub(crate) fn run_counted_x_loop<F>(
+        &mut self,
+        entry_pc: u16,
+        x: u8,
+        p: u8,
+        max_cycles: u64,
+        mut read_code: F,
+    ) -> Option<TraceRun>
+    where
+        F: FnMut(u16) -> Option<u8>,
+    {
+        let guard_bytes = read_guard_bytes(entry_pc, &mut read_code)?;
+        if let Some(index) = self.cache_index(entry_pc) {
+            if self.cache[index].guard_bytes != guard_bytes {
+                self.cache.remove(index);
+            } else {
+                return self.run_cached(index, x, p, max_cycles);
+            }
+        }
+
+        let plan = TracePlan::decode_counted_x_loop(entry_pc, |address| {
+            guard_byte(entry_pc, guard_bytes, address)
+        })?;
+        let expected_guard = plan.guard_bytes();
+        if guard_bytes != expected_guard {
+            return None;
+        }
+        let mut compiler = TraceCompiler::new();
+        let trace = compiler.compile(&plan)?;
+        self.cache.push_front(CachedTrace {
+            entry_pc,
+            guard_bytes,
+            plan,
+            trace,
+        });
+        while self.cache.len() > MAX_CACHED_TRACES {
+            self.cache.pop_back();
+        }
+        self.run_cached(0, x, p, max_cycles)
+    }
+
+    fn cache_index(&self, entry_pc: u16) -> Option<usize> {
+        self.cache
+            .iter()
+            .position(|cached| cached.entry_pc == entry_pc)
+    }
+
+    fn run_cached(&mut self, index: usize, x: u8, p: u8, max_cycles: u64) -> Option<TraceRun> {
+        let cached = self.cache.remove(index)?;
+        let cycles = cached.plan.cycles_for_x(x);
+        if cycles > max_cycles {
+            self.cache.push_front(cached);
+            return None;
+        }
+
+        let mut state = TraceCpuState::new(cached.entry_pc, x, p);
+        cached.trace.run(&mut state);
+        debug_assert_eq!(state.cycles, cycles);
+        let result = TraceRun {
+            pc_to_fetch: cached.plan.fallthrough_pc(),
+            x: state.x as u8,
+            p: state.p as u8,
+            cycles: state.cycles,
+        };
+        self.cache.push_front(cached);
+        Some(result)
+    }
+}
+
+fn read_guard_bytes<F>(entry_pc: u16, read_code: &mut F) -> Option<[u8; GUARDED_TRACE_LEN]>
+where
+    F: FnMut(u16) -> Option<u8>,
+{
+    Some([
+        read_code(entry_pc)?,
+        read_code(entry_pc.wrapping_add(1))?,
+        read_code(entry_pc.wrapping_add(2))?,
+    ])
+}
+
+fn guard_byte(entry_pc: u16, guard_bytes: [u8; GUARDED_TRACE_LEN], address: u16) -> Option<u8> {
+    let offset = address.wrapping_sub(entry_pc);
+    if offset < GUARDED_TRACE_LEN as u16 {
+        Some(guard_bytes[usize::from(offset)])
+    } else {
+        None
     }
 }
 
@@ -342,5 +483,47 @@ mod tests {
         assert_eq!(state.cycles, 14);
         assert_eq!(state.p & u64::from(RegisterP::ZERO.bits()), 0x02);
         assert_eq!(state.p & u64::from(RegisterP::NEGATIVE.bits()), 0);
+    }
+
+    #[test]
+    fn trace_jit_revalidates_guard_bytes_before_running_cached_trace() {
+        let mut bytes = [0xCA, 0xD0, 0xFD];
+        let mut jit = TraceJit::default();
+
+        let result = jit
+            .run_counted_x_loop(0x8000, 2, RegisterP::RESERVED.bits(), u64::MAX, |address| {
+                bytes.get(usize::from(address - 0x8000)).copied()
+            })
+            .unwrap();
+        assert_eq!(result.cycles, 9);
+
+        bytes[1] = 0xEA;
+        assert!(
+            jit.run_counted_x_loop(0x8000, 2, RegisterP::RESERVED.bits(), u64::MAX, |address| {
+                bytes.get(usize::from(address - 0x8000)).copied()
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn trace_jit_respects_cycle_budget() {
+        let bytes = [0xCA, 0xD0, 0xFD];
+        let mut jit = TraceJit::default();
+
+        assert!(
+            jit.run_counted_x_loop(0x8000, 3, RegisterP::RESERVED.bits(), 13, |address| {
+                bytes.get(usize::from(address - 0x8000)).copied()
+            })
+            .is_none()
+        );
+        assert_eq!(
+            jit.run_counted_x_loop(0x8000, 3, RegisterP::RESERVED.bits(), 14, |address| {
+                bytes.get(usize::from(address - 0x8000)).copied()
+            })
+            .unwrap()
+            .cycles,
+            14
+        );
     }
 }

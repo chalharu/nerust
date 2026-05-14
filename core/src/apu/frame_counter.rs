@@ -124,6 +124,25 @@ impl FrameCounter {
         result
     }
 
+    pub(crate) fn trace_jit_safe_cpu_cycles(&self) -> u64 {
+        if self.write_counter > 0 {
+            return 0;
+        }
+
+        let period_end = if self.period { 37282 } else { 29830 };
+        let thresholds: &[u16] = if self.period {
+            &[7457, 14913, 22371, 37281, 37282]
+        } else {
+            &[7457, 14913, 29828, 29829, 29830]
+        };
+        let next = thresholds
+            .iter()
+            .copied()
+            .find(|&threshold| threshold > self.cycle)
+            .unwrap_or(period_end);
+        u64::from(next.saturating_sub(self.cycle)).saturating_sub(1)
+    }
+
     pub(crate) fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = ((value >> 6) & 1) == 0;
         self.new_value = value;

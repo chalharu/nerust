@@ -373,6 +373,54 @@ impl Core {
         self.has_next_sprite = false;
     }
 
+    pub(crate) fn trace_jit_safe_cpu_cycles(&self) -> u64 {
+        if self.scan_line >= 241 {
+            return 0;
+        }
+
+        let ppu_steps = self.trace_jit_steps_until_boundary();
+        (ppu_steps.saturating_sub(1) / 3).saturating_sub(1)
+    }
+
+    fn trace_jit_steps_until_boundary(&self) -> u64 {
+        let mut scan_line = self.scan_line;
+        let mut cycle = self.cycle;
+        let future_rendering = self.mask.show_background | self.mask.show_sprites;
+        let mut steps = 0_u64;
+
+        for line_index in 0..=TOTAL_SCAN_LINE {
+            let rendering = if line_index == 0 {
+                self.render_executing
+            } else {
+                future_rendering
+            };
+            steps += u64::from(self.steps_until_next_scanline(scan_line, cycle, rendering));
+            cycle = 0;
+            scan_line += 1;
+            if scan_line == 241 || scan_line == NMI_SCAN_LINE {
+                return steps;
+            }
+            if scan_line == TOTAL_SCAN_LINE {
+                scan_line = 0;
+            }
+        }
+
+        0
+    }
+
+    fn steps_until_next_scanline(&self, scan_line: u16, cycle: u16, rendering: bool) -> u16 {
+        if cycle > 339 {
+            return 1;
+        }
+
+        let steps = 341 - cycle;
+        if scan_line == 0 && rendering && (self.frames & 1) != 0 && cycle <= 338 {
+            steps - 1
+        } else {
+            steps
+        }
+    }
+
     #[inline]
     pub(crate) fn read_register(
         &mut self,
@@ -1081,5 +1129,31 @@ impl Core {
             self.state.vram_addr = self.new_vram_addr;
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_jit_budget_is_zero_during_vblank_and_nmi_window() {
+        let mut ppu = Core::new();
+
+        ppu.scan_line = 241;
+        assert_eq!(ppu.trace_jit_safe_cpu_cycles(), 0);
+
+        ppu.scan_line = NMI_SCAN_LINE;
+        assert_eq!(ppu.trace_jit_safe_cpu_cycles(), 0);
+    }
+
+    #[test]
+    fn trace_jit_budget_stops_before_next_frame_boundary() {
+        let mut ppu = Core::new();
+
+        ppu.scan_line = 240;
+        ppu.cycle = 338;
+
+        assert_eq!(ppu.trace_jit_safe_cpu_cycles(), 0);
     }
 }

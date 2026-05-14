@@ -147,6 +147,14 @@ impl Core {
         self.dmc.fill_address()
     }
 
+    pub(crate) fn trace_jit_safe_cpu_cycles(&self) -> u64 {
+        if !self.dmc.trace_jit_safe() {
+            0
+        } else {
+            self.frame_counter.trace_jit_safe_cpu_cycles()
+        }
+    }
+
     fn step_frame(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
         match self.frame_counter.step_frame_counter(interrupt) {
             FrameType::Half => {

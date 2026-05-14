@@ -11,7 +11,7 @@ mod memory;
 mod oamdma;
 mod opcodes;
 mod register;
-mod trace_jit;
+pub(crate) mod trace_jit;
 
 use self::addressing_mode::*;
 use self::internal_stat::{CpuStatesEnum, InternalStat};
@@ -23,6 +23,7 @@ use self::opcodes::{
     *,
 };
 use self::register::{Register, RegisterP};
+use self::trace_jit::TraceJit;
 use super::*;
 use std::ops::Shr;
 
@@ -269,6 +270,83 @@ impl Core {
 
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {
         &mut self.interrupt
+    }
+
+    pub(crate) fn is_trace_jit_boundary(&self) -> bool {
+        self.internal_stat.state == CpuStatesEnum::FetchOpCode
+            && self.internal_stat.step == 1
+            && self.internal_stat.opcode == 0xCA
+    }
+
+    pub(crate) fn try_run_trace_jit(
+        &mut self,
+        trace_jit: &mut TraceJit,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+        max_cycles: u64,
+    ) -> Option<u64> {
+        if max_cycles == 0 || !self.is_trace_jit_boundary() || self.trace_jit_blocked() {
+            return None;
+        }
+
+        let entry_pc = self.register.get_pc().wrapping_sub(1);
+        self.memory.peek_code(entry_pc.wrapping_add(3), cartridge)?;
+
+        let trace = {
+            let memory = &self.memory;
+            let cartridge_ref: &dyn Cartridge = &*cartridge;
+            trace_jit.run_counted_x_loop(
+                entry_pc,
+                self.register.get_x(),
+                self.register.get_p(),
+                max_cycles,
+                |address| memory.peek_code(address, cartridge_ref),
+            )
+        }?;
+
+        self.register.set_x(trace.x);
+        self.register.set_p(trace.p);
+        self.register.set_pc(trace.pc_to_fetch);
+        let opcode = self.memory.read_next(
+            &mut self.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut self.interrupt,
+        );
+        self.internal_stat.opcode = usize::from(opcode);
+        self.internal_stat.state = CpuStatesEnum::FetchOpCode;
+        self.internal_stat.step = 1;
+        self.cpu_stepfunc = cpu_stepfunc(CpuStatesEnum::FetchOpCode);
+        self.cycles = self.cycles.wrapping_add(trace.cycles);
+        self.update_interrupt_detection();
+        Some(trace.cycles)
+    }
+
+    fn trace_jit_blocked(&self) -> bool {
+        self.interrupt.executing
+            || self.interrupt.detected
+            || self.interrupt.nmi
+            || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
+                && !self.register.get_i())
+            || self.interrupt.oam_dma.is_some()
+            || self.interrupt.dmc_start
+            || self.interrupt.dmc_count > 0
+            || self.interrupt.running_dma
+            || self
+                .oam_dma
+                .as_ref()
+                .is_some_and(OamDmaState::has_transaction)
+    }
+
+    fn update_interrupt_detection(&mut self) {
+        self.interrupt.executing = self.interrupt.detected;
+        self.interrupt.detected = self.interrupt.nmi
+            || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
+                && !self.register.get_i());
     }
 }
 

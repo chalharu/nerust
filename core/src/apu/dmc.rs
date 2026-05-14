@@ -138,6 +138,10 @@ impl DMC {
         self.length_value > 0
     }
 
+    pub(crate) fn trace_jit_safe(&self) -> bool {
+        !self.enabled && self.length_value == 0
+    }
+
     pub(crate) fn fill(&mut self, value: u8, interrupt: &mut Interrupt) {
         if self.length_value > 0 {
             self.read_buffer = value;

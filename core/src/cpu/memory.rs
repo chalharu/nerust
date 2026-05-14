@@ -62,6 +62,17 @@ impl Memory {
         self.openbus.unite(result)
     }
 
+    pub(crate) fn peek_code(&self, address: u16, cartridge: &dyn Cartridge) -> Option<u8> {
+        match usize::from(address) {
+            0..=0x1FFF => Some(self.wram[usize::from(address) & 0x07FF]),
+            0x6000..=0xFFFF => {
+                let result = cartridge.read(usize::from(address));
+                (result.mask == 0xFF).then_some(result.data)
+            }
+            _ => None,
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "CPU bus reads need access to every attached device"
