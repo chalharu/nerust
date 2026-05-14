@@ -51,6 +51,10 @@ alto = { version = "=3.0.4" }
 bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
 crc = { version = "=3.4.0" }
+cranelift-codegen = { version = "=0.131.1" }
+cranelift-frontend = { version = "=0.131.1" }
+cranelift-jit = { version = "=0.131.1" }
+cranelift-module = { version = "=0.131.1" }
 epoxy = { version = "=0.1.0" }
 gdk = { version = "=0.18.2" }
 gio = { version = "=0.22.6" }

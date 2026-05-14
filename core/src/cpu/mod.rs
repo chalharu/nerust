@@ -11,6 +11,7 @@ mod memory;
 mod oamdma;
 mod opcodes;
 mod register;
+mod trace_jit;
 
 use self::addressing_mode::*;
 use self::internal_stat::{CpuStatesEnum, InternalStat};

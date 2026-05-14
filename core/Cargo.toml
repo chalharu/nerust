@@ -7,6 +7,10 @@ edition.workspace = true
 
 [dependencies]
 bitflags.workspace = true
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-jit.workspace = true
+cranelift-module.workspace = true
 log.workspace = true
 nerust_screen_traits.workspace = true
 nerust_serialize.workspace = true
