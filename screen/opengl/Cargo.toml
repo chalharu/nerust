@@ -7,6 +7,7 @@ edition.workspace = true
 
 [dependencies]
 gl.workspace = true
+log.workspace = true
 nerust_glwrap.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_screen_traits.workspace = true

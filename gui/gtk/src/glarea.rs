@@ -36,8 +36,6 @@ impl GLAreaExtend for GLArea {
 
     fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea {
         gl_area.set_auto_render(false);
-        #[allow(deprecated)]
-        gl_area.set_use_es(true);
 
         let result = Rc::new(RefCell::new(GLAreaCore {
             gl_area: gl_area.clone(),
