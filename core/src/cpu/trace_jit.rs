@@ -292,7 +292,7 @@ fn set_flag_from_bool(
     condition: cranelift_codegen::ir::Value,
     flag: u8,
 ) -> cranelift_codegen::ir::Value {
-    let cleared = builder.ins().band_imm(p, i64::from(!flag & 0xFF));
+    let cleared = builder.ins().band_imm(p, i64::from(!flag));
     let set = builder.ins().bor_imm(cleared, i64::from(flag));
     builder.ins().select(condition, set, cleared)
 }
