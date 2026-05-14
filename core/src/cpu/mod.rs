@@ -23,9 +23,7 @@ use self::opcodes::{
 };
 use self::register::{Register, RegisterP};
 use super::*;
-use std::collections::HashMap;
 use std::ops::Shr;
-use strum::IntoEnumIterator;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where
@@ -38,7 +36,7 @@ const NMI_VECTOR: usize = 0xFFFA;
 const RESET_VECTOR: usize = 0xFFFC;
 const IRQ_VECTOR: usize = 0xFFFE;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize)]
 pub(crate) struct Core {
     #[serde(skip)]
     opcode_tables: Opcodes,
@@ -50,8 +48,8 @@ pub(crate) struct Core {
     interrupt: Interrupt,
     cycles: u64,
     oam_dma: Option<OamDmaState>,
-    #[serde(skip, default = "make_cpu_stepfunc")]
-    cpu_stepfunc: Vec<CpuStepStateFunc>,
+    #[serde(skip)]
+    cpu_stepfunc: CpuStepStateFunc,
 }
 
 // pub(crate) struct State {
@@ -64,114 +62,122 @@ pub(crate) struct Core {
 //     cpu_states: CpuStates,
 // }
 
-fn make_cpu_stepfunc() -> Vec<CpuStepStateFunc> {
-    let funcs: [(CpuStatesEnum, CpuStepStateFunc); 98] = [
-        (CpuStatesEnum::Reset, Reset::exec),
-        (CpuStatesEnum::FetchOpCode, FetchOpCode::exec),
-        (CpuStatesEnum::Irq, Irq::exec),
-        (CpuStatesEnum::AbsoluteIndirect, AbsoluteIndirect::exec),
-        (CpuStatesEnum::AbsoluteXRMW, AbsoluteXRMW::exec),
-        (CpuStatesEnum::AbsoluteX, AbsoluteX::exec),
-        (CpuStatesEnum::AbsoluteYRMW, AbsoluteYRMW::exec),
-        (CpuStatesEnum::AbsoluteY, AbsoluteY::exec),
-        (CpuStatesEnum::Absolute, Absolute::exec),
-        (CpuStatesEnum::Accumulator, Accumulator::exec),
-        (CpuStatesEnum::Immediate, Immediate::exec),
-        (CpuStatesEnum::Implied, Implied::exec),
-        (CpuStatesEnum::IndexedIndirect, IndexedIndirect::exec),
-        (CpuStatesEnum::IndirectIndexedRMW, IndirectIndexedRMW::exec),
-        (CpuStatesEnum::IndirectIndexed, IndirectIndexed::exec),
-        (CpuStatesEnum::Relative, Relative::exec),
-        (CpuStatesEnum::ZeroPageX, ZeroPageX::exec),
-        (CpuStatesEnum::ZeroPageY, ZeroPageY::exec),
-        (CpuStatesEnum::ZeroPage, ZeroPage::exec),
-        (CpuStatesEnum::And, And::exec),
-        (CpuStatesEnum::Eor, Eor::exec),
-        (CpuStatesEnum::Ora, Ora::exec),
-        (CpuStatesEnum::Adc, Adc::exec),
-        (CpuStatesEnum::Sbc, Sbc::exec),
-        (CpuStatesEnum::Bit, Bit::exec),
-        (CpuStatesEnum::Lax, Lax::exec),
-        (CpuStatesEnum::Anc, Anc::exec),
-        (CpuStatesEnum::Alr, Alr::exec),
-        (CpuStatesEnum::Arr, Arr::exec),
-        (CpuStatesEnum::Xaa, Xaa::exec),
-        (CpuStatesEnum::Las, Las::exec),
-        (CpuStatesEnum::Axs, Axs::exec),
-        (CpuStatesEnum::Sax, Sax::exec),
-        (CpuStatesEnum::Tas, Tas::exec),
-        (CpuStatesEnum::Ahx, Ahx::exec),
-        (CpuStatesEnum::Shx, Shx::exec),
-        (CpuStatesEnum::Shy, Shy::exec),
-        (CpuStatesEnum::Cmp, Cmp::exec),
-        (CpuStatesEnum::Cpx, Cpx::exec),
-        (CpuStatesEnum::Cpy, Cpy::exec),
-        (CpuStatesEnum::Bcc, Bcc::exec),
-        (CpuStatesEnum::Bcs, Bcs::exec),
-        (CpuStatesEnum::Beq, Beq::exec),
-        (CpuStatesEnum::Bmi, Bmi::exec),
-        (CpuStatesEnum::Bne, Bne::exec),
-        (CpuStatesEnum::Bpl, Bpl::exec),
-        (CpuStatesEnum::Bvc, Bvc::exec),
-        (CpuStatesEnum::Bvs, Bvs::exec),
-        (CpuStatesEnum::Dex, Dex::exec),
-        (CpuStatesEnum::Dey, Dey::exec),
-        (CpuStatesEnum::Dec, Dec::exec),
-        (CpuStatesEnum::Clc, Clc::exec),
-        (CpuStatesEnum::Cld, Cld::exec),
-        (CpuStatesEnum::Cli, Cli::exec),
-        (CpuStatesEnum::Clv, Clv::exec),
-        (CpuStatesEnum::Sec, Sec::exec),
-        (CpuStatesEnum::Sed, Sed::exec),
-        (CpuStatesEnum::Sei, Sei::exec),
-        (CpuStatesEnum::Inx, Inx::exec),
-        (CpuStatesEnum::Iny, Iny::exec),
-        (CpuStatesEnum::Inc, Inc::exec),
-        (CpuStatesEnum::Brk, Brk::exec),
-        (CpuStatesEnum::Rti, Rti::exec),
-        (CpuStatesEnum::Rts, Rts::exec),
-        (CpuStatesEnum::Jmp, Jmp::exec),
-        (CpuStatesEnum::Jsr, Jsr::exec),
-        (CpuStatesEnum::Lda, Lda::exec),
-        (CpuStatesEnum::Ldx, Ldx::exec),
-        (CpuStatesEnum::Ldy, Ldy::exec),
-        (CpuStatesEnum::Nop, Nop::exec),
-        (CpuStatesEnum::Kil, Kil::exec),
-        (CpuStatesEnum::Isc, Isc::exec),
-        (CpuStatesEnum::Dcp, Dcp::exec),
-        (CpuStatesEnum::Slo, Slo::exec),
-        (CpuStatesEnum::Rla, Rla::exec),
-        (CpuStatesEnum::Sre, Sre::exec),
-        (CpuStatesEnum::Rra, Rra::exec),
-        (CpuStatesEnum::AslAcc, AslAcc::exec),
-        (CpuStatesEnum::AslMem, AslMem::exec),
-        (CpuStatesEnum::LsrAcc, LsrAcc::exec),
-        (CpuStatesEnum::LsrMem, LsrMem::exec),
-        (CpuStatesEnum::RolAcc, RolAcc::exec),
-        (CpuStatesEnum::RolMem, RolMem::exec),
-        (CpuStatesEnum::RorAcc, RorAcc::exec),
-        (CpuStatesEnum::RorMem, RorMem::exec),
-        (CpuStatesEnum::Pla, Pla::exec),
-        (CpuStatesEnum::Plp, Plp::exec),
-        (CpuStatesEnum::Pha, Pha::exec),
-        (CpuStatesEnum::Php, Php::exec),
-        (CpuStatesEnum::Sta, Sta::exec),
-        (CpuStatesEnum::Stx, Stx::exec),
-        (CpuStatesEnum::Sty, Sty::exec),
-        (CpuStatesEnum::Tax, Tax::exec),
-        (CpuStatesEnum::Tay, Tay::exec),
-        (CpuStatesEnum::Tsx, Tsx::exec),
-        (CpuStatesEnum::Txa, Txa::exec),
-        (CpuStatesEnum::Tya, Tya::exec),
-        (CpuStatesEnum::Txs, Txs::exec),
-    ];
-    let mut map: HashMap<CpuStatesEnum, CpuStepStateFunc> = funcs
-        .iter()
-        .cloned()
-        .collect::<HashMap<CpuStatesEnum, CpuStepStateFunc>>();
-    CpuStatesEnum::iter()
-        .map(|x| map.remove(&x).unwrap())
-        .collect()
+macro_rules! cpu_stepfunc_entries {
+    ($with_entries:ident) => {
+        $with_entries! {
+            (CpuStatesEnum::FetchOpCode, FetchOpCode::exec),
+            (CpuStatesEnum::Reset, Reset::exec),
+            (CpuStatesEnum::Irq, Irq::exec),
+            (CpuStatesEnum::AbsoluteIndirect, AbsoluteIndirect::exec),
+            (CpuStatesEnum::AbsoluteXRMW, AbsoluteXRMW::exec),
+            (CpuStatesEnum::AbsoluteX, AbsoluteX::exec),
+            (CpuStatesEnum::AbsoluteYRMW, AbsoluteYRMW::exec),
+            (CpuStatesEnum::AbsoluteY, AbsoluteY::exec),
+            (CpuStatesEnum::Absolute, Absolute::exec),
+            (CpuStatesEnum::Accumulator, Accumulator::exec),
+            (CpuStatesEnum::Immediate, Immediate::exec),
+            (CpuStatesEnum::Implied, Implied::exec),
+            (CpuStatesEnum::IndexedIndirect, IndexedIndirect::exec),
+            (CpuStatesEnum::IndirectIndexedRMW, IndirectIndexedRMW::exec),
+            (CpuStatesEnum::IndirectIndexed, IndirectIndexed::exec),
+            (CpuStatesEnum::Relative, Relative::exec),
+            (CpuStatesEnum::ZeroPageX, ZeroPageX::exec),
+            (CpuStatesEnum::ZeroPageY, ZeroPageY::exec),
+            (CpuStatesEnum::ZeroPage, ZeroPage::exec),
+            (CpuStatesEnum::And, And::exec),
+            (CpuStatesEnum::Eor, Eor::exec),
+            (CpuStatesEnum::Ora, Ora::exec),
+            (CpuStatesEnum::Adc, Adc::exec),
+            (CpuStatesEnum::Sbc, Sbc::exec),
+            (CpuStatesEnum::Bit, Bit::exec),
+            (CpuStatesEnum::Lax, Lax::exec),
+            (CpuStatesEnum::Anc, Anc::exec),
+            (CpuStatesEnum::Alr, Alr::exec),
+            (CpuStatesEnum::Arr, Arr::exec),
+            (CpuStatesEnum::Xaa, Xaa::exec),
+            (CpuStatesEnum::Las, Las::exec),
+            (CpuStatesEnum::Axs, Axs::exec),
+            (CpuStatesEnum::Sax, Sax::exec),
+            (CpuStatesEnum::Tas, Tas::exec),
+            (CpuStatesEnum::Ahx, Ahx::exec),
+            (CpuStatesEnum::Shx, Shx::exec),
+            (CpuStatesEnum::Shy, Shy::exec),
+            (CpuStatesEnum::Cmp, Cmp::exec),
+            (CpuStatesEnum::Cpx, Cpx::exec),
+            (CpuStatesEnum::Cpy, Cpy::exec),
+            (CpuStatesEnum::Bcc, Bcc::exec),
+            (CpuStatesEnum::Bcs, Bcs::exec),
+            (CpuStatesEnum::Beq, Beq::exec),
+            (CpuStatesEnum::Bmi, Bmi::exec),
+            (CpuStatesEnum::Bne, Bne::exec),
+            (CpuStatesEnum::Bpl, Bpl::exec),
+            (CpuStatesEnum::Bvc, Bvc::exec),
+            (CpuStatesEnum::Bvs, Bvs::exec),
+            (CpuStatesEnum::Dex, Dex::exec),
+            (CpuStatesEnum::Dey, Dey::exec),
+            (CpuStatesEnum::Dec, Dec::exec),
+            (CpuStatesEnum::Clc, Clc::exec),
+            (CpuStatesEnum::Cld, Cld::exec),
+            (CpuStatesEnum::Cli, Cli::exec),
+            (CpuStatesEnum::Clv, Clv::exec),
+            (CpuStatesEnum::Sec, Sec::exec),
+            (CpuStatesEnum::Sed, Sed::exec),
+            (CpuStatesEnum::Sei, Sei::exec),
+            (CpuStatesEnum::Inx, Inx::exec),
+            (CpuStatesEnum::Iny, Iny::exec),
+            (CpuStatesEnum::Inc, Inc::exec),
+            (CpuStatesEnum::Brk, Brk::exec),
+            (CpuStatesEnum::Rti, Rti::exec),
+            (CpuStatesEnum::Rts, Rts::exec),
+            (CpuStatesEnum::Jmp, Jmp::exec),
+            (CpuStatesEnum::Jsr, Jsr::exec),
+            (CpuStatesEnum::Lda, Lda::exec),
+            (CpuStatesEnum::Ldx, Ldx::exec),
+            (CpuStatesEnum::Ldy, Ldy::exec),
+            (CpuStatesEnum::Nop, Nop::exec),
+            (CpuStatesEnum::Kil, Kil::exec),
+            (CpuStatesEnum::Isc, Isc::exec),
+            (CpuStatesEnum::Dcp, Dcp::exec),
+            (CpuStatesEnum::Slo, Slo::exec),
+            (CpuStatesEnum::Rla, Rla::exec),
+            (CpuStatesEnum::Sre, Sre::exec),
+            (CpuStatesEnum::Rra, Rra::exec),
+            (CpuStatesEnum::AslAcc, AslAcc::exec),
+            (CpuStatesEnum::AslMem, AslMem::exec),
+            (CpuStatesEnum::LsrAcc, LsrAcc::exec),
+            (CpuStatesEnum::LsrMem, LsrMem::exec),
+            (CpuStatesEnum::RolAcc, RolAcc::exec),
+            (CpuStatesEnum::RolMem, RolMem::exec),
+            (CpuStatesEnum::RorAcc, RorAcc::exec),
+            (CpuStatesEnum::RorMem, RorMem::exec),
+            (CpuStatesEnum::Pla, Pla::exec),
+            (CpuStatesEnum::Plp, Plp::exec),
+            (CpuStatesEnum::Pha, Pha::exec),
+            (CpuStatesEnum::Php, Php::exec),
+            (CpuStatesEnum::Sta, Sta::exec),
+            (CpuStatesEnum::Stx, Stx::exec),
+            (CpuStatesEnum::Sty, Sty::exec),
+            (CpuStatesEnum::Tax, Tax::exec),
+            (CpuStatesEnum::Tay, Tay::exec),
+            (CpuStatesEnum::Tsx, Tsx::exec),
+            (CpuStatesEnum::Txa, Txa::exec),
+            (CpuStatesEnum::Tya, Tya::exec),
+            (CpuStatesEnum::Txs, Txs::exec),
+        }
+    };
+}
+
+macro_rules! cpu_stepfunc_array {
+    ($(($state:expr, $func:path)),+ $(,)?) => {
+        [$($func),+]
+    };
+}
+
+const CPU_STEPFUNCS: [CpuStepStateFunc; CpuStatesEnum::COUNT] =
+    cpu_stepfunc_entries!(cpu_stepfunc_array);
+
+fn cpu_stepfunc(state: CpuStatesEnum) -> CpuStepStateFunc {
+    CPU_STEPFUNCS[state as usize]
 }
 
 impl Core {
@@ -185,7 +191,7 @@ impl Core {
             memory: Memory::new(),
             cycles: 0,
             oam_dma: Some(OamDmaState::new()),
-            cpu_stepfunc: make_cpu_stepfunc(),
+            cpu_stepfunc: cpu_stepfunc(CpuStatesEnum::Reset),
         }
     }
 
@@ -193,7 +199,13 @@ impl Core {
         self.interrupt.reset();
         self.oam_dma.as_mut().unwrap().reset();
         self.internal_stat.reset();
+        self.cpu_stepfunc = cpu_stepfunc(self.internal_stat.state);
         self.cycles = 0;
+    }
+
+    fn set_cpu_state(&mut self, state: CpuStatesEnum) {
+        self.internal_stat.state = state;
+        self.cpu_stepfunc = cpu_stepfunc(state);
     }
 
     pub(crate) fn step(
@@ -238,14 +250,13 @@ impl Core {
                     .next(self, ppu, cartridge, controller, apu);
                 self.oam_dma = oam_dma;
             } else {
-                let mut machine = &mut self.cpu_stepfunc[self.internal_stat.get_state() as usize];
-                let step = self.internal_stat.get_step() + 1;
-                self.internal_stat.set_step(step);
+                let mut machine = self.cpu_stepfunc;
+                self.internal_stat.step += 1;
                 while let CpuStepStateEnum::Exit(s) = machine(self, ppu, cartridge, controller, apu)
                 {
-                    self.internal_stat.set_state(s);
-                    self.internal_stat.set_step(1);
-                    machine = &mut self.cpu_stepfunc[self.internal_stat.get_state() as usize];
+                    self.set_cpu_state(s);
+                    self.internal_stat.step = 1;
+                    machine = self.cpu_stepfunc;
                 }
                 self.interrupt.executing = self.interrupt.detected;
                 self.interrupt.detected = self.interrupt.nmi
@@ -257,6 +268,60 @@ impl Core {
 
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {
         &mut self.interrupt
+    }
+}
+
+#[derive(serde_derive::Deserialize)]
+struct CoreDeserialize {
+    memory: Memory,
+    register: Register,
+    internal_stat: InternalStat,
+    interrupt: Interrupt,
+    cycles: u64,
+    oam_dma: Option<OamDmaState>,
+}
+
+impl<'de> serde::Deserialize<'de> for Core {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let data = <CoreDeserialize as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self {
+            opcode_tables: Opcodes::new(),
+            addressing_tables: AddressingModeLut::new(),
+            cpu_stepfunc: cpu_stepfunc(data.internal_stat.state),
+            memory: data.memory,
+            register: data.register,
+            internal_stat: data.internal_stat,
+            interrupt: data.interrupt,
+            cycles: data.cycles,
+            oam_dma: data.oam_dma,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strum::IntoEnumIterator;
+
+    macro_rules! cpu_stepfunc_pair_array {
+        ($(($state:expr, $func:path)),+ $(,)?) => {
+            [$(($state, $func as CpuStepStateFunc)),+]
+        };
+    }
+
+    #[test]
+    fn cpu_stepfunc_table_tracks_cpu_state_order() {
+        assert_eq!(CpuStatesEnum::iter().count(), CpuStatesEnum::COUNT);
+        assert_eq!(CPU_STEPFUNCS.len(), CpuStatesEnum::COUNT);
+        let expected = cpu_stepfunc_entries!(cpu_stepfunc_pair_array);
+        assert_eq!(expected.len(), CpuStatesEnum::COUNT);
+        for (index, (state, expected_func)) in expected.into_iter().enumerate() {
+            assert_eq!(state as usize, index);
+            assert!(std::ptr::fn_addr_eq(CPU_STEPFUNCS[index], expected_func));
+        }
     }
 }
 
@@ -289,7 +354,7 @@ impl CpuStepState for FetchOpCode {
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
-        if core.internal_stat.get_step() == 1 {
+        if core.internal_stat.step == 1 {
             let code = usize::from(core.memory.read_next(
                 &mut core.register,
                 ppu,
@@ -298,10 +363,10 @@ impl CpuStepState for FetchOpCode {
                 apu,
                 &mut core.interrupt,
             ));
-            core.internal_stat.set_opcode(code);
+            core.internal_stat.opcode = code;
             CpuStepStateEnum::Continue
         } else {
-            CpuStepStateEnum::Exit(core.addressing_tables.get(core.internal_stat.get_opcode()))
+            CpuStepStateEnum::Exit(core.addressing_tables.get(core.internal_stat.opcode))
         }
     }
 }
