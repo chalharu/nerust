@@ -9,7 +9,7 @@ pub(crate) mod rgb;
 
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 
-pub trait FilterUnit {
+pub trait FilterUnit: Send {
     type Input;
     type Output;
 

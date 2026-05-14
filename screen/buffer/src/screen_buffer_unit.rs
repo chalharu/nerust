@@ -38,6 +38,16 @@ impl ScreenBufferUnit {
     }
 
     #[inline]
+    pub(crate) fn pixel_len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    #[inline]
+    pub(crate) fn is_full(&self) -> bool {
+        self.pos == self.buffer.len()
+    }
+
+    #[inline]
     pub(crate) fn copy_to_slice(&self, dest: &mut [u8]) {
         let src =
             unsafe { slice::from_raw_parts(self.buffer.as_ptr().cast::<u8>(), self.byte_len()) };
@@ -57,12 +67,13 @@ impl ScreenBufferUnit {
 impl FilterFunc for ScreenBufferUnit {
     #[inline]
     fn filter_func(&mut self, color: RGB) {
-        unsafe {
-            *(self.buffer.get_unchecked_mut(self.pos)) = OPAQUE_BLACK
-                | u32::from(color.red)
-                | u32::from(color.green) << 8
-                | u32::from(color.blue) << 16;
-        }
+        *self
+            .buffer
+            .get_mut(self.pos)
+            .expect("display buffer overflow while writing filtered frame") = OPAQUE_BLACK
+            | u32::from(color.red)
+            | u32::from(color.green) << 8
+            | u32::from(color.blue) << 16;
         self.pos += 1;
     }
 }
@@ -71,5 +82,3 @@ impl FilterFunc for ScreenBufferUnit {
 pub(crate) fn init_screen_buffer(size: LogicalSize) -> Box<[u32]> {
     allocate(size.width * size.height)
 }
-
-unsafe impl Send for ScreenBufferUnit {}
