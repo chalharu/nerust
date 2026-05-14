@@ -408,6 +408,49 @@ impl Core {
         0
     }
 
+    pub(crate) fn advance_trace_jit<S: Screen>(
+        &mut self,
+        screen: &mut S,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+        steps: u64,
+    ) -> bool {
+        let mut result = false;
+        let mut remaining = steps;
+        while remaining > 0 {
+            let skipped = self.skip_trace_jit_idle_steps(remaining);
+            if skipped > 0 {
+                remaining -= skipped;
+                continue;
+            }
+            if self.step(screen, cartridge, interrupt) {
+                result = true;
+            }
+            remaining -= 1;
+        }
+        result
+    }
+
+    fn skip_trace_jit_idle_steps(&mut self, max_steps: u64) -> u64 {
+        if self.scan_line == 0
+            || self.scan_line > 240
+            || self.cycle < 257
+            || self.cycle > 339
+            || self.mask.show_background
+            || self.mask.show_sprites
+            || self.render_executing
+            || self.post_render_executing
+            || self.vram_read_delay > 0
+            || self.vram_addr_update_delay > 0
+        {
+            return 0;
+        }
+
+        let steps = max_steps.min(u64::from(340 - self.cycle));
+        self.cycle += steps as u16;
+        steps
+    }
+
     fn steps_until_next_scanline(&self, scan_line: u16, cycle: u16, rendering: bool) -> u16 {
         if cycle > 339 {
             return 1;
@@ -1155,5 +1198,44 @@ mod tests {
         ppu.cycle = 338;
 
         assert_eq!(ppu.trace_jit_safe_cpu_cycles(), 0);
+    }
+
+    #[test]
+    fn trace_jit_idle_skip_advances_only_non_rendering_dots() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 1;
+        ppu.cycle = 257;
+
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 3);
+        assert_eq!(ppu.cycle, 260);
+
+        ppu.render_executing = true;
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 0);
+        assert_eq!(ppu.cycle, 260);
+    }
+
+    #[test]
+    fn trace_jit_idle_skip_does_not_bypass_cycle_257_or_mask_changes() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 1;
+        ppu.cycle = 256;
+
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 0);
+        assert_eq!(ppu.cycle, 256);
+
+        ppu.cycle = 257;
+        ppu.mask.show_background = true;
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 0);
+        assert_eq!(ppu.cycle, 257);
+    }
+
+    #[test]
+    fn trace_jit_idle_skip_stops_before_scanline_transition() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 1;
+        ppu.cycle = 338;
+
+        assert_eq!(ppu.skip_trace_jit_idle_steps(10), 2);
+        assert_eq!(ppu.cycle, 340);
     }
 }

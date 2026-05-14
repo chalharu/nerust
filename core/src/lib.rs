@@ -196,7 +196,19 @@ impl Core {
     ) -> bool {
         let mut result = false;
         for _ in 0..cycles {
-            result |= self.step_devices(screen, mixer, mixer_sample_rate);
+            result |= self.ppu.advance_trace_jit(
+                screen,
+                self.cartridge.as_mut(),
+                self.cpu.interrupt_mut(),
+                3,
+            );
+            self.cartridge.step();
+            self.apu.step(
+                &mut self.cpu,
+                self.cartridge.as_mut(),
+                mixer,
+                mixer_sample_rate,
+            );
         }
         result
     }
