@@ -23,7 +23,7 @@ use self::opcodes::{
     *,
 };
 use self::register::{Register, RegisterP};
-use self::trace_jit::TraceJit;
+use self::trace_jit::{TraceInput, TraceJit, TraceOp};
 use super::*;
 use std::ops::Shr;
 
@@ -273,9 +273,12 @@ impl Core {
     }
 
     pub(crate) fn is_trace_jit_boundary(&self) -> bool {
+        let Ok(opcode) = u8::try_from(self.internal_stat.opcode) else {
+            return false;
+        };
         self.internal_stat.state == CpuStatesEnum::FetchOpCode
             && self.internal_stat.step == 1
-            && self.internal_stat.opcode == 0xCA
+            && TraceOp::is_supported_block_start(opcode)
     }
 
     pub(crate) fn try_run_trace_jit(
@@ -292,21 +295,27 @@ impl Core {
         }
 
         let entry_pc = self.register.get_pc().wrapping_sub(1);
-        self.memory.peek_code(entry_pc.wrapping_add(3), cartridge)?;
-
         let trace = {
             let memory = &self.memory;
             let cartridge_ref: &dyn Cartridge = &*cartridge;
-            trace_jit.run_counted_x_loop(
-                entry_pc,
-                self.register.get_x(),
-                self.register.get_p(),
-                max_cycles,
+            trace_jit.run_block_trace(
+                TraceInput {
+                    entry_pc,
+                    a: self.register.get_a(),
+                    x: self.register.get_x(),
+                    y: self.register.get_y(),
+                    sp: self.register.get_sp(),
+                    p: self.register.get_p(),
+                    max_cycles,
+                },
                 |address| memory.peek_code(address, cartridge_ref),
             )
         }?;
 
+        self.register.set_a(trace.a);
         self.register.set_x(trace.x);
+        self.register.set_y(trace.y);
+        self.register.set_sp(trace.sp);
         self.register.set_p(trace.p);
         self.register.set_pc(trace.pc_to_fetch);
         let opcode = self.memory.read_next(
