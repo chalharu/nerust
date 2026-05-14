@@ -432,9 +432,9 @@ impl Core {
     }
 
     fn skip_trace_jit_idle_steps(&mut self, max_steps: u64) -> u64 {
-        if self.scan_line == 0
-            || self.scan_line > 240
-            || self.cycle < 257
+        let is_visible_idle_dot = (1..=240).contains(&self.scan_line) && self.cycle >= 257;
+        let is_prerender_idle_dot = self.scan_line == 0 && self.cycle >= 8;
+        if (!is_visible_idle_dot && !is_prerender_idle_dot)
             || self.cycle > 339
             || self.mask.show_background
             || self.mask.show_sprites
@@ -1227,6 +1227,20 @@ mod tests {
         ppu.mask.show_background = true;
         assert_eq!(ppu.skip_trace_jit_idle_steps(3), 0);
         assert_eq!(ppu.cycle, 257);
+    }
+
+    #[test]
+    fn trace_jit_idle_skip_handles_prerender_idle_window() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 0;
+        ppu.cycle = 7;
+
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 0);
+        assert_eq!(ppu.cycle, 7);
+
+        ppu.cycle = 8;
+        assert_eq!(ppu.skip_trace_jit_idle_steps(3), 3);
+        assert_eq!(ppu.cycle, 11);
     }
 
     #[test]
