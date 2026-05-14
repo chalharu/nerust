@@ -12,9 +12,8 @@ use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::Timer;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use std::sync::atomic::AtomicPtr;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -46,30 +45,31 @@ pub struct Console {
     thread: Option<JoinHandle<()>>,
 
     logical_size: LogicalSize,
-    screen_buffer_ptr: Arc<AtomicPtr<u8>>,
+    frame_buffer: Arc<RwLock<Box<[u8]>>>,
 }
 
 impl Console {
     pub fn new<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
-        mut screen_buffer: ScreenBuffer,
+        screen_buffer: ScreenBuffer,
     ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
         let logical_size = screen_buffer.logical_size();
-        let screen_buffer_ptr = Arc::new(AtomicPtr::new(screen_buffer.as_mut_ptr()));
+        let mut frame_buffer = vec![0; screen_buffer.frame_len()].into_boxed_slice();
+        screen_buffer.copy_display_buffer(frame_buffer.as_mut());
+        let frame_buffer = Arc::new(RwLock::new(frame_buffer));
 
         let mut result = Self {
             data_sender,
             stop_sender,
             thread: None,
             logical_size,
-            screen_buffer_ptr: screen_buffer_ptr.clone(),
+            frame_buffer: frame_buffer.clone(),
         };
 
         result.thread = Some(thread::spawn(move || {
-            let mut state =
-                ConsoleRunner::new(data_recv, stop_recv, screen_buffer, screen_buffer_ptr);
+            let mut state = ConsoleRunner::new(data_recv, stop_recv, screen_buffer, frame_buffer);
 
             state.run(speaker);
         }));
@@ -81,9 +81,12 @@ impl Console {
         self.logical_size
     }
 
-    pub fn as_ptr(&self) -> *const u8 {
-        self.screen_buffer_ptr
-            .load(std::sync::atomic::Ordering::SeqCst)
+    pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
+        let frame_buffer = self
+            .frame_buffer
+            .read()
+            .unwrap_or_else(|err| err.into_inner());
+        f(&frame_buffer)
     }
 
     pub fn resume(&self) {
@@ -150,7 +153,7 @@ struct ConsoleRunner {
     stop_receiver: Receiver<()>,
     data_receiver: Receiver<ConsoleData>,
     screen_buffer: ScreenBuffer,
-    screen_buffer_ptr: Arc<AtomicPtr<u8>>,
+    frame_buffer: Arc<RwLock<Box<[u8]>>>,
 }
 
 impl ConsoleRunner {
@@ -158,7 +161,7 @@ impl ConsoleRunner {
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
         screen_buffer: ScreenBuffer,
-        screen_buffer_ptr: Arc<AtomicPtr<u8>>,
+        frame_buffer: Arc<RwLock<Box<[u8]>>>,
     ) -> Self {
         Self {
             data_receiver,
@@ -169,8 +172,17 @@ impl ConsoleRunner {
             paused: true,
             frame_counter: 0,
             screen_buffer,
-            screen_buffer_ptr,
+            frame_buffer,
         }
+    }
+
+    fn publish_frame(&self) {
+        let mut frame_buffer = self
+            .frame_buffer
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+        self.screen_buffer
+            .copy_display_buffer(frame_buffer.as_mut());
     }
 
     fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
@@ -181,15 +193,14 @@ impl ConsoleRunner {
             {
                 while !core.step(&mut self.screen_buffer, &mut self.controller, &mut speaker) {}
                 self.frame_counter += 1;
-                self.screen_buffer_ptr.store(
-                    self.screen_buffer.as_mut_ptr(),
-                    std::sync::atomic::Ordering::SeqCst,
-                );
+                self.publish_frame();
             }
             self.timer.wait();
             if let Ok(event) = self.data_receiver.try_recv() {
                 match event {
                     ConsoleData::Load(data) => {
+                        self.screen_buffer.clear();
+                        self.publish_frame();
                         core = Core::new(&mut data.into_iter()).ok();
                     }
                     ConsoleData::Resume => {
@@ -217,6 +228,7 @@ impl ConsoleRunner {
                         self.paused = false;
                         core = None;
                         self.screen_buffer.clear();
+                        self.publish_frame();
                     } // _ => (),
                 }
             }
