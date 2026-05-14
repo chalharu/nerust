@@ -35,6 +35,10 @@ impl GLAreaExtend for GLArea {
     }
 
     fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea {
+        gl_area.set_auto_render(false);
+        #[allow(deprecated)]
+        gl_area.set_use_es(true);
+
         let result = Rc::new(RefCell::new(GLAreaCore {
             gl_area: gl_area.clone(),
             state,
@@ -73,6 +77,7 @@ impl GLAreaExtend for GLArea {
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
+            return;
         }
         epoxy::load_with(|s| unsafe {
             match DynamicLibrary::open(None).unwrap().symbol(s) {
@@ -90,12 +95,14 @@ impl GLAreaExtend for GLArea {
             view.on_load(state.logical_size);
             state.view = Some(view);
         }
+        self.glarea().queue_render();
     }
 
     fn resize(&self, width: i32, height: i32) {
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
+            return;
         }
         // unsafe {epoxy::Viewport(0, 0, w, h);}
         // let dpi_factor = self.glarea().get_scale_factor();
@@ -137,6 +144,7 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     gl_area.make_current();
     if let Some(e) = gl_area.error() {
         log::error!("{}", e);
+        return;
     }
     {
         if let Ok(mut state) = state.try_borrow_mut() {
