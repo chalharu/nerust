@@ -37,6 +37,9 @@ default-members = [
 [profile.release]
 debug = true
 
+[profile.release.package.nerust_core]
+codegen-units = 1
+
 [workspace.package]
 version = "0.1.0"
 authors = ["chalharu"]
