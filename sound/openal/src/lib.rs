@@ -112,28 +112,30 @@ struct OpenAlState {
 
 impl OpenAlState {
     fn load_alto() -> Result<Alto, String> {
-        let mut errors = Vec::new();
+        OpenAl::with_sanitized_dyld_env(|| {
+            let mut errors = Vec::new();
 
-        match Alto::load_default() {
-            Ok(alto) => {
-                log::info!("loaded OpenAL with the default loader");
-                return Ok(alto);
-            }
-            Err(err) => errors.push(format!("default loader failed: {err:?}")),
-        }
-
-        #[cfg(target_os = "macos")]
-        for path in MACOS_OPENAL_CANDIDATES {
-            match Alto::load(path) {
+            match Alto::load_default() {
                 Ok(alto) => {
-                    log::info!("loaded OpenAL from {path}");
+                    log::info!("loaded OpenAL with the default loader");
                     return Ok(alto);
                 }
-                Err(err) => errors.push(format!("{path}: {err:?}")),
+                Err(err) => errors.push(format!("default loader failed: {err:?}")),
             }
-        }
 
-        Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
+            #[cfg(target_os = "macos")]
+            for path in MACOS_OPENAL_CANDIDATES {
+                match Alto::load(path) {
+                    Ok(alto) => {
+                        log::info!("loaded OpenAL from {path}");
+                        return Ok(alto);
+                    }
+                    Err(err) => errors.push(format!("{path}: {err:?}")),
+                }
+            }
+
+            Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
+        })
     }
 
     fn create_streaming_source(
@@ -161,18 +163,11 @@ impl OpenAlState {
     pub(crate) fn new(
         sample_rate: i32,
         buffer_width: usize,
-        buffer_count: usize,
         playing_receiver: Receiver<bool>,
         data_receiver: Receiver<f32>,
         fade_width: usize,
+        src: Option<StreamingSource>,
     ) -> Self {
-        let src = match Self::create_streaming_source(sample_rate, buffer_width, buffer_count) {
-            Ok(src) => Some(src),
-            Err(err) => {
-                log::error!("{err}");
-                None
-            }
-        };
         Self {
             src,
             sample_rate,
@@ -260,14 +255,25 @@ impl OpenAl {
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
+        // On macOS, loading Apple's deprecated OpenAL framework from a background thread can
+        // race with AppKit/ImageIO initialization. Initialize the backend on the caller thread
+        // first, then hand the fully created streaming source to the audio thread.
+        let src =
+            match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
+                Ok(src) => Some(src),
+                Err(err) => {
+                    log::error!("{err}");
+                    None
+                }
+            };
         let thread = thread::spawn(move || {
             let mut state = OpenAlState::new(
                 sample_rate,
                 buffer_width,
-                buffer_count,
                 playing_recv,
                 data_recv,
                 buffer_width,
+                src,
             );
             while stop_recv.try_recv().is_err() {
                 state.step();
@@ -283,6 +289,54 @@ impl OpenAl {
             thread: Some(thread),
             resampler: SimpleDownSampler::new(f64::from(output_rate), f64::from(sample_rate)),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
+
+        let saved = DYLD_ENV_VARS.map(|name| (name, std::env::var_os(name)));
+        for (name, value) in &saved {
+            if value.is_some() {
+                log::warn!(
+                    "temporarily clearing {name} while loading OpenAL to avoid ImageIO plugin conflicts"
+                );
+                // SAFETY: OpenAl::new initializes the audio backend on the caller thread before
+                // the dedicated audio thread is spawned, so no other thread concurrently mutates
+                // these DYLD variables during this narrow load window.
+                unsafe {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+
+        let result = f();
+
+        for (name, value) in saved {
+            match value {
+                Some(value) => {
+                    // SAFETY: See the rationale above; restoration happens on the same thread
+                    // before the audio worker is started, so there is no concurrent env access.
+                    unsafe {
+                        std::env::set_var(name, value);
+                    }
+                }
+                None => {
+                    // SAFETY: See the rationale above; restoration happens before spawning the
+                    // audio thread, so there is no concurrent env access.
+                    unsafe {
+                        std::env::remove_var(name);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        f()
     }
 }
 
