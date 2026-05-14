@@ -304,10 +304,6 @@ impl BranchCondition {
 }
 
 pub(crate) struct CompiledTrace {
-    // Keep the JIT module alive for as long as the function pointer can be
-    // called. This intentionally avoids a self-referential CPU cache: each
-    // cached trace owns the module that owns its finalized code.
-    _module: JITModule,
     func: TraceFn,
 }
 
@@ -319,28 +315,38 @@ impl CompiledTrace {
     }
 }
 
-pub(crate) struct TraceCompiler;
+pub(crate) struct TraceCompiler {
+    module: Option<JITModule>,
+    next_function_id: u32,
+}
 
 impl TraceCompiler {
     pub(crate) fn new() -> Self {
-        Self
+        let module = JITBuilder::new(cranelift_module::default_libcall_names())
+            .ok()
+            .map(JITModule::new);
+        Self {
+            module,
+            next_function_id: 0,
+        }
     }
 
     pub(crate) fn compile(&mut self, plan: &TracePlan) -> Option<CompiledTrace> {
-        Self::compile_block(plan)
+        self.compile_block(plan)
     }
 
-    fn compile_block(plan: &TracePlan) -> Option<CompiledTrace> {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
-        let mut module = JITModule::new(builder);
+    fn compile_block(&mut self, plan: &TracePlan) -> Option<CompiledTrace> {
+        let module = self.module.as_mut()?;
+        let function_id = self.next_function_id;
+        self.next_function_id = self.next_function_id.checked_add(1)?;
         let pointer_type = module.target_config().pointer_type();
         let mut ctx = module.make_context();
         ctx.func.signature.call_conv = CallConv::triple_default(module.isa().triple());
         ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        ctx.func.name = UserFuncName::user(0, 0);
-        let name = "trace_jit_block";
+        ctx.func.name = UserFuncName::user(0, function_id);
+        let name = format!("trace_jit_block_{function_id}");
         let func_id = module
-            .declare_function(name, Linkage::Local, &ctx.func.signature)
+            .declare_function(&name, Linkage::Local, &ctx.func.signature)
             .ok()?;
 
         let mut builder_context = FunctionBuilderContext::new();
@@ -406,7 +412,6 @@ impl TraceCompiler {
             // SAFETY: The finalized Cranelift function was declared and built
             // with the same ABI as TraceFn.
             func: unsafe { mem::transmute::<*const u8, TraceFn>(code) },
-            _module: module,
         })
     }
 }
@@ -457,12 +462,14 @@ pub(crate) struct TraceRun {
 pub(crate) struct TraceJit {
     cache: VecDeque<CachedTrace>,
     hotness: VecDeque<TraceHotness>,
+    compiler: TraceCompiler,
 }
 
 impl TraceJit {
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
         self.hotness.clear();
+        self.compiler = TraceCompiler::new();
     }
 
     pub(crate) fn run_block_trace<F>(
@@ -491,8 +498,7 @@ impl TraceJit {
         if !self.observe_hot_trace(&plan) {
             return None;
         }
-        let mut compiler = TraceCompiler::new();
-        let trace = compiler.compile(&plan)?;
+        let trace = self.compiler.compile(&plan)?;
         self.cache.push_front(CachedTrace {
             entry_pc: input.entry_pc,
             guard_bytes: plan.guard_bytes().to_vec(),
@@ -993,5 +999,105 @@ mod tests {
             );
         }
         assert_eq!(result.unwrap().cycles, 7);
+    }
+
+    #[test]
+    fn shared_jit_module_keeps_older_cached_traces_callable() {
+        let bytes_a = [0xA2, 0x03, 0xCA, 0xD0, 0xFD, 0xEA];
+        let bytes_b = [0xA2, 0x05, 0xCA, 0xD0, 0xFD, 0xEA];
+        let mut jit = TraceJit::default();
+
+        let mut first_result = None;
+        for _ in 0..COMPILE_HIT_THRESHOLD {
+            first_result = jit.run_block_trace(
+                TraceInput {
+                    entry_pc: 0x8000,
+                    a: 0,
+                    x: 0,
+                    y: 0,
+                    sp: 0xFD,
+                    p: RegisterP::RESERVED.bits(),
+                    max_cycles: u64::MAX,
+                },
+                read_from(0x8000, &bytes_a),
+            );
+        }
+        assert_eq!(first_result.unwrap().x, 2);
+
+        let mut second_result = None;
+        for _ in 0..COMPILE_HIT_THRESHOLD {
+            second_result = jit.run_block_trace(
+                TraceInput {
+                    entry_pc: 0x8100,
+                    a: 0,
+                    x: 0,
+                    y: 0,
+                    sp: 0xFD,
+                    p: RegisterP::RESERVED.bits(),
+                    max_cycles: u64::MAX,
+                },
+                read_from(0x8100, &bytes_b),
+            );
+        }
+        assert_eq!(second_result.unwrap().x, 4);
+
+        let cached_first_result = jit
+            .run_block_trace(
+                TraceInput {
+                    entry_pc: 0x8000,
+                    a: 0,
+                    x: 0,
+                    y: 0,
+                    sp: 0xFD,
+                    p: RegisterP::RESERVED.bits(),
+                    max_cycles: u64::MAX,
+                },
+                read_from(0x8000, &bytes_a),
+            )
+            .unwrap();
+        assert_eq!(cached_first_result.x, 2);
+    }
+
+    #[test]
+    fn clear_drops_cached_trace_pointers_before_replacing_module() {
+        let bytes = [0xA2, 0x03, 0xCA, 0xD0, 0xFD, 0xEA];
+        let mut jit = TraceJit::default();
+
+        for _ in 0..COMPILE_HIT_THRESHOLD {
+            jit.run_block_trace(
+                TraceInput {
+                    entry_pc: 0x8000,
+                    a: 0,
+                    x: 0,
+                    y: 0,
+                    sp: 0xFD,
+                    p: RegisterP::RESERVED.bits(),
+                    max_cycles: u64::MAX,
+                },
+                read_from(0x8000, &bytes),
+            );
+        }
+        assert_eq!(jit.cache.len(), 1);
+
+        jit.clear();
+        assert!(jit.cache.is_empty());
+        assert!(jit.hotness.is_empty());
+
+        let mut result = None;
+        for _ in 0..COMPILE_HIT_THRESHOLD {
+            result = jit.run_block_trace(
+                TraceInput {
+                    entry_pc: 0x8000,
+                    a: 0,
+                    x: 0,
+                    y: 0,
+                    sp: 0xFD,
+                    p: RegisterP::RESERVED.bits(),
+                    max_cycles: u64::MAX,
+                },
+                read_from(0x8000, &bytes),
+            );
+        }
+        assert_eq!(result.unwrap().x, 2);
     }
 }
