@@ -7,6 +7,7 @@ use nerust_core::controller::standard_controller::Buttons;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::path::Path;
 use std::rc::Rc;
 
 pub(crate) struct WindowCore {
@@ -35,6 +36,7 @@ pub(crate) trait WindowExtend {
     fn realize(&self);
     fn close_request(&self) -> bool;
     fn open(&self);
+    fn load_path(&self, path: &Path);
     fn close(&self);
     fn pause(&self);
     fn resume(&self);
@@ -148,15 +150,8 @@ impl WindowExtend for Window {
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
             if response == gtk::ResponseType::Accept {
-                if let Some(mut f) = file_chooser_native
-                    .file()
-                    .and_then(|f| f.path())
-                    .and_then(|f| File::open(f).ok())
-                    .map(BufReader::new)
-                {
-                    let mut buf = Vec::new();
-                    let _ = f.read_to_end(&mut buf).unwrap();
-                    result.state().borrow_mut().load(buf);
+                if let Some(path) = file_chooser_native.file().and_then(|f| f.path()) {
+                    result.load_path(&path);
                 }
             }
 
@@ -173,6 +168,15 @@ impl WindowExtend for Window {
         });
         self.borrow_mut().open_dialog = Some(file_chooser_native.clone());
         file_chooser_native.show();
+    }
+
+    fn load_path(&self, path: &Path) {
+        if let Some(mut f) = File::open(path).ok().map(BufReader::new) {
+            let mut buf = Vec::new();
+            let _ = f.read_to_end(&mut buf).unwrap();
+            self.state().borrow_mut().load(buf);
+            self.update_actions();
+        }
     }
 
     fn close(&self) {

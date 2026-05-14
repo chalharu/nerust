@@ -85,7 +85,7 @@ impl State {
     }
 }
 
-fn app_activate(app: &gtk::Application) {
+fn build_window(app: &gtk::Application) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let menu = gtk::Builder::from_string(include_str!("../resources/menu.xml"))
@@ -143,12 +143,22 @@ fn app_activate(app: &gtk::Application) {
     }
     app.add_action(&about_action);
 
-    let _ = Window::bind(
+    Window::bind(
         app.clone(),
         window,
         builder.object("glarea").unwrap(),
         state,
-    );
+    )
+}
+
+fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Window>>>) -> Window {
+    if let Some(window) = current_window.borrow().as_ref().cloned() {
+        return window;
+    }
+
+    let window = build_window(app);
+    *current_window.borrow_mut() = Some(window.clone());
+    window
 }
 
 fn main() {
@@ -160,7 +170,24 @@ fn main() {
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
-    let _ = app.connect_activate(app_activate);
+    let current_window = Rc::new(RefCell::new(None));
+    {
+        let current_window = current_window.clone();
+        let _ = app.connect_activate(move |app| {
+            let window = ensure_window(app, &current_window);
+            window.window().present();
+        });
+    }
+    {
+        let current_window = current_window.clone();
+        let _ = app.connect_open(move |app, files, _| {
+            let window = ensure_window(app, &current_window);
+            if let Some(path) = files.iter().find_map(|file| file.path()) {
+                window.load_path(&path);
+            }
+            window.window().present();
+        });
+    }
 
     let _ = app.run();
 }
