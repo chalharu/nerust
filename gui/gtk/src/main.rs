@@ -12,7 +12,7 @@ use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
-use nerust_sound_openal::OpenAl;
+use nerust_sound_openal::{OpenAl, prepare_macos_runtime};
 use nerust_timer::CLOCK_RATE;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -166,6 +166,7 @@ fn main() {
     // log initialize
     simple_logger::init().unwrap();
     crash_handler::install();
+    prepare_macos_runtime();
 
     let app = gtk::Application::new(
         Some("com.github.chalharu"),

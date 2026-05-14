@@ -10,10 +10,17 @@ use self::resampler::{Resampler, SimpleDownSampler};
 use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_soundfilter::{Filter, NesFilter};
+#[cfg(target_os = "macos")]
+use std::ffi::{CStr, CString};
+#[cfg(target_os = "macos")]
+use std::sync::Once;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
+
+#[cfg(target_os = "macos")]
+const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
 
 #[cfg(target_os = "macos")]
 const MACOS_OPENAL_CANDIDATES: &[&str] = &[
@@ -21,6 +28,90 @@ const MACOS_OPENAL_CANDIDATES: &[&str] = &[
     "/System/Library/Frameworks/OpenAL.framework/Versions/Current/OpenAL",
     "/System/Library/Frameworks/OpenAL.framework/Versions/A/OpenAL",
 ];
+
+#[cfg(target_os = "macos")]
+const MACOS_IMAGEIO_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/ImageIO",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+    "/System/Library/Frameworks/ImageIO.framework/ImageIO",
+    "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+];
+
+#[cfg(target_os = "macos")]
+const MACOS_HISERVICES_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/Versions/A/HIServices",
+];
+
+#[cfg(target_os = "macos")]
+const MACOS_PNG_PLUGIN_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+];
+
+#[cfg(target_os = "macos")]
+static PREPARE_MACOS_RUNTIME_ONCE: Once = Once::new();
+
+pub fn prepare_macos_runtime() {
+    #[cfg(target_os = "macos")]
+    PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
+        sanitize_process_dyld_env();
+        preload_system_library("ImageIO", MACOS_IMAGEIO_CANDIDATES);
+        preload_system_library("HIServices", MACOS_HISERVICES_CANDIDATES);
+        preload_system_library("PNGReadPlugin", MACOS_PNG_PLUGIN_CANDIDATES);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn sanitize_process_dyld_env() {
+    for name in DYLD_ENV_VARS {
+        if std::env::var_os(name).is_some() {
+            log::warn!(
+                "removing {name} from the process environment to avoid macOS ImageIO plugin conflicts"
+            );
+            // SAFETY: This runs during process startup on the main thread before any frontend or
+            // audio worker threads are created, so there is no concurrent environment mutation.
+            unsafe {
+                std::env::remove_var(name);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn preload_system_library(name: &str, candidates: &[&str]) {
+    let mut last_error = None;
+    for path in candidates {
+        let path_c = CString::new(*path).expect("macOS framework path must not contain NUL");
+        // SAFETY: dlerror/dlopen are called with valid pointers, and we intentionally keep any
+        // successfully loaded handle alive for the remainder of the process to preserve plugin
+        // initialization side effects.
+        let handle = unsafe {
+            libc::dlerror();
+            libc::dlopen(path_c.as_ptr(), libc::RTLD_NOW)
+        };
+        if !handle.is_null() {
+            log::info!("preloaded {name} from {path}");
+            return;
+        }
+
+        let error = unsafe {
+            let error = libc::dlerror();
+            if error.is_null() {
+                "unknown dlopen error".to_string()
+            } else {
+                CStr::from_ptr(error).to_string_lossy().into_owned()
+            }
+        };
+        last_error = Some(format!("{path}: {error}"));
+    }
+
+    if let Some(error) = last_error {
+        log::warn!("failed to preload {name}: {error}");
+    }
+}
 
 #[derive(Debug)]
 struct FadeBuffer {
@@ -293,8 +384,6 @@ impl OpenAl {
 
     #[cfg(target_os = "macos")]
     fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
-
         let saved = DYLD_ENV_VARS.map(|name| (name, std::env::var_os(name)));
         for (name, value) in &saved {
             if value.is_some() {
