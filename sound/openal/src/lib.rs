@@ -15,6 +15,13 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
 
+#[cfg(target_os = "macos")]
+const MACOS_OPENAL_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/OpenAL.framework/OpenAL",
+    "/System/Library/Frameworks/OpenAL.framework/Versions/Current/OpenAL",
+    "/System/Library/Frameworks/OpenAL.framework/Versions/A/OpenAL",
+];
+
 #[derive(Debug)]
 struct FadeBuffer {
     data_receiver: Receiver<f32>,
@@ -104,6 +111,53 @@ struct OpenAlState {
 }
 
 impl OpenAlState {
+    fn load_alto() -> Result<Alto, String> {
+        let mut errors = Vec::new();
+
+        match Alto::load_default() {
+            Ok(alto) => {
+                log::info!("loaded OpenAL with the default loader");
+                return Ok(alto);
+            }
+            Err(err) => errors.push(format!("default loader failed: {err:?}")),
+        }
+
+        #[cfg(target_os = "macos")]
+        for path in MACOS_OPENAL_CANDIDATES {
+            match Alto::load(path) {
+                Ok(alto) => {
+                    log::info!("loaded OpenAL from {path}");
+                    return Ok(alto);
+                }
+                Err(err) => errors.push(format!("{path}: {err:?}")),
+            }
+        }
+
+        Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
+    }
+
+    fn create_streaming_source(
+        sample_rate: i32,
+        buffer_width: usize,
+        buffer_count: usize,
+    ) -> Result<StreamingSource, String> {
+        let alto = Self::load_alto()?;
+        let dev = alto
+            .open(None)
+            .map_err(|err| format!("failed to open default OpenAL output device: {err:?}"))?;
+        let mut ctx = dev
+            .new_context(None)
+            .map_err(|err| format!("failed to create OpenAL context: {err:?}"))?;
+        let mut src = ctx
+            .new_streaming_source()
+            .map_err(|err| format!("failed to create OpenAL streaming source: {err:?}"))?;
+        for _ in 0..buffer_count {
+            Self::add_buffer(&mut ctx, &mut src, sample_rate, buffer_width)
+                .map_err(|err| format!("failed to queue initial OpenAL buffer: {err:?}"))?;
+        }
+        Ok(src)
+    }
+
     pub(crate) fn new(
         sample_rate: i32,
         buffer_width: usize,
@@ -112,20 +166,12 @@ impl OpenAlState {
         data_receiver: Receiver<f32>,
         fade_width: usize,
     ) -> Self {
-        let src = if let Ok(src) = Alto::load_default()
-            .and_then(|alto| alto.open(None))
-            .and_then(|dev| dev.new_context(None))
-            .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
-            .map(|(mut src, mut ctx)| {
-                for _ in 0..buffer_count {
-                    Self::add_buffer(&mut ctx, &mut src, sample_rate, buffer_width);
-                }
-                src
-            }) {
-            Some(src)
-        } else {
-            log::error!("No OpenAL implementation present!");
-            None
+        let src = match Self::create_streaming_source(sample_rate, buffer_width, buffer_count) {
+            Ok(src) => Some(src),
+            Err(err) => {
+                log::error!("{err}");
+                None
+            }
         };
         Self {
             src,
@@ -142,10 +188,11 @@ impl OpenAlState {
         src: &mut StreamingSource,
         sample_rate: i32,
         buffer_width: usize,
-    ) {
-        let data = &vec![Mono { center: 0_i16 }; buffer_width];
-        let buf = ctx.new_buffer(data, sample_rate).unwrap();
-        src.queue_buffer(buf).unwrap();
+    ) -> AltoResult<()> {
+        let data = vec![Mono { center: 0_i16 }; buffer_width];
+        let buf = ctx.new_buffer(&data, sample_rate)?;
+        src.queue_buffer(buf)?;
+        Ok(())
     }
 
     fn fill_buffer(
