@@ -144,13 +144,12 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
         log::error!("{}", e);
         return;
     }
-    {
-        if let Ok(mut state) = state.try_borrow_mut() {
-            let logical_size = state.console.logical_size();
-            let ptr = state.console.as_ptr();
-            if let Some(ref mut view) = state.view {
-                view.on_update(logical_size, ptr);
-            }
+    if let Ok(state) = state.try_borrow() {
+        let logical_size = state.console.logical_size();
+        if let Some(ref view) = state.view {
+            state.console.with_frame_buffer(|frame_buffer| {
+                view.on_update(logical_size, frame_buffer.as_ptr())
+            });
         }
     }
     unsafe {

@@ -7,6 +7,7 @@
 use super::allocate;
 use nerust_screen_filter::FilterFunc;
 use nerust_screen_traits::{LogicalSize, RGB};
+use std::{mem, slice};
 
 #[derive(Debug)]
 pub(crate) struct ScreenBufferUnit {
@@ -28,13 +29,16 @@ impl ScreenBufferUnit {
     }
 
     #[inline]
-    pub(crate) fn as_ptr(&self) -> *const u8 {
-        self.buffer.as_ptr() as *const u8
+    pub(crate) fn byte_len(&self) -> usize {
+        self.buffer.len() * mem::size_of::<u32>()
     }
 
     #[inline]
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr() as *mut u8
+    pub(crate) fn copy_to_slice(&self, dest: &mut [u8]) {
+        let src =
+            unsafe { slice::from_raw_parts(self.buffer.as_ptr().cast::<u8>(), self.byte_len()) };
+        assert_eq!(dest.len(), src.len(), "display buffer size mismatch");
+        dest.copy_from_slice(src);
     }
 
     #[inline]
@@ -63,4 +67,3 @@ pub(crate) fn init_screen_buffer(size: LogicalSize) -> Box<[u32]> {
 }
 
 unsafe impl Send for ScreenBufferUnit {}
-unsafe impl Sync for ScreenBufferUnit {}

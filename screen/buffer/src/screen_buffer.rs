@@ -37,12 +37,12 @@ impl ScreenBuffer {
         }
     }
 
-    pub fn as_ptr(&self) -> *const u8 {
-        self.display_buffer.as_ptr()
+    pub fn frame_len(&self) -> usize {
+        self.display_buffer.byte_len()
     }
 
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.display_buffer.as_mut_ptr()
+    pub fn copy_display_buffer(&self, dest: &mut [u8]) {
+        self.display_buffer.copy_to_slice(dest);
     }
 
     pub fn logical_size(&self) -> LogicalSize {
@@ -88,4 +88,3 @@ impl Hash for ScreenBuffer {
 }
 
 unsafe impl Send for ScreenBuffer {}
-unsafe impl Sync for ScreenBuffer {}
