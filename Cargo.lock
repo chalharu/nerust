@@ -1339,6 +1339,7 @@ dependencies = [
  "gio",
  "gl",
  "gtk4",
+ "libc",
  "log",
  "nerust_console",
  "nerust_core",

@@ -11,6 +11,7 @@ gdk.workspace = true
 gio.workspace = true
 gl.workspace = true
 gtk.workspace = true
+libc.workspace = true
 log.workspace = true
 nerust_console.workspace = true
 nerust_core.workspace = true
