@@ -128,11 +128,11 @@ impl ScenarioRunner {
     }
 
     fn on_update(&mut self) {
-        while !self.core.step(
+        self.core.run_frame(
             &mut self.screen_buffer,
             &mut self.controller,
             &mut self.mixer,
-        ) {}
+        );
         self.frame_counter += 1;
     }
 }

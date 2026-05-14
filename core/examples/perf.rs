@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 const DEFAULT_ROUNDS: usize = 5;
 const DEFAULT_WARMUP_ROUNDS: usize = 1;
+const PERF_MIXER_SAMPLE_RATE: u32 = 192_000;
 
 struct Crc64Hasher(Digest<'static, u64>);
 
@@ -32,10 +33,52 @@ impl Hasher for Crc64Hasher {
     }
 }
 
-struct TestMixer;
+#[derive(Debug, Clone)]
+struct TestMixer {
+    samples: u64,
+    checksum: u64,
+}
+
+impl TestMixer {
+    const FNV_OFFSET_BASIS: u64 = 0xCBF2_9CE4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+
+    fn new() -> Self {
+        Self {
+            samples: 0,
+            checksum: Self::FNV_OFFSET_BASIS,
+        }
+    }
+
+    fn samples(&self) -> u64 {
+        self.samples
+    }
+
+    fn checksum(&self) -> u64 {
+        self.checksum
+    }
+}
 
 impl MixerInput for TestMixer {
+    fn push(&mut self, data: f32) {
+        self.samples += 1;
+        self.checksum ^= u64::from(data.to_bits());
+        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
+    }
+
+    fn sample_rate(&self) -> u32 {
+        PERF_MIXER_SAMPLE_RATE
+    }
+}
+
+struct PerfMixer;
+
+impl MixerInput for PerfMixer {
     fn push(&mut self, _data: f32) {}
+
+    fn sample_rate(&self) -> u32 {
+        PERF_MIXER_SAMPLE_RATE
+    }
 }
 
 struct PerfScreen {
@@ -126,11 +169,25 @@ struct RomCase {
     name: &'static str,
     rom: &'static [u8],
     events: &'static [Event],
+    expected_audio_samples: u64,
+    expected_audio_hash: u64,
 }
 
 impl RomCase {
-    const fn new(name: &'static str, rom: &'static [u8], events: &'static [Event]) -> Self {
-        Self { name, rom, events }
+    const fn new(
+        name: &'static str,
+        rom: &'static [u8],
+        events: &'static [Event],
+        expected_audio_samples: u64,
+        expected_audio_hash: u64,
+    ) -> Self {
+        Self {
+            name,
+            rom,
+            events,
+            expected_audio_samples,
+            expected_audio_hash,
+        }
     }
 
     fn final_frame(&self) -> u64 {
@@ -171,9 +228,27 @@ const APU_LEN_CTR_EVENTS: &[Event] = &[Event::check_screen(30, 0xE31E_B517_2247_
 const PPU_VBL_NMI_EVENTS: &[Event] = &[Event::check_screen(1640, 0xEB57_E169_78E4_5540)];
 
 const CASES: &[RomCase] = &[
-    RomCase::new("cpu.nestest", NESTEST_ROM, NESTEST_EVENTS),
-    RomCase::new("apu.len_ctr", APU_LEN_CTR_ROM, APU_LEN_CTR_EVENTS),
-    RomCase::new("ppu.vbl_nmi", PPU_VBL_NMI_ROM, PPU_VBL_NMI_EVENTS),
+    RomCase::new(
+        "cpu.nestest",
+        NESTEST_ROM,
+        NESTEST_EVENTS,
+        287_270,
+        0x34BB_3FFD_F962_043D,
+    ),
+    RomCase::new(
+        "apu.len_ctr",
+        APU_LEN_CTR_ROM,
+        APU_LEN_CTR_EVENTS,
+        95_586,
+        0x27C6_A0AD_8041_E1F7,
+    ),
+    RomCase::new(
+        "ppu.vbl_nmi",
+        PPU_VBL_NMI_ROM,
+        PPU_VBL_NMI_EVENTS,
+        5_239_142,
+        0x2E61_2CB2_A8E5_80BD,
+    ),
 ];
 
 struct ScenarioRunner {
@@ -198,7 +273,7 @@ impl ScenarioRunner {
             ),
             core: Core::new(&mut iter).expect("failed to construct core"),
             controller: StandardController::new(),
-            mixer: TestMixer,
+            mixer: TestMixer::new(),
             frame_counter: 0,
             pad1: Buttons::empty(),
         }
@@ -219,26 +294,36 @@ impl ScenarioRunner {
             }
         }
 
+        let audio_samples = self.mixer.samples();
+        let audio_hash = self.mixer.checksum();
+        assert_eq!(
+            audio_samples, case.expected_audio_samples,
+            "audio sample count mismatch for {}",
+            case.name
+        );
+        assert_eq!(
+            audio_hash, case.expected_audio_hash,
+            "audio hash mismatch for {}",
+            case.name
+        );
+
         ValidationResult {
             frames: self.frame_counter,
             steps: total_steps,
             final_hash: self.screen_hash(),
+            audio_samples,
+            audio_hash,
         }
     }
 
     fn run_frame(&mut self) -> u64 {
-        let mut steps = 0_u64;
-        loop {
-            steps += 1;
-            if self.core.step(
-                &mut self.screen_buffer,
-                &mut self.controller,
-                &mut self.mixer,
-            ) {
-                self.frame_counter += 1;
-                return steps;
-            }
-        }
+        let steps = self.core.run_frame(
+            &mut self.screen_buffer,
+            &mut self.controller,
+            &mut self.mixer,
+        );
+        self.frame_counter += 1;
+        steps
     }
 
     fn apply_event(&mut self, event: Event) {
@@ -274,7 +359,7 @@ struct PerfRunner {
     screen: PerfScreen,
     core: Core,
     controller: StandardController,
-    mixer: TestMixer,
+    mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
 }
@@ -286,7 +371,7 @@ impl PerfRunner {
             screen: PerfScreen::new(),
             core: Core::new(&mut iter).expect("failed to construct core"),
             controller: StandardController::new(),
-            mixer: TestMixer,
+            mixer: PerfMixer,
             frame_counter: 0,
             pad1: Buttons::empty(),
         }
@@ -323,17 +408,11 @@ impl PerfRunner {
     }
 
     fn run_frame(&mut self) -> u64 {
-        let mut steps = 0_u64;
-        loop {
-            steps += 1;
-            if self
-                .core
-                .step(&mut self.screen, &mut self.controller, &mut self.mixer)
-            {
-                self.frame_counter += 1;
-                return steps;
-            }
-        }
+        let steps = self
+            .core
+            .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
+        self.frame_counter += 1;
+        steps
     }
 
     fn apply_pad1(&mut self, button: ButtonCode, state: PadState) {
@@ -359,6 +438,8 @@ struct ValidationResult {
     frames: u64,
     steps: u64,
     final_hash: u64,
+    audio_samples: u64,
+    audio_hash: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -515,10 +596,16 @@ fn run() -> Result<(), String> {
     for case in &cases {
         let result = ScenarioRunner::new(case.rom).run_case(case);
         println!(
-            "validated case={} frames={} steps={} final_hash=0x{:016X}",
-            case.name, result.frames, result.steps, result.final_hash
+            "validated case={} frames={} steps={} final_hash=0x{:016X} audio_samples={} audio_hash=0x{:016X}",
+            case.name,
+            result.frames,
+            result.steps,
+            result.final_hash,
+            result.audio_samples,
+            result.audio_hash
         );
         std::hint::black_box(result.final_hash);
+        std::hint::black_box(result.audio_hash);
     }
 
     Ok(())

@@ -18,6 +18,10 @@ use std::mem;
 
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
+const PALETTE_ADDRESS: [usize; 32] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x00, 0x11, 0x12, 0x13, 0x04, 0x15, 0x16, 0x17, 0x08, 0x19, 0x1A, 0x1B, 0x0C, 0x1D, 0x1E, 0x1F,
+];
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 struct DecayableOpenBus {
@@ -485,7 +489,6 @@ impl Core {
     #[inline]
     pub(crate) fn read_vram(&mut self, mut address: usize, cartridge: &mut dyn Cartridge) -> u8 {
         address &= 0x3FFF;
-        cartridge.vram_address_change(address);
         let result = match address {
             0..=0x1FFF => cartridge.read(address),
             0x2000..=0x3FFF => OpenBusReadResult::new(
@@ -502,7 +505,7 @@ impl Core {
 
     #[inline]
     fn palette_address(address: usize) -> usize {
-        address & if address & 0x13 == 0x10 { 0x0F } else { 0x1F }
+        PALETTE_ADDRESS[address & 0x1F]
     }
 
     #[inline]
@@ -630,7 +633,6 @@ impl Core {
         interrupt: &mut Interrupt,
     ) {
         address &= 0x3FFF;
-        cartridge.vram_address_change(address);
         match address {
             0..=0x1FFF => cartridge.write(address, value, interrupt),
             0x2000..=0x3FFF => {
@@ -766,23 +768,23 @@ impl Core {
 
     #[inline]
     fn evaluate_pixel(&mut self) -> u8 {
-        let bg = if self.show_background() {
+        let show_background =
+            self.mask.show_background && (self.cycle > 8 || self.mask.show_left_background);
+        let bg = if show_background {
             self.background_pixel()
         } else {
             0
         };
 
-        let bg_result_func = |s: &mut Self| {
-            (if u16::from(s.state.x_scroll) + ((s.cycle - 1) & 0x07) < 8 {
-                s.previous_tile
-            } else {
-                s.current_tile
-            })
-            .palette_offset
-                + bg
+        let bg_tile = if u16::from(self.state.x_scroll) + ((self.cycle - 1) & 0x07) < 8 {
+            self.previous_tile
+        } else {
+            self.current_tile
         };
+        let bg_result = bg_tile.palette_offset + bg;
 
-        if self.show_sprite() & self.has_next_sprite {
+        let show_sprite = self.mask.show_sprites && (self.cycle > 8 || self.mask.show_left_sprites);
+        if self.has_next_sprite && show_sprite {
             for i in 0..self.sprite_count {
                 let s: &SpriteInfo = &self.sprites[usize::from(i)];
                 if self.cycle > u16::from(s.position) {
@@ -807,14 +809,14 @@ impl Core {
                             return if bg == 0 || !s.priority {
                                 s.palette_offset + sprite_color
                             } else {
-                                bg_result_func(self)
+                                bg_result
                             };
                         }
                     }
                 }
             }
         }
-        bg_result_func(self)
+        bg_result
     }
 
     #[inline]
@@ -976,7 +978,7 @@ impl Core {
                 match self.cycle {
                     1..=256 => {
                         self.fetch_tile(cartridge);
-                        if self.post_render_executing && self.cycle.trailing_zeros() >= 3 {
+                        if self.post_render_executing && (self.cycle & 7) == 0 {
                             self.increment_x();
                             if self.cycle == 256 {
                                 self.increment_y();
@@ -1077,9 +1079,6 @@ impl Core {
         if self.vram_addr_update_delay > 0 {
             self.vram_addr_update_delay -= 1;
             self.state.vram_addr = self.new_vram_addr;
-            if self.scan_line > 240 || !self.render_executing {
-                cartridge.vram_address_change(self.new_vram_addr as usize);
-            }
         }
         result
     }
