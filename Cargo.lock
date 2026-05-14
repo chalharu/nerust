@@ -1400,6 +1400,7 @@ name = "nerust_sound_openal"
 version = "0.1.0"
 dependencies = [
  "alto",
+ "libc",
  "log",
  "nerust_sound_traits",
  "nerust_soundfilter",
