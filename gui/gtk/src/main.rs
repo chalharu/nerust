@@ -1,3 +1,4 @@
+mod crash_handler;
 mod glarea;
 mod window;
 
@@ -164,6 +165,7 @@ fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Wind
 fn main() {
     // log initialize
     simple_logger::init().unwrap();
+    crash_handler::install();
 
     let app = gtk::Application::new(
         Some("com.github.chalharu"),

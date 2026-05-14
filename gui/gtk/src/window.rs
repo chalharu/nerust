@@ -149,10 +149,10 @@ impl WindowExtend for Window {
         );
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
-            if response == gtk::ResponseType::Accept {
-                if let Some(path) = file_chooser_native.file().and_then(|f| f.path()) {
-                    result.load_path(&path);
-                }
+            if response == gtk::ResponseType::Accept
+                && let Some(path) = file_chooser_native.file().and_then(|f| f.path())
+            {
+                result.load_path(&path);
             }
 
             file_chooser_native.hide();
