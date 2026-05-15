@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
-    event::{ElementState, Event, KeyEvent, WindowEvent},
-    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
+    event::{ElementState, Event, KeyEvent, StartCause, WindowEvent},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
     keyboard::KeyCode,
     window::{Window as TaoWindow, WindowBuilder},
 };
@@ -826,14 +826,16 @@ impl Renderer {
 
 pub struct Window {
     event_loop: Option<EventLoop<UserEvent>>,
-    window: Arc<TaoWindow>,
-    renderer: Renderer,
+    window: Option<Arc<TaoWindow>>,
+    renderer: Option<Renderer>,
     last_render_error: Option<String>,
     timer: Timer,
     keys: Buttons,
     paused: bool,
     console: Console,
     app_menu: AppMenu,
+    physical_size: PhysicalSize,
+    logical_size: LogicalSize,
 }
 
 impl Window {
@@ -854,38 +856,25 @@ impl Window {
         #[cfg(target_os = "macos")]
         let event_loop = {
             let mut event_loop = event_loop;
-            // Keep the Tao frontend from force-activating over an already active full-screen app.
+            // Keep launch from force-activating over an already active full-screen app.
             event_loop.set_activate_ignoring_other_apps(false);
             event_loop
         };
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
-        let window = Arc::new(
-            create_window_builder(physical_size, false)
-                .build(&event_loop)
-                .unwrap(),
-        );
-        let surface_target = SurfaceTarget::new(window.clone(), physical_size);
-        app_menu.init_for_window(&window);
-        app_menu.update(false);
-        let renderer = pollster::block_on(Renderer::new(
-            window.clone(),
-            surface_target,
-            logical_size,
-            physical_size,
-        ))
-        .unwrap();
 
         Self {
             event_loop: Some(event_loop),
-            window,
-            renderer,
+            window: None,
+            renderer: None,
             last_render_error: None,
             timer: Timer::new(),
             keys: Buttons::empty(),
             paused: false,
             console,
             app_menu,
+            physical_size,
+            logical_size,
         }
     }
 
@@ -897,25 +886,43 @@ impl Window {
         self.console.resume();
         let event_loop = self.event_loop.take().unwrap();
 
-        event_loop.run(move |event, _, control_flow| {
+        event_loop.run(move |event, event_loop, control_flow| {
             *control_flow = ControlFlow::Poll;
 
             match event {
+                Event::NewEvents(StartCause::Init) => self.ensure_window(event_loop),
                 Event::WindowEvent {
                     event, window_id, ..
-                } if window_id == self.window.id() => match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    WindowEvent::Focused(false) => self.clear_keys(),
-                    WindowEvent::Resized(_) => self.renderer.resize_to_target(),
-                    WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
-                    _ => (),
-                },
-                Event::RedrawRequested(window_id) if window_id == self.window.id() => {
+                } if self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window_id == window.id()) =>
+                {
+                    match event {
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        WindowEvent::Focused(false) => self.clear_keys(),
+                        WindowEvent::Resized(_) => {
+                            if let Some(renderer) = self.renderer.as_mut() {
+                                renderer.resize_to_target();
+                            }
+                        }
+                        WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
+                        _ => (),
+                    }
+                }
+                Event::RedrawRequested(window_id)
+                    if self
+                        .window
+                        .as_ref()
+                        .is_some_and(|window| window_id == window.id()) =>
+                {
                     self.on_update()
                 }
                 Event::MainEventsCleared => {
-                    self.timer.wait();
-                    self.window.request_redraw();
+                    if let Some(window) = self.window.as_ref() {
+                        self.timer.wait();
+                        window.request_redraw();
+                    }
                 }
                 Event::UserEvent(UserEvent::Menu(command)) => {
                     self.on_menu_command(control_flow, command);
@@ -926,6 +933,30 @@ impl Window {
                 _ => (),
             }
         });
+    }
+
+    fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let window = Arc::new(
+            create_window_builder(self.physical_size, self.paused)
+                .build(event_loop)
+                .unwrap(),
+        );
+        let surface_target = SurfaceTarget::new(window.clone(), self.physical_size);
+        self.app_menu.init_for_window(&window);
+        self.app_menu.update(self.paused);
+        let renderer = pollster::block_on(Renderer::new(
+            window.clone(),
+            surface_target,
+            self.logical_size,
+            self.physical_size,
+        ))
+        .unwrap();
+        self.window = Some(window);
+        self.renderer = Some(renderer);
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -940,7 +971,9 @@ impl Window {
             self.console.resume();
         }
         self.app_menu.update(self.paused);
-        self.window.set_title(window_title(self.paused));
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(window_title(self.paused));
+        }
     }
 
     fn on_menu_command(&mut self, control_flow: &mut ControlFlow, command: MenuCommand) {
@@ -953,9 +986,12 @@ impl Window {
     }
 
     fn on_update(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
         let render_result = self
             .console
-            .with_frame_buffer(|frame_buffer| self.renderer.render(frame_buffer));
+            .with_frame_buffer(|frame_buffer| renderer.render(frame_buffer));
 
         match render_result {
             Ok(()) => {
