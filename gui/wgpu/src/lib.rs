@@ -12,6 +12,13 @@ use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::{CLOCK_RATE, Timer};
 use std::sync::Arc;
+use tao::{
+    dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
+    keyboard::KeyCode,
+    window::{Window as TaoWindow, WindowBuilder},
+};
 use wgpu::{
     BindGroup, BindGroupLayout, Color, ColorTargetState, ColorWrites, CommandEncoderDescriptor,
     CompositeAlphaMode, Device, Extent3d, Features, FilterMode, FragmentState, Instance, Limits,
@@ -19,25 +26,31 @@ use wgpu::{
     PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
     RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout,
-    TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTargetUnsafe,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
-#[cfg(target_os = "macos")]
-use winit::platform::macos::EventLoopBuilderExtMacOS;
-use winit::{
-    application::ApplicationHandler,
-    dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize},
-    event::{ElementState, KeyEvent, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    window::{Window as WinitWindow, WindowAttributes},
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+use {
+    gtk::{
+        EventBox,
+        gdk::prelude::DisplayExtManual,
+        prelude::{BoxExt, ObjectType, WidgetExt},
+    },
+    raw_window_handle::{
+        HandleError, RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
+        XlibDisplayHandle, XlibWindowHandle,
+    },
+    std::ptr::NonNull,
+    tao::platform::unix::WindowExtUnix,
 };
 
-#[allow(
-    dead_code,
-    reason = "menu integration is only active on macOS and Windows"
-)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum MenuCommand {
     Pause,
@@ -46,22 +59,44 @@ enum MenuCommand {
     Quit,
 }
 
-#[allow(
-    dead_code,
-    reason = "menu integration is only active on macOS and Windows"
-)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum UserEvent {
     Menu(MenuCommand),
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "macos",
+    target_os = "windows"
+))]
 mod app_menu {
-    use super::{MenuCommand, UserEvent};
+    use super::{MenuCommand, TaoWindow, UserEvent};
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuItem, Submenu};
+    use tao::event_loop::EventLoopProxy;
+    #[cfg(target_os = "macos")]
+    use tao::platform::macos::WindowExtMacOS;
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use winit::{event_loop::EventLoopProxy, window::Window as WinitWindow};
+    use tao::platform::windows::WindowExtWindows;
 
     pub(super) struct AppMenu {
         menu_bar: Menu,
@@ -74,6 +109,23 @@ mod app_menu {
             let menu_bar = Menu::new();
             let file_menu = Submenu::new("File", true);
             let emulation_menu = Submenu::new("Emulation", true);
+
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = Submenu::new("App", true);
+                app_menu.append_items(&[
+                    &muda::PredefinedMenuItem::about(None, None),
+                    &muda::PredefinedMenuItem::separator(),
+                    &muda::PredefinedMenuItem::services(None),
+                    &muda::PredefinedMenuItem::separator(),
+                    &muda::PredefinedMenuItem::hide(None),
+                    &muda::PredefinedMenuItem::hide_others(None),
+                    &muda::PredefinedMenuItem::show_all(None),
+                    &muda::PredefinedMenuItem::separator(),
+                    &muda::PredefinedMenuItem::quit(None),
+                ]);
+                menu_bar.append(&app_menu).unwrap();
+            }
 
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
@@ -93,7 +145,7 @@ mod app_menu {
             menu_bar.append(&file_menu).unwrap();
             menu_bar.append(&emulation_menu).unwrap();
 
-            MenuEvent::set_event_handler(Some(move |event| {
+            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &pause_id {
                     Some(MenuCommand::Pause)
                 } else if event.id() == &resume_id {
@@ -117,19 +169,29 @@ mod app_menu {
             }
         }
 
-        pub(super) fn init_for_window(&self, window: &WinitWindow) {
+        pub(super) fn init_for_window(&self, window: &TaoWindow) {
             #[cfg(target_os = "windows")]
+            unsafe {
+                self.menu_bar.init_for_hwnd(window.hwnd() as _).unwrap();
+            }
+
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
             {
-                if let RawWindowHandle::Win32(handle) = window.window_handle().unwrap().as_raw() {
-                    unsafe {
-                        self.menu_bar.init_for_hwnd(handle.hwnd.get());
-                    }
-                }
+                self.menu_bar
+                    .init_for_gtk_window(window.gtk_window(), window.default_vbox())
+                    .unwrap();
+                window.gtk_window().show_all();
             }
 
             #[cfg(target_os = "macos")]
             {
-                let _ = window;
+                let _ = window.ns_view();
                 self.menu_bar.init_for_nsapp();
             }
         }
@@ -145,10 +207,18 @@ mod app_menu {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "macos",
+    target_os = "windows"
+)))]
 mod app_menu {
-    use super::UserEvent;
-    use winit::{event_loop::EventLoopProxy, window::Window as WinitWindow};
+    use super::{TaoWindow, UserEvent};
+    use tao::event_loop::EventLoopProxy;
 
     pub(super) struct AppMenu;
 
@@ -157,7 +227,7 @@ mod app_menu {
             Self
         }
 
-        pub(super) fn init_for_window(&self, _window: &WinitWindow) {}
+        pub(super) fn init_for_window(&self, _window: &TaoWindow) {}
 
         pub(super) fn update(&self, _paused: bool) {}
 
@@ -179,15 +249,6 @@ fn window_title(paused: bool) -> &'static str {
     if paused { "Nes -- Paused" } else { "Nes" }
 }
 
-fn create_window_attributes(size: PhysicalSize, paused: bool) -> WindowAttributes {
-    WinitWindow::default_attributes()
-        .with_inner_size(WinitLogicalSize::new(
-            f64::from(size.width),
-            f64::from(size.height),
-        ))
-        .with_title(window_title(paused))
-}
-
 fn keycode_button(code: KeyCode) -> Buttons {
     match code {
         KeyCode::KeyZ => Buttons::A,
@@ -202,7 +263,7 @@ fn keycode_button(code: KeyCode) -> Buttons {
     }
 }
 
-fn compute_viewport(window_size: WinitPhysicalSize<u32>, content_size: PhysicalSize) -> Viewport {
+fn compute_viewport(window_size: TaoPhysicalSize<u32>, content_size: PhysicalSize) -> Viewport {
     if window_size.width == 0
         || window_size.height == 0
         || content_size.width <= 0.0
@@ -230,10 +291,208 @@ fn compute_viewport(window_size: WinitPhysicalSize<u32>, content_size: PhysicalS
     }
 }
 
+fn create_window_builder(size: PhysicalSize, paused: bool) -> WindowBuilder {
+    WindowBuilder::new()
+        .with_title(window_title(paused))
+        .with_inner_size(TaoLogicalSize::new(
+            f64::from(size.width),
+            f64::from(size.height),
+        ))
+}
+
+#[derive(Clone)]
+enum SurfaceTarget {
+    Window(Arc<TaoWindow>),
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    Gtk(GtkRenderTarget),
+}
+
+impl SurfaceTarget {
+    fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        {
+            return Self::Gtk(GtkRenderTarget::new(&window, content_size));
+        }
+
+        #[allow(unreachable_code)]
+        Self::Window(window)
+    }
+
+    fn prepare(&self) {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        if let Self::Gtk(target) = self {
+            target.prepare();
+        }
+    }
+
+    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
+        match self {
+            Self::Window(window) => window.inner_size(),
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
+            Self::Gtk(target) => target.surface_size(fallback),
+        }
+    }
+
+    fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
+        match self {
+            Self::Window(window) => instance
+                .create_surface(window.clone())
+                .map_err(|err| format!("failed to create wgpu surface: {err:?}")),
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
+            Self::Gtk(target) => unsafe {
+                let raw_display_handle = target
+                    .raw_display_handle()
+                    .map_err(|err| format!("failed to acquire raw display handle: {err:?}"))?;
+                let raw_window_handle = target
+                    .raw_window_handle()
+                    .map_err(|err| format!("failed to acquire raw window handle: {err:?}"))?;
+                instance
+                    .create_surface_unsafe(SurfaceTargetUnsafe::RawHandle {
+                        raw_display_handle: Some(raw_display_handle),
+                        raw_window_handle,
+                    })
+                    .map_err(|err| format!("failed to create wgpu surface: {err:?}"))
+            },
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+#[derive(Clone)]
+struct GtkRenderTarget {
+    widget: EventBox,
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+impl GtkRenderTarget {
+    fn new(window: &TaoWindow, content_size: PhysicalSize) -> Self {
+        let widget = EventBox::new();
+        widget.set_hexpand(true);
+        widget.set_vexpand(true);
+        widget.set_size_request(content_size.width as i32, content_size.height as i32);
+        window
+            .default_vbox()
+            .expect("tao default_vbox must exist for Linux menu integration")
+            .pack_start(&widget, true, true, 0);
+
+        Self { widget }
+    }
+
+    fn prepare(&self) {
+        self.widget.realize();
+    }
+
+    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
+        let width = self.widget.allocated_width();
+        let height = self.widget.allocated_height();
+        if width > 0 && height > 0 {
+            let scale = self.widget.scale_factor().max(1) as u32;
+            TaoPhysicalSize::new(width as u32 * scale, height as u32 * scale)
+        } else {
+            fallback
+        }
+    }
+
+    fn gdk_window(&self) -> Result<gtk::gdk::Window, HandleError> {
+        self.widget.window().ok_or(HandleError::Unavailable)
+    }
+
+    fn is_wayland(&self) -> bool {
+        self.widget.display().backend().is_wayland()
+    }
+
+    fn raw_window_handle(&self) -> Result<RawWindowHandle, HandleError> {
+        let window = self.gdk_window()?;
+        if self.is_wayland() {
+            let surface = unsafe {
+                gdk_wayland_sys::gdk_wayland_window_get_wl_surface(window.as_ptr() as *mut _)
+            };
+            let surface = NonNull::new(surface)
+                .ok_or(HandleError::Unavailable)?
+                .cast();
+            Ok(RawWindowHandle::Wayland(WaylandWindowHandle::new(surface)))
+        } else {
+            let xid = unsafe { gdk_x11_sys::gdk_x11_window_get_xid(window.as_ptr() as *mut _) };
+            Ok(RawWindowHandle::Xlib(XlibWindowHandle::new(xid)))
+        }
+    }
+
+    fn raw_display_handle(&self) -> Result<RawDisplayHandle, HandleError> {
+        let display = self.widget.display();
+        if self.is_wayland() {
+            let display = unsafe {
+                gdk_wayland_sys::gdk_wayland_display_get_wl_display(display.as_ptr() as *mut _)
+            };
+            let display = NonNull::new(display)
+                .ok_or(HandleError::Unavailable)?
+                .cast();
+            Ok(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                display,
+            )))
+        } else {
+            let display =
+                unsafe { gdk_x11_sys::gdk_x11_display_get_xdisplay(display.as_ptr() as *mut _) };
+            let display = NonNull::new(display as *mut _).ok_or(HandleError::Unavailable)?;
+            let screen = self.widget.screen().ok_or(HandleError::Unavailable)?;
+            let screen =
+                unsafe { gdk_x11_sys::gdk_x11_screen_get_screen_number(screen.as_ptr() as *mut _) }
+                    as _;
+            Ok(RawDisplayHandle::Xlib(XlibDisplayHandle::new(
+                Some(display),
+                screen,
+            )))
+        }
+    }
+}
+
 struct Renderer {
     instance: Instance,
-    window: Arc<WinitWindow>,
+    window: Arc<TaoWindow>,
+    // The surface must drop before the GTK render target that backs its raw handles.
     surface: Surface<'static>,
+    surface_target: SurfaceTarget,
     device: Device,
     queue: Queue,
     config: SurfaceConfiguration,
@@ -248,14 +507,14 @@ struct Renderer {
 
 impl Renderer {
     async fn new(
-        window: Arc<WinitWindow>,
+        window: Arc<TaoWindow>,
+        surface_target: SurfaceTarget,
         logical_size: LogicalSize,
         content_size: PhysicalSize,
     ) -> Result<Self, String> {
         let instance = Instance::default();
-        let surface = instance
-            .create_surface(window.clone())
-            .map_err(|err| format!("failed to create wgpu surface: {err:?}"))?;
+        surface_target.prepare();
+        let surface = surface_target.create_surface(&instance)?;
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
                 power_preference: PowerPreference::HighPerformance,
@@ -274,7 +533,11 @@ impl Renderer {
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
-        let mut config = Self::surface_config(&surface, &adapter, window.inner_size())?;
+        let mut config = Self::surface_config(
+            &surface,
+            &adapter,
+            surface_target.surface_size(window.inner_size()),
+        )?;
         let caps = surface.get_capabilities(&adapter);
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
@@ -383,6 +646,7 @@ impl Renderer {
         Ok(Self {
             instance,
             window,
+            surface_target,
             surface,
             device,
             queue,
@@ -400,14 +664,15 @@ impl Renderer {
     fn surface_config(
         surface: &Surface<'_>,
         adapter: &wgpu::Adapter,
-        window_size: WinitPhysicalSize<u32>,
+        window_size: TaoPhysicalSize<u32>,
     ) -> Result<SurfaceConfiguration, String> {
         surface
             .get_default_config(adapter, window_size.width.max(1), window_size.height.max(1))
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
     }
 
-    fn resize(&mut self, size: WinitPhysicalSize<u32>) {
+    fn resize_to_target(&mut self) {
+        let size = self.surface_target.surface_size(self.window.inner_size());
         if size.width == 0 || size.height == 0 {
             return;
         }
@@ -417,11 +682,8 @@ impl Renderer {
     }
 
     fn recreate_surface(&mut self) -> Result<(), String> {
-        self.surface = self
-            .instance
-            .create_surface(self.window.clone())
-            .map_err(|err| format!("failed to recreate wgpu surface: {err:?}"))?;
-        self.surface.configure(&self.device, &self.config);
+        self.surface = self.surface_target.create_surface(&self.instance)?;
+        self.resize_to_target();
         Ok(())
     }
 
@@ -457,7 +719,7 @@ impl Renderer {
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.resize(self.window.inner_size());
+                self.resize_to_target();
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -478,7 +740,7 @@ impl Renderer {
                 label: Some("nerust_render_encoder"),
             });
         let viewport = compute_viewport(
-            WinitPhysicalSize::new(self.config.width, self.config.height),
+            self.surface_target.surface_size(self.window.inner_size()),
             self.content_size,
         );
 
@@ -515,22 +777,20 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
         if suboptimal {
-            self.resize(self.window.inner_size());
+            self.resize_to_target();
         }
         Ok(())
     }
 }
 
 pub struct Window {
-    window: Option<Arc<WinitWindow>>,
-    renderer: Option<Renderer>,
     event_loop: Option<EventLoop<UserEvent>>,
+    window: Arc<TaoWindow>,
+    renderer: Renderer,
     timer: Timer,
     keys: Buttons,
     paused: bool,
     console: Console,
-    physical_size: PhysicalSize,
-    logical_size: LogicalSize,
     app_menu: AppMenu,
 }
 
@@ -548,23 +808,33 @@ impl Window {
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
         let console = Console::new(speaker, screen_buffer);
 
-        let mut event_loop_builder = EventLoop::<UserEvent>::with_user_event();
-        #[cfg(target_os = "macos")]
-        event_loop_builder.with_default_menu(false);
-        let event_loop = event_loop_builder.build().unwrap();
+        let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
+        let window = Arc::new(
+            create_window_builder(physical_size, false)
+                .build(&event_loop)
+                .unwrap(),
+        );
+        let surface_target = SurfaceTarget::new(window.clone(), physical_size);
+        app_menu.init_for_window(&window);
+        app_menu.update(false);
+        let renderer = pollster::block_on(Renderer::new(
+            window.clone(),
+            surface_target,
+            logical_size,
+            physical_size,
+        ))
+        .unwrap();
 
         Self {
-            window: None,
-            renderer: None,
             event_loop: Some(event_loop),
+            window,
+            renderer,
             timer: Timer::new(),
             keys: Buttons::empty(),
             paused: false,
             console,
-            physical_size,
-            logical_size,
             app_menu,
         }
     }
@@ -573,11 +843,39 @@ impl Window {
         self.console.load(data);
     }
 
-    pub fn run(&mut self) {
+    pub fn run(mut self) {
         self.console.resume();
         let event_loop = self.event_loop.take().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
-        event_loop.run_app(self).unwrap();
+
+        event_loop.run(move |event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
+
+            match event {
+                Event::WindowEvent {
+                    event, window_id, ..
+                } if window_id == self.window.id() => match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Focused(false) => self.clear_keys(),
+                    WindowEvent::Resized(_) => self.renderer.resize_to_target(),
+                    WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
+                    _ => (),
+                },
+                Event::RedrawRequested(window_id) if window_id == self.window.id() => {
+                    self.on_update()
+                }
+                Event::MainEventsCleared => {
+                    self.timer.wait();
+                    self.window.request_redraw();
+                }
+                Event::UserEvent(UserEvent::Menu(command)) => {
+                    self.on_menu_command(control_flow, command);
+                }
+                Event::LoopDestroyed => {
+                    self.app_menu.clear_event_handler();
+                }
+                _ => (),
+            }
+        });
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -592,87 +890,43 @@ impl Window {
             self.console.resume();
         }
         self.app_menu.update(self.paused);
-        if let Some(window) = self.window.as_ref() {
-            window.set_title(window_title(self.paused));
-        }
+        self.window.set_title(window_title(self.paused));
     }
 
-    fn on_menu_command(&mut self, event_loop: &ActiveEventLoop, command: MenuCommand) {
+    fn on_menu_command(&mut self, control_flow: &mut ControlFlow, command: MenuCommand) {
         match command {
             MenuCommand::Pause => self.set_paused(true),
             MenuCommand::Resume => self.set_paused(false),
             MenuCommand::Reset => self.console.reset(),
-            MenuCommand::Quit => {
-                self.on_close();
-                event_loop.exit();
-            }
+            MenuCommand::Quit => *control_flow = ControlFlow::Exit,
         }
-    }
-
-    fn on_load(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-
-        let window = Arc::new(
-            event_loop
-                .create_window(create_window_attributes(self.physical_size, self.paused))
-                .unwrap(),
-        );
-        self.app_menu.init_for_window(&window);
-        self.app_menu.update(self.paused);
-        let renderer = pollster::block_on(Renderer::new(
-            window.clone(),
-            self.logical_size,
-            self.physical_size,
-        ))
-        .unwrap();
-        window.request_redraw();
-        self.renderer = Some(renderer);
-        self.window = Some(window);
     }
 
     fn on_update(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
         self.console.with_frame_buffer(|frame_buffer| {
-            if let Err(err) = renderer.render(frame_buffer) {
+            if let Err(err) = self.renderer.render(frame_buffer) {
                 log::error!("{err}");
             }
         });
     }
 
-    fn on_resize(&mut self, size: WinitPhysicalSize<u32>) {
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.resize(size);
-        }
-    }
-
-    fn on_close(&mut self) {
-        self.renderer = None;
-        self.window = None;
-    }
-
     fn on_keyboard_input(&mut self, input: KeyEvent) {
         let code = match input.physical_key {
-            PhysicalKey::Code(KeyCode::Space)
-                if input.state == ElementState::Pressed && !input.repeat =>
-            {
+            KeyCode::Space if input.state == ElementState::Pressed && !input.repeat => {
                 self.set_paused(!self.paused);
                 Buttons::empty()
             }
-            PhysicalKey::Code(KeyCode::Escape) if input.state == ElementState::Released => {
+            KeyCode::Escape if input.state == ElementState::Released => {
                 self.console.reset();
                 Buttons::empty()
             }
-            PhysicalKey::Code(code) => keycode_button(code),
-            _ => Buttons::empty(),
+            code => keycode_button(code),
         };
 
         self.keys = match input.state {
             ElementState::Pressed => self.keys | code,
             ElementState::Released => self.keys & !code,
+            _ => self.keys,
         };
         self.console.set_pad1(self.keys);
     }
@@ -689,64 +943,17 @@ impl Default for Window {
     }
 }
 
-impl ApplicationHandler<UserEvent> for Window {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.on_load(event_loop);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                self.on_close();
-                event_loop.exit();
-            }
-            WindowEvent::Focused(false) => self.clear_keys(),
-            WindowEvent::Resized(size) => self.on_resize(size),
-            WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
-            WindowEvent::RedrawRequested => self.on_update(),
-            _ => (),
-        }
-    }
-
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
-        match event {
-            UserEvent::Menu(event) => self.on_menu_command(event_loop, event),
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.as_ref() {
-            self.timer.wait();
-            window.request_redraw();
-        }
-    }
-
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        self.on_close();
-    }
-
-    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        self.on_close();
-        self.app_menu.clear_event_handler();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{compute_viewport, keycode_button};
     use nerust_core::controller::standard_controller::Buttons;
     use nerust_screen_traits::PhysicalSize;
-    use winit::{dpi::PhysicalSize as WinitPhysicalSize, keyboard::KeyCode};
+    use tao::{dpi::PhysicalSize as TaoPhysicalSize, keyboard::KeyCode};
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
         let viewport = compute_viewport(
-            WinitPhysicalSize::new(1600, 900),
+            TaoPhysicalSize::new(1600, 900),
             PhysicalSize {
                 width: 512.0,
                 height: 480.0,

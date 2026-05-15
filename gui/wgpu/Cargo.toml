@@ -8,6 +8,7 @@ edition.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
+muda.workspace = true
 nerust_console.workspace = true
 nerust_core.workspace = true
 nerust_screen_buffer.workspace = true
@@ -16,10 +17,12 @@ nerust_screen_traits.workspace = true
 nerust_sound_openal.workspace = true
 nerust_timer.workspace = true
 pollster.workspace = true
-simple_logger.workspace = true
-wgpu.workspace = true
-winit.workspace = true
-
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-muda.workspace = true
 raw-window-handle.workspace = true
+simple_logger.workspace = true
+tao.workspace = true
+wgpu.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+gdkwayland-sys = "=0.18.2"
+gdkx11-sys = "=0.18.2"
+gtk = "=0.18.2"
