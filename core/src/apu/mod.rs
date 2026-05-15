@@ -29,7 +29,7 @@ use nerust_sound_traits::MixerInput;
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
-// const CLOCK_RATE: u64 = 1_789_773;
+const CLOCK_RATE: u64 = 1_789_773;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Core {
@@ -42,8 +42,9 @@ pub(crate) struct Core {
     triangle: Triangle,
     noise: Noise,
     dmc: DMC,
-    // sample_cycle: u64,
-    // sample_reset_cycle: u64,
+    // Channel timers stay CPU-cycle accurate; only exported mixer samples are rate-limited.
+    #[serde(default)]
+    sample_accumulator: u64,
     frame_counter: FrameCounter,
 }
 
@@ -72,8 +73,7 @@ impl Core {
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: DMC::new(),
-            // sample_cycle: 0,
-            // sample_reset_cycle,
+            sample_accumulator: 0,
             frame_counter: FrameCounter::new(),
         };
         result.initialize(interrupt, cartridge);
@@ -86,6 +86,7 @@ impl Core {
         self.triangle.reset();
         self.noise.reset();
         self.dmc.reset();
+        self.sample_accumulator = 0;
         self.frame_counter.reset();
         self.initialize(interrupt, cartridge);
     }
@@ -163,16 +164,17 @@ impl Core {
         cpu: &mut Cpu,
         cartridge: &mut dyn Cartridge,
         mixer: &mut M,
+        mixer_sample_rate: u32,
     ) {
-        // let cycle1 = self.sample_cycle;
-        // self.sample_cycle += 1;
-        // let cycle2 = self.sample_cycle;
-        // if self.sample_cycle == self.sample_reset_cycle {
-        //     self.sample_cycle = 0;
-        // }
-
         self.step_frame(cpu.interrupt_mut(), cartridge);
-        self.send_sample(mixer);
+        if self.sample_accumulator >= CLOCK_RATE {
+            self.sample_accumulator %= CLOCK_RATE;
+        }
+        self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
+        if self.sample_accumulator >= CLOCK_RATE {
+            self.sample_accumulator -= CLOCK_RATE;
+            self.send_sample(mixer);
+        }
     }
 
     pub(crate) fn send_sample<M: MixerInput>(&self, mixer: &mut M) {

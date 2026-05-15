@@ -118,16 +118,20 @@ pub(crate) enum CpuStatesEnum {
     Txs,
 }
 
+impl CpuStatesEnum {
+    pub(crate) const COUNT: usize = CpuStatesEnum::Txs as usize + 1;
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub(crate) struct InternalStat {
-    opcode: usize,
-    address: usize,
-    step: usize,
-    tempaddr: usize,
-    data: u8,
-    crossed: bool,
-    interrupt: bool,
-    state: CpuStatesEnum,
+    pub(super) opcode: usize,
+    pub(super) address: usize,
+    pub(super) step: usize,
+    pub(super) tempaddr: usize,
+    pub(super) data: u8,
+    pub(super) crossed: bool,
+    pub(super) interrupt: bool,
+    pub(super) state: CpuStatesEnum,
 }
 
 impl InternalStat {
@@ -203,10 +207,6 @@ impl InternalStat {
 
     pub(crate) fn get_crossed(&self) -> bool {
         self.crossed
-    }
-
-    pub(crate) fn set_state(&mut self, value: CpuStatesEnum) {
-        self.state = value;
     }
 
     pub(crate) fn get_state(&self) -> CpuStatesEnum {
