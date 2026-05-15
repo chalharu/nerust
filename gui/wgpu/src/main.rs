@@ -5,13 +5,19 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use clap::{Arg, Command};
+use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
 use nerust_wgpu::Window;
+use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{BufReader, Read};
 
 fn main() {
-    simple_logger::init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Warn)
+        .env()
+        .init()
+        .unwrap();
     prepare_macos_runtime();
 
     let app = Command::new(env!("CARGO_PKG_NAME"))

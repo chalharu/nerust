@@ -26,9 +26,9 @@ use wgpu::{
     PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
     RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTargetUnsafe,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
 #[cfg(any(
     target_os = "linux",
@@ -113,17 +113,19 @@ mod app_menu {
             #[cfg(target_os = "macos")]
             {
                 let app_menu = Submenu::new("App", true);
-                app_menu.append_items(&[
-                    &muda::PredefinedMenuItem::about(None, None),
-                    &muda::PredefinedMenuItem::separator(),
-                    &muda::PredefinedMenuItem::services(None),
-                    &muda::PredefinedMenuItem::separator(),
-                    &muda::PredefinedMenuItem::hide(None),
-                    &muda::PredefinedMenuItem::hide_others(None),
-                    &muda::PredefinedMenuItem::show_all(None),
-                    &muda::PredefinedMenuItem::separator(),
-                    &muda::PredefinedMenuItem::quit(None),
-                ]);
+                app_menu
+                    .append_items(&[
+                        &muda::PredefinedMenuItem::about(None, None),
+                        &muda::PredefinedMenuItem::separator(),
+                        &muda::PredefinedMenuItem::services(None),
+                        &muda::PredefinedMenuItem::separator(),
+                        &muda::PredefinedMenuItem::hide(None),
+                        &muda::PredefinedMenuItem::hide_others(None),
+                        &muda::PredefinedMenuItem::show_all(None),
+                        &muda::PredefinedMenuItem::separator(),
+                        &muda::PredefinedMenuItem::quit(None),
+                    ])
+                    .unwrap();
                 menu_bar.append(&app_menu).unwrap();
             }
 
@@ -302,6 +304,13 @@ fn create_window_builder(size: PhysicalSize, paused: bool) -> WindowBuilder {
 
 #[derive(Clone)]
 enum SurfaceTarget {
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
     Window(Arc<TaoWindow>),
     #[cfg(any(
         target_os = "linux",
@@ -314,19 +323,25 @@ enum SurfaceTarget {
 }
 
 impl SurfaceTarget {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ))]
-        {
-            return Self::Gtk(GtkRenderTarget::new(&window, content_size));
-        }
+        Self::Gtk(GtkRenderTarget::new(&window, content_size))
+    }
 
-        #[allow(unreachable_code)]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
+    fn new(window: Arc<TaoWindow>, _content_size: PhysicalSize) -> Self {
         Self::Window(window)
     }
 
@@ -338,37 +353,46 @@ impl SurfaceTarget {
             target_os = "netbsd",
             target_os = "openbsd"
         ))]
-        if let Self::Gtk(target) = self {
-            target.prepare();
+        match self {
+            Self::Gtk(target) => target.prepare(),
         }
     }
 
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
         match self {
-            Self::Window(window) => window.inner_size(),
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ))]
             Self::Gtk(target) => target.surface_size(fallback),
         }
     }
 
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
+    fn surface_size(&self, _fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
+        match self {
+            Self::Window(window) => window.inner_size(),
+        }
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
         match self {
-            Self::Window(window) => instance
-                .create_surface(window.clone())
-                .map_err(|err| format!("failed to create wgpu surface: {err:?}")),
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ))]
             Self::Gtk(target) => unsafe {
                 let raw_display_handle = target
                     .raw_display_handle()
@@ -377,12 +401,27 @@ impl SurfaceTarget {
                     .raw_window_handle()
                     .map_err(|err| format!("failed to acquire raw window handle: {err:?}"))?;
                 instance
-                    .create_surface_unsafe(SurfaceTargetUnsafe::RawHandle {
+                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                         raw_display_handle: Some(raw_display_handle),
                         raw_window_handle,
                     })
                     .map_err(|err| format!("failed to create wgpu surface: {err:?}"))
             },
+        }
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
+    fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
+        match self {
+            Self::Window(window) => instance
+                .create_surface(window.clone())
+                .map_err(|err| format!("failed to create wgpu surface: {err:?}")),
         }
     }
 }
@@ -787,6 +826,7 @@ pub struct Window {
     event_loop: Option<EventLoop<UserEvent>>,
     window: Arc<TaoWindow>,
     renderer: Renderer,
+    last_render_error: Option<String>,
     timer: Timer,
     keys: Buttons,
     paused: bool,
@@ -831,6 +871,7 @@ impl Window {
             event_loop: Some(event_loop),
             window,
             renderer,
+            last_render_error: None,
             timer: Timer::new(),
             keys: Buttons::empty(),
             paused: false,
@@ -903,11 +944,22 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        self.console.with_frame_buffer(|frame_buffer| {
-            if let Err(err) = self.renderer.render(frame_buffer) {
-                log::error!("{err}");
+        let render_result = self
+            .console
+            .with_frame_buffer(|frame_buffer| self.renderer.render(frame_buffer));
+
+        match render_result {
+            Ok(()) => {
+                self.last_render_error = None;
             }
-        });
+            Err(err) => {
+                let should_log = self.last_render_error.as_deref() != Some(err.as_str());
+                self.last_render_error = Some(err.clone());
+                if should_log {
+                    log::error!("{err}");
+                }
+            }
+        }
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
