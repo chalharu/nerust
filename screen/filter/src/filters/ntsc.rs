@@ -59,7 +59,7 @@ impl FilterUnit for NesNtsc {
             next_func(RGB {
                 red: x.red,
                 green: x.green,
-                blue: x.green,
+                blue: x.blue,
             })
         });
     }

@@ -5,6 +5,7 @@ members = [
   "core",
   "gui/gtk",
   "gui/glutin",
+  "gui/wgpu",
   "glwrap",
   "nes_ntsc",
   "screen/buffer",
@@ -52,15 +53,17 @@ bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
 crc = { version = "=3.4.0" }
 epoxy = { version = "=0.1.0" }
-gdk = { version = "=0.18.2" }
+gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }
 gl = { version = "=0.14.0" }
 glutin = { version = "=0.32.3" }
 glutin-winit = { version = "=0.5.0" }
-gtk = { version = "=0.18.2", features = ["v3_24"] }
+gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
 lazy_static = { version = "=1.5.0" }
+libc = { version = "=0.2.186" }
 log = { version = "=0.4.29", default-features = false }
+muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
@@ -74,6 +77,7 @@ nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }
 nerust_soundfilter = { version = "=0.1.0", path = "soundfilter" }
 nerust_timer = { version = "=0.1.0", path = "timer" }
 nes_ntsc = { version = "=0.1.0", path = "nes_ntsc" }
+pollster = { version = "=0.4.0" }
 raw-window-handle = { version = "=0.6.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
@@ -82,6 +86,8 @@ shared_library = { version = "=0.1.9" }
 simple_logger = { version = "=5.2.0" }
 strum = { version = "=0.28.0" }
 strum_macros = { version = "=0.28.0" }
+tao = { version = "=0.35.2" }
 thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.21" }
+wgpu = { version = "=29.0.3" }
 winit = { version = "=0.30.13" }

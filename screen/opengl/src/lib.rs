@@ -14,6 +14,7 @@ use self::vertex_data::VertexData;
 use gl::types::GLint;
 use nerust_glwrap::*;
 use nerust_screen_traits::LogicalSize;
+use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;
 use std::rc::Rc;
@@ -51,8 +52,9 @@ impl GlView {
     }
 
     pub fn on_load(&mut self, logical_size: LogicalSize) {
-        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("flagment.glsl"));
+        let shader = compile_shader_program();
         shader.use_program();
+        clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         // テクスチャのセットアップ
         gen_textures(1, &mut self.tex_name).unwrap();
@@ -159,19 +161,21 @@ impl GlView {
 
         // uniform属性を設定する
         uniform_matrix_4fv(
-            shader.get_uniform("unif_matrix") as GLint,
+            shader.get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::identity().as_ptr(),
         )
         .unwrap();
-        uniform_1i(shader.get_uniform("texture") as GLint, 0).unwrap();
+        uniform_1i(shader.get_uniform("screen_texture"), 0).unwrap();
 
         // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
     }
 
     pub fn on_update(&self, logical_size: LogicalSize, screen_ptr: *const u8) {
+        self.shader.as_ref().unwrap().use_program();
+        bind_texture(gl::TEXTURE_2D, self.tex_name).unwrap();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
         } else {
@@ -195,14 +199,22 @@ impl GlView {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
 
-    pub fn on_resize(&mut self, scale_x: f32, scale_y: f32) {
+    pub fn on_resize(
+        &mut self,
+        scale_x: f32,
+        scale_y: f32,
+        viewport_width: i32,
+        viewport_height: i32,
+    ) {
+        self.shader.as_ref().unwrap().use_program();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
         } else {
             bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
         }
+        viewport(0, 0, viewport_width, viewport_height).unwrap();
         uniform_matrix_4fv(
-            self.shader.as_ref().unwrap().get_uniform("unif_matrix") as GLint,
+            self.shader.as_ref().unwrap().get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
@@ -220,4 +232,70 @@ impl Default for GlView {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn compile_shader_program() -> Shader {
+    let context_version = gl_string(gl::VERSION);
+    let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
+    let is_gles = context_version
+        .as_deref()
+        .is_some_and(|version| version.contains("OpenGL ES"));
+
+    log::info!(
+        "initializing OpenGL renderer with context {:?} and shading language {:?}",
+        context_version,
+        shading_version
+    );
+
+    let candidates: &[(&str, &str, &str)] = if is_gles {
+        &[(
+            "gles2",
+            include_str!("vertex.glsl"),
+            include_str!("flagment.glsl"),
+        )]
+    } else {
+        &[
+            (
+                "desktop-core",
+                include_str!("vertex_desktop.glsl"),
+                include_str!("fragment_desktop.glsl"),
+            ),
+            (
+                "desktop-legacy",
+                include_str!("vertex_legacy.glsl"),
+                include_str!("fragment_legacy.glsl"),
+            ),
+        ]
+    };
+
+    let mut errors = Vec::new();
+    for (name, vertex, fragment) in candidates {
+        match Shader::try_new(vertex, fragment) {
+            Ok(shader) => {
+                log::info!("selected {name} shader pipeline");
+                return shader;
+            }
+            Err(err) => errors.push(format!("{name}: {err}")),
+        }
+    }
+
+    panic!(
+        "failed to compile shader pipeline for context {:?} / {:?}: {}",
+        context_version,
+        shading_version,
+        errors.join(" | ")
+    );
+}
+
+fn gl_string(name: u32) -> Option<String> {
+    let value = unsafe { gl::GetString(name) };
+    if value.is_null() {
+        return None;
+    }
+
+    Some(
+        unsafe { CStr::from_ptr(value.cast()) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }

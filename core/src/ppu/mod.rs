@@ -29,6 +29,26 @@ struct DecayableOpenBus {
     decay: [u8; 8],
 }
 
+#[cfg(test)]
+mod tests {
+    use super::Core;
+
+    #[test]
+    fn background_color_zero_uses_universal_backdrop() {
+        assert_eq!(Core::background_palette_index(0x00, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x04, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x08, 0), 0x00);
+        assert_eq!(Core::background_palette_index(0x0C, 0), 0x00);
+    }
+
+    #[test]
+    fn background_color_nonzero_keeps_palette_offset() {
+        assert_eq!(Core::background_palette_index(0x04, 1), 0x05);
+        assert_eq!(Core::background_palette_index(0x08, 2), 0x0A);
+        assert_eq!(Core::background_palette_index(0x0C, 3), 0x0F);
+    }
+}
+
 impl DecayableOpenBus {
     pub(crate) fn new() -> Self {
         Self {
@@ -767,6 +787,11 @@ impl Core {
     }
 
     #[inline]
+    fn background_palette_index(palette_offset: u8, bg: u8) -> u8 {
+        if bg == 0 { 0 } else { palette_offset + bg }
+    }
+
+    #[inline]
     fn evaluate_pixel(&mut self) -> u8 {
         let show_background =
             self.mask.show_background && (self.cycle > 8 || self.mask.show_left_background);
@@ -781,7 +806,7 @@ impl Core {
         } else {
             self.current_tile
         };
-        let bg_result = bg_tile.palette_offset + bg;
+        let bg_result = Self::background_palette_index(bg_tile.palette_offset, bg);
 
         let show_sprite = self.mask.show_sprites && (self.cycle > 8 || self.mask.show_left_sprites);
         if self.has_next_sprite && show_sprite {

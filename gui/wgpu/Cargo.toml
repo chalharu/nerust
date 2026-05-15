@@ -1,25 +1,28 @@
 [package]
-name = "nerust_gtk"
+name = "nerust_wgpu"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
-epoxy.workspace = true
-gdk.workspace = true
-gio.workspace = true
-gl.workspace = true
-gtk.workspace = true
-libc.workspace = true
+clap.workspace = true
 log.workspace = true
+muda.workspace = true
 nerust_console.workspace = true
 nerust_core.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_screen_filter.workspace = true
-nerust_screen_opengl.workspace = true
 nerust_screen_traits.workspace = true
 nerust_sound_openal.workspace = true
 nerust_timer.workspace = true
-shared_library.workspace = true
+pollster.workspace = true
+raw-window-handle.workspace = true
 simple_logger.workspace = true
+tao.workspace = true
+wgpu.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+gdkwayland-sys = "=0.18.2"
+gdkx11-sys = "=0.18.2"
+gtk = "=0.18.2"

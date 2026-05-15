@@ -35,6 +35,8 @@ impl GLAreaExtend for GLArea {
     }
 
     fn bind(gl_area: gtk::GLArea, state: Rc<RefCell<State>>) -> GLArea {
+        gl_area.set_auto_render(false);
+
         let result = Rc::new(RefCell::new(GLAreaCore {
             gl_area: gl_area.clone(),
             state,
@@ -73,6 +75,7 @@ impl GLAreaExtend for GLArea {
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
+            return;
         }
         epoxy::load_with(|s| unsafe {
             match DynamicLibrary::open(None).unwrap().symbol(s) {
@@ -90,26 +93,31 @@ impl GLAreaExtend for GLArea {
             view.on_load(state.logical_size);
             state.view = Some(view);
         }
+        self.resize(self.glarea().width(), self.glarea().height());
+        self.glarea().queue_render();
     }
 
     fn resize(&self, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
             log::error!("{}", e);
+            return;
         }
-        // unsafe {epoxy::Viewport(0, 0, w, h);}
-        // let dpi_factor = self.glarea().get_scale_factor();
-
-        let rate_x = f64::from(width) / f64::from(self.state().borrow_mut().physical_size.width);
-        let rate_y = f64::from(height) / f64::from(self.state().borrow_mut().physical_size.height);
+        let physical_size = self.state().borrow().physical_size;
+        let rate_x = f64::from(width) / f64::from(physical_size.width);
+        let rate_y = f64::from(height) / f64::from(physical_size.height);
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;
+        let scale_factor = self.glarea().scale_factor();
+        let viewport_width = width.saturating_mul(scale_factor);
+        let viewport_height = height.saturating_mul(scale_factor);
 
-        // self.context.resize(logical_size.to_physical(dpi_factor));
-        // unsafe {epoxy::Viewport(0, 0, w * dpi_factor, h * dpi_factor);}
         if let Some(ref mut view) = self.state().borrow_mut().view {
-            view.on_resize(scale_x, scale_y);
+            view.on_resize(scale_x, scale_y, viewport_width, viewport_height);
         }
     }
 
@@ -137,14 +145,14 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     gl_area.make_current();
     if let Some(e) = gl_area.error() {
         log::error!("{}", e);
+        return;
     }
-    {
-        if let Ok(mut state) = state.try_borrow_mut() {
-            let logical_size = state.console.logical_size();
-            let ptr = state.console.as_ptr();
-            if let Some(ref mut view) = state.view {
-                view.on_update(logical_size, ptr);
-            }
+    if let Ok(state) = state.try_borrow() {
+        let logical_size = state.console.logical_size();
+        if let Some(ref view) = state.view {
+            state.console.with_frame_buffer(|frame_buffer| {
+                view.on_update(logical_size, frame_buffer.as_ptr())
+            });
         }
     }
     unsafe {

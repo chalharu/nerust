@@ -5,14 +5,19 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use clap::{Arg, Command};
-use nerust_glutin::Window;
+use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
+use nerust_wgpu::Window;
+use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{BufReader, Read};
 
 fn main() {
-    // log initialize
-    simple_logger::init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Warn)
+        .env()
+        .init()
+        .unwrap();
     prepare_macos_runtime();
 
     let app = Command::new(env!("CARGO_PKG_NAME"))
@@ -21,10 +26,8 @@ fn main() {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(Arg::new("filename").help("Rom file name").required(true));
 
-    // 引数を解析
     let matches = app.get_matches();
 
-    // paが指定されていれば値を表示
     if let Some(mut f) = matches
         .get_one::<String>("filename")
         .and_then(|f| File::open(f).ok())

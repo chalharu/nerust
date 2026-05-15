@@ -172,18 +172,23 @@ impl Window {
         let mut view = GlView::new();
         view.use_vao(true);
         view.on_load(self.logical_size);
+        let initial_size = window.inner_size();
 
         self.window = Some(window);
         self.gl_context = Some(gl_context);
         self.gl_surface = Some(gl_surface);
         self.view = Some(view);
+        self.on_resize(initial_size);
     }
 
     fn on_update(&mut self) {
-        self.view
-            .as_ref()
-            .unwrap()
-            .on_update(self.console.logical_size(), self.console.as_ptr());
+        let logical_size = self.console.logical_size();
+        self.console.with_frame_buffer(|frame_buffer| {
+            self.view
+                .as_ref()
+                .unwrap()
+                .on_update(logical_size, frame_buffer.as_ptr());
+        });
         self.gl_surface
             .as_ref()
             .unwrap()
@@ -210,7 +215,12 @@ impl Window {
         let scale_x = rate / rate_x;
         let scale_y = rate / rate_y;
 
-        self.view.as_mut().unwrap().on_resize(scale_x, scale_y);
+        self.view.as_mut().unwrap().on_resize(
+            scale_x,
+            scale_y,
+            physical_size.width as i32,
+            physical_size.height as i32,
+        );
     }
 
     fn on_close(&mut self) {

@@ -10,6 +10,6 @@ use super::*;
 fn test_ppu_read_buffer() {
     run_test!(
         "ppu/ppu_read_buffer/test_ppu_read_buffer.nes",
-        ScenarioLeaf::check_screen(1300, 0x4D1B_0F97_B207_4269)
+        ScenarioLeaf::check_screen(1300, 0x3F03_9C47_60B0_C27D)
     );
 }
