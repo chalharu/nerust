@@ -856,8 +856,8 @@ impl Window {
         #[cfg(target_os = "macos")]
         let event_loop = {
             let mut event_loop = event_loop;
-            // Keep launch from force-activating over an already active full-screen app.
-            event_loop.set_activate_ignoring_other_apps(false);
+            // Explicitly let macOS activate the app even when another app is currently active.
+            event_loop.set_activate_ignoring_other_apps(true);
             event_loop
         };
         let proxy = event_loop.create_proxy();
