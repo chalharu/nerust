@@ -12,6 +12,8 @@ use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::{CLOCK_RATE, Timer};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, Event, KeyEvent, WindowEvent},
@@ -849,6 +851,13 @@ impl Window {
         let console = Console::new(speaker, screen_buffer);
 
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+        #[cfg(target_os = "macos")]
+        let event_loop = {
+            let mut event_loop = event_loop;
+            // Keep the Tao frontend from force-activating over an already active full-screen app.
+            event_loop.set_activate_ignoring_other_apps(false);
+            event_loop
+        };
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
         let window = Arc::new(
