@@ -61,6 +61,33 @@ impl Core {
         controller: &mut dyn Controller,
         mixer: &mut M,
     ) -> bool {
+        self.step_cycle(screen, controller, mixer, mixer.sample_rate())
+    }
+
+    pub fn run_frame<S: Screen, M: MixerInput>(
+        &mut self,
+        screen: &mut S,
+        controller: &mut dyn Controller,
+        mixer: &mut M,
+    ) -> u64 {
+        let mut cycles = 0;
+        let mixer_sample_rate = mixer.sample_rate();
+        loop {
+            cycles += 1;
+            if self.step_cycle(screen, controller, mixer, mixer_sample_rate) {
+                return cycles;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn step_cycle<S: Screen, M: MixerInput>(
+        &mut self,
+        screen: &mut S,
+        controller: &mut dyn Controller,
+        mixer: &mut M,
+        mixer_sample_rate: u32,
+    ) -> bool {
         // 1CPUサイクルにつき、APUは1、PPUはNTSC=>3,PAL=>3.2となる
         let mut result = false;
         self.cpu.step(
@@ -78,7 +105,12 @@ impl Core {
             }
         }
         self.cartridge.step();
-        self.apu.step(&mut self.cpu, self.cartridge.as_mut(), mixer);
+        self.apu.step(
+            &mut self.cpu,
+            self.cartridge.as_mut(),
+            mixer,
+            mixer_sample_rate,
+        );
 
         result
     }
