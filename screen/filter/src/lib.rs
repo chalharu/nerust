@@ -8,7 +8,7 @@ mod filters;
 
 use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
 
-pub trait NesFilter {
+pub trait NesFilter: Send {
     fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
 
     fn logical_size(&self) -> LogicalSize;

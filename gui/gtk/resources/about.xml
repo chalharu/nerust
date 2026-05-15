@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
+  <requires lib="gtk" version="4.0"/>
   <object class="GtkAboutDialog" id="about">
-    <property name="can_focus">False</property>
-    <property name="type_hint">dialog</property>
-    <property name="program_name">Nerust</property>
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="program-name">Nerust</property>
     <property name="copyright" translatable="yes">© 2019 Mitsuharu Seki</property>
     <property name="website">https://github.com/chalharu/Nerust</property>
     <property name="license">Mozilla Public License Version 2.0
@@ -377,34 +378,10 @@ You may add additional accurate notices of copyright ownership.
 Exhibit B - "Incompatible With Secondary Licenses" Notice
 ---------------------------------------------------------
 
-  This Source Code Form is "Incompatible With Secondary Licenses", as
-  defined by the Mozilla Public License, v. 2.0. </property>
+This Source Code Form is "Incompatible With Secondary Licenses", as
+defined by the Mozilla Public License, v. 2.0. </property>
     <property name="authors">chalharu</property>
-    <property name="logo_icon_name">application-x-executable</property>
-    <property name="license_type">custom</property>
-    <child>
-      <placeholder/>
-    </child>
-    <child internal-child="vbox">
-      <object class="GtkBox">
-        <property name="can_focus">False</property>
-        <property name="orientation">vertical</property>
-        <property name="spacing">2</property>
-        <child internal-child="action_area">
-          <object class="GtkButtonBox">
-            <property name="can_focus">False</property>
-            <property name="layout_style">end</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-            <property name="position">0</property>
-          </packing>
-        </child>
-        <child>
-          <placeholder/>
-        </child>
-      </object>
-    </child>
+    <property name="logo-icon-name">application-x-executable</property>
+    <property name="license-type">custom</property>
   </object>
 </interface>

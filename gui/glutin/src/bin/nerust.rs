@@ -6,12 +6,14 @@
 
 use clap::{Arg, Command};
 use nerust_glutin::Window;
+use nerust_sound_openal::prepare_macos_runtime;
 use std::fs::File;
 use std::io::{BufReader, Read};
 
 fn main() {
     // log initialize
     simple_logger::init().unwrap();
+    prepare_macos_runtime();
 
     let app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))

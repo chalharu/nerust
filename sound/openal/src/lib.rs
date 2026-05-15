@@ -10,10 +10,108 @@ use self::resampler::{Resampler, SimpleDownSampler};
 use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_soundfilter::{Filter, NesFilter};
+#[cfg(target_os = "macos")]
+use std::ffi::{CStr, CString};
+#[cfg(target_os = "macos")]
+use std::sync::Once;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
+
+#[cfg(target_os = "macos")]
+const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
+
+#[cfg(target_os = "macos")]
+const MACOS_OPENAL_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/OpenAL.framework/OpenAL",
+    "/System/Library/Frameworks/OpenAL.framework/Versions/Current/OpenAL",
+    "/System/Library/Frameworks/OpenAL.framework/Versions/A/OpenAL",
+];
+
+#[cfg(target_os = "macos")]
+const MACOS_IMAGEIO_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/ImageIO",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+    "/System/Library/Frameworks/ImageIO.framework/ImageIO",
+    "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+];
+
+#[cfg(target_os = "macos")]
+const MACOS_HISERVICES_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/Versions/A/HIServices",
+];
+
+#[cfg(target_os = "macos")]
+const MACOS_PNG_PLUGIN_CANDIDATES: &[&str] = &[
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+    "/System/Library/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
+];
+
+#[cfg(target_os = "macos")]
+static PREPARE_MACOS_RUNTIME_ONCE: Once = Once::new();
+
+pub fn prepare_macos_runtime() {
+    #[cfg(target_os = "macos")]
+    PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
+        sanitize_process_dyld_env();
+        preload_system_library("ImageIO", MACOS_IMAGEIO_CANDIDATES);
+        preload_system_library("HIServices", MACOS_HISERVICES_CANDIDATES);
+        preload_system_library("PNGReadPlugin", MACOS_PNG_PLUGIN_CANDIDATES);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn sanitize_process_dyld_env() {
+    for name in DYLD_ENV_VARS {
+        if std::env::var_os(name).is_some() {
+            log::warn!(
+                "removing {name} from the process environment to avoid macOS ImageIO plugin conflicts"
+            );
+            // SAFETY: This runs during process startup on the main thread before any frontend or
+            // audio worker threads are created, so there is no concurrent environment mutation.
+            unsafe {
+                std::env::remove_var(name);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn preload_system_library(name: &str, candidates: &[&str]) {
+    let mut last_error = None;
+    for path in candidates {
+        let path_c = CString::new(*path).expect("macOS framework path must not contain NUL");
+        // SAFETY: dlerror/dlopen are called with valid pointers, and we intentionally keep any
+        // successfully loaded handle alive for the remainder of the process to preserve plugin
+        // initialization side effects.
+        let handle = unsafe {
+            libc::dlerror();
+            libc::dlopen(path_c.as_ptr(), libc::RTLD_NOW)
+        };
+        if !handle.is_null() {
+            log::info!("preloaded {name} from {path}");
+            return;
+        }
+
+        let error = unsafe {
+            let error = libc::dlerror();
+            if error.is_null() {
+                "unknown dlopen error".to_string()
+            } else {
+                CStr::from_ptr(error).to_string_lossy().into_owned()
+            }
+        };
+        last_error = Some(format!("{path}: {error}"));
+    }
+
+    if let Some(error) = last_error {
+        log::warn!("failed to preload {name}: {error}");
+    }
+}
 
 const CORE_AUDIO_OVERSAMPLE: u32 = 4;
 
@@ -106,29 +204,121 @@ struct OpenAlState {
 }
 
 impl OpenAlState {
+    fn create_context(dev: &OutputDevice, requested_sample_rate: i32) -> Result<Context, String> {
+        let attrs = ContextAttrs {
+            frequency: Some(requested_sample_rate),
+            ..ContextAttrs::default()
+        };
+        match dev.new_context(Some(attrs)) {
+            Ok(ctx) => Ok(ctx),
+            Err(requested_err) => {
+                log::warn!(
+                    "failed to create OpenAL context at {requested_sample_rate} Hz ({requested_err:?}); retrying with backend defaults"
+                );
+                dev.new_context(None).map_err(|default_err| {
+                    format!(
+                        "failed to create OpenAL context (requested {requested_sample_rate} Hz: {requested_err:?}; default attributes: {default_err:?})"
+                    )
+                })
+            }
+        }
+    }
+
+    fn resolve_playback_sample_rate(
+        alto: &Alto,
+        dev: &OutputDevice,
+        requested_sample_rate: i32,
+    ) -> i32 {
+        let mut actual_sample_rate = 0;
+        unsafe {
+            alto.raw_api().alcGetIntegerv(
+                dev.as_raw(),
+                sys::ALC_FREQUENCY,
+                1,
+                &mut actual_sample_rate,
+            );
+        }
+        match alto.get_error(dev.as_raw()) {
+            Ok(()) if actual_sample_rate > 0 => {
+                if actual_sample_rate != requested_sample_rate {
+                    log::debug!(
+                        "OpenAL playback sample rate resolved to {actual_sample_rate} Hz instead of requested {requested_sample_rate} Hz"
+                    );
+                }
+                actual_sample_rate
+            }
+            Ok(()) => {
+                log::warn!(
+                    "OpenAL reported a non-positive playback sample rate ({actual_sample_rate}); using requested {requested_sample_rate} Hz"
+                );
+                requested_sample_rate
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to query OpenAL playback sample rate ({err:?}); using requested {requested_sample_rate} Hz"
+                );
+                requested_sample_rate
+            }
+        }
+    }
+
+    fn load_alto() -> Result<Alto, String> {
+        OpenAl::with_sanitized_dyld_env(|| {
+            let mut errors = Vec::new();
+
+            match Alto::load_default() {
+                Ok(alto) => {
+                    log::info!("loaded OpenAL with the default loader");
+                    return Ok(alto);
+                }
+                Err(err) => errors.push(format!("default loader failed: {err:?}")),
+            }
+
+            #[cfg(target_os = "macos")]
+            for path in MACOS_OPENAL_CANDIDATES {
+                match Alto::load(path) {
+                    Ok(alto) => {
+                        log::info!("loaded OpenAL from {path}");
+                        return Ok(alto);
+                    }
+                    Err(err) => errors.push(format!("{path}: {err:?}")),
+                }
+            }
+
+            Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
+        })
+    }
+
+    fn create_streaming_source(
+        requested_sample_rate: i32,
+        buffer_width: usize,
+        buffer_count: usize,
+    ) -> Result<(StreamingSource, i32), String> {
+        let alto = Self::load_alto()?;
+        let dev = alto
+            .open(None)
+            .map_err(|err| format!("failed to open default OpenAL output device: {err:?}"))?;
+        let mut ctx = Self::create_context(&dev, requested_sample_rate)?;
+        let playback_sample_rate =
+            Self::resolve_playback_sample_rate(&alto, &dev, requested_sample_rate);
+        let mut src = ctx
+            .new_streaming_source()
+            .map_err(|err| format!("failed to create OpenAL streaming source: {err:?}"))?;
+        for _ in 0..buffer_count {
+            Self::add_buffer(&mut ctx, &mut src, playback_sample_rate, buffer_width)
+                .map_err(|err| format!("failed to queue initial OpenAL buffer: {err:?}"))?;
+        }
+        Ok((src, playback_sample_rate))
+    }
+
     pub(crate) fn new(
         sample_rate: i32,
         buffer_width: usize,
-        buffer_count: usize,
         playing_receiver: Receiver<bool>,
         data_receiver: Receiver<f32>,
         fade_width: usize,
+        src: Option<StreamingSource>,
     ) -> Self {
-        let src = if let Ok(src) = Alto::load_default()
-            .and_then(|alto| alto.open(None))
-            .and_then(|dev| dev.new_context(None))
-            .and_then(|ctx| ctx.new_streaming_source().map(|src| (src, ctx)))
-            .map(|(mut src, mut ctx)| {
-                for _ in 0..buffer_count {
-                    Self::add_buffer(&mut ctx, &mut src, sample_rate, buffer_width);
-                }
-                src
-            }) {
-            Some(src)
-        } else {
-            log::error!("No OpenAL implementation present!");
-            None
-        };
         Self {
             src,
             sample_rate,
@@ -144,10 +334,11 @@ impl OpenAlState {
         src: &mut StreamingSource,
         sample_rate: i32,
         buffer_width: usize,
-    ) {
-        let data = &vec![Mono { center: 0_i16 }; buffer_width];
-        let buf = ctx.new_buffer(data, sample_rate).unwrap();
-        src.queue_buffer(buf).unwrap();
+    ) -> AltoResult<()> {
+        let data = vec![Mono { center: 0_i16 }; buffer_width];
+        let buf = ctx.new_buffer(&data, sample_rate)?;
+        src.queue_buffer(buf)?;
+        Ok(())
     }
 
     fn fill_buffer(
@@ -212,25 +403,37 @@ impl OpenAl {
         buffer_width: usize,
         buffer_count: usize,
     ) -> Self {
-        let mixer_sample_rate =
-            u32::try_from(sample_rate).expect("OpenAL sample_rate must be non-negative");
+        let requested_playback_sample_rate = sample_rate;
+        let (src, playback_sample_rate) =
+            match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
+                Ok((src, playback_sample_rate)) => (Some(src), playback_sample_rate),
+                Err(err) => {
+                    log::error!("{err}");
+                    (None, requested_playback_sample_rate)
+                }
+            };
+        let playback_sample_rate_u32 = u32::try_from(playback_sample_rate)
+            .expect("OpenAL playback sample_rate must be non-negative");
         let requested_source_rate =
             u32::try_from(output_rate).expect("OpenAL output_rate must be non-negative");
         let source_sample_rate = requested_source_rate
-            .min(mixer_sample_rate.saturating_mul(CORE_AUDIO_OVERSAMPLE))
-            .max(mixer_sample_rate);
-        let filter = NesFilter::new(sample_rate as f32);
+            .min(playback_sample_rate_u32.saturating_mul(CORE_AUDIO_OVERSAMPLE))
+            .max(playback_sample_rate_u32);
+        let filter = NesFilter::new(playback_sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
+        // On macOS, loading Apple's deprecated OpenAL framework from a background thread can
+        // race with AppKit/ImageIO initialization. Initialize the backend on the caller thread
+        // first, then hand the fully created streaming source to the audio thread.
         let thread = thread::spawn(move || {
             let mut state = OpenAlState::new(
-                sample_rate,
+                playback_sample_rate,
                 buffer_width,
-                buffer_count,
                 playing_recv,
                 data_recv,
                 buffer_width,
+                src,
             );
             while stop_recv.try_recv().is_err() {
                 state.step();
@@ -247,9 +450,55 @@ impl OpenAl {
             source_sample_rate,
             resampler: SimpleDownSampler::new(
                 f64::from(source_sample_rate),
-                f64::from(mixer_sample_rate),
+                f64::from(playback_sample_rate_u32),
             ),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let saved = DYLD_ENV_VARS.map(|name| (name, std::env::var_os(name)));
+        for (name, value) in &saved {
+            if value.is_some() {
+                log::warn!(
+                    "temporarily clearing {name} while loading OpenAL to avoid ImageIO plugin conflicts"
+                );
+                // SAFETY: OpenAl::new initializes the audio backend on the caller thread before
+                // the dedicated audio thread is spawned, so no other thread concurrently mutates
+                // these DYLD variables during this narrow load window.
+                unsafe {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+
+        let result = f();
+
+        for (name, value) in saved {
+            match value {
+                Some(value) => {
+                    // SAFETY: See the rationale above; restoration happens on the same thread
+                    // before the audio worker is started, so there is no concurrent env access.
+                    unsafe {
+                        std::env::set_var(name, value);
+                    }
+                }
+                None => {
+                    // SAFETY: See the rationale above; restoration happens before spawning the
+                    // audio thread, so there is no concurrent env access.
+                    unsafe {
+                        std::env::remove_var(name);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        f()
     }
 }
 
