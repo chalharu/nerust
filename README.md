@@ -51,6 +51,26 @@ cargo build -p nerust_gtk --release
 target/release/nerust_gtk
 ```
 
+### WGPU Frontend
+
+#### WGPU dependencies
+
+- Cargo
+- Rust
+- Linux では GTK3 開発パッケージ (`libgtk-3-dev` など)
+
+#### Build WGPU
+
+```sh
+cargo build -p nerust_wgpu --release
+```
+
+#### Run WGPU
+
+```sh
+target/release/nerust_wgpu [Rom File Path]
+```
+
 ## Supported Mappers
 
 - NRom (Mapper 0)
