@@ -204,6 +204,64 @@ struct OpenAlState {
 }
 
 impl OpenAlState {
+    fn create_context(dev: &OutputDevice, requested_sample_rate: i32) -> Result<Context, String> {
+        let attrs = ContextAttrs {
+            frequency: Some(requested_sample_rate),
+            ..ContextAttrs::default()
+        };
+        match dev.new_context(Some(attrs)) {
+            Ok(ctx) => Ok(ctx),
+            Err(requested_err) => {
+                log::warn!(
+                    "failed to create OpenAL context at {requested_sample_rate} Hz ({requested_err:?}); retrying with backend defaults"
+                );
+                dev.new_context(None).map_err(|default_err| {
+                    format!(
+                        "failed to create OpenAL context (requested {requested_sample_rate} Hz: {requested_err:?}; default attributes: {default_err:?})"
+                    )
+                })
+            }
+        }
+    }
+
+    fn resolve_playback_sample_rate(
+        alto: &Alto,
+        dev: &OutputDevice,
+        requested_sample_rate: i32,
+    ) -> i32 {
+        let mut actual_sample_rate = 0;
+        unsafe {
+            alto.raw_api().alcGetIntegerv(
+                dev.as_raw(),
+                sys::ALC_FREQUENCY,
+                1,
+                &mut actual_sample_rate,
+            );
+        }
+        match alto.get_error(dev.as_raw()) {
+            Ok(()) if actual_sample_rate > 0 => {
+                if actual_sample_rate != requested_sample_rate {
+                    log::debug!(
+                        "OpenAL playback sample rate resolved to {actual_sample_rate} Hz instead of requested {requested_sample_rate} Hz"
+                    );
+                }
+                actual_sample_rate
+            }
+            Ok(()) => {
+                log::warn!(
+                    "OpenAL reported a non-positive playback sample rate ({actual_sample_rate}); using requested {requested_sample_rate} Hz"
+                );
+                requested_sample_rate
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to query OpenAL playback sample rate ({err:?}); using requested {requested_sample_rate} Hz"
+                );
+                requested_sample_rate
+            }
+        }
+    }
+
     fn load_alto() -> Result<Alto, String> {
         OpenAl::with_sanitized_dyld_env(|| {
             let mut errors = Vec::new();
@@ -232,25 +290,25 @@ impl OpenAlState {
     }
 
     fn create_streaming_source(
-        sample_rate: i32,
+        requested_sample_rate: i32,
         buffer_width: usize,
         buffer_count: usize,
-    ) -> Result<StreamingSource, String> {
+    ) -> Result<(StreamingSource, i32), String> {
         let alto = Self::load_alto()?;
         let dev = alto
             .open(None)
             .map_err(|err| format!("failed to open default OpenAL output device: {err:?}"))?;
-        let mut ctx = dev
-            .new_context(None)
-            .map_err(|err| format!("failed to create OpenAL context: {err:?}"))?;
+        let mut ctx = Self::create_context(&dev, requested_sample_rate)?;
+        let playback_sample_rate =
+            Self::resolve_playback_sample_rate(&alto, &dev, requested_sample_rate);
         let mut src = ctx
             .new_streaming_source()
             .map_err(|err| format!("failed to create OpenAL streaming source: {err:?}"))?;
         for _ in 0..buffer_count {
-            Self::add_buffer(&mut ctx, &mut src, sample_rate, buffer_width)
+            Self::add_buffer(&mut ctx, &mut src, playback_sample_rate, buffer_width)
                 .map_err(|err| format!("failed to queue initial OpenAL buffer: {err:?}"))?;
         }
-        Ok(src)
+        Ok((src, playback_sample_rate))
     }
 
     pub(crate) fn new(
@@ -345,31 +403,32 @@ impl OpenAl {
         buffer_width: usize,
         buffer_count: usize,
     ) -> Self {
-        let mixer_sample_rate =
-            u32::try_from(sample_rate).expect("OpenAL sample_rate must be non-negative");
+        let requested_playback_sample_rate = sample_rate;
+        let (src, playback_sample_rate) =
+            match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
+                Ok((src, playback_sample_rate)) => (Some(src), playback_sample_rate),
+                Err(err) => {
+                    log::error!("{err}");
+                    (None, requested_playback_sample_rate)
+                }
+            };
+        let playback_sample_rate_u32 = u32::try_from(playback_sample_rate)
+            .expect("OpenAL playback sample_rate must be non-negative");
         let requested_source_rate =
             u32::try_from(output_rate).expect("OpenAL output_rate must be non-negative");
         let source_sample_rate = requested_source_rate
-            .min(mixer_sample_rate.saturating_mul(CORE_AUDIO_OVERSAMPLE))
-            .max(mixer_sample_rate);
-        let filter = NesFilter::new(sample_rate as f32);
+            .min(playback_sample_rate_u32.saturating_mul(CORE_AUDIO_OVERSAMPLE))
+            .max(playback_sample_rate_u32);
+        let filter = NesFilter::new(playback_sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
         // On macOS, loading Apple's deprecated OpenAL framework from a background thread can
         // race with AppKit/ImageIO initialization. Initialize the backend on the caller thread
         // first, then hand the fully created streaming source to the audio thread.
-        let src =
-            match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
-                Ok(src) => Some(src),
-                Err(err) => {
-                    log::error!("{err}");
-                    None
-                }
-            };
         let thread = thread::spawn(move || {
             let mut state = OpenAlState::new(
-                sample_rate,
+                playback_sample_rate,
                 buffer_width,
                 playing_recv,
                 data_recv,
@@ -391,7 +450,7 @@ impl OpenAl {
             source_sample_rate,
             resampler: SimpleDownSampler::new(
                 f64::from(source_sample_rate),
-                f64::from(mixer_sample_rate),
+                f64::from(playback_sample_rate_u32),
             ),
         }
     }
