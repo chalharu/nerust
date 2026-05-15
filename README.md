@@ -57,6 +57,7 @@ target/release/nerust_gtk
 
 - Cargo
 - Rust
+- Linux では GTK3 開発パッケージ (`libgtk-3-dev` など)
 
 #### Build WGPU
 
