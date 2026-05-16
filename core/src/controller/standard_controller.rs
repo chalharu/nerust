@@ -49,6 +49,10 @@ impl StandardController {
 
     pub fn reset(&mut self) {
         self.buttons = [Buttons::empty(); 2];
+        self.microphone = false;
+        self.index1 = 0;
+        self.index2 = 0;
+        self.strobe = false;
     }
 
     pub fn set_pad1(&mut self, buttons: Buttons) {
@@ -61,6 +65,10 @@ impl StandardController {
 
     pub fn set_pad(&mut self, buttons: [Buttons; 2]) {
         self.buttons = buttons;
+    }
+
+    pub fn set_microphone(&mut self, microphone: bool) {
+        self.microphone = microphone;
     }
 }
 
@@ -132,5 +140,48 @@ mod tests {
 
         assert_eq!(controller.read(0).data & 1, 1);
         assert_eq!(controller.read(0).data & 1, 1);
+    }
+
+    #[test]
+    fn standard_controller_reports_microphone_on_port_zero_d2() {
+        let mut controller = StandardController::new();
+
+        controller.set_microphone(true);
+        assert_eq!(controller.read(0).data & 0x04, 0x04);
+
+        controller.set_microphone(false);
+        assert_eq!(controller.read(0).data & 0x04, 0x00);
+    }
+
+    #[test]
+    fn standard_controller_reset_clears_buttons_and_microphone() {
+        let mut controller = StandardController::new();
+        controller.set_pad1(Buttons::A);
+        controller.set_pad2(Buttons::A);
+        controller.set_microphone(true);
+        controller.write(1);
+
+        controller.reset();
+        controller.set_pad1(Buttons::A);
+        controller.set_pad2(Buttons::A);
+
+        assert_eq!(controller.read(0).data & 0x05, 0x01);
+        assert_eq!(controller.read(0).data & 0x01, 0x00);
+        assert_eq!(controller.read(1).data & 0x01, 0x01);
+    }
+
+    #[test]
+    fn standard_controller_reset_rewinds_shift_index() {
+        let mut controller = StandardController::new();
+        controller.set_pad1(Buttons::A);
+        controller.write(1);
+        controller.write(0);
+
+        assert_eq!(controller.read(0).data & 0x01, 0x01);
+
+        controller.reset();
+        controller.set_pad1(Buttons::A);
+
+        assert_eq!(controller.read(0).data & 0x01, 0x01);
     }
 }
