@@ -116,15 +116,46 @@ fn run_command(
     let cases = manifest
         .select(case_ids, perf_only)
         .map_err(|error| error.to_string())?;
-    let outcomes = cases
-        .into_iter()
-        .map(|case| validate_case(case, options))
-        .collect::<Vec<_>>();
+    let mode = if fail_on_mismatch {
+        "validate"
+    } else {
+        "capture"
+    };
+    let total = cases.len();
+    let mut outcomes = Vec::with_capacity(total);
+    let mut current_category = None;
 
-    for outcome in &outcomes {
-        print_outcome(outcome);
+    println!(
+        "mode={mode} cases={total} output_dir={}",
+        output_dir.display()
+    );
+
+    for (index, case) in cases.into_iter().enumerate() {
+        if current_category != Some(case.category) {
+            current_category = Some(case.category);
+            println!("[{}]", case.category.label());
+        }
+        println!(
+            "[{}/{}] mode={} case={} target_frames={} rom={} description={}",
+            index + 1,
+            total,
+            mode,
+            case.id,
+            case.final_frame(),
+            case.rom,
+            case.description
+        );
+
+        let outcome = validate_case(case, options);
+        print_outcome(&outcome);
+        outcomes.push(outcome);
     }
 
+    println!(
+        "writing_report={} mode={} cases={total}",
+        output_dir.display(),
+        mode
+    );
     let summary = write_html_report(
         &output_dir,
         if fail_on_mismatch {
@@ -137,8 +168,9 @@ fn run_command(
     .map_err(|error| error.to_string())?;
 
     println!(
-        "report={} passed={} failed={}",
+        "report={} mode={} passed={} failed={}",
         summary.report_path.display(),
+        mode,
         summary.passed,
         summary.failed
     );
