@@ -1,0 +1,694 @@
+rom_root: ../roms
+cases:
+  - id: apu.len_ctr
+    category: apu
+    description: "Tests APU length counter behavior from blargg's APU validation ROMs."
+    rom: apu/blargg_apu_2005.07.30/01.len_ctr.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 95586
+      hash: "0x27C6A0AD8041E1F7"
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.02.len_table
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Table."
+    rom: apu/blargg_apu_2005.07.30/02.len_table.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.03.irq_flag
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Flag."
+    rom: apu/blargg_apu_2005.07.30/03.irq_flag.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.04.clock_jitter
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Clock Jitter."
+    rom: apu/blargg_apu_2005.07.30/04.clock_jitter.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.05.len_timing_mode0
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Timing Mode0."
+    rom: apu/blargg_apu_2005.07.30/05.len_timing_mode0.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.06.len_timing_mode1
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Timing Mode1."
+    rom: apu/blargg_apu_2005.07.30/06.len_timing_mode1.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.07.irq_flag_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Flag Timing."
+    rom: apu/blargg_apu_2005.07.30/07.irq_flag_timing.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.08.irq_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Timing."
+    rom: apu/blargg_apu_2005.07.30/08.irq_timing.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.09.reset_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Reset Timing."
+    rom: apu/blargg_apu_2005.07.30/09.reset_timing.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.10.len_halt_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Halt Timing."
+    rom: apu/blargg_apu_2005.07.30/10.len_halt_timing.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.blargg_apu_2005.07.30.11.len_reload_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Reload Timing."
+    rom: apu/blargg_apu_2005.07.30/11.len_reload_timing.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: apu.test_apu_2.test_1
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 1."
+    rom: apu/test_apu_2/test_1.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_2
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 2."
+    rom: apu/test_apu_2/test_2.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_3
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 3."
+    rom: apu/test_apu_2/test_3.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_4
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 4."
+    rom: apu/test_apu_2/test_4.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_5
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 5."
+    rom: apu/test_apu_2/test_5.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_6
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 6."
+    rom: apu/test_apu_2/test_6.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_7
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 7."
+    rom: apu/test_apu_2/test_7.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_8
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 8."
+    rom: apu/test_apu_2/test_8.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_9
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 9."
+    rom: apu/test_apu_2/test_9.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_2.test_10
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 10."
+    rom: apu/test_apu_2/test_10.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_m.test_9
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 9."
+    rom: apu/test_apu_m/test_9.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_m.test_10
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 10."
+    rom: apu/test_apu_m/test_10.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: apu.test_apu_m.test_11
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 11."
+    rom: apu/test_apu_m/test_11.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624" }
+  - id: cpu.branch_timing_tests.1.Branch_Basics
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Branch Basics."
+    rom: cpu/branch_timing_tests/1.Branch_Basics.nes
+    events:
+      - { frame: 25, action: check_screen, hash: "0x93D488FABC5E367D" }
+  - id: cpu.branch_timing_tests.2.Backward_Branch
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Backward Branch."
+    rom: cpu/branch_timing_tests/2.Backward_Branch.nes
+    events:
+      - { frame: 25, action: check_screen, hash: "0x3C977E767E7BF4AD" }
+  - id: cpu.branch_timing_tests.3.Forward_Branch
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Forward Branch."
+    rom: cpu/branch_timing_tests/3.Forward_Branch.nes
+    events:
+      - { frame: 25, action: check_screen, hash: "0x4F3A6AA2964D33B7" }
+  - id: cpu.cpu_dummy_reads
+    category: cpu
+    description: "Tests the CPU's dummy reads."
+    rom: cpu/cpu_dummy_reads.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x13841FEDB44DC75D" }
+  - id: cpu.cpu_dummy_writes.cpu_dummy_writes_oam
+    category: cpu
+    description: "Tests the CPU's dummy writes. Case: OAM writes."
+    rom: cpu/cpu_dummy_writes/cpu_dummy_writes_oam.nes
+    events:
+      - { frame: 330, action: check_screen, hash: "0xF25FB885BF1F8DE2" }
+  - id: cpu.cpu_dummy_writes.cpu_dummy_writes_ppumem
+    category: cpu
+    description: "Tests the CPU's dummy writes. Case: PPU memory writes."
+    rom: cpu/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes
+    events:
+      - { frame: 240, action: check_screen, hash: "0x68404497D176CD2A" }
+  - id: cpu.cpu_exec_space.test_cpu_exec_space_ppuio
+    category: cpu
+    description: "Verifies that the CPU can execute code from any possible memory location, including I/O-mapped regions. Case: PPU I/O execution space."
+    rom: cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes
+    events:
+      - { frame: 45, action: check_screen, hash: "0xFA8F4E7F0ECDD92F" }
+  - id: cpu.cpu_exec_space.test_cpu_exec_space_apu
+    category: cpu
+    description: "Verifies that the CPU can execute code from any possible memory location, including I/O-mapped regions. Case: APU and I/O execution space."
+    rom: cpu/cpu_exec_space/test_cpu_exec_space_apu.nes
+    events:
+      - { frame: 295, action: check_screen, hash: "0x3A0C2ED9AA73D9F4" }
+  - id: cpu.cpu_flag_concurrency.test_cpu_flag_concurrency
+    category: cpu
+    description: "Exercises CPU flag concurrency edge cases."
+    rom: cpu/cpu_flag_concurrency/test_cpu_flag_concurrency.nes
+    events:
+      - { frame: 850, action: check_screen, hash: "0x238D985A6183B697" }
+  - id: cpu.cpu_interrupts_v2.cpu_interrupts
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: Combined interrupt suite."
+    rom: cpu/cpu_interrupts_v2/cpu_interrupts.nes
+    events:
+      - { frame: 760, action: check_screen, hash: "0x9026DAD65555ECA0" }
+  - id: cpu.cpu_interrupts_v2.rom_singles.1-cli_latency
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: CLI Latency."
+    rom: cpu/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
+    events:
+      - { frame: 35, action: check_screen, hash: "0x06A2E9A5AD65ED0E" }
+  - id: cpu.cpu_interrupts_v2.rom_singles.2-nmi_and_brk
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: NMI And BRK."
+    rom: cpu/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes
+    events:
+      - { frame: 115, action: check_screen, hash: "0x2FB0BFAC269FD16A" }
+  - id: cpu.cpu_interrupts_v2.rom_singles.3-nmi_and_irq
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: NMI And IRQ."
+    rom: cpu/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes
+    events:
+      - { frame: 150, action: check_screen, hash: "0x9A8775FF7A9697DF" }
+  - id: cpu.cpu_interrupts_v2.rom_singles.4-irq_and_dma
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: IRQ And DMA."
+    rom: cpu/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes
+    events:
+      - { frame: 75, action: check_screen, hash: "0x70E9CDAE61FC6CE6" }
+  - id: cpu.cpu_interrupts_v2.rom_singles.5-branch_delays_irq
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: Branch Delays IRQ."
+    rom: cpu/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes
+    events:
+      - { frame: 400, action: check_screen, hash: "0xDCF04EA09FBB490C" }
+  - id: cpu.cpu_reset.ram_after_reset
+    category: cpu
+    description: "Tests CPU register state across power and reset while ensuring RAM is preserved. Case: RAM after reset."
+    rom: cpu/cpu_reset/ram_after_reset.nes
+    events:
+      - { frame: 155, action: check_screen, hash: "0x440354DCC93B0821" }
+      - { frame: 156, action: reset }
+      - { frame: 255, action: check_screen, hash: "0xD3422C94B83715E9" }
+  - id: cpu.cpu_reset.registers
+    category: cpu
+    description: "Tests CPU register state across power and reset while ensuring RAM is preserved. Case: Registers."
+    rom: cpu/cpu_reset/registers.nes
+    events:
+      - { frame: 155, action: check_screen, hash: "0x440354DCC93B0821" }
+      - { frame: 156, action: reset }
+      - { frame: 255, action: check_screen, hash: "0x71F4ECB5DA8686D2" }
+  - id: cpu.cpu_timing_test6.cpu_timing_test
+    category: cpu
+    description: "Tests instruction timing for official and unofficial NES 6502 instructions except branches and halts."
+    rom: cpu/cpu_timing_test6/cpu_timing_test.nes
+    events:
+      - { frame: 639, action: check_screen, hash: "0x172C687E69C06327" }
+  - id: cpu.instr_misc.instr_misc
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Combined miscellaneous instruction suite."
+    rom: cpu/instr_misc/instr_misc.nes
+    events:
+      - { frame: 580, action: check_screen, hash: "0x20E234D5DB551AA9" }
+  - id: cpu.instr_misc.rom_singles.01-abs_x_wrap
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Absolute X Wrap."
+    rom: cpu/instr_misc/rom_singles/01-abs_x_wrap.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0xE2900046F45BB66A" }
+  - id: cpu.instr_misc.rom_singles.02-branch_wrap
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Branch Wrap."
+    rom: cpu/instr_misc/rom_singles/02-branch_wrap.nes
+    events:
+      - { frame: 20, action: check_screen, hash: "0x0341BD5B2530B417" }
+  - id: cpu.instr_misc.rom_singles.03-dummy_reads
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Dummy Reads."
+    rom: cpu/instr_misc/rom_singles/03-dummy_reads.nes
+    events:
+      - { frame: 70, action: check_screen, hash: "0x0584AAAEB26972DC" }
+  - id: cpu.instr_misc.rom_singles.04-dummy_reads_apu
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Dummy Reads APU."
+    rom: cpu/instr_misc/rom_singles/04-dummy_reads_apu.nes
+    events:
+      - { frame: 165, action: check_screen, hash: "0xAE30A6A220EF1A20" }
+  - id: cpu.instr_test-v5.all_instrs
+    category: cpu
+    description: "Thoroughly tests official and unofficial CPU instructions."
+    rom: cpu/instr_test-v5/all_instrs.nes
+    events:
+      - { frame: 2450, action: check_screen, hash: "0x4E0209B232069DEA" }
+  - id: cpu.instr_timing.instr_timing
+    category: cpu
+    description: "Tests instruction timing, including unofficial opcodes and page crossings."
+    rom: cpu/instr_timing/instr_timing.nes
+    events:
+      - { frame: 1330, action: check_screen, hash: "0x911C1A51A508AB74" }
+  - id: cpu.nestest
+    category: cpu
+    description: "Provides a broad first-pass CPU validation against the classic nestest program flow."
+    rom: cpu/nestest.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 287270
+      hash: "0x34BB3FFDF962043D"
+    events:
+      - { frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E" }
+      - { frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed }
+      - { frame: 16, action: standard_controller, pad: pad1, button: START, state: released }
+      - { frame: 70, action: check_screen, hash: "0xBE54DF8CF9FBE026" }
+      - { frame: 70, action: standard_controller, pad: pad1, button: SELECT, state: pressed }
+      - { frame: 71, action: standard_controller, pad: pad1, button: SELECT, state: released }
+      - { frame: 75, action: check_screen, hash: "0x9D082986B6F8DF51" }
+      - { frame: 75, action: standard_controller, pad: pad1, button: START, state: pressed }
+      - { frame: 76, action: standard_controller, pad: pad1, button: START, state: released }
+      - { frame: 90, action: check_screen, hash: "0xBACF3F4FCBF5718C" }
+  - id: mapper.2_test_src.2_test_0
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 0."
+    rom: mapper/2_test_src/2_test_0.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x01C3BF218899DD55" }
+  - id: mapper.2_test_src.2_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 1."
+    rom: mapper/2_test_src/2_test_1.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x01C3BF218899DD55" }
+  - id: mapper.2_test_src.2_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 2."
+    rom: mapper/2_test_src/2_test_2.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x7D4967ED8CD264A0" }
+  - id: mapper.34_test_src.34_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 34. Case: Submapper case 1."
+    rom: mapper/34_test_src/34_test_1.nes
+    events:
+      - { frame: 70, action: check_screen, hash: "0x4656955C241976B9" }
+  - id: mapper.34_test_src.34_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 34. Case: Submapper case 2."
+    rom: mapper/34_test_src/34_test_2.nes
+    events:
+      - { frame: 70, action: check_screen, hash: "0x00C9497C3EC444FF" }
+  - id: mapper.7_test_src.7_test_0
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 0."
+    rom: mapper/7_test_src/7_test_0.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x29DF181B7DD6EEA1" }
+  - id: mapper.7_test_src.7_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 1."
+    rom: mapper/7_test_src/7_test_1.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x29DF181B7DD6EEA1" }
+  - id: mapper.7_test_src.7_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 2."
+    rom: mapper/7_test_src/7_test_2.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0x19EDEC019A25B69E" }
+  - id: mapper.bntest.bntest_aorom
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: AOROM bank reachability."
+    rom: mapper/bntest/bntest_aorom.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0xAD9D23DD8E573B19" }
+  - id: mapper.bntest.bntest_h
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: Horizontal mirroring reachability."
+    rom: mapper/bntest/bntest_h.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0x8108A6D2A9D9C28A" }
+  - id: mapper.bntest.bntest_v
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: Vertical mirroring reachability."
+    rom: mapper/bntest/bntest_v.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0x4E34969EC01EA621" }
+  - id: mapper.bxrom_512k_test
+    category: mapper
+    description: "Checks PRG bank reachability in 512 KiB BxROM configurations."
+    rom: mapper/bxrom_512k_test.nes
+    events:
+      - { frame: 15, action: check_screen, hash: "0x56C4FA7DD5BFD57B" }
+      - { frame: 45, action: check_screen, hash: "0x187F98462E737C08" }
+      - { frame: 75, action: check_screen, hash: "0x4C8D8ADDB93D2691" }
+      - { frame: 105, action: check_screen, hash: "0xEAECD98D0A6296B1" }
+      - { frame: 135, action: check_screen, hash: "0x9383A55C004D8DEF" }
+      - { frame: 165, action: check_screen, hash: "0x7D1CE0BBBEBC8565" }
+      - { frame: 195, action: check_screen, hash: "0x14B67E413E85D3E7" }
+      - { frame: 225, action: check_screen, hash: "0x7C0932B422A463CD" }
+      - { frame: 255, action: check_screen, hash: "0x3B341C14BBCB4637" }
+      - { frame: 285, action: check_screen, hash: "0x98157B6513DB1D92" }
+      - { frame: 315, action: check_screen, hash: "0xD4A135BEEFDE569A" }
+      - { frame: 345, action: check_screen, hash: "0x7615A5B091DB6D45" }
+      - { frame: 375, action: check_screen, hash: "0xB362A38A4EF25CD1" }
+      - { frame: 405, action: check_screen, hash: "0xE9C93AA3BC269AA4" }
+      - { frame: 435, action: check_screen, hash: "0xA4E46F5691457ADE" }
+      - { frame: 465, action: check_screen, hash: "0x3B05850458FBA8FF" }
+      - { frame: 495, action: check_screen, hash: "0x56C4FA7DD5BFD57B" }
+  - id: mapper.serom.serom
+    category: mapper
+    description: "Tests SEROM, SHROM, and SH1ROM constraints for MMC1 variants."
+    rom: mapper/serom/serom.nes
+    events:
+      - { frame: 20, action: check_screen, hash: "0x66F3C603B1119162" }
+  - id: ppu.blargg_ppu_tests_2005.09.15b.palette_ram
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Palette RAM."
+    rom: ppu/blargg_ppu_tests_2005.09.15b/palette_ram.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: ppu.blargg_ppu_tests_2005.09.15b.power_up_palette
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Power Up Palette."
+    rom: ppu/blargg_ppu_tests_2005.09.15b/power_up_palette.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: ppu.blargg_ppu_tests_2005.09.15b.sprite_ram
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Sprite RAM."
+    rom: ppu/blargg_ppu_tests_2005.09.15b/sprite_ram.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: ppu.blargg_ppu_tests_2005.09.15b.vbl_clear_time
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: VBL Clear Time."
+    rom: ppu/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: ppu.blargg_ppu_tests_2005.09.15b.vram_access
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Vram Access."
+    rom: ppu/blargg_ppu_tests_2005.09.15b/vram_access.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0xE31EB51722472E30" }
+  - id: ppu.oam_read.oam_read
+    category: ppu
+    description: "Tests OAMDATA ($2004) reads at the current OAMADDR ($2003)."
+    rom: ppu/oam_read/oam_read.nes
+    events:
+      - { frame: 30, action: check_screen, hash: "0x09D034960D5BF704" }
+  - id: ppu.oam_stress.oam_stress
+    category: ppu
+    description: "Thoroughly tests OAMADDR and OAMDATA read/write behavior."
+    rom: ppu/oam_stress/oam_stress.nes
+    events:
+      - { frame: 1740, action: check_screen, hash: "0x865796B297C30C6B" }
+  - id: ppu.ppu_open_bus.ppu_open_bus
+    category: ppu
+    description: "Tests open-bus behavior on PPU registers."
+    rom: ppu/ppu_open_bus/ppu_open_bus.nes
+    events:
+      - { frame: 267, action: check_screen, hash: "0x0EB5F7F2316C5604" }
+  - id: ppu.ppu_read_buffer.test_ppu_read_buffer
+    category: ppu
+    description: "Tests the PPU $2007 read buffer."
+    rom: ppu/ppu_read_buffer/test_ppu_read_buffer.nes
+    events:
+      - { frame: 1300, action: check_screen, hash: "0x3F039C4760B0C27D" }
+  - id: ppu.ppu_sprite_hit.ppu_sprite_hit
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Combined sprite 0 hit suite."
+    rom: ppu/ppu_sprite_hit/ppu_sprite_hit.nes
+    events:
+      - { frame: 800, action: check_screen, hash: "0xEB57E16978E45540" }
+  - id: ppu.ppu_sprite_hit.rom_singles.01-basics
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Basics."
+    rom: ppu/ppu_sprite_hit/rom_singles/01-basics.nes
+    events:
+      - { frame: 60, action: check_screen, hash: "0x10C127D09E7F0585" }
+  - id: ppu.ppu_sprite_hit.rom_singles.02-alignment
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Alignment."
+    rom: ppu/ppu_sprite_hit/rom_singles/02-alignment.nes
+    events:
+      - { frame: 85, action: check_screen, hash: "0xB28839BADFF75598" }
+  - id: ppu.ppu_sprite_hit.rom_singles.03-corners
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Corners."
+    rom: ppu/ppu_sprite_hit/rom_singles/03-corners.nes
+    events:
+      - { frame: 55, action: check_screen, hash: "0xA01EC12CBB5BAA86" }
+  - id: ppu.ppu_sprite_hit.rom_singles.04-flip
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Flip."
+    rom: ppu/ppu_sprite_hit/rom_singles/04-flip.nes
+    events:
+      - { frame: 40, action: check_screen, hash: "0x27480614E2616F04" }
+  - id: ppu.ppu_sprite_hit.rom_singles.05-left_clip
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Left Clip."
+    rom: ppu/ppu_sprite_hit/rom_singles/05-left_clip.nes
+    events:
+      - { frame: 52, action: check_screen, hash: "0xDAF2913B574DEFED" }
+  - id: ppu.ppu_sprite_hit.rom_singles.06-right_edge
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Right Edge."
+    rom: ppu/ppu_sprite_hit/rom_singles/06-right_edge.nes
+    events:
+      - { frame: 45, action: check_screen, hash: "0xB453214D284BA5DE" }
+  - id: ppu.ppu_sprite_hit.rom_singles.07-screen_bottom
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Screen Bottom."
+    rom: ppu/ppu_sprite_hit/rom_singles/07-screen_bottom.nes
+    events:
+      - { frame: 50, action: check_screen, hash: "0xC6F894DB61A5E7C4" }
+  - id: ppu.ppu_sprite_hit.rom_singles.08-double_height
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Double Height."
+    rom: ppu/ppu_sprite_hit/rom_singles/08-double_height.nes
+    events:
+      - { frame: 40, action: check_screen, hash: "0x7336D45B93EF0C23" }
+  - id: ppu.ppu_sprite_hit.rom_singles.09-timing
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Timing."
+    rom: ppu/ppu_sprite_hit/rom_singles/09-timing.nes
+    events:
+      - { frame: 200, action: check_screen, hash: "0xC3F209137CAA75E2" }
+  - id: ppu.ppu_sprite_hit.rom_singles.10-timing_order
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Timing Order."
+    rom: ppu/ppu_sprite_hit/rom_singles/10-timing_order.nes
+    events:
+      - { frame: 90, action: check_screen, hash: "0x7B948A10ACE70AD0" }
+  - id: ppu.ppu_sprite_overflow.ppu_sprite_overflow
+    category: ppu
+    description: "Tests sprite overflow behavior and timing."
+    rom: ppu/ppu_sprite_overflow/ppu_sprite_overflow.nes
+    events:
+      - { frame: 480, action: check_screen, hash: "0x9026DAD65555ECA0" }
+  - id: ppu.vbl_nmi
+    category: ppu
+    description: "Tests the NTSC PPU VBL flag, NMI enable, and NMI timing to PPU-clock accuracy."
+    rom: ppu/ppu_vbl_nmi/ppu_vbl_nmi.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 5239142
+      hash: "0x2E612CB2A8E580BD"
+    events:
+      - { frame: 1640, action: check_screen, hash: "0xEB57E16978E45540" }
+  - id: ppu.sprite_hit_tests_2005.10.05.01.basics
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Basics."
+    rom: ppu/sprite_hit_tests_2005.10.05/01.basics.nes
+    events:
+      - { frame: 36, action: check_screen, hash: "0xB6B8D4F4C83C2F3A" }
+  - id: ppu.sprite_hit_tests_2005.10.05.02.alignment
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Alignment."
+    rom: ppu/sprite_hit_tests_2005.10.05/02.alignment.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0xDED8BAE9675ECFFC" }
+  - id: ppu.sprite_hit_tests_2005.10.05.03.corners
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Corners."
+    rom: ppu/sprite_hit_tests_2005.10.05/03.corners.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0x299F099E767A7FBC" }
+  - id: ppu.sprite_hit_tests_2005.10.05.04.flip
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Flip."
+    rom: ppu/sprite_hit_tests_2005.10.05/04.flip.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0xEA13722405663737" }
+  - id: ppu.sprite_hit_tests_2005.10.05.05.left_clip
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Left Clip."
+    rom: ppu/sprite_hit_tests_2005.10.05/05.left_clip.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0xCA3F0DFC6A85445F" }
+  - id: ppu.sprite_hit_tests_2005.10.05.06.right_edge
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Right Edge."
+    rom: ppu/sprite_hit_tests_2005.10.05/06.right_edge.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0x36BE2A768F7651FB" }
+  - id: ppu.sprite_hit_tests_2005.10.05.07.screen_bottom
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Screen Bottom."
+    rom: ppu/sprite_hit_tests_2005.10.05/07.screen_bottom.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0xF5612439038423A9" }
+  - id: ppu.sprite_hit_tests_2005.10.05.08.double_height
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Double Height."
+    rom: ppu/sprite_hit_tests_2005.10.05/08.double_height.nes
+    events:
+      - { frame: 34, action: check_screen, hash: "0xD124539B482668D5" }
+  - id: ppu.sprite_hit_tests_2005.10.05.09.timing_basics
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Timing Basics."
+    rom: ppu/sprite_hit_tests_2005.10.05/09.timing_basics.nes
+    events:
+      - { frame: 80, action: check_screen, hash: "0xB71D1F7A8C2BED67" }
+  - id: ppu.sprite_hit_tests_2005.10.05.10.timing_order
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Timing Order."
+    rom: ppu/sprite_hit_tests_2005.10.05/10.timing_order.nes
+    events:
+      - { frame: 60, action: check_screen, hash: "0x35700A9026341B07" }
+  - id: ppu.sprite_hit_tests_2005.10.05.11.edge_timing
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Edge Timing."
+    rom: ppu/sprite_hit_tests_2005.10.05/11.edge_timing.nes
+    events:
+      - { frame: 80, action: check_screen, hash: "0x5ECA913BB9982F14" }
+  - id: ppu.sprite_overflow_tests.1.Basics
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Basics."
+    rom: ppu/sprite_overflow_tests/1.Basics.nes
+    events:
+      - { frame: 36, action: check_screen, hash: "0x50A5A002EEA2256E" }
+  - id: ppu.sprite_overflow_tests.2.Details
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Details."
+    rom: ppu/sprite_overflow_tests/2.Details.nes
+    events:
+      - { frame: 36, action: check_screen, hash: "0xFAFB3F12716BD507" }
+  - id: ppu.sprite_overflow_tests.3.Timing
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Timing."
+    rom: ppu/sprite_overflow_tests/3.Timing.nes
+    events:
+      - { frame: 130, action: check_screen, hash: "0xF324957B1A6A158E" }
+  - id: ppu.sprite_overflow_tests.4.Obscure
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Obscure."
+    rom: ppu/sprite_overflow_tests/4.Obscure.nes
+    events:
+      - { frame: 36, action: check_screen, hash: "0xDF355FCAEA6D930E" }
+  - id: ppu.sprite_overflow_tests.5.Emulator
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Emulator."
+    rom: ppu/sprite_overflow_tests/5.Emulator.nes
+    events:
+      - { frame: 36, action: check_screen, hash: "0x3FC68EEE283CE2C3" }
+  - id: ppu.vbl_nmi_timing.1.frame_basics
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: Frame Basics."
+    rom: ppu/vbl_nmi_timing/1.frame_basics.nes
+    events:
+      - { frame: 198, action: check_screen, hash: "0x1731EB1B8C091E47" }
+  - id: ppu.vbl_nmi_timing.2.vbl_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: VBL Timing."
+    rom: ppu/vbl_nmi_timing/2.vbl_timing.nes
+    events:
+      - { frame: 179, action: check_screen, hash: "0xE51D5454497CBFDB" }
+  - id: ppu.vbl_nmi_timing.3.even_odd_frames
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: Even Odd Frames."
+    rom: ppu/vbl_nmi_timing/3.even_odd_frames.nes
+    events:
+      - { frame: 124, action: check_screen, hash: "0x537008D7E0C3FF45" }
+  - id: ppu.vbl_nmi_timing.4.vbl_clear_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: VBL Clear Timing."
+    rom: ppu/vbl_nmi_timing/4.vbl_clear_timing.nes
+    events:
+      - { frame: 140, action: check_screen, hash: "0x7E5D5B53E1C2703F" }
+  - id: ppu.vbl_nmi_timing.5.nmi_suppression
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Suppression."
+    rom: ppu/vbl_nmi_timing/5.nmi_suppression.nes
+    events:
+      - { frame: 187, action: check_screen, hash: "0xAC7573AA9EE324C0" }
+  - id: ppu.vbl_nmi_timing.6.nmi_disable
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Disable."
+    rom: ppu/vbl_nmi_timing/6.nmi_disable.nes
+    events:
+      - { frame: 133, action: check_screen, hash: "0xC5509E44ABF95C7D" }
+  - id: ppu.vbl_nmi_timing.7.nmi_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Timing."
+    rom: ppu/vbl_nmi_timing/7.nmi_timing.nes
+    events:
+      - { frame: 140, action: check_screen, hash: "0x47D4DAE682D8F8D0" }
