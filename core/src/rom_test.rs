@@ -541,20 +541,20 @@ impl ValidationRunner {
             expected: case.expected_audio.clone(),
         };
 
-        if self.options.check_expectations {
-            if let Some(expected_audio) = &audio.expected {
-                if audio.samples != expected_audio.samples {
-                    self.failures.push(format!(
-                        "{}: audio sample mismatch (expected {}, actual {})",
-                        case.id, expected_audio.samples, audio.samples
-                    ));
-                }
-                if audio.hash != expected_audio.hash {
-                    self.failures.push(format!(
-                        "{}: audio hash mismatch (expected 0x{:016X}, actual 0x{:016X})",
-                        case.id, expected_audio.hash, audio.hash
-                    ));
-                }
+        if self.options.check_expectations
+            && let Some(expected_audio) = &audio.expected
+        {
+            if audio.samples != expected_audio.samples {
+                self.failures.push(format!(
+                    "{}: audio sample mismatch (expected {}, actual {})",
+                    case.id, expected_audio.samples, audio.samples
+                ));
+            }
+            if audio.hash != expected_audio.hash {
+                self.failures.push(format!(
+                    "{}: audio hash mismatch (expected 0x{:016X}, actual 0x{:016X})",
+                    case.id, expected_audio.hash, audio.hash
+                ));
             }
         }
 
