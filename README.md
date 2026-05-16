@@ -71,6 +71,21 @@ cargo build -p nerust_wgpu --release
 target/release/nerust_wgpu [Rom File Path]
 ```
 
+### ROM test tooling
+
+ROM regression cases are defined in `core/rom_tests.yaml`, with NESdev-style categories and short descriptions for each case.
+
+```sh
+# Validate configured ROM cases and write an HTML report to target/rom-tests/validate/
+cargo run -p nerust_core --features rom-tooling --bin rom_tool -- validate
+
+# Capture actual hashes/screenshots without failing the run
+cargo run -p nerust_core --features rom-tooling --bin rom_tool -- capture --case cpu.nestest
+
+# Benchmark perf-enabled ROM cases from the shared manifest
+cargo run -p nerust_core --features rom-tooling --bin perf --release -- --case cpu.nestest
+```
+
 ## Supported Mappers
 
 - NRom (Mapper 0)

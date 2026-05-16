@@ -4,23 +4,54 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+autobins = false
+autotests = false
+
+[features]
+default = []
+rom-tooling = [
+    "dep:clap",
+    "dep:crc",
+    "dep:nerust_screen_buffer",
+    "dep:nerust_screen_filter",
+    "dep:png",
+    "dep:serde_yaml",
+]
 
 [dependencies]
 bitflags.workspace = true
+clap = { workspace = true, optional = true }
+crc = { workspace = true, optional = true }
 log.workspace = true
+nerust_screen_buffer = { workspace = true, optional = true }
+nerust_screen_filter = { workspace = true, optional = true }
 nerust_screen_traits.workspace = true
 nerust_serialize.workspace = true
 nerust_sound_traits.workspace = true
+png = { workspace = true, optional = true }
 serde.workspace = true
 serde_bytes.workspace = true
 serde_derive.workspace = true
+serde_yaml = { workspace = true, optional = true }
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
 typetag.workspace = true
 
 [dev-dependencies]
-crc.workspace = true
 hound.workspace = true
-nerust_screen_buffer.workspace = true
-nerust_screen_filter.workspace = true
+
+[[bin]]
+name = "perf"
+path = "src/bin/perf.rs"
+required-features = ["rom-tooling"]
+
+[[bin]]
+name = "rom_tool"
+path = "src/bin/rom_tool.rs"
+required-features = ["rom-tooling"]
+
+[[test]]
+name = "rom_tests"
+path = "tests/lib.rs"
+required-features = ["rom-tooling"]
