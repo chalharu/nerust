@@ -11,6 +11,13 @@ fn main() {
 }
 
 #[cfg(feature = "rom-tooling")]
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "binary unit tests compile the perf implementation without invoking the CLI entry point"
+    )
+)]
 #[path = "perf_impl.rs"]
 mod perf_impl;
 

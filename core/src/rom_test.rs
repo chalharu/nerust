@@ -87,6 +87,7 @@ impl RomManifest {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn case(&self, id: &str) -> Option<&RomCase> {
         self.cases.iter().find(|case| case.id == id)
     }
@@ -351,13 +352,6 @@ pub struct ValidationOptions {
 }
 
 impl ValidationOptions {
-    pub const fn validating() -> Self {
-        Self {
-            capture_screenshots: false,
-            check_expectations: true,
-        }
-    }
-
     pub const fn capturing() -> Self {
         Self {
             capture_screenshots: true,

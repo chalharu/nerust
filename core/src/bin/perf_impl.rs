@@ -4,6 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[allow(
+    dead_code,
+    reason = "the perf binary reuses the shared ROM tooling module but only needs a subset of its helpers"
+)]
 #[path = "../rom_test.rs"]
 mod rom_test;
 
@@ -17,9 +21,6 @@ use rom_test::{
 };
 use std::fs;
 use std::time::{Duration, Instant};
-
-const DEFAULT_ROUNDS: usize = 5;
-const DEFAULT_WARMUP_ROUNDS: usize = 1;
 
 pub fn main() {
     if let Err(message) = run() {
@@ -85,7 +86,13 @@ fn run() -> Result<(), String> {
 
     let mut roms = Vec::with_capacity(cases.len());
     for case in &cases {
-        match validate_case(case, rom_test::ValidationOptions::validating()) {
+        match validate_case(
+            case,
+            rom_test::ValidationOptions {
+                capture_screenshots: false,
+                check_expectations: true,
+            },
+        ) {
             CaseOutcome::Completed(validation) if validation.passed() => {
                 println!(
                     "validated case={} frames={} steps={} final_hash=0x{:016X} audio_samples={} audio_hash=0x{:016X}",
