@@ -55,6 +55,10 @@ impl Core {
             .reset(self.cpu.interrupt_mut(), self.cartridge.as_mut());
     }
 
+    pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
+        self.cpu.peek_work_ram(address)
+    }
+
     pub fn step<S: Screen, M: MixerInput>(
         &mut self,
         screen: &mut S,
