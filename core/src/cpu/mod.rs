@@ -203,6 +203,10 @@ impl Core {
         self.cycles = 0;
     }
 
+    pub(crate) fn peek_work_ram(&self, address: usize) -> Option<u8> {
+        self.memory.peek_work_ram(address)
+    }
+
     fn set_cpu_state(&mut self, state: CpuStatesEnum) {
         self.internal_stat.state = state;
         self.cpu_stepfunc = cpu_stepfunc(state);
