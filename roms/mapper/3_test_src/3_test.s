@@ -361,8 +361,8 @@ testing:
 	jsr ppu_wait
 	jsr test_wram
 	PPU_STRING 4,7,string_wram
-	lda result_wram
 	PPU_LATCH_AT 26,7
+	lda result_wram
 	jsr print_yes_no
 	jsr ppu_ready
 	; CNROM chr
