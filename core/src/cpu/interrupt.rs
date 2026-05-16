@@ -21,6 +21,12 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DmcDmaKind {
+    Load,
+    Reload,
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Interrupt {
     pub nmi: bool,
@@ -29,10 +35,8 @@ pub(crate) struct Interrupt {
     pub running_dma: bool,
     pub irq_mask: IrqSource,
     pub irq_flag: IrqSource,
-
     pub oam_dma: Option<u8>,
-    pub dmc_start: bool,
-    pub dmc_count: u8,
+    pub dmc_dma_request: Option<DmcDmaKind>,
     pub write: bool,
 }
 
@@ -46,9 +50,8 @@ impl Interrupt {
             irq_mask: IrqSource::empty(),
             irq_flag: IrqSource::empty(),
             oam_dma: None,
+            dmc_dma_request: None,
             write: false,
-            dmc_start: false,
-            dmc_count: 0,
         }
     }
 
@@ -70,9 +73,8 @@ impl Interrupt {
         self.detected = false;
         self.running_dma = false;
         self.oam_dma = None;
+        self.dmc_dma_request = None;
         self.write = false;
-        self.dmc_start = false;
-        self.dmc_count = 0;
     }
 }
 
