@@ -888,6 +888,12 @@ cases:
     rom: ppu/oam_stress/oam_stress.nes
     events:
       - {frame: 1740, action: check_screen, hash: "0x865796B297C30C6B"}
+  - id: ppu.scanline
+    category: ppu
+    description: "Tests proper mid-scanline PPU write emulation."
+    rom: tests/scanline/scanline.nes
+    events:
+      - {frame: 10, action: check_screen, hash: "0x95F204538D9E5A2C"}
   - id: ppu.sprdma_and_dmc_dma
     category: ppu
     description: "Tests overlap timing between OAM DMA and DMC DMA, including the shorter 3-cycle overlap when the DMC fetch lands on a CPU write."
