@@ -9,7 +9,7 @@ mod rom_test;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use rom_test::{
-    CaseOutcome, ValidationOptions, default_manifest_path, default_output_root, load_manifest,
+    CaseOutcome, ValidationOptions, default_output_root, load_default_manifest, load_manifest,
     validate_case, write_html_report,
 };
 use std::path::PathBuf;
@@ -54,11 +54,13 @@ fn run() -> Result<(), String> {
         .subcommand(Command::new("list").about("List configured ROM cases"))
         .get_matches();
 
-    let manifest_path = matches
+    let manifest = matches
         .get_one::<String>("manifest")
         .map(PathBuf::from)
-        .unwrap_or_else(default_manifest_path);
-    let manifest = load_manifest(&manifest_path).map_err(|error| error.to_string())?;
+        .map_or_else(
+            || load_default_manifest().map_err(|error| error.to_string()),
+            |manifest_path| load_manifest(&manifest_path).map_err(|error| error.to_string()),
+        )?;
     let case_ids = matches
         .get_many::<String>("case")
         .map(|values| values.cloned().collect::<Vec<_>>())
@@ -157,7 +159,7 @@ fn print_outcome(outcome: &CaseOutcome) {
         CaseOutcome::Completed(validation) => {
             println!(
                 "case={} category={} status={} frames={} steps={} final_hash=0x{:016X}",
-                validation.case_id,
+                outcome.case_id(),
                 validation.category.label(),
                 if validation.passed() { "pass" } else { "fail" },
                 validation.frames,
