@@ -19,7 +19,6 @@ use rom_test::{
     ButtonCode, CaseHarness, CaseOutcome, ControllerPad, PadState, RomCase, drive_case,
     load_default_manifest, read_rom, validate_case,
 };
-use std::fs;
 use std::time::{Duration, Instant};
 
 pub fn main() {
@@ -401,7 +400,7 @@ fn apply_button_state(current: Buttons, button: Buttons, state: PadState) -> But
 fn peak_rss_mib() -> Option<f64> {
     #[cfg(target_os = "linux")]
     {
-        let status = fs::read_to_string("/proc/self/status").ok()?;
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
         for line in status.lines() {
             if let Some(rest) = line.strip_prefix("VmHWM:") {
                 let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
@@ -419,7 +418,7 @@ fn peak_rss_mib() -> Option<f64> {
 fn process_cpu_time_nanos() -> Result<u64, String> {
     #[cfg(target_os = "linux")]
     {
-        let schedstat = fs::read_to_string("/proc/self/schedstat")
+        let schedstat = std::fs::read_to_string("/proc/self/schedstat")
             .map_err(|error| format!("failed to read /proc/self/schedstat: {error}"))?;
         schedstat
             .split_whitespace()
