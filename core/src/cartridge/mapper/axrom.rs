@@ -68,7 +68,13 @@ impl Mapper for AxRom {
         self.data_ref().sub_mapper_type() == 2
     }
 
-    fn write_register(&mut self, _address: usize, value: u8, _interrupt: &mut Interrupt) {
+    fn write_register(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {
+        let rom_value = self.read_program(address - 0x8000).data;
+        if self.data_ref().sub_mapper_type() == 0 && (rom_value & value) != value {
+            // Treat submapper 0 as unspecified hardware: only honor writes that are
+            // conflict-safe for the currently visible PRG ROM byte.
+            return;
+        }
         self.change_program_page(0, usize::from(value) & 0x0F);
         if value & 0x10 == 0x10 {
             self.set_mirror_mode(MirrorMode::Single1);
