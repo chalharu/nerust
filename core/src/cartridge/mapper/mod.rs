@@ -29,7 +29,7 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
         0 => Ok(Box::new(NRom::new(data))),
         1 => Ok(Box::new(SxRom::new(data))),
         2 => Ok(Box::new(UxRom::new(data))),
-        3 => Ok(Box::new(CNRom::new(data, false))),
+        3 => Ok(Box::new(CNRom::new_mapper3(data))),
         7 => Ok(Box::new(AxRom::new(data))),
         34 => match data.sub_mapper_type() {
             0 => {
@@ -46,7 +46,7 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
                 Err(CartridgeError::DataError)
             }
         },
-        185 => Ok(Box::new(CNRom::new(data, true))),
+        185 => Ok(Box::new(CNRom::new_mapper185(data))),
         n => {
             log::error!("unknown mapper type : {}", n);
             Err(CartridgeError::DataError)
