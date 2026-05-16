@@ -292,6 +292,9 @@ pub enum RomEventKind {
         button: ButtonCode,
         state: PadState,
     },
+    Microphone {
+        state: PadState,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,6 +406,7 @@ pub trait CaseHarness {
         button: ButtonCode,
         state: PadState,
     ) -> Result<(), RomTestError>;
+    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError>;
 }
 
 pub fn drive_case<H: CaseHarness>(
@@ -699,6 +703,12 @@ impl CaseHarness for ValidationRunner {
                 self.controller.set_pad2(self.pad2);
             }
         }
+        Ok(())
+    }
+
+    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
+        self.controller
+            .set_microphone(matches!(state, PadState::Pressed));
         Ok(())
     }
 }
@@ -1026,6 +1036,9 @@ fn dispatch_pending_events<H: CaseHarness>(
             }
             RomEventKind::StandardController { pad, button, state } => {
                 harness.on_standard_controller(pad, button, state)?;
+            }
+            RomEventKind::Microphone { state } => {
+                harness.on_microphone(state)?;
             }
         }
 
@@ -1445,6 +1458,12 @@ cases:
                     .push(format!("controller@{}", self.frame_counter));
                 Ok(())
             }
+
+            fn on_microphone(&mut self, _state: PadState) -> Result<(), RomTestError> {
+                self.events
+                    .push(format!("microphone@{}", self.frame_counter));
+                Ok(())
+            }
         }
 
         let case = RomCase {
@@ -1463,6 +1482,12 @@ cases:
                     kind: RomEventKind::StandardController {
                         pad: ControllerPad::Pad1,
                         button: ButtonCode::START,
+                        state: PadState::Pressed,
+                    },
+                },
+                RomEvent {
+                    frame: 0,
+                    kind: RomEventKind::Microphone {
                         state: PadState::Pressed,
                     },
                 },
@@ -1495,6 +1520,7 @@ cases:
             vec![
                 "reset@0".to_string(),
                 "controller@0".to_string(),
+                "microphone@0".to_string(),
                 "ram@1".to_string(),
                 "check@1".to_string()
             ]
