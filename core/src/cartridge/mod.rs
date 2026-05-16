@@ -134,8 +134,6 @@ pub(crate) trait Cartridge: Mapper {
                 },
                 interrupt,
             );
-        } else if let Some(addr) = self.program_address(address - 0x8000) {
-            self.data_mut().write_prog_rom(addr, value);
         }
     }
 
