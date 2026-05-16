@@ -462,6 +462,18 @@ cases:
     rom: ppu/oam_stress/oam_stress.nes
     events:
       - {frame: 1740, action: check_screen, hash: "0x865796B297C30C6B"}
+  - id: ppu.sprdma_and_dmc_dma
+    category: ppu
+    description: "Tests overlap timing between OAM DMA and DMC DMA, including the shorter 3-cycle overlap when the DMC fetch lands on a CPU write."
+    rom: tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes
+    events:
+      - {frame: 240, action: check_screen, hash: "0x33CE257CFBDBF85B"}
+  - id: ppu.sprdma_and_dmc_dma_512
+    category: ppu
+    description: "Tests the same OAM DMA and DMC DMA overlap cases with the DMC fetch delayed by 512 clocks."
+    rom: tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes
+    events:
+      - {frame: 240, action: check_screen, hash: "0x80A6C930703C69F5"}
   - id: ppu.ppu_open_bus.ppu_open_bus
     category: ppu
     description: "Tests open-bus behavior on PPU registers."

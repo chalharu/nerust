@@ -116,7 +116,7 @@ impl DMC {
         } else if self.length_value == 0 {
             self.restart();
             if self.need_buffer && self.length_value > 0 {
-                interrupt.dmc_start = true;
+                interrupt.dmc_dma_request = Some(DmcDmaKind::Load);
             }
         }
     }
@@ -185,7 +185,9 @@ impl DMC {
                 self.enabled = true;
                 self.shift_register = self.read_buffer;
                 self.need_buffer = true;
-                interrupt.dmc_start = true;
+                if self.length_value > 0 {
+                    interrupt.dmc_dma_request = Some(DmcDmaKind::Reload);
+                }
             }
         }
     }
