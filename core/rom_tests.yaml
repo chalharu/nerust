@@ -329,7 +329,9 @@ cases:
     description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 0."
     rom: mapper/2_test_src/2_test_0.nes
     events:
-      - {frame: 50, action: check_screen, hash: "0x01C3BF218899DD55"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x10"}
+      - {frame: 50, action: check_work_ram, address: "0x0306", value: "0x02"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x03"}
   - id: mapper.2_test_src.2_test_1
     category: mapper
     description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 1."
@@ -382,7 +384,9 @@ cases:
     description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 0."
     rom: mapper/7_test_src/7_test_0.nes
     events:
-      - {frame: 50, action: check_screen, hash: "0x29DF181B7DD6EEA1"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x08"}
+      - {frame: 50, action: check_work_ram, address: "0x0306", value: "0x02"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x03"}
   - id: mapper.7_test_src.7_test_1
     category: mapper
     description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 1."
