@@ -62,6 +62,13 @@ impl Memory {
         self.openbus.unite(result)
     }
 
+    pub(crate) fn peek_work_ram(&self, address: usize) -> Option<u8> {
+        match address {
+            0..=0x1FFF => Some(self.wram[address & 0x07FF]),
+            _ => None,
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "CPU bus reads need access to every attached device"
