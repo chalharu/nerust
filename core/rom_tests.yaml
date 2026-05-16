@@ -458,17 +458,45 @@ cases:
       - {frame: 20, action: check_screen, hash: "0x66F3C603B1119162"}
   - id: input.allpads
     category: input
-    description: "Detects connected controllers and exercises the basic standard-controller selection and button display flow in allpads."
+    description: "Detects connected controllers and exercises every standard-controller button in the allpads pad-test screen."
     rom: tests/allpads.nes
     events:
       - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
       - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
       - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
       - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
-      - {frame: 740, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
-      - {frame: 760, action: check_screen, hash: "0x2399A5BC3B8F0782"}
-      - {frame: 770, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 740, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xAE40EF92D46F8D2C"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: A, state: released}
       - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 820, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0x89B23BB7D8147473"}
+      - {frame: 850, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 900, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x9F74892CD7043B34"}
+      - {frame: 930, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 980, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x248999E28E1A7F55"}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0x6689D7A2756A358D"}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0xBC1152DCBA196BA4"}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x5AACCD226A7BCE4F"}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0x2399A5BC3B8F0782"}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xEED8CABAF0708F84"}
   - id: ppu.blargg_ppu_tests_2005.09.15b.palette_ram
     category: ppu
     description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Palette RAM."
