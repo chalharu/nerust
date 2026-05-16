@@ -456,6 +456,396 @@ cases:
     rom: mapper/serom/serom.nes
     events:
       - {frame: 20, action: check_screen, hash: "0x66F3C603B1119162"}
+  - id: input.allpads
+    category: input
+    description: "Detects connected controllers and exercises every single-button input on the allpads 1P NES controller screen."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 740, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xAE40EF92D46F8D2C"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 820, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0x89B23BB7D8147473"}
+      - {frame: 850, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 900, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x9F74892CD7043B34"}
+      - {frame: 930, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 980, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x248999E28E1A7F55"}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0x6689D7A2756A358D"}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0xBC1152DCBA196BA4"}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x5AACCD226A7BCE4F"}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0x2399A5BC3B8F0782"}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xEED8CABAF0708F84"}
+  - id: input.allpads.pad1_pairwise
+    category: input
+    description: "Exercises every pairwise simultaneous button combination on the allpads 1P NES controller screen."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 740, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 740, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xC92A1E9FFC0B76DB"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 770, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 820, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 820, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0xDFECAC04F31B399C"}
+      - {frame: 850, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 850, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 900, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 900, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x6411BCCAAA057DFD"}
+      - {frame: 930, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 930, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 980, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 980, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x2611F28A51753725"}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0xFC8977F49E06690C"}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x1A34E80A4E64CCE7"}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x630180941F90052A"}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0xF81E7821FF60C0C3"}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1380, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1380, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1400, action: check_screen, hash: "0x43E368EFA67E84A2"}
+      - {frame: 1410, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1410, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1430, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1460, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1460, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1480, action: check_screen, hash: "0x01E326AF5D0ECE7A"}
+      - {frame: 1490, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1490, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1510, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1540, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1540, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1560, action: check_screen, hash: "0xDB7BA3D1927D9053"}
+      - {frame: 1570, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1570, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1590, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1620, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1620, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1640, action: check_screen, hash: "0x3DC63C2F421F35B8"}
+      - {frame: 1650, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1650, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1670, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1700, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1700, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1720, action: check_screen, hash: "0x44F354B113EBFC75"}
+      - {frame: 1730, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1730, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1750, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1780, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1780, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1800, action: check_screen, hash: "0x5525DA74A96ECBE5"}
+      - {frame: 1810, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1810, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1830, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1860, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1860, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1880, action: check_screen, hash: "0x17259434521E813D"}
+      - {frame: 1890, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1890, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1910, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1940, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1940, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1960, action: check_screen, hash: "0xCDBD114A9D6DDF14"}
+      - {frame: 1970, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1970, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1990, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2020, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 2020, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2040, action: check_screen, hash: "0x2B008EB44D0F7AFF"}
+      - {frame: 2050, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 2050, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2070, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2100, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 2100, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2120, action: check_screen, hash: "0x5235E62A1CFBB332"}
+      - {frame: 2130, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 2130, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2150, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2180, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2180, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2200, action: check_screen, hash: "0xACD884FA0B00C55C"}
+      - {frame: 2210, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2210, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2230, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2260, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2260, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2280, action: check_screen, hash: "0x76400184C4739B75"}
+      - {frame: 2290, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2290, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2310, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2340, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2340, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2360, action: check_screen, hash: "0x90FD9E7A14113E9E"}
+      - {frame: 2370, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2370, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2390, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2420, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2420, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2440, action: check_screen, hash: "0xE9C8F6E445E5F753"}
+      - {frame: 2450, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2450, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2470, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2500, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2500, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2520, action: check_screen, hash: "0x34404FC43F03D1AD"}
+      - {frame: 2530, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2530, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2550, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2580, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2580, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2600, action: check_screen, hash: "0xD2FDD03AEF617446"}
+      - {frame: 2610, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2610, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2630, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2660, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2660, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2680, action: check_screen, hash: "0xABC8B8A4BE95BD8B"}
+      - {frame: 2690, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2690, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2710, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2740, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2740, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2760, action: check_screen, hash: "0x0865554420122A6F"}
+      - {frame: 2770, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2770, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2820, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2820, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2840, action: check_screen, hash: "0x71503DDA71E6E3A2"}
+      - {frame: 2850, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2850, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2900, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2900, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2920, action: check_screen, hash: "0x97EDA224A1844649"}
+      - {frame: 2930, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2930, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+  - id: input.allpads.pad2
+    category: input
+    description: "Exercises every visible input on the allpads 2P Famicom Mic Controller screen, including the microphone."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 740, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xEB0A0C1FF4CB5D3B"}
+      - {frame: 770, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 790, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 820, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0xCCF8D83AF8B0A464"}
+      - {frame: 850, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 870, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 900, action: microphone, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0xDA3E6AA1F7A0EB23"}
+      - {frame: 930, action: microphone, state: released}
+      - {frame: 950, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 980, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x23C3342F55CEE59A"}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0xF95BB1519ABDBBB3"}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x1FE62EAF4ADF1E58"}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1220, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x66D346311B2BD795"}
+      - {frame: 1250, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xAB922937D0D45F93"}
+  - id: input.allpads.pad2_pairwise
+    category: input
+    description: "Exercises every pairwise simultaneous input combination on the allpads 2P Famicom Mic Controller screen, including microphone combinations."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 740, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 740, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0x8C60FD12DCAFA6CC"}
+      - {frame: 770, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 770, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 790, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 820, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 820, action: microphone, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0x9AA64F89D3BFE98B"}
+      - {frame: 850, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 850, action: microphone, state: released}
+      - {frame: 870, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 900, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 900, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x635B110771D1E732"}
+      - {frame: 930, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 930, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 950, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 980, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 980, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0xB9C39479BEA2B91B"}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0x5F7E0B876EC01CF0"}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x264B63193F34D53D"}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1220, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1220, action: microphone, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0xBD549BACDFC410D4"}
+      - {frame: 1250, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1250, action: microphone, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1300, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1300, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0x44A9C5227DAA1E6D"}
+      - {frame: 1330, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1330, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1380, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1380, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1400, action: check_screen, hash: "0x9E31405CB2D94044"}
+      - {frame: 1410, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1410, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1430, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1460, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1460, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1480, action: check_screen, hash: "0x788CDFA262BBE5AF"}
+      - {frame: 1490, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1490, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1510, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1540, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1540, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1560, action: check_screen, hash: "0x01B9B73C334F2C62"}
+      - {frame: 1570, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1570, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1590, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1620, action: microphone, state: pressed}
+      - {frame: 1620, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1640, action: check_screen, hash: "0x526F77B972BA512A"}
+      - {frame: 1650, action: microphone, state: released}
+      - {frame: 1650, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1670, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1700, action: microphone, state: pressed}
+      - {frame: 1700, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1720, action: check_screen, hash: "0x88F7F2C7BDC90F03"}
+      - {frame: 1730, action: microphone, state: released}
+      - {frame: 1730, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1750, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1780, action: microphone, state: pressed}
+      - {frame: 1780, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1800, action: check_screen, hash: "0x6E4A6D396DABAAE8"}
+      - {frame: 1810, action: microphone, state: released}
+      - {frame: 1810, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1830, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1860, action: microphone, state: pressed}
+      - {frame: 1860, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1880, action: check_screen, hash: "0x177F05A73C5F6325"}
+      - {frame: 1890, action: microphone, state: released}
+      - {frame: 1890, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1910, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1940, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1940, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1960, action: check_screen, hash: "0x710AAC491FA701BA"}
+      - {frame: 1970, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1970, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1990, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2020, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 2020, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2040, action: check_screen, hash: "0x97B733B7CFC5A451"}
+      - {frame: 2050, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 2050, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2070, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2100, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 2100, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2120, action: check_screen, hash: "0xEE825B299E316D9C"}
+      - {frame: 2130, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 2130, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2150, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2180, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 2180, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2200, action: check_screen, hash: "0x4D2FB6C900B6FA78"}
+      - {frame: 2210, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 2210, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2230, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2260, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 2260, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2280, action: check_screen, hash: "0x341ADE57514233B5"}
+      - {frame: 2290, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 2290, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2310, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2340, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2340, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2360, action: check_screen, hash: "0xD2A741A98120965E"}
+      - {frame: 2370, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2370, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2390, action: check_screen, hash: "0xAB922937D0D45F93"}
   - id: ppu.blargg_ppu_tests_2005.09.15b.palette_ram
     category: ppu
     description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Palette RAM."

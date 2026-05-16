@@ -337,6 +337,12 @@ impl CaseHarness for PerfRunner {
         }
         Ok(())
     }
+
+    fn on_microphone(&mut self, state: PadState) -> Result<(), rom_test::RomTestError> {
+        self.controller
+            .set_microphone(matches!(state, PadState::Pressed));
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
