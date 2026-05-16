@@ -143,6 +143,10 @@ impl OamDmaStepState for OamDmaStep1 {
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
+        if core.cycles & 1 == 0 {
+            read_dummy_current(core, ppu, cartridge, controller, apu);
+            return OamDmaStateEnumValue::Step1;
+        }
         value.value = core.memory.read(
             usize::from(value.offset) * 0x100 + usize::from(255 - value.count),
             ppu,
@@ -167,6 +171,10 @@ impl OamDmaStepState for OamDmaStep2 {
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
+        if core.cycles & 1 != 0 {
+            read_dummy_current(core, ppu, cartridge, controller, apu);
+            return OamDmaStateEnumValue::Step2;
+        }
         core.memory.write(
             0x2004,
             value.value,
