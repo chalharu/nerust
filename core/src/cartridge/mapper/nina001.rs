@@ -17,7 +17,14 @@ pub(crate) struct Nina001 {
 }
 
 #[typetag::serde]
-impl Cartridge for Nina001 {}
+impl Cartridge for Nina001 {
+    fn write_ram(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        Mapper::write_ram(self, address - 0x6000, value);
+        if self.register_addr(address) {
+            self.write_register(address, value, interrupt);
+        }
+    }
+}
 
 impl Nina001 {
     pub(crate) fn new(data: CartridgeData) -> Self {
@@ -57,6 +64,7 @@ impl Mapper for Nina001 {
     fn initialize(&mut self) {
         self.change_program_page(0, 0);
         self.change_character_page(0, 0);
+        self.change_ram_page(0, 0);
     }
 
     fn name(&self) -> &str {
