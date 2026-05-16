@@ -81,7 +81,7 @@ impl Controller for StandardController {
                     }
                     result & 1
                 } else {
-                    0
+                    1
                 } | (if self.microphone { 0x04 } else { 0 }),
                 7,
             ),
@@ -93,7 +93,7 @@ impl Controller for StandardController {
                     }
                     result & 1
                 } else {
-                    0
+                    1
                 },
                 0x1F,
             ),
@@ -110,5 +110,27 @@ impl Controller for StandardController {
             self.index1 = 0;
             self.index2 = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Buttons, StandardController};
+    use crate::controller::Controller;
+
+    #[test]
+    fn standard_controller_returns_one_after_eight_bits() {
+        let mut controller = StandardController::new();
+        controller.set_pad1(Buttons::A);
+
+        controller.write(1);
+        controller.write(0);
+
+        for _ in 0..8 {
+            let _ = controller.read(0);
+        }
+
+        assert_eq!(controller.read(0).data & 1, 1);
+        assert_eq!(controller.read(0).data & 1, 1);
     }
 }

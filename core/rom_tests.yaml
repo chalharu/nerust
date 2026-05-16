@@ -456,6 +456,19 @@ cases:
     rom: mapper/serom/serom.nes
     events:
       - {frame: 20, action: check_screen, hash: "0x66F3C603B1119162"}
+  - id: input.allpads
+    category: input
+    description: "Detects connected controllers and exercises the basic standard-controller selection and button display flow in allpads."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 740, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0x2399A5BC3B8F0782"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
   - id: ppu.blargg_ppu_tests_2005.09.15b.palette_ram
     category: ppu
     description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Palette RAM."
