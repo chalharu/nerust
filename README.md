@@ -77,11 +77,11 @@ ROM regression cases are defined in `core/rom_tests.yaml`, with
 NESdev-style categories and short descriptions for each case.
 
 ```sh
-# Validate configured ROM cases and write an HTML report
-# to target/rom-tests/validate/
+# Validate configured ROM cases, print per-case progress,
+# and write an HTML report to target/rom-tests/validate/
 cargo run -p nerust_core --features rom-tooling --bin rom_tool -- validate
 
-# Capture actual hashes/screenshots without failing the run
+# Capture actual hashes/screenshots with the same progress output
 cargo run -p nerust_core --features rom-tooling --bin rom_tool \
   -- capture --case cpu.nestest
 
