@@ -1,5 +1,4 @@
 # yamllint disable rule:line-length
----
 rom_root: ../roms
 cases:
   - id: apu.len_ctr
