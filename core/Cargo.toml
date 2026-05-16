@@ -39,7 +39,12 @@ thiserror.workspace = true
 typetag.workspace = true
 
 [dev-dependencies]
+crc.workspace = true
 hound.workspace = true
+nerust_screen_buffer.workspace = true
+nerust_screen_filter.workspace = true
+png.workspace = true
+serde_yaml.workspace = true
 
 [[bin]]
 name = "perf"
@@ -52,4 +57,3 @@ path = "src/bin/rom_tool.rs"
 [[test]]
 name = "rom_tests"
 path = "tests/lib.rs"
-required-features = ["rom-tooling"]
