@@ -78,7 +78,7 @@ nerust_soundfilter = { version = "=0.1.0", path = "soundfilter" }
 nerust_timer = { version = "=0.1.0", path = "timer" }
 nes_ntsc = { version = "=0.1.0", path = "nes_ntsc" }
 pollster = { version = "=0.4.0" }
-png = { version = "=0.18.0" }
+png = { version = "=0.18.1" }
 raw-window-handle = { version = "=0.6.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }

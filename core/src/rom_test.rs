@@ -261,8 +261,15 @@ pub struct RomEvent {
 }
 
 impl RomEvent {
-    fn validate(&self, _case_id: &str) -> Result<(), RomTestError> {
-        Ok(())
+    fn validate(&self, case_id: &str) -> Result<(), RomTestError> {
+        match self.kind {
+            RomEventKind::CheckWorkRam { address, .. } if address > 0x1FFF => {
+                Err(RomTestError::InvalidManifest(format!(
+                    "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -272,6 +279,12 @@ pub enum RomEventKind {
     CheckScreen {
         #[serde(with = "hex_u64")]
         hash: u64,
+    },
+    CheckWorkRam {
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
     },
     Reset,
     StandardController {
@@ -377,6 +390,12 @@ pub trait CaseHarness {
     fn run_frame(&mut self) -> u64;
     fn frame_counter(&self) -> u64;
     fn on_check_screen(&mut self, frame: u64, expected_hash: u64) -> Result<(), RomTestError>;
+    fn on_check_work_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError>;
     fn on_reset(&mut self) -> Result<(), RomTestError>;
     fn on_standard_controller(
         &mut self,
@@ -422,6 +441,20 @@ impl ScreenCheck {
 }
 
 #[derive(Debug, Clone)]
+pub struct WorkRamCheck {
+    pub frame: u64,
+    pub address: u16,
+    pub expected_value: u8,
+    pub actual_value: u8,
+}
+
+impl WorkRamCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_value == self.actual_value
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioObservation {
     pub sample_rate: u32,
     pub samples: u64,
@@ -439,6 +472,7 @@ pub struct CaseValidation {
     pub steps: u64,
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
+    pub work_ram_checks: Vec<WorkRamCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }
@@ -494,6 +528,7 @@ pub struct ValidationRunner {
     pad1: Buttons,
     pad2: Buttons,
     screen_checks: Vec<ScreenCheck>,
+    work_ram_checks: Vec<WorkRamCheck>,
     failures: Vec<String>,
     options: ValidationOptions,
 }
@@ -526,6 +561,7 @@ impl ValidationRunner {
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
             screen_checks: Vec::new(),
+            work_ram_checks: Vec::new(),
             failures: Vec::new(),
             options,
         })
@@ -567,6 +603,7 @@ impl ValidationRunner {
             steps: totals.steps,
             final_screen_hash,
             screen_checks: self.screen_checks,
+            work_ram_checks: self.work_ram_checks,
             audio,
             failures: self.failures,
         })
@@ -608,6 +645,34 @@ impl CaseHarness for ValidationRunner {
             expected_hash,
             actual_hash,
             screenshot_png,
+        });
+        Ok(())
+    }
+
+    fn on_check_work_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError> {
+        let actual_value = self.core.peek_work_ram(address).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "ROM case `{}` requested check_work_ram outside CPU work RAM at address 0x{address:04X}",
+                self.case_id
+            ))
+        })?;
+        if self.options.check_expectations && actual_value != expected_value {
+            self.failures.push(format!(
+                "{}: work RAM mismatch at frame {} address 0x{:04X} (expected 0x{:02X}, actual 0x{:02X})",
+                self.case_id, frame, address, expected_value, actual_value
+            ));
+        }
+
+        self.work_ram_checks.push(WorkRamCheck {
+            frame,
+            address: u16::try_from(address).expect("address range validated before dispatch"),
+            expected_value,
+            actual_value,
         });
         Ok(())
     }
@@ -869,6 +934,31 @@ pub fn write_html_report(
                     html.push_str("</tbody></table>");
                 }
 
+                if !validation.work_ram_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Work RAM checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.work_ram_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
+                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.address,
+                            check.expected_value,
+                            check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+
                 html.push_str("</section>");
             }
             CaseOutcome::InternalError {
@@ -927,6 +1017,9 @@ fn dispatch_pending_events<H: CaseHarness>(
         match event.kind {
             RomEventKind::CheckScreen { hash } => {
                 harness.on_check_screen(event.frame, hash)?;
+            }
+            RomEventKind::CheckWorkRam { address, value } => {
+                harness.on_check_work_ram(event.frame, usize::from(address), value)?;
             }
             RomEventKind::Reset => {
                 harness.on_reset()?;
@@ -1060,6 +1153,133 @@ impl MixerInput for HashingMixer {
     }
 }
 
+fn parse_hex_u64(value: &str) -> Result<u64, String> {
+    let trimmed = value.trim().replace('_', "");
+    let digits = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"));
+    if let Some(digits) = digits {
+        u64::from_str_radix(digits, 16)
+            .map_err(|error| format!("invalid hexadecimal value `{value}`: {error}"))
+    } else {
+        trimmed
+            .parse::<u64>()
+            .map_err(|error| format!("invalid integer value `{value}`: {error}"))
+    }
+}
+
+fn parse_hex_u16(value: &str) -> Result<u16, String> {
+    let parsed = parse_hex_u64(value)?;
+    u16::try_from(parsed).map_err(|_| format!("value `{value}` does not fit in u16"))
+}
+
+fn parse_hex_u8(value: &str) -> Result<u8, String> {
+    let parsed = parse_hex_u64(value)?;
+    u8::try_from(parsed).map_err(|_| format!("value `{value}` does not fit in u8"))
+}
+
+mod hex_u8 {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u8, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{value:02X}"))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u8, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(HexValueVisitor)
+    }
+
+    struct HexValueVisitor;
+
+    impl<'de> Visitor<'de> for HexValueVisitor {
+        type Value = u8;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a hexadecimal string like 0x12 or an unsigned 8-bit integer")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u8::try_from(value)
+                .map_err(|_| E::custom(format!("value `{value}` does not fit in u8")))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_u8(value).map_err(E::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_u8(&value).map_err(E::custom)
+        }
+    }
+}
+
+mod hex_u16 {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u16, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{value:04X}"))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u16, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(HexValueVisitor)
+    }
+
+    struct HexValueVisitor;
+
+    impl<'de> Visitor<'de> for HexValueVisitor {
+        type Value = u16;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a hexadecimal string like 0x1234 or an unsigned 16-bit integer")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u16::try_from(value)
+                .map_err(|_| E::custom(format!("value `{value}` does not fit in u16")))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_u16(value).map_err(E::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_u16(&value).map_err(E::custom)
+        }
+    }
+}
+
 mod hex_u64 {
     use super::*;
     use serde::{Deserializer, Serializer};
@@ -1098,29 +1318,14 @@ mod hex_u64 {
         where
             E: de::Error,
         {
-            parse_hex(value).map_err(E::custom)
+            parse_hex_u64(value).map_err(E::custom)
         }
 
         fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            parse_hex(&value).map_err(E::custom)
-        }
-    }
-
-    fn parse_hex(value: &str) -> Result<u64, String> {
-        let trimmed = value.trim().replace('_', "");
-        let digits = trimmed
-            .strip_prefix("0x")
-            .or_else(|| trimmed.strip_prefix("0X"));
-        if let Some(digits) = digits {
-            u64::from_str_radix(digits, 16)
-                .map_err(|error| format!("invalid hexadecimal value `{value}`: {error}"))
-        } else {
-            trimmed
-                .parse::<u64>()
-                .map_err(|error| format!("invalid integer value `{value}`: {error}"))
+            parse_hex_u64(&value).map_err(E::custom)
         }
     }
 }
@@ -1144,6 +1349,7 @@ cases:
       samples: 287270
       hash: "0x34BB3FFDF962043D"
     events:
+      - { frame: 15, action: check_work_ram, address: "0x0301", value: "0x01" }
       - { frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E" }
       - { frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed }
 "#,
@@ -1214,6 +1420,16 @@ cases:
                 Ok(())
             }
 
+            fn on_check_work_ram(
+                &mut self,
+                frame: u64,
+                _address: usize,
+                _expected_value: u8,
+            ) -> Result<(), RomTestError> {
+                self.events.push(format!("ram@{frame}"));
+                Ok(())
+            }
+
             fn on_reset(&mut self) -> Result<(), RomTestError> {
                 self.events.push(format!("reset@{}", self.frame_counter));
                 Ok(())
@@ -1252,6 +1468,13 @@ cases:
                 },
                 RomEvent {
                     frame: 1,
+                    kind: RomEventKind::CheckWorkRam {
+                        address: 0x0301,
+                        value: 0x01,
+                    },
+                },
+                RomEvent {
+                    frame: 1,
                     kind: RomEventKind::CheckScreen { hash: 1 },
                 },
             ],
@@ -1272,8 +1495,26 @@ cases:
             vec![
                 "reset@0".to_string(),
                 "controller@0".to_string(),
+                "ram@1".to_string(),
                 "check@1".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn check_work_ram_rejects_addresses_outside_cpu_work_ram() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::CheckWorkRam {
+                address: 0x2000,
+                value: 0,
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.34_test_src.34_test_1"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("check_work_ram outside CPU work RAM")
+        ));
     }
 }

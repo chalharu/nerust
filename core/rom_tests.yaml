@@ -366,12 +366,14 @@ cases:
     rom: mapper/34_test_src/34_test_1.nes
     events:
       - {frame: 70, action: check_screen, hash: "0x4656955C241976B9"}
+      - {frame: 70, action: check_work_ram, address: "0x0301", value: "0x00"}
   - id: mapper.34_test_src.34_test_2
     category: mapper
     description: "Tests NES 2.0 submapper behavior for mapper 34. Case: Submapper case 2."
     rom: mapper/34_test_src/34_test_2.nes
     events:
       - {frame: 70, action: check_screen, hash: "0x00C9497C3EC444FF"}
+      - {frame: 70, action: check_work_ram, address: "0x0301", value: "0x01"}
   - id: mapper.7_test_src.7_test_0
     category: mapper
     description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 0."
