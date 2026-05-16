@@ -10,12 +10,12 @@ autotests = false
 [features]
 default = []
 rom-tooling = [
-    "dep:clap",
-    "dep:crc",
-    "dep:nerust_screen_buffer",
-    "dep:nerust_screen_filter",
-    "dep:png",
-    "dep:serde_yaml",
+  "dep:clap",
+  "dep:crc",
+  "dep:nerust_screen_buffer",
+  "dep:nerust_screen_filter",
+  "dep:png",
+  "dep:serde_yaml",
 ]
 
 [dependencies]
@@ -44,12 +44,10 @@ hound.workspace = true
 [[bin]]
 name = "perf"
 path = "src/bin/perf.rs"
-required-features = ["rom-tooling"]
 
 [[bin]]
 name = "rom_tool"
 path = "src/bin/rom_tool.rs"
-required-features = ["rom-tooling"]
 
 [[test]]
 name = "rom_tests"
