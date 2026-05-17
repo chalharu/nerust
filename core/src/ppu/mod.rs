@@ -32,6 +32,28 @@ struct DecayableOpenBus {
 #[cfg(test)]
 mod tests {
     use super::Core;
+    use crate::cartridge;
+    use crate::cartridge::Cartridge;
+    use crate::cpu::interrupt::Interrupt;
+    use nerust_screen_traits::Screen;
+
+    #[derive(Default)]
+    struct NullScreen;
+
+    impl Screen for NullScreen {
+        fn push(&mut self, _index: u8) {}
+
+        fn render(&mut self) {}
+    }
+
+    fn nrom_cartridge() -> Box<dyn Cartridge> {
+        let mut rom = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        cartridge::try_from(&mut rom.into_iter()).expect("cartridge should parse")
+    }
 
     #[test]
     fn background_color_zero_uses_universal_backdrop() {
@@ -46,6 +68,34 @@ mod tests {
         assert_eq!(Core::background_palette_index(0x04, 1), 0x05);
         assert_eq!(Core::background_palette_index(0x08, 2), 0x0A);
         assert_eq!(Core::background_palette_index(0x0C, 3), 0x0F);
+    }
+
+    #[test]
+    fn odd_frame_skip_does_not_consume_extra_ppu_tick() {
+        let mut ppu = Core::new();
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = NullScreen;
+
+        ppu.scan_line = 0;
+        ppu.cycle = 338;
+        ppu.frames = 1;
+        ppu.bus_tick = 10;
+        ppu.render_executing = true;
+        assert_eq!(ppu.scan_line, 0);
+        assert_eq!(ppu.cycle, 338);
+        assert_eq!(ppu.ppu_bus_tick(), 10);
+
+        ppu.step(&mut screen, cartridge.as_mut(), &mut interrupt);
+
+        assert_eq!(ppu.cycle, 340);
+        assert_eq!(ppu.ppu_bus_tick(), 11);
+
+        ppu.step(&mut screen, cartridge.as_mut(), &mut interrupt);
+
+        assert_eq!(ppu.scan_line, 1);
+        assert_eq!(ppu.cycle, 0);
+        assert_eq!(ppu.ppu_bus_tick(), 11);
     }
 }
 
@@ -278,6 +328,8 @@ pub(crate) struct Core {
     cycle: u16,
     scan_line: u16,
     frames: usize,
+    #[serde(default)]
+    bus_tick: u64,
     buffered_data: u8,
 
     #[serde(with = "nerust_serialize::BigArray")]
@@ -332,6 +384,7 @@ impl Core {
             cycle: 0,
             scan_line: 0,
             frames: 0,
+            bus_tick: 0,
             buffered_data: 0,
             primary_oam: [0; 256],
             secondary_oam: [0; 32],
@@ -376,6 +429,7 @@ impl Core {
         self.cycle = 0;
         self.scan_line = 0;
         self.frames = 0;
+        self.bus_tick = 0;
         self.buffered_data = 0;
         self.primary_oam = [0; 256];
         self.secondary_oam = [0; 32];
@@ -531,7 +585,7 @@ impl Core {
 
     #[inline]
     fn ppu_bus_tick(&self) -> u64 {
-        self.frames as u64 * 341 * 262 + self.scan_line as u64 * 341 + self.cycle as u64
+        self.bus_tick
     }
 
     #[inline]
@@ -1083,6 +1137,7 @@ impl Core {
                 _ => unreachable!(),
             }
         } else {
+            self.bus_tick += 1;
             self.cycle += 1;
             if self.scan_line <= 240 {
                 match self.cycle {
