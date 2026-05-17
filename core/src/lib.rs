@@ -28,14 +28,7 @@ use nerust_sound_traits::MixerInput;
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(
-    serde_derive::Serialize,
-    serde_derive::Deserialize,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
+    serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Mmc3IrqVariant {
