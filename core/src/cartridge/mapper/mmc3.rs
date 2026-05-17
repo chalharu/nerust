@@ -136,6 +136,10 @@ impl Mmc3 {
         self.update_offsets();
     }
 
+    fn uses_old_style_irq(&self) -> bool {
+        self.data_ref().sub_mapper_type() == 4
+    }
+
     fn write_control(&mut self, _value: u8) {
         // MMC3 does not use the MMC1-style control; keep for compatibility with initialize call.
         self.update_offsets();
@@ -186,14 +190,23 @@ impl Mmc3 {
     }
 
     fn clock_irq_counter(&mut self, interrupt: &mut Interrupt) {
-        if self.irq_counter == 0 || self.irq_reload {
+        let counter = self.irq_counter;
+        let reload_pending = self.irq_reload;
+
+        if counter == 0 || reload_pending {
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
         } else {
-            self.irq_counter = self.irq_counter.wrapping_sub(1);
+            self.irq_counter = counter.wrapping_sub(1);
         }
 
-        if self.irq_counter == 0 && self.irq_enabled {
+        let irq_triggered = if self.uses_old_style_irq() {
+            (!reload_pending && counter == 1) || (reload_pending && self.irq_counter == 0)
+        } else {
+            self.irq_counter == 0
+        };
+
+        if irq_triggered && self.irq_enabled {
             interrupt.set_irq(IrqSource::EXTERNAL);
         }
     }

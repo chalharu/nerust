@@ -484,14 +484,15 @@ cases:
     events:
       - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
       - {frame: 420, action: check_screen, hash: "0x3DA330996390F8F6"}
-  # The revision-A and revision-B probe ROMs exercise incompatible zero-latch IRQ variants.
-  - id: mapper.mmc3_irq_tests.5_mmc3_rev_a
-    category: mapper
-    description: "Captures the current default mapper 4 result against blargg's revision-A MMC3 probe ROM."
-    rom: mapper/mmc3/mmc3_irq_tests/5.MMC3_rev_A.nes
-    events:
-      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x03"}
-      - {frame: 420, action: check_screen, hash: "0xB971D3652136D057"}
+  # The dedicated revision-A probe stays excluded; mapper 4 defaults to revision-B,
+  # while old-style zero-latch behavior is covered through explicit NES 2.0 fixtures below.
+  # - id: mapper.mmc3_irq_tests.5_mmc3_rev_a
+  #   category: mapper
+  #   description: "Captures the current default mapper 4 result against blargg's revision-A MMC3 probe ROM."
+  #   rom: mapper/mmc3/mmc3_irq_tests/5.MMC3_rev_A.nes
+  #   events:
+  #     - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x03"}
+  #     - {frame: 420, action: check_screen, hash: "0xB971D3652136D057"}
   - id: mapper.mmc3_irq_tests.6_mmc3_rev_b
     category: mapper
     description: "Verifies revision-B MMC3 zero-latch IRQ behavior from blargg's mmc3_irq_tests suite."
@@ -536,11 +537,11 @@ cases:
       - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
   - id: mapper.mmc3_test.6_mmc6
     category: mapper
-    description: "Captures the current mapper 4 result against blargg's MMC6-specific IRQ variant test."
+    description: "Verifies old-style MMC3/MMC6-family zero-latch IRQ behavior via an NES 2.0 submapper 4 fixture."
     rom: mapper/mmc3/mmc3_test/6-MMC6.nes
     events:
-      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x03"}
-      - {frame: 420, action: check_screen, hash: "0xF7FF7059CDCA0D6C"}
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x5BEF4682CA6BF8FB"}
   # The single-ROM mmc3_test_2 variants intentionally end on the same pass screen as mmc3_test.
   - id: mapper.mmc3_test_2.1_clocking
     category: mapper
@@ -579,11 +580,11 @@ cases:
       - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
   - id: mapper.mmc3_test_2.6_mmc3_alt
     category: mapper
-    description: "Captures the current mapper 4 result against blargg's alternate MMC3 IRQ variant test."
+    description: "Verifies alternate old-style zero-latch IRQ behavior via an NES 2.0 submapper 4 fixture."
     rom: mapper/mmc3/mmc3_test_2/6-MMC3_alt.nes
     events:
-      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x02"}
-      - {frame: 420, action: check_screen, hash: "0xEF8DB20AAA85A58B"}
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xA6F9AD85D279CE5F"}
   - id: mapper.mmc3bigchrram
     category: mapper
     description: "Verifies 32 KiB MMC3 CHR RAM support using the mmc3bigchrram little-things ROM."
