@@ -6,6 +6,7 @@
 
 use clap::{Arg, Command};
 use log::LevelFilter;
+use nerust_core::{CoreOptions, Mmc3IrqVariant};
 use nerust_sound_openal::prepare_macos_runtime;
 use nerust_wgpu::Window;
 use simple_logger::SimpleLogger;
@@ -24,9 +25,24 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::new("filename").help("Rom file name").required(true));
+        .arg(Arg::new("filename").help("Rom file name").required(true))
+        .arg(
+            Arg::new("mmc3-irq-variant")
+                .long("mmc3-irq-variant")
+                .value_parser(["sharp", "nec"])
+                .help("Override mapper 4 MMC3 IRQ behavior"),
+        );
 
     let matches = app.get_matches();
+    let core_options = CoreOptions {
+        mmc3_irq_variant: matches
+            .get_one::<String>("mmc3-irq-variant")
+            .map(|variant| match variant.as_str() {
+                "sharp" => Mmc3IrqVariant::Sharp,
+                "nec" => Mmc3IrqVariant::Nec,
+                _ => unreachable!(),
+            }),
+    };
 
     if let Some(mut f) = matches
         .get_one::<String>("filename")
@@ -36,7 +52,7 @@ fn main() {
         let mut buf = Vec::new();
         let _ = f.read_to_end(&mut buf).unwrap();
         let mut window = Window::new();
-        window.load(buf);
+        window.load_with_options(buf, core_options);
         window.run();
     }
 }

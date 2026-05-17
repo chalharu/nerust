@@ -8,7 +8,7 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::MirrorMode;
+use crate::{MirrorMode, Mmc3IrqVariant};
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 
 const A12_LOW_FILTER_TICKS: u64 = 12;
@@ -186,7 +186,15 @@ impl Mmc3 {
     }
 
     fn uses_old_style_irq(&self) -> bool {
-        self.data_ref().sub_mapper_type() == 4
+        if self.is_mmc6() {
+            return false;
+        }
+
+        match self.data_ref().mmc3_irq_variant_override() {
+            Some(Mmc3IrqVariant::Sharp) => false,
+            Some(Mmc3IrqVariant::Nec) => true,
+            None => self.data_ref().sub_mapper_type() == 4,
+        }
     }
 
     fn write_control(&mut self, _value: u8) {

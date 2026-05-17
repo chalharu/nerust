@@ -257,11 +257,12 @@ struct PerfRunner {
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, rom_test::RomTestError> {
         let mut input = rom_bytes.iter().copied();
-        let core =
-            Core::new(&mut input).map_err(|error| rom_test::RomTestError::CoreConstruction {
+        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
+            rom_test::RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         Ok(Self {
             core,
             screen: PerfScreen::new(),

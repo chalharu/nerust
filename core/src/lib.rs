@@ -27,6 +27,28 @@ use nerust_sound_traits::MixerInput;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+#[derive(
+    serde_derive::Serialize,
+    serde_derive::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Mmc3IrqVariant {
+    #[default]
+    Sharp,
+    Nec,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CoreOptions {
+    pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub struct Core {
     cpu: Cpu,
@@ -37,8 +59,15 @@ pub struct Core {
 
 impl Core {
     pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Core, Error> {
+        Self::new_with_options(input, CoreOptions::default())
+    }
+
+    pub fn new_with_options<I: Iterator<Item = u8>>(
+        input: &mut I,
+        options: CoreOptions,
+    ) -> Result<Core, Error> {
         let mut cpu = Cpu::new();
-        let mut cartridge = cartridge::try_from(input)?;
+        let mut cartridge = cartridge::try_from_with_options(input, options)?;
         let apu = Apu::new(cpu.interrupt_mut(), cartridge.as_mut());
         Ok(Self {
             cpu,
