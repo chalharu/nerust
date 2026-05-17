@@ -462,98 +462,133 @@ cases:
     rom: mapper/mmc3/mmc3_irq_tests/1.Clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xA6307C08E5259359"}
   - id: mapper.mmc3_irq_tests.2_details
     category: mapper
     description: "Verifies MMC3 IRQ counter edge-case details from blargg's mmc3_irq_tests suite."
     rom: mapper/mmc3/mmc3_irq_tests/2.Details.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x3563727EECC9E3FC"}
   - id: mapper.mmc3_irq_tests.3_a12_clocking
     category: mapper
     description: "Verifies MMC3 A12 edge detection behavior from blargg's mmc3_irq_tests suite."
     rom: mapper/mmc3/mmc3_irq_tests/3.A12_clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xB62F5E9898DAB025"}
   - id: mapper.mmc3_irq_tests.4_scanline_timing
     category: mapper
     description: "Verifies MMC3 scanline IRQ timing from blargg's mmc3_irq_tests suite."
     rom: mapper/mmc3/mmc3_irq_tests/4.Scanline_timing.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x3DA330996390F8F6"}
+  - id: mapper.mmc3_irq_tests.5_mmc3_rev_a
+    category: mapper
+    description: "Verifies MMC3 zero-latch IRQ behavior against blargg's revision-A probe ROM."
+    rom: mapper/mmc3/mmc3_irq_tests/5.MMC3_rev_A.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xB971D3652136D057"}
   - id: mapper.mmc3_irq_tests.6_mmc3_rev_b
     category: mapper
     description: "Verifies revision-B MMC3 zero-latch IRQ behavior from blargg's mmc3_irq_tests suite."
     rom: mapper/mmc3/mmc3_irq_tests/6.MMC3_rev_B.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x25AC2EFDD3AB7C43"}
   - id: mapper.mmc3_test.1_clocking
     category: mapper
     description: "Runs blargg's mmc3_test baseline clocking case against mapper 4."
     rom: mapper/mmc3/mmc3_test/1-clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x312B1061B67A967A"}
   - id: mapper.mmc3_test.2_details
     category: mapper
     description: "Runs blargg's mmc3_test detailed IRQ counter case against mapper 4."
     rom: mapper/mmc3/mmc3_test/2-details.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x5D64A7E9C200EC9C"}
   - id: mapper.mmc3_test.3_a12_clocking
     category: mapper
     description: "Runs blargg's mmc3_test A12 clocking case against mapper 4."
     rom: mapper/mmc3/mmc3_test/3-A12_clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x714782FFB12314C2"}
   - id: mapper.mmc3_test.4_scanline_timing
     category: mapper
     description: "Runs blargg's mmc3_test scanline timing case against mapper 4."
     rom: mapper/mmc3/mmc3_test/4-scanline_timing.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x87288EF8D9D158C2"}
   - id: mapper.mmc3_test.5_mmc3
     category: mapper
     description: "Runs blargg's mmc3_test MMC3-specific behavior case against mapper 4."
     rom: mapper/mmc3/mmc3_test/5-MMC3.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
+  - id: mapper.mmc3_test.6_mmc6
+    category: mapper
+    description: "Captures the current mapper 4 result against blargg's MMC6-specific IRQ variant test."
+    rom: mapper/mmc3/mmc3_test/6-MMC6.nes
+    events:
+      - {frame: 420, action: check_screen, hash: "0xF7FF7059CDCA0D6C"}
+  # The single-ROM mmc3_test_2 variants intentionally end on the same pass screen as mmc3_test.
   - id: mapper.mmc3_test_2.1_clocking
     category: mapper
     description: "Runs blargg's mmc3_test_2 single clocking case against mapper 4."
     rom: mapper/mmc3/mmc3_test_2/1-clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x312B1061B67A967A"}
   - id: mapper.mmc3_test_2.2_details
     category: mapper
     description: "Runs blargg's mmc3_test_2 single detailed IRQ counter case against mapper 4."
     rom: mapper/mmc3/mmc3_test_2/2-details.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x5D64A7E9C200EC9C"}
   - id: mapper.mmc3_test_2.3_a12_clocking
     category: mapper
     description: "Runs blargg's mmc3_test_2 single A12 clocking case against mapper 4."
     rom: mapper/mmc3/mmc3_test_2/3-A12_clocking.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x714782FFB12314C2"}
   - id: mapper.mmc3_test_2.4_scanline_timing
     category: mapper
     description: "Runs blargg's mmc3_test_2 single scanline timing case against mapper 4."
     rom: mapper/mmc3/mmc3_test_2/4-scanline_timing.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x87288EF8D9D158C2"}
   - id: mapper.mmc3_test_2.5_mmc3
     category: mapper
     description: "Runs blargg's mmc3_test_2 single MMC3-specific behavior case against mapper 4."
     rom: mapper/mmc3/mmc3_test_2/5-MMC3.nes
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
+  - id: mapper.mmc3_test_2.6_mmc3_alt
+    category: mapper
+    description: "Captures the current mapper 4 result against blargg's alternate MMC3 IRQ variant test."
+    rom: mapper/mmc3/mmc3_test_2/6-MMC3_alt.nes
+    events:
+      - {frame: 420, action: check_screen, hash: "0xEF8DB20AAA85A58B"}
   - id: mapper.mmc3bigchrram
     category: mapper
     description: "Verifies 32 KiB MMC3 CHR RAM support using the mmc3bigchrram little-things ROM."
     rom: mapper/mmc3/mmc3bigchrram.nes
     events:
-      - {frame: 0, action: standard_controller, pad: pad1, button: START, state: pressed}
-      - {frame: 1, action: standard_controller, pad: pad1, button: START, state: released}
-      - {frame: 150, action: check_screen, hash: "0x63F07895D53F9881"}
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 150, action: check_screen, hash: "0x5912D7E306DCB3AF"}
   - id: mapper.mmc3o
     category: mapper
     description: "Verifies oversize MMC3 PRG/CHR bank decoding using the mmc3o little-things ROM built as a 1 MiB PRG / 32 KiB CHR RAM image."
@@ -577,14 +612,24 @@ cases:
       - {frame: 30, action: check_ppu_vram, address: "0x22A9", value: "0x0E"}
       - {frame: 30, action: check_ppu_vram, address: "0x22AB", value: "0x07"}
       - {frame: 30, action: check_ppu_vram, address: "0x22AC", value: "0x0F"}
+      - {frame: 30, action: check_screen, hash: "0xCFCA443A1F1BCC97"}
   - id: mapper.mmc3spaminc
     category: mapper
     description: "Verifies MMC3 read-modify-write register behavior using the mmc3spaminc little-things ROM."
     rom: mapper/mmc3/mmc3spaminc.nes
     events:
-      - {frame: 0, action: standard_controller, pad: pad1, button: A, state: pressed}
-      - {frame: 1, action: standard_controller, pad: pad1, button: A, state: released}
-      - {frame: 300, action: check_screen, hash: "0xEC16BDED97C2B36B"}
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 300, action: check_screen, hash: "0x2EC225477A16E22F"}
+  - id: mapper.mmc3spaminc_tg
+    category: mapper
+    # The threaded-generate variant converges on the same final success screen as the base ROM.
+    description: "Verifies MMC3 read-modify-write register behavior using the mmc3spaminc threaded-generate variant ROM."
+    rom: mapper/mmc3/mmc3spaminc-tg.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 300, action: check_screen, hash: "0x2EC225477A16E22F"}
   - id: input.allpads
     category: input
     description: "Detects connected controllers and exercises every single-button input on the allpads 1P NES controller screen."
