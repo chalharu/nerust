@@ -537,11 +537,11 @@ cases:
       - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
   - id: mapper.mmc3_test.6_mmc6
     category: mapper
-    description: "Verifies old-style MMC3/MMC6-family zero-latch IRQ behavior via an NES 2.0 submapper 4 fixture."
+    description: "Captures the current sharp-style mapper 4 result against blargg's historical MMC6-labelled IRQ probe ROM. The ROM assumes MMC3-style $6000 RAM and is not a true MMC6 submapper 1 validation."
     rom: mapper/mmc3/mmc3_test/6-MMC6.nes
     events:
-      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
-      - {frame: 420, action: check_screen, hash: "0x5BEF4682CA6BF8FB"}
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x03"}
+      - {frame: 420, action: check_screen, hash: "0xF7FF7059CDCA0D6C"}
   # The single-ROM mmc3_test_2 variants intentionally end on the same pass screen as mmc3_test.
   - id: mapper.mmc3_test_2.1_clocking
     category: mapper
@@ -580,8 +580,9 @@ cases:
       - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
   - id: mapper.mmc3_test_2.6_mmc3_alt
     category: mapper
-    description: "Verifies alternate old-style zero-latch IRQ behavior via an NES 2.0 submapper 4 fixture."
+    description: "Verifies alternate old-style NEC MMC3 zero-latch IRQ behavior via a test-harness submapper override."
     rom: mapper/mmc3/mmc3_test_2/6-MMC3_alt.nes
+    sub_mapper_type: 4
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
       - {frame: 420, action: check_screen, hash: "0xA6F9AD85D279CE5F"}

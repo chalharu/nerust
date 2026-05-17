@@ -81,15 +81,59 @@ impl Mmc3 {
     }
 
     fn program_ram_enabled(&self) -> bool {
-        !self.mapper_state_ref().sram.is_empty() && (self.program_ram_protect & 0x80) != 0
+        if self.is_mmc6() {
+            self.mmc6_program_ram_chip_enabled()
+        } else {
+            !self.mapper_state_ref().sram.is_empty() && (self.program_ram_protect & 0x80) != 0
+        }
     }
 
     fn program_ram_write_enabled(&self) -> bool {
-        self.program_ram_enabled() && (self.program_ram_protect & 0x40) == 0
+        if self.is_mmc6() {
+            self.mmc6_program_ram_chip_enabled()
+        } else {
+            self.program_ram_enabled() && (self.program_ram_protect & 0x40) == 0
+        }
+    }
+
+    fn is_mmc6(&self) -> bool {
+        self.data_ref().sub_mapper_type() == 1
+    }
+
+    fn mmc6_program_ram_chip_enabled(&self) -> bool {
+        !self.mapper_state_ref().sram.is_empty() && (self.bank_select & 0x20) != 0
+    }
+
+    fn mmc6_ram_address(index: usize) -> Option<(usize, bool)> {
+        if !(0x1000..=0x1FFF).contains(&index) {
+            return None;
+        }
+
+        let address = (index - 0x1000) & 0x03FF;
+        Some((address, address >= 0x0200))
+    }
+
+    fn mmc6_bank_read_enabled(&self, high_bank: bool) -> bool {
+        if high_bank {
+            (self.program_ram_protect & 0x80) != 0
+        } else {
+            (self.program_ram_protect & 0x20) != 0
+        }
+    }
+
+    fn mmc6_bank_write_enabled(&self, high_bank: bool) -> bool {
+        if high_bank {
+            (self.program_ram_protect & 0x40) != 0
+        } else {
+            (self.program_ram_protect & 0x10) != 0
+        }
     }
 
     fn write_bank_select(&mut self, value: u8) {
         self.bank_select = value;
+        if self.is_mmc6() && !self.mmc6_program_ram_chip_enabled() {
+            self.program_ram_protect = 0;
+        }
         self.update_offsets();
     }
 
@@ -131,8 +175,13 @@ impl Mmc3 {
     }
 
     fn write_program_ram_protect(&mut self, value: u8) {
-        self.program_ram_protect = value;
-        // minimal behavior: toggle WRAM mapping based on bit 7
+        if self.is_mmc6() {
+            if self.mmc6_program_ram_chip_enabled() {
+                self.program_ram_protect = value & 0xF0;
+            }
+        } else {
+            self.program_ram_protect = value;
+        }
         self.update_offsets();
     }
 
@@ -182,7 +231,9 @@ impl Mmc3 {
             self.map_character_bank(7, usize::from(self.bank_data[1] | 0x01));
         }
 
-        if self.program_ram_enabled() {
+        if self.is_mmc6() {
+            self.clear_ram_mapping();
+        } else if self.program_ram_enabled() {
             self.change_ram_page(0, 0);
         } else {
             self.clear_ram_mapping();
@@ -240,7 +291,24 @@ impl Mapper for Mmc3 {
     }
 
     fn read_ram(&self, index: usize) -> Option<u8> {
-        if self.program_ram_enabled() {
+        if self.is_mmc6() {
+            let (address, high_bank) = Self::mmc6_ram_address(index)?;
+            if !self.mmc6_program_ram_chip_enabled() {
+                return None;
+            }
+
+            let low_bank_read_enabled = self.mmc6_bank_read_enabled(false);
+            let high_bank_read_enabled = self.mmc6_bank_read_enabled(true);
+            if !low_bank_read_enabled && !high_bank_read_enabled {
+                return None;
+            }
+
+            if self.mmc6_bank_read_enabled(high_bank) {
+                Some(self.mapper_state_ref().sram[address])
+            } else {
+                Some(0)
+            }
+        } else if self.program_ram_enabled() {
             self.ram_address(index)
                 .map(|address| self.mapper_state_ref().sram[address])
         } else {
@@ -249,7 +317,17 @@ impl Mapper for Mmc3 {
     }
 
     fn write_ram(&mut self, index: usize, data: u8) {
-        if self.program_ram_write_enabled()
+        if self.is_mmc6() {
+            let Some((address, high_bank)) = Self::mmc6_ram_address(index) else {
+                return;
+            };
+            if self.mmc6_program_ram_chip_enabled()
+                && self.mmc6_bank_read_enabled(high_bank)
+                && self.mmc6_bank_write_enabled(high_bank)
+            {
+                self.mapper_state_mut().sram[address] = data;
+            }
+        } else if self.program_ram_write_enabled()
             && let Some(address) = self.ram_address(index)
         {
             self.mapper_state_mut().sram[address] = data;
@@ -284,7 +362,7 @@ impl Mapper for Mmc3 {
         true
     }
     fn initialize(&mut self) {
-        self.program_ram_protect = 0x80;
+        self.program_ram_protect = if self.is_mmc6() { 0 } else { 0x80 };
         self.write_control(0);
     }
 
@@ -331,5 +409,78 @@ impl Mapper for Mmc3 {
         }
 
         self.last_a12_high = a12_high;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::cartridge::format::CartridgeData;
+
+    fn new_mapper(sub_mapper_type: u8) -> Mmc3 {
+        let mut rom = vec![
+            0x4E,
+            0x45,
+            0x53,
+            0x1A,
+            0x02,
+            0x01,
+            0x40,
+            0x08,
+            sub_mapper_type << 4,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        let data = CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse");
+        let mut mapper = Mmc3::new(data);
+        Cartridge::initialize(&mut mapper);
+        mapper
+    }
+
+    #[test]
+    fn mmc6_maps_ram_at_7000_with_1kb_mirroring() {
+        let mut mapper = new_mapper(1);
+
+        mapper.write_bank_select(0x20);
+        mapper.write_program_ram_protect(0xF0);
+        Mapper::write_ram(&mut mapper, 0x1000, 0x12);
+        Mapper::write_ram(&mut mapper, 0x1200, 0x34);
+
+        assert_eq!(Mapper::read_ram(&mapper, 0x0000), None);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), Some(0x12));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1400), Some(0x12));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1200), Some(0x34));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1600), Some(0x34));
+    }
+
+    #[test]
+    fn mmc6_respects_chip_enable_and_half_bank_permissions() {
+        let mut mapper = new_mapper(1);
+
+        mapper.write_program_ram_protect(0xF0);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_bank_select(0x20);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_program_ram_protect(0x30);
+        Mapper::write_ram(&mut mapper, 0x1000, 0x56);
+        Mapper::write_ram(&mut mapper, 0x1200, 0x78);
+
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), Some(0x56));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1200), Some(0x00));
+
+        mapper.write_bank_select(0x00);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_bank_select(0x20);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
     }
 }
