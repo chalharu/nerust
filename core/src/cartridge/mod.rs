@@ -8,8 +8,8 @@ pub(crate) mod error;
 pub(crate) mod format;
 pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
-use crate::{CoreOptions, MirrorMode, OpenBusReadResult};
 use crate::cpu::interrupt::Interrupt;
+use crate::{CoreOptions, MirrorMode, OpenBusReadResult};
 use std::cmp;
 
 #[typetag::serde(tag = "type")]

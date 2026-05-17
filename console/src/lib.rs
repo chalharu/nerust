@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_core::{Core, CoreOptions};
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use nerust_core::{Core, CoreOptions};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};

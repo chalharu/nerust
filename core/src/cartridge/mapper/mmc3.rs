@@ -8,8 +8,8 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::{MirrorMode, Mmc3IrqVariant};
 use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::{MirrorMode, Mmc3IrqVariant};
 
 const A12_LOW_FILTER_TICKS: u64 = 12;
 

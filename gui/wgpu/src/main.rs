@@ -35,13 +35,13 @@ fn main() {
 
     let matches = app.get_matches();
     let core_options = CoreOptions {
-        mmc3_irq_variant: matches
-            .get_one::<String>("mmc3-irq-variant")
-            .map(|variant| match variant.as_str() {
+        mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").map(
+            |variant| match variant.as_str() {
                 "sharp" => Mmc3IrqVariant::Sharp,
                 "nec" => Mmc3IrqVariant::Nec,
                 _ => unreachable!(),
-            }),
+            },
+        ),
     };
 
     if let Some(mut f) = matches
