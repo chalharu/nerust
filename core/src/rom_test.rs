@@ -145,6 +145,8 @@ pub struct RomCase {
     pub rom: String,
     #[serde(default)]
     pub perf: bool,
+    #[serde(default)]
+    pub sub_mapper_type: Option<u8>,
     pub events: Vec<RomEvent>,
     #[serde(default)]
     pub expected_audio: Option<AudioExpectation>,
@@ -169,6 +171,14 @@ impl RomCase {
             return Err(RomTestError::InvalidManifest(format!(
                 "ROM case `{}` must define a description",
                 self.id
+            )));
+        }
+        if let Some(sub_mapper_type) = self.sub_mapper_type
+            && sub_mapper_type > 0x0F
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` uses unsupported sub_mapper_type {}; NES 2.0 submappers must fit in 4 bits",
+                self.id, sub_mapper_type
             )));
         }
         let rom_path = self.resolved_rom_path()?;
@@ -886,10 +896,28 @@ pub fn load_default_manifest() -> Result<RomManifest, RomTestError> {
 
 pub fn read_rom(case: &RomCase) -> Result<Vec<u8>, RomTestError> {
     let rom_path = case.resolved_rom_path()?.to_path_buf();
-    fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
+    let rom_bytes = fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
         path: rom_path,
         source,
-    })
+    })?;
+
+    apply_case_rom_overrides(case, rom_bytes)
+}
+
+fn apply_case_rom_overrides(case: &RomCase, mut rom_bytes: Vec<u8>) -> Result<Vec<u8>, RomTestError> {
+    if let Some(sub_mapper_type) = case.sub_mapper_type {
+        if rom_bytes.len() < 16 || &rom_bytes[..4] != b"NES\x1A" {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` cannot override sub_mapper_type without a 16-byte iNES/NES 2.0 header",
+                case.id
+            )));
+        }
+
+        rom_bytes[7] = (rom_bytes[7] & 0xF3) | 0x08;
+        rom_bytes[8] = (rom_bytes[8] & 0x0F) | (sub_mapper_type << 4);
+    }
+
+    Ok(rom_bytes)
 }
 
 pub fn validate_case(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
@@ -1548,6 +1576,7 @@ cases:
     description: Best first-pass CPU validation ROM.
     rom: cpu/nestest.nes
     perf: true
+    sub_mapper_type: 4
     expected_audio:
       sample_rate: 192000
       samples: 287270
@@ -1562,6 +1591,7 @@ cases:
         manifest.resolve_paths(&default_manifest_path());
         manifest.validate().expect("manifest should validate");
         assert!(manifest.case("cpu.nestest").unwrap().perf);
+        assert_eq!(manifest.case("cpu.nestest").unwrap().sub_mapper_type, Some(4));
     }
 
     #[test]
@@ -1683,6 +1713,7 @@ cases:
             description: "Frame-zero dispatch regression.".to_string(),
             rom: "cpu/nestest.nes".to_string(),
             perf: false,
+            sub_mapper_type: None,
             events: vec![
                 RomEvent {
                     frame: 0,
@@ -1803,5 +1834,56 @@ cases:
             Err(RomTestError::InvalidManifest(message))
                 if message.contains("check_ppu_vram outside PPU nametable/palette space")
         ));
+    }
+
+    #[test]
+    fn rom_case_rejects_submapper_values_outside_nes20_range() {
+        let mut manifest = serde_yaml::from_str::<RomManifest>(
+            r#"
+cases:
+  - id: cpu.nestest
+    category: cpu
+    description: Best first-pass CPU validation ROM.
+    rom: cpu/nestest.nes
+    sub_mapper_type: 16
+    events:
+      - { frame: 1, action: check_screen, hash: "0x1" }
+"#,
+        )
+        .expect("manifest should parse");
+        manifest.resolve_paths(&default_manifest_path());
+
+        assert!(matches!(
+            manifest.validate(),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("sub_mapper_type")
+        ));
+    }
+
+    #[test]
+    fn submapper_override_promotes_rom_header_in_memory() {
+        let case = RomCase {
+            id: "mapper.override".to_string(),
+            category: RomCategory::Mapper,
+            description: "Override regression.".to_string(),
+            rom: "mapper/override.nes".to_string(),
+            perf: false,
+            sub_mapper_type: Some(4),
+            events: vec![RomEvent {
+                frame: 1,
+                kind: RomEventKind::CheckScreen { hash: 1 },
+            }],
+            expected_audio: None,
+            resolved_rom_path: PathBuf::new(),
+        };
+        let rom_bytes = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+
+        let overridden = apply_case_rom_overrides(&case, rom_bytes).expect("override should work");
+
+        assert_eq!(overridden[7], 0x08);
+        assert_eq!(overridden[8], 0x40);
     }
 }
