@@ -494,12 +494,8 @@ impl Core {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
                 (self.state.vram_addr + if self.control.increment { 32 } else { 1 }) & 0x7FFF;
-            let _ = self.read_vram_internal(
-                self.state.vram_addr as usize,
-                cartridge,
-                interrupt,
-                true,
-            );
+            let _ =
+                self.read_vram_internal(self.state.vram_addr as usize, cartridge, interrupt, true);
         } else {
             self.increment_x();
             self.increment_y();
