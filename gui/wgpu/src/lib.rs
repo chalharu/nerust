@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use nerust_console::Console;
+use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
@@ -879,7 +880,11 @@ impl Window {
     }
 
     pub fn load(&mut self, data: Vec<u8>) {
-        self.console.load(data);
+        self.load_with_options(data, CoreOptions::default());
+    }
+
+    pub fn load_with_options(&mut self, data: Vec<u8>, options: CoreOptions) {
+        self.console.load_with_options(data, options);
     }
 
     pub fn run(mut self) {

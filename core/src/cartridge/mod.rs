@@ -8,8 +8,7 @@ pub(crate) mod error;
 pub(crate) mod format;
 pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
-use crate::MirrorMode;
-use crate::OpenBusReadResult;
+use crate::{CoreOptions, MirrorMode, OpenBusReadResult};
 use crate::cpu::interrupt::Interrupt;
 use std::cmp;
 
@@ -342,7 +341,16 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 pub(crate) fn try_from<I: Iterator<Item = u8>>(
     input: &mut I,
 ) -> Result<Box<dyn Cartridge>, error::CartridgeError> {
-    let mut result = mapper::try_from(format::CartridgeData::try_from(input)?);
+    try_from_with_options(input, CoreOptions::default())
+}
+
+pub(crate) fn try_from_with_options<I: Iterator<Item = u8>>(
+    input: &mut I,
+    options: CoreOptions,
+) -> Result<Box<dyn Cartridge>, error::CartridgeError> {
+    let mut data = format::CartridgeData::try_from(input)?;
+    data.set_mmc3_irq_variant_override(options.mmc3_irq_variant);
+    let mut result = mapper::try_from(data);
     if let Ok(ref mut r) = result {
         Cartridge::initialize(r.as_mut());
     }

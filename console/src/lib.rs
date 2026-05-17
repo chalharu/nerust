@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_core::Core;
+use nerust_core::{Core, CoreOptions};
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
@@ -108,7 +108,15 @@ impl Console {
     }
 
     pub fn load(&self, data: Vec<u8>) {
-        if self.data_sender.send(ConsoleData::Load(data)).is_err() {
+        self.load_with_options(data, CoreOptions::default());
+    }
+
+    pub fn load_with_options(&self, data: Vec<u8>, options: CoreOptions) {
+        if self
+            .data_sender
+            .send(ConsoleData::Load { data, options })
+            .is_err()
+        {
             log::warn!("Core load send failed");
         }
     }
@@ -136,7 +144,7 @@ impl Drop for Console {
 }
 
 enum ConsoleData {
-    Load(Vec<u8>),
+    Load { data: Vec<u8>, options: CoreOptions },
     Resume,
     Pause,
     Reset,
@@ -198,10 +206,10 @@ impl ConsoleRunner {
             self.timer.wait();
             if let Ok(event) = self.data_receiver.try_recv() {
                 match event {
-                    ConsoleData::Load(data) => {
+                    ConsoleData::Load { data, options } => {
                         self.screen_buffer.clear();
                         self.publish_frame();
-                        core = Core::new(&mut data.into_iter()).ok();
+                        core = Core::new_with_options(&mut data.into_iter(), options).ok();
                     }
                     ConsoleData::Resume => {
                         self.paused = false;
