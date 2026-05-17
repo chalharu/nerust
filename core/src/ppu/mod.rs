@@ -467,7 +467,12 @@ impl Core {
         } else {
             self.vram_read_delay = 6;
             let addr = self.state.vram_addr as usize;
-            let mut value = self.read_vram(addr, cartridge, interrupt);
+            let mut value = self.read_vram_internal(
+                addr,
+                cartridge,
+                interrupt,
+                self.scan_line > 240 || !self.render_executing,
+            );
             // emulate buffered reads
             let mask = if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
@@ -489,7 +494,12 @@ impl Core {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
                 (self.state.vram_addr + if self.control.increment { 32 } else { 1 }) & 0x7FFF;
-            let _ = self.read_vram(self.state.vram_addr as usize, cartridge, interrupt);
+            let _ = self.read_vram_internal(
+                self.state.vram_addr as usize,
+                cartridge,
+                interrupt,
+                true,
+            );
         } else {
             self.increment_x();
             self.increment_y();
@@ -531,13 +541,29 @@ impl Core {
     #[inline]
     pub(crate) fn read_vram(
         &mut self,
-        mut address: usize,
+        address: usize,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> u8 {
+        self.read_vram_internal(address, cartridge, interrupt, false)
+    }
+
+    #[inline]
+    fn read_vram_internal(
+        &mut self,
+        mut address: usize,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+        address_register_change: bool,
+    ) -> u8 {
         address &= 0x3FFF;
         if self.render_executing || address <= 0x1FFF {
-            cartridge.vram_address_change(address, self.ppu_bus_tick(), false, interrupt);
+            cartridge.vram_address_change(
+                address,
+                self.ppu_bus_tick(),
+                address_register_change,
+                interrupt,
+            );
         }
         let result = match address {
             0..=0x1FFF => cartridge.read(address),
@@ -667,7 +693,13 @@ impl Core {
         let addr = (self.state.vram_addr & 0x3FFF) as usize;
 
         if addr < 0x3F00 {
-            self.write_vram(addr, value, cartridge, interrupt);
+            self.write_vram_internal(
+                addr,
+                value,
+                cartridge,
+                interrupt,
+                self.scan_line > 240 || !self.render_executing,
+            );
         } else {
             self.write_palette(addr, value);
         }
@@ -677,14 +709,31 @@ impl Core {
     #[inline]
     fn write_vram(
         &mut self,
-        mut address: usize,
+        address: usize,
         value: u8,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) {
+        self.write_vram_internal(address, value, cartridge, interrupt, false);
+    }
+
+    #[inline]
+    fn write_vram_internal(
+        &mut self,
+        mut address: usize,
+        value: u8,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+        address_register_change: bool,
+    ) {
         address &= 0x3FFF;
         if self.render_executing || address <= 0x1FFF {
-            cartridge.vram_address_change(address, self.ppu_bus_tick(), false, interrupt);
+            cartridge.vram_address_change(
+                address,
+                self.ppu_bus_tick(),
+                address_register_change,
+                interrupt,
+            );
         }
         match address {
             0..=0x1FFF => cartridge.write(address, value, interrupt),
