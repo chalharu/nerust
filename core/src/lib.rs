@@ -59,6 +59,18 @@ impl Core {
         self.cpu.peek_work_ram(address)
     }
 
+    pub fn peek_cartridge_ram(&self, address: usize) -> Option<OpenBusReadResult> {
+        if (0x6000..=0x7FFF).contains(&address) {
+            Some(self.cartridge.read(address))
+        } else {
+            None
+        }
+    }
+
+    pub fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
+        self.ppu.peek_vram(address, self.cartridge.mirror_mode())
+    }
+
     pub fn step<S: Screen, M: MixerInput>(
         &mut self,
         screen: &mut S,

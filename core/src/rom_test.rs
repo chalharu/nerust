@@ -268,6 +268,18 @@ impl RomEvent {
                     "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
                 )))
             }
+            RomEventKind::CheckCartridgeRam { address, .. }
+                if !(0x6000..=0x7FFF).contains(&address) =>
+            {
+                Err(RomTestError::InvalidManifest(format!(
+                    "ROM case `{case_id}` uses check_cartridge_ram outside cartridge RAM at address 0x{address:04X}"
+                )))
+            }
+            RomEventKind::CheckPpuVram { address, .. } if !(0x2000..=0x3FFF).contains(&address) => {
+                Err(RomTestError::InvalidManifest(format!(
+                    "ROM case `{case_id}` uses check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}"
+                )))
+            }
             _ => Ok(()),
         }
     }
@@ -281,6 +293,18 @@ pub enum RomEventKind {
         hash: u64,
     },
     CheckWorkRam {
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
+    },
+    CheckCartridgeRam {
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
+    },
+    CheckPpuVram {
         #[serde(with = "hex_u16")]
         address: u16,
         #[serde(with = "hex_u8")]
@@ -399,6 +423,18 @@ pub trait CaseHarness {
         address: usize,
         expected_value: u8,
     ) -> Result<(), RomTestError>;
+    fn on_check_cartridge_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError>;
+    fn on_check_ppu_vram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError>;
     fn on_reset(&mut self) -> Result<(), RomTestError>;
     fn on_standard_controller(
         &mut self,
@@ -459,6 +495,34 @@ impl WorkRamCheck {
 }
 
 #[derive(Debug, Clone)]
+pub struct CartridgeRamCheck {
+    pub frame: u64,
+    pub address: u16,
+    pub expected_value: u8,
+    pub actual_value: u8,
+}
+
+impl CartridgeRamCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_value == self.actual_value
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PpuVramCheck {
+    pub frame: u64,
+    pub address: u16,
+    pub expected_value: u8,
+    pub actual_value: u8,
+}
+
+impl PpuVramCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_value == self.actual_value
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioObservation {
     pub sample_rate: u32,
     pub samples: u64,
@@ -477,6 +541,8 @@ pub struct CaseValidation {
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
     pub work_ram_checks: Vec<WorkRamCheck>,
+    pub cartridge_ram_checks: Vec<CartridgeRamCheck>,
+    pub ppu_vram_checks: Vec<PpuVramCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }
@@ -533,6 +599,8 @@ pub struct ValidationRunner {
     pad2: Buttons,
     screen_checks: Vec<ScreenCheck>,
     work_ram_checks: Vec<WorkRamCheck>,
+    cartridge_ram_checks: Vec<CartridgeRamCheck>,
+    ppu_vram_checks: Vec<PpuVramCheck>,
     failures: Vec<String>,
     options: ValidationOptions,
 }
@@ -566,6 +634,8 @@ impl ValidationRunner {
             pad2: Buttons::empty(),
             screen_checks: Vec::new(),
             work_ram_checks: Vec::new(),
+            cartridge_ram_checks: Vec::new(),
+            ppu_vram_checks: Vec::new(),
             failures: Vec::new(),
             options,
         })
@@ -608,6 +678,8 @@ impl ValidationRunner {
             final_screen_hash,
             screen_checks: self.screen_checks,
             work_ram_checks: self.work_ram_checks,
+            cartridge_ram_checks: self.cartridge_ram_checks,
+            ppu_vram_checks: self.ppu_vram_checks,
             audio,
             failures: self.failures,
         })
@@ -673,6 +745,69 @@ impl CaseHarness for ValidationRunner {
         }
 
         self.work_ram_checks.push(WorkRamCheck {
+            frame,
+            address: u16::try_from(address).expect("address range validated before dispatch"),
+            expected_value,
+            actual_value,
+        });
+        Ok(())
+    }
+
+    fn on_check_cartridge_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError> {
+        let read_result = self.core.peek_cartridge_ram(address).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "ROM case `{}` requested check_cartridge_ram outside cartridge RAM at address 0x{address:04X}",
+                self.case_id
+            ))
+        })?;
+        let actual_value = read_result.data;
+        if self.options.check_expectations && read_result.mask != 0xFF {
+            self.failures.push(format!(
+                "{}: cartridge RAM was unmapped/open bus at frame {} address 0x{:04X}",
+                self.case_id, frame, address
+            ));
+        }
+        if self.options.check_expectations && actual_value != expected_value {
+            self.failures.push(format!(
+                "{}: cartridge RAM mismatch at frame {} address 0x{:04X} (expected 0x{:02X}, actual 0x{:02X})",
+                self.case_id, frame, address, expected_value, actual_value
+            ));
+        }
+
+        self.cartridge_ram_checks.push(CartridgeRamCheck {
+            frame,
+            address: u16::try_from(address).expect("address range validated before dispatch"),
+            expected_value,
+            actual_value,
+        });
+        Ok(())
+    }
+
+    fn on_check_ppu_vram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError> {
+        let actual_value = self.core.peek_ppu_vram(address).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "ROM case `{}` requested check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}",
+                self.case_id
+            ))
+        })?;
+        if self.options.check_expectations && actual_value != expected_value {
+            self.failures.push(format!(
+                "{}: PPU VRAM mismatch at frame {} address 0x{:04X} (expected 0x{:02X}, actual 0x{:02X})",
+                self.case_id, frame, address, expected_value, actual_value
+            ));
+        }
+
+        self.ppu_vram_checks.push(PpuVramCheck {
             frame,
             address: u16::try_from(address).expect("address range validated before dispatch"),
             expected_value,
@@ -969,6 +1104,56 @@ pub fn write_html_report(
                     html.push_str("</tbody></table>");
                 }
 
+                if !validation.cartridge_ram_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Cartridge RAM checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.cartridge_ram_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
+                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.address,
+                            check.expected_value,
+                            check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+
+                if !validation.ppu_vram_checks.is_empty() {
+                    html.push_str(
+                        "<h4>PPU VRAM checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.ppu_vram_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
+                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.address,
+                            check.expected_value,
+                            check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+
                 html.push_str("</section>");
             }
             CaseOutcome::InternalError {
@@ -1030,6 +1215,12 @@ fn dispatch_pending_events<H: CaseHarness>(
             }
             RomEventKind::CheckWorkRam { address, value } => {
                 harness.on_check_work_ram(event.frame, usize::from(address), value)?;
+            }
+            RomEventKind::CheckCartridgeRam { address, value } => {
+                harness.on_check_cartridge_ram(event.frame, usize::from(address), value)?;
+            }
+            RomEventKind::CheckPpuVram { address, value } => {
+                harness.on_check_ppu_vram(event.frame, usize::from(address), value)?;
             }
             RomEventKind::Reset => {
                 harness.on_reset()?;
@@ -1443,6 +1634,26 @@ cases:
                 Ok(())
             }
 
+            fn on_check_cartridge_ram(
+                &mut self,
+                frame: u64,
+                _address: usize,
+                _expected_value: u8,
+            ) -> Result<(), RomTestError> {
+                self.events.push(format!("cart@{frame}"));
+                Ok(())
+            }
+
+            fn on_check_ppu_vram(
+                &mut self,
+                frame: u64,
+                _address: usize,
+                _expected_value: u8,
+            ) -> Result<(), RomTestError> {
+                self.events.push(format!("ppu@{frame}"));
+                Ok(())
+            }
+
             fn on_reset(&mut self) -> Result<(), RomTestError> {
                 self.events.push(format!("reset@{}", self.frame_counter));
                 Ok(())
@@ -1500,6 +1711,20 @@ cases:
                 },
                 RomEvent {
                     frame: 1,
+                    kind: RomEventKind::CheckCartridgeRam {
+                        address: 0x6000,
+                        value: 0x00,
+                    },
+                },
+                RomEvent {
+                    frame: 1,
+                    kind: RomEventKind::CheckPpuVram {
+                        address: 0x2000,
+                        value: 0x00,
+                    },
+                },
+                RomEvent {
+                    frame: 1,
                     kind: RomEventKind::CheckScreen { hash: 1 },
                 },
             ],
@@ -1522,6 +1747,8 @@ cases:
                 "controller@0".to_string(),
                 "microphone@0".to_string(),
                 "ram@1".to_string(),
+                "cart@1".to_string(),
+                "ppu@1".to_string(),
                 "check@1".to_string()
             ]
         );
@@ -1541,6 +1768,40 @@ cases:
             event.validate("mapper.34_test_src.34_test_1"),
             Err(RomTestError::InvalidManifest(message))
                 if message.contains("check_work_ram outside CPU work RAM")
+        ));
+    }
+
+    #[test]
+    fn check_cartridge_ram_rejects_addresses_outside_cartridge_ram() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::CheckCartridgeRam {
+                address: 0x5FFF,
+                value: 0,
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.mmc3_test.1-clocking"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("check_cartridge_ram outside cartridge RAM")
+        ));
+    }
+
+    #[test]
+    fn check_ppu_vram_rejects_addresses_outside_nametable_space() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::CheckPpuVram {
+                address: 0x1FFF,
+                value: 0,
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.mmc3bigchrram"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("check_ppu_vram outside PPU nametable/palette space")
         ));
     }
 }

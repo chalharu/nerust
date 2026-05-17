@@ -313,6 +313,24 @@ impl CaseHarness for PerfRunner {
         Ok(())
     }
 
+    fn on_check_cartridge_ram(
+        &mut self,
+        _frame: u64,
+        _address: usize,
+        _expected_value: u8,
+    ) -> Result<(), rom_test::RomTestError> {
+        Ok(())
+    }
+
+    fn on_check_ppu_vram(
+        &mut self,
+        _frame: u64,
+        _address: usize,
+        _expected_value: u8,
+    ) -> Result<(), rom_test::RomTestError> {
+        Ok(())
+    }
+
     fn on_reset(&mut self) -> Result<(), rom_test::RomTestError> {
         self.core.reset();
         Ok(())
