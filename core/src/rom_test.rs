@@ -904,7 +904,10 @@ pub fn read_rom(case: &RomCase) -> Result<Vec<u8>, RomTestError> {
     apply_case_rom_overrides(case, rom_bytes)
 }
 
-fn apply_case_rom_overrides(case: &RomCase, mut rom_bytes: Vec<u8>) -> Result<Vec<u8>, RomTestError> {
+fn apply_case_rom_overrides(
+    case: &RomCase,
+    mut rom_bytes: Vec<u8>,
+) -> Result<Vec<u8>, RomTestError> {
     if let Some(sub_mapper_type) = case.sub_mapper_type {
         if rom_bytes.len() < 16 || &rom_bytes[..4] != b"NES\x1A" {
             return Err(RomTestError::InvalidManifest(format!(
@@ -1591,7 +1594,10 @@ cases:
         manifest.resolve_paths(&default_manifest_path());
         manifest.validate().expect("manifest should validate");
         assert!(manifest.case("cpu.nestest").unwrap().perf);
-        assert_eq!(manifest.case("cpu.nestest").unwrap().sub_mapper_type, Some(4));
+        assert_eq!(
+            manifest.case("cpu.nestest").unwrap().sub_mapper_type,
+            Some(4)
+        );
     }
 
     #[test]

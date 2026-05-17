@@ -438,7 +438,8 @@ mod tests {
             0x00,
         ];
         rom.resize(16 + 0x8000 + 0x2000, 0);
-        let data = CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse");
+        let data =
+            CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse");
         let mut mapper = Mmc3::new(data);
         Cartridge::initialize(&mut mapper);
         mapper
