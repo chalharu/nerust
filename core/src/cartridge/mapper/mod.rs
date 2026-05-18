@@ -32,6 +32,7 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
         3 => Ok(Box::new(CNRom::new_mapper3(data))),
         4 => mmc3::try_from(data),
         7 => Ok(Box::new(AxRom::new(data))),
+        118 => mmc3::try_from_txsrom(data),
         34 => match data.sub_mapper_type() {
             0 => {
                 if data.char_rom_len() > 0 {

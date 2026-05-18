@@ -99,6 +99,7 @@ cargo run -p nerust_core --features rom-tooling --bin perf --release -- \
 - AxRom (Mapper 7)
 - BnRom (Mapper 34)
 - NINA-001 (Mapper 34)
+- TxSROM (Mapper 118)
 
 ## To-Do
 

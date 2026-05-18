@@ -23,11 +23,22 @@ pub(super) enum PrgRamModel {
     Mmc6,
 }
 
+#[derive(
+    serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default,
+)]
+pub(super) enum MirroringModel {
+    #[default]
+    Standard,
+    TxSrom,
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Mapper4Config {
     irq_variant: IrqVariant,
     prg_ram_model: PrgRamModel,
     bus_conflicts: bool,
+    #[serde(default)]
+    mirroring_model: MirroringModel,
 }
 
 impl Mapper4Config {
@@ -36,10 +47,25 @@ impl Mapper4Config {
         prg_ram_model: PrgRamModel,
         bus_conflicts: bool,
     ) -> Self {
+        Self::from_parts_with_mirroring(
+            irq_variant,
+            prg_ram_model,
+            bus_conflicts,
+            MirroringModel::Standard,
+        )
+    }
+
+    pub(super) const fn from_parts_with_mirroring(
+        irq_variant: IrqVariant,
+        prg_ram_model: PrgRamModel,
+        bus_conflicts: bool,
+        mirroring_model: MirroringModel,
+    ) -> Self {
         Self {
             irq_variant,
             prg_ram_model,
             bus_conflicts,
+            mirroring_model,
         }
     }
 
@@ -57,6 +83,15 @@ impl Mapper4Config {
 
     pub(super) const fn mmc6() -> Self {
         Self::from_parts(IrqVariant::NecOldStyle, PrgRamModel::Mmc6, false)
+    }
+
+    pub(super) const fn txsrom() -> Self {
+        Self::from_parts_with_mirroring(
+            IrqVariant::Sharp,
+            PrgRamModel::Standard,
+            false,
+            MirroringModel::TxSrom,
+        )
     }
 }
 
@@ -308,13 +343,30 @@ impl Mapper4Shared {
 
     fn write_mirroring(&mut self, value: u8) {
         self.mirroring = value;
+        self.update_mirroring_mode();
+    }
 
-        if !matches!(self.get_mirror_mode(), MirrorMode::Four) {
-            self.set_mirror_mode(match value & 1 {
-                0 => MirrorMode::Vertical,
-                1 => MirrorMode::Horizontal,
-                _ => unreachable!(),
-            });
+    fn update_mirroring_mode(&mut self) {
+        match self.config.mirroring_model {
+            MirroringModel::Standard => {
+                if !matches!(self.get_mirror_mode(), MirrorMode::Four) {
+                    self.set_mirror_mode(match self.mirroring & 1 {
+                        0 => MirrorMode::Vertical,
+                        1 => MirrorMode::Horizontal,
+                        _ => unreachable!(),
+                    });
+                }
+            }
+            MirroringModel::TxSrom => {
+                let nametable_registers = if (self.bank_select & 0x80) == 0 {
+                    [0, 0, 1, 1]
+                } else {
+                    [2, 3, 4, 5]
+                };
+                self.set_mirror_mode(MirrorMode::Custom(
+                    nametable_registers.map(|register| (self.bank_data[register] >> 7) & 0x01),
+                ));
+            }
         }
     }
 
@@ -383,6 +435,8 @@ impl Mapper4Shared {
                 }
             }
         }
+
+        self.update_mirroring_mode();
     }
 
     #[cfg(test)]
