@@ -4,15 +4,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_console::Console;
+use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_timer::{CLOCK_RATE, Timer};
+use nerust_timer::CLOCK_RATE;
 use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -23,15 +25,16 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 use wgpu::{
-    BindGroup, BindGroupLayout, Color, ColorTargetState, ColorWrites, CommandEncoderDescriptor,
-    CompositeAlphaMode, Device, Extent3d, Features, FilterMode, FragmentState, Instance, Limits,
-    LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout,
-    TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
+    ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, Features,
+    FilterMode, FragmentState, Instance, Limits, LoadOp, MultisampleState, Operations, Origin3d,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PowerPreference, PresentMode,
+    PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface,
+    SurfaceConfiguration, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
+    Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureViewDescriptor, TextureViewDimension,
 };
 #[cfg(any(
     target_os = "linux",
@@ -250,8 +253,24 @@ struct Viewport {
     height: f32,
 }
 
-fn window_title(paused: bool) -> &'static str {
-    if paused { "Nes -- Paused" } else { "Nes" }
+const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+const SKIPPED_PRESENT_SLEEP: Duration = Duration::from_millis(5);
+
+fn window_title(paused: bool, render_fps: f32, console_metrics: ConsoleMetrics) -> String {
+    let state = if paused { "Nes -- Paused" } else { "Nes" };
+    let fps = if console_metrics.loaded {
+        console_metrics.emulation_fps
+    } else {
+        render_fps
+    };
+    if console_metrics.loaded {
+        format!(
+            "{state} | FPS {:.1} | Speed x{:.2}",
+            fps, console_metrics.speed_multiplier
+        )
+    } else {
+        format!("{state} | FPS {:.1} | No ROM", fps)
+    }
 }
 
 fn keycode_button(code: KeyCode) -> Buttons {
@@ -296,9 +315,9 @@ fn compute_viewport(window_size: TaoPhysicalSize<u32>, content_size: PhysicalSiz
     }
 }
 
-fn create_window_builder(size: PhysicalSize, paused: bool) -> WindowBuilder {
+fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
     WindowBuilder::new()
-        .with_title(window_title(paused))
+        .with_title(title)
         .with_inner_size(TaoLogicalSize::new(
             f64::from(size.width),
             f64::from(size.height),
@@ -539,6 +558,7 @@ struct Renderer {
     queue: Queue,
     config: SurfaceConfiguration,
     frame_texture: Texture,
+    frame_upload_buffer: Buffer,
     _frame_sampler: Sampler,
     _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
@@ -605,6 +625,12 @@ impl Renderer {
             format: TextureFormat::Rgba8UnormSrgb,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
+        });
+        let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("nerust_frame_upload_buffer"),
+            size: (logical_size.width * logical_size.height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
         let frame_view = frame_texture.create_view(&TextureViewDescriptor::default());
         let frame_sampler = device.create_sampler(&SamplerDescriptor {
@@ -694,6 +720,7 @@ impl Renderer {
             queue,
             config,
             frame_texture,
+            frame_upload_buffer,
             _frame_sampler: frame_sampler,
             _bind_group_layout: bind_group_layout,
             bind_group,
@@ -729,19 +756,23 @@ impl Renderer {
         Ok(())
     }
 
-    fn update_frame_texture(&self, frame_buffer: &[u8]) {
-        self.queue.write_texture(
+    fn update_frame_texture(&self, encoder: &mut wgpu::CommandEncoder, frame_buffer: &[u8]) {
+        self.queue
+            .write_buffer(&self.frame_upload_buffer, 0, frame_buffer);
+        encoder.copy_buffer_to_texture(
+            TexelCopyBufferInfo {
+                buffer: &self.frame_upload_buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some((self.logical_size.width * 4) as u32),
+                    rows_per_image: Some(self.logical_size.height as u32),
+                },
+            },
             TexelCopyTextureInfo {
                 texture: &self.frame_texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
-            },
-            frame_buffer,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((self.logical_size.width * 4) as u32),
-                rows_per_image: Some(self.logical_size.height as u32),
             },
             Extent3d {
                 width: self.logical_size.width as u32,
@@ -751,22 +782,20 @@ impl Renderer {
         );
     }
 
-    fn render(&mut self, frame_buffer: &[u8]) -> Result<(), String> {
-        self.update_frame_texture(frame_buffer);
-
+    fn render(&mut self, frame_buffer: &[u8]) -> Result<bool, String> {
         let (surface_texture, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.resize_to_target();
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.recreate_surface()?;
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 return Err("wgpu surface validation error".to_string());
@@ -781,6 +810,7 @@ impl Renderer {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("nerust_render_encoder"),
             });
+        self.update_frame_texture(&mut encoder, frame_buffer);
         let viewport = compute_viewport(
             self.surface_target.surface_size(self.window.inner_size()),
             self.content_size,
@@ -821,7 +851,7 @@ impl Renderer {
         if suboptimal {
             self.resize_to_target();
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -830,13 +860,17 @@ pub struct Window {
     window: Option<Arc<TaoWindow>>,
     renderer: Option<Renderer>,
     last_render_error: Option<String>,
-    timer: Timer,
     keys: Buttons,
     paused: bool,
+    last_presented: bool,
     console: Console,
     app_menu: AppMenu,
     physical_size: PhysicalSize,
     logical_size: LogicalSize,
+    render_frame_count: u32,
+    render_fps: f32,
+    render_started_at: Instant,
+    last_title_update: Instant,
 }
 
 impl Window {
@@ -869,13 +903,17 @@ impl Window {
             window: None,
             renderer: None,
             last_render_error: None,
-            timer: Timer::new(),
             keys: Buttons::empty(),
             paused: false,
+            last_presented: true,
             console,
             app_menu,
             physical_size,
             logical_size,
+            render_frame_count: 0,
+            render_fps: 0.0,
+            render_started_at: Instant::now(),
+            last_title_update: Instant::now(),
         }
     }
 
@@ -925,7 +963,9 @@ impl Window {
                 }
                 Event::MainEventsCleared => {
                     if let Some(window) = self.window.as_ref() {
-                        self.timer.wait();
+                        if !self.last_presented {
+                            thread::sleep(SKIPPED_PRESENT_SLEEP);
+                        }
                         window.request_redraw();
                     }
                 }
@@ -946,7 +986,7 @@ impl Window {
         }
 
         let window = Arc::new(
-            create_window_builder(self.physical_size, self.paused)
+            create_window_builder(self.physical_size, self.current_window_title())
                 .build(event_loop)
                 .unwrap(),
         );
@@ -964,6 +1004,31 @@ impl Window {
         self.renderer = Some(renderer);
     }
 
+    fn current_window_title(&self) -> String {
+        window_title(self.paused, self.render_fps, self.console.metrics())
+    }
+
+    fn refresh_window_title(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(&self.current_window_title());
+        }
+    }
+
+    fn record_render_frame(&mut self) {
+        self.render_frame_count += 1;
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.render_started_at);
+        if elapsed >= TITLE_UPDATE_INTERVAL {
+            self.render_fps = self.render_frame_count as f32 / elapsed.as_secs_f32();
+            self.render_frame_count = 0;
+            self.render_started_at = now;
+        }
+        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
+            self.last_title_update = now;
+            self.refresh_window_title();
+        }
+    }
+
     fn set_paused(&mut self, paused: bool) {
         if self.paused == paused {
             return;
@@ -976,9 +1041,7 @@ impl Window {
             self.console.resume();
         }
         self.app_menu.update(self.paused);
-        if let Some(window) = self.window.as_ref() {
-            window.set_title(window_title(self.paused));
-        }
+        self.refresh_window_title();
     }
 
     fn on_menu_command(&mut self, control_flow: &mut ControlFlow, command: MenuCommand) {
@@ -999,12 +1062,17 @@ impl Window {
             .with_frame_buffer(|frame_buffer| renderer.render(frame_buffer));
 
         match render_result {
-            Ok(()) => {
+            Ok(presented) => {
                 self.last_render_error = None;
+                self.last_presented = presented;
+                if presented {
+                    self.record_render_frame();
+                }
             }
             Err(err) => {
                 let should_log = self.last_render_error.as_deref() != Some(err.as_str());
                 self.last_render_error = Some(err.clone());
+                self.last_presented = false;
                 if should_log {
                     log::error!("{err}");
                 }
@@ -1047,7 +1115,8 @@ impl Default for Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_viewport, keycode_button};
+    use super::{compute_viewport, keycode_button, window_title};
+    use nerust_console::ConsoleMetrics;
     use nerust_core::controller::standard_controller::Buttons;
     use nerust_screen_traits::PhysicalSize;
     use tao::{dpi::PhysicalSize as TaoPhysicalSize, keyboard::KeyCode};
@@ -1081,5 +1150,22 @@ mod tests {
             keycode_button(KeyCode::Enter).bits(),
             Buttons::empty().bits()
         );
+    }
+
+    #[test]
+    fn window_title_surfaces_runtime_metrics() {
+        let title = window_title(
+            false,
+            59.9,
+            ConsoleMetrics {
+                loaded: true,
+                emulation_fps: 59.9,
+                speed_multiplier: 1.01,
+                ..ConsoleMetrics::default()
+            },
+        );
+
+        assert!(title.contains("FPS 59.9"));
+        assert!(title.contains("Speed x1.01"));
     }
 }
