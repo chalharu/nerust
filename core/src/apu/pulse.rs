@@ -199,7 +199,7 @@ mod tests {
         CPU_CLOCK_HZ / (16.0 * (f32::from(raw_period) + 1.0))
     }
 
-    fn test_pulse(is_first_channel: bool, raw_period: u16) -> Pulse {
+    fn test_fixed_pulse(is_first_channel: bool, raw_period: u16) -> Pulse {
         let mut pulse = Pulse::new(is_first_channel);
         pulse.write_control(0xBF);
         pulse.length_counter.set_enabled(true);
@@ -257,8 +257,8 @@ mod tests {
     }
 
     #[test]
-    fn fft_peak_matches_expected_pulse_frequency() {
-        let mut pulse = test_pulse(true, 0x0020);
+    fn fft_peak_matches_expected_fixed_pulse_frequency() {
+        let mut pulse = test_fixed_pulse(true, 0x0020);
         let samples = capture_samples(FFT_SAMPLE_COUNT, || {
             pulse.step_timer();
             f32::from(pulse.output())
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn fft_peak_moves_after_sweep_updates_period() {
-        let mut pulse = test_pulse(true, 0x0040);
+        let mut pulse = test_fixed_pulse(true, 0x0040);
         let before = dominant_frequency(
             &capture_samples(FFT_SAMPLE_COUNT, || {
                 pulse.step_timer();

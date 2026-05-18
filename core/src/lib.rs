@@ -88,8 +88,8 @@ impl Core {
     ) -> Result<Core, Error> {
         cartridge_data.validate()?;
         let mut cpu = Cpu::new();
-        let mut cartridge = cartridge::try_from_with_options(cartridge_data, options)?;
-        let apu = Apu::new(cpu.interrupt_mut(), cartridge.as_mut());
+        let cartridge = cartridge::try_from_with_options(cartridge_data, options)?;
+        let apu = Apu::new(cpu.interrupt_mut());
         Ok(Self {
             cpu,
             ppu: Ppu::new(),
@@ -101,8 +101,7 @@ impl Core {
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.reset();
-        self.apu
-            .reset(self.cpu.interrupt_mut(), self.cartridge.as_mut());
+        self.apu.reset(self.cpu.interrupt_mut());
     }
 
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
@@ -193,12 +192,7 @@ impl Core {
             }
         }
         self.cartridge.step();
-        self.apu.step(
-            &mut self.cpu,
-            self.cartridge.as_mut(),
-            mixer,
-            mixer_sample_rate,
-        );
+        self.apu.step(&mut self.cpu, mixer, mixer_sample_rate);
 
         result
     }
