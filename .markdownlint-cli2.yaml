@@ -1,0 +1,3 @@
+ignores:
+  - "roms/little-things-nes/**"
+  - "roms/nes-test-roms/**"

@@ -1,0 +1,5 @@
+force-exclude = true
+extend-exclude = [
+  "roms/little-things-nes",
+  "roms/nes-test-roms",
+]
