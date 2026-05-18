@@ -1,5 +1,5 @@
-use super::State;
 use super::glarea::{GLArea, GLAreaExtend};
+use super::{State, TITLE_UPDATE_INTERVAL};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
@@ -41,6 +41,7 @@ pub(crate) trait WindowExtend {
     fn pause(&self);
     fn resume(&self);
     fn update_actions(&self);
+    fn refresh_title(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
 }
 
@@ -133,6 +134,14 @@ impl WindowExtend for Window {
         }
         window.add_action(&resume_action);
 
+        {
+            let result = result.clone();
+            let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
+                result.refresh_title();
+                glib::ControlFlow::Continue
+            });
+        }
+
         result.update_actions();
         window.present();
         let _ = glarea.grab_focus();
@@ -219,6 +228,12 @@ impl WindowExtend for Window {
         self.borrow()
             .resume_action
             .set_enabled(self.state().borrow().can_resume());
+        self.refresh_title();
+    }
+
+    fn refresh_title(&self) {
+        let title = self.state().borrow().title();
+        self.window().set_title(Some(title.as_str()));
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
