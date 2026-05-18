@@ -5,7 +5,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::Cartridge;
 use crate::cpu::interrupt::*;
 
 // NTSC
@@ -146,7 +145,7 @@ impl DMC {
         }
     }
 
-    pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt) {
         if self.timer.step_timer() {
             if self.enabled {
                 self.step_shifter();
@@ -155,15 +154,11 @@ impl DMC {
                 self.bit_count -= 1;
             }
 
-            self.step_reader(interrupt, cartridge);
+            self.step_reader(interrupt);
         }
     }
 
-    pub(crate) fn step_reader(
-        &mut self,
-        interrupt: &mut Interrupt,
-        _cartridge: &mut dyn Cartridge,
-    ) {
+    pub(crate) fn step_reader(&mut self, interrupt: &mut Interrupt) {
         if self.bit_count == 0 {
             self.bit_count = 8;
             if self.need_buffer {
@@ -198,7 +193,42 @@ impl DMC {
 
 #[cfg(test)]
 mod tests {
-    use super::DMC;
+    use super::super::fft_test::{
+        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+        dominant_frequency_tolerance,
+    };
+    use super::{DMC, DMC_TABLE};
+    use crate::cpu::interrupt::Interrupt;
+
+    fn expected_single_sample_frequency(rate_index: usize) -> f32 {
+        CPU_CLOCK_HZ / (16.0 * f32::from(DMC_TABLE[rate_index]))
+    }
+
+    fn test_single_sample_dmc(rate_index: u8, sample_byte: u8) -> (DMC, Interrupt) {
+        let mut interrupt = Interrupt::new();
+        let mut dmc = DMC::new();
+        dmc.reset();
+        dmc.write_control(0x40 | rate_index, &mut interrupt);
+        dmc.write_value(64);
+        dmc.write_length(0);
+        dmc.set_enabled(true, &mut interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, &mut interrupt);
+        }
+        dmc.step_reader(&mut interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, &mut interrupt);
+        }
+        (dmc, interrupt)
+    }
+
+    fn step_single_sample_dmc(dmc: &mut DMC, interrupt: &mut Interrupt, sample_byte: u8) -> f32 {
+        dmc.step_timer(interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, interrupt);
+        }
+        f32::from(dmc.output())
+    }
 
     #[test]
     fn step_shifter_clamps_output_at_zero() {
@@ -237,5 +267,21 @@ mod tests {
         dmc.write_value(0xFF);
 
         assert_eq!(dmc.output(), 0x7F);
+    }
+
+    #[test]
+    fn fft_peak_matches_expected_single_sample_frequency() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xF0;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+        let dominant = dominant_frequency(&samples, CPU_CLOCK_HZ);
+
+        assert!(
+            (dominant - expected_single_sample_frequency(rate_index)).abs()
+                <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
+        );
     }
 }

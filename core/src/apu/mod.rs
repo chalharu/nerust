@@ -22,7 +22,6 @@ use self::length_counter::*;
 use self::noise::Noise;
 use self::pulse::Pulse;
 use self::triangle::Triangle;
-use crate::Cartridge;
 use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
@@ -54,7 +53,6 @@ impl Core {
     pub(crate) fn new(
         // sample_rate: u32,
         interrupt: &mut Interrupt,
-        cartridge: &mut dyn Cartridge,
     ) -> Self {
         // let sample_reset_cycle = CLOCK_RATE * sample_rate as u64;
         // let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
@@ -78,11 +76,11 @@ impl Core {
             sample_accumulator: 0,
             frame_counter: FrameCounter::new(),
         };
-        result.initialize(interrupt, cartridge);
+        result.initialize(interrupt);
         result
     }
 
-    pub(crate) fn reset(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    pub(crate) fn reset(&mut self, interrupt: &mut Interrupt) {
         self.pulse1.reset();
         self.pulse2.reset();
         self.triangle.reset();
@@ -90,12 +88,12 @@ impl Core {
         self.dmc.reset();
         self.sample_accumulator = 0;
         self.frame_counter.reset();
-        self.initialize(interrupt, cartridge);
+        self.initialize(interrupt);
     }
 
-    fn initialize(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    fn initialize(&mut self, interrupt: &mut Interrupt) {
         for _ in 0..4 {
-            self.step_frame(interrupt, cartridge);
+            self.step_frame(interrupt);
         }
     }
 
@@ -149,7 +147,7 @@ impl Core {
         self.dmc.fill_address()
     }
 
-    fn step_frame(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    fn step_frame(&mut self, interrupt: &mut Interrupt) {
         match self.frame_counter.step_frame_counter(interrupt) {
             FrameType::Half => {
                 self.quarter_frame();
@@ -158,17 +156,16 @@ impl Core {
             FrameType::Quarter => self.quarter_frame(),
             FrameType::None => (),
         }
-        self.step_timer(interrupt, cartridge);
+        self.step_timer(interrupt);
     }
 
     pub(crate) fn step<M: MixerInput>(
         &mut self,
         cpu: &mut Cpu,
-        cartridge: &mut dyn Cartridge,
         mixer: &mut M,
         mixer_sample_rate: u32,
     ) {
-        self.step_frame(cpu.interrupt_mut(), cartridge);
+        self.step_frame(cpu.interrupt_mut());
         if self.sample_accumulator >= CLOCK_RATE {
             self.sample_accumulator %= CLOCK_RATE;
         }
@@ -202,14 +199,14 @@ impl Core {
         self.step_length();
     }
 
-    fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    fn step_timer(&mut self, interrupt: &mut Interrupt) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
         self.noise.step_length_counter();
         self.pulse1.step_timer();
         self.pulse2.step_timer();
         self.noise.step_timer();
-        self.dmc.step_timer(interrupt, cartridge);
+        self.dmc.step_timer(interrupt);
         self.triangle.step_timer();
     }
 

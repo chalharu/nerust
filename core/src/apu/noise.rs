@@ -115,3 +115,46 @@ impl Noise {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::fft_test::{
+        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+        dominant_frequency_tolerance,
+    };
+    use super::{NOISE_TABLE, Noise};
+
+    const SHORT_MODE_SEQUENCE_LENGTH: f32 = 93.0;
+    const SHORT_MODE_DOMINANT_HARMONIC: f32 = 31.0;
+
+    fn expected_short_mode_peak(period_index: usize) -> f32 {
+        SHORT_MODE_DOMINANT_HARMONIC * CPU_CLOCK_HZ
+            / (f32::from(NOISE_TABLE[period_index]) * SHORT_MODE_SEQUENCE_LENGTH)
+    }
+
+    fn test_fixed_noise(period_index: u8) -> Noise {
+        let mut noise = Noise::new();
+        noise.write_control(0x3F);
+        noise.length_counter.set_enabled(true);
+        noise.write_period(0x80 | period_index);
+        noise.write_length(0xF8);
+        noise.length_counter.step();
+        noise
+    }
+
+    #[test]
+    fn fft_peak_matches_expected_fixed_noise_frequency() {
+        let period_index = 5_usize;
+        let mut noise = test_fixed_noise(period_index as u8);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            noise.step_timer();
+            f32::from(noise.output())
+        });
+        let dominant = dominant_frequency(&samples, CPU_CLOCK_HZ);
+
+        assert!(
+            (dominant - expected_short_mode_peak(period_index)).abs()
+                <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
+        );
+    }
+}
