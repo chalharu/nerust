@@ -20,7 +20,7 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_timer::{CLOCK_RATE, TARGET_FPS};
+use nerust_timer::CLOCK_RATE;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -111,10 +111,7 @@ fn create_window(
 }
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-
-fn frame_interval() -> Duration {
-    Duration::from_secs_f64(1.0 / TARGET_FPS as f64)
-}
+const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
     let state = if paused { "Nes -- Paused" } else { "Nes" };
@@ -141,7 +138,6 @@ pub struct Window {
     logical_size: LogicalSize,
     last_title_update: Instant,
     last_presented_frame_counter: u64,
-    next_redraw_at: Instant,
     needs_redraw: bool,
 }
 
@@ -172,7 +168,6 @@ impl Window {
             logical_size,
             last_title_update: Instant::now(),
             last_presented_frame_counter: 0,
-            next_redraw_at: Instant::now(),
             needs_redraw: true,
         }
     }
@@ -280,23 +275,6 @@ impl Window {
         }
     }
 
-    fn advance_redraw_deadline(&mut self, now: Instant) {
-        if self.next_redraw_at > now {
-            return;
-        }
-
-        let interval = frame_interval();
-        let interval_nanos = interval.as_nanos();
-        let skipped_intervals = now.duration_since(self.next_redraw_at).as_nanos() / interval_nanos;
-        let skipped_intervals = skipped_intervals.saturating_add(1);
-        let skipped_intervals = skipped_intervals.min(u128::from(u32::MAX)) as u32;
-        let advance = interval.checked_mul(skipped_intervals).unwrap_or(interval);
-        self.next_redraw_at += advance;
-        if self.next_redraw_at <= now {
-            self.next_redraw_at = now + interval;
-        }
-    }
-
     fn set_paused(&mut self, paused: bool) {
         if self.paused == paused {
             return;
@@ -308,7 +286,6 @@ impl Window {
         } else {
             self.console.resume();
             self.needs_redraw = true;
-            self.next_redraw_at = Instant::now();
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
@@ -387,28 +364,20 @@ impl ApplicationHandler for Window {
         let now = Instant::now();
         self.maybe_refresh_window_title(now);
 
-        if self.window.is_none() {
+        let Some(window) = self.window.as_ref() else {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
-        }
+        };
 
         let metrics = self.console.metrics();
-        let should_redraw =
-            self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter;
-        if !should_redraw && (!metrics.loaded || metrics.paused) {
+        if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
+            window.request_redraw();
+        }
+
+        if self.needs_redraw || (metrics.loaded && !metrics.paused) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL));
+        } else {
             event_loop.set_control_flow(ControlFlow::Wait);
-            return;
-        }
-
-        if now < self.next_redraw_at {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_redraw_at));
-            return;
-        }
-
-        self.advance_redraw_deadline(now);
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_redraw_at));
-        if should_redraw {
-            self.window.as_ref().unwrap().request_redraw();
         }
     }
 
