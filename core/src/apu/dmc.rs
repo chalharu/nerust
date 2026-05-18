@@ -7,7 +7,6 @@
 use super::timer::*;
 use crate::Cartridge;
 use crate::cpu::interrupt::*;
-use std::mem;
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_DMC
@@ -36,7 +35,6 @@ pub(crate) struct DMC {
     need_buffer: bool,
     is_loop: bool,
     irq: bool,
-    prev_reg_value: u8,
     timer: TimerDao,
 }
 
@@ -64,7 +62,6 @@ impl DMC {
             sample_length: 0,
             is_loop: false,
             irq: false,
-            prev_reg_value: 0,
             timer: TimerDao::new(),
         }
     }
@@ -89,17 +86,7 @@ impl DMC {
     }
 
     pub(crate) fn write_value(&mut self, value: u8) {
-        let prev_value = mem::replace(&mut self.value, value & 0x7F);
-        self.prev_reg_value = self.value;
-
-        let output_diff = self.value.abs_diff(prev_value);
-        if output_diff > 50 {
-            if self.value > prev_value {
-                self.value -= output_diff >> 1;
-            } else {
-                self.value += output_diff >> 1;
-            }
-        }
+        self.value = value & 0x7F;
     }
 
     pub(crate) fn write_address(&mut self, value: u8) {
@@ -230,5 +217,25 @@ mod tests {
         dmc.step_shifter();
 
         assert_eq!(dmc.output(), 6);
+    }
+
+    #[test]
+    fn write_value_updates_output_immediately_without_smoothing() {
+        let mut dmc = DMC::new();
+
+        dmc.write_value(0x7F);
+        assert_eq!(dmc.output(), 0x7F);
+
+        dmc.write_value(0);
+        assert_eq!(dmc.output(), 0);
+    }
+
+    #[test]
+    fn write_value_masks_to_seven_bits() {
+        let mut dmc = DMC::new();
+
+        dmc.write_value(0xFF);
+
+        assert_eq!(dmc.output(), 0x7F);
     }
 }
