@@ -10,6 +10,29 @@ pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
 use crate::cpu::interrupt::Interrupt;
 use crate::{CoreOptions, MirrorMode, OpenBusReadResult};
+
+/// An observable event on the PPU address/data bus.
+///
+/// Mappers subscribe to these events to implement timing-sensitive behaviour such
+/// as the MMC3 family's A12-edge scanline-IRQ counter. The enum is forward-extensible:
+/// additional PPU-timing events (e.g. scanline boundaries) can be added without
+/// changing existing mapper implementations.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PpuBusEvent {
+    /// The PPU placed a new address on the bus (CHR address lines A0–A13 visible to
+    /// the cartridge).
+    ///
+    /// * `address`           – 14-bit PPU bus address (0x0000–0x3FFF, already masked)
+    /// * `ppu_tick`          – Monotonic PPU-clock tick counter (increments every PPU step)
+    /// * `from_cpu_register` – `true` when the address change originates from a delayed
+    ///   CPU-side PPU register write ($2006/$2007 address latch update), `false` for
+    ///   normal hardware rendering fetches
+    AddressBusUpdate {
+        address: usize,
+        ppu_tick: u64,
+        from_cpu_register: bool,
+    },
+}
 use std::cmp;
 
 #[typetag::serde(tag = "type")]
@@ -328,14 +351,12 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn step(&mut self) {}
 
-    fn vram_address_change(
-        &mut self,
-        _address: usize,
-        _ppu_tick: u64,
-        _address_register_change: bool,
-        _interrupt: &mut Interrupt,
-    ) {
-    }
+    /// Notify the mapper of an observable PPU bus event.
+    ///
+    /// The default implementation is a no-op. Mappers that count scanlines or
+    /// otherwise react to PPU bus activity (e.g. MMC3-family A12-edge IRQ) override
+    /// this method.
+    fn notify_ppu_bus_event(&mut self, _event: PpuBusEvent, _interrupt: &mut Interrupt) {}
 }
 
 pub(crate) fn try_from<I: Iterator<Item = u8>>(

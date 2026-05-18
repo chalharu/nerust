@@ -9,7 +9,7 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
-use crate::cartridge::Cartridge;
+use crate::cartridge::{Cartridge, PpuBusEvent};
 use crate::cpu::interrupt::Interrupt;
 use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
@@ -608,10 +608,12 @@ impl Core {
     ) -> u8 {
         address &= 0x3FFF;
         if self.render_executing || address <= 0x1FFF {
-            cartridge.vram_address_change(
-                address,
-                self.ppu_bus_tick(),
-                address_register_change,
+            cartridge.notify_ppu_bus_event(
+                PpuBusEvent::AddressBusUpdate {
+                    address,
+                    ppu_tick: self.ppu_bus_tick(),
+                    from_cpu_register: address_register_change,
+                },
                 interrupt,
             );
         }
@@ -778,10 +780,12 @@ impl Core {
     ) {
         address &= 0x3FFF;
         if self.render_executing || address <= 0x1FFF {
-            cartridge.vram_address_change(
-                address,
-                self.ppu_bus_tick(),
-                address_register_change,
+            cartridge.notify_ppu_bus_event(
+                PpuBusEvent::AddressBusUpdate {
+                    address,
+                    ppu_tick: self.ppu_bus_tick(),
+                    from_cpu_register: address_register_change,
+                },
                 interrupt,
             );
         }
@@ -1261,7 +1265,14 @@ impl Core {
             self.state.vram_addr = self.new_vram_addr;
             let address = usize::from(self.state.vram_addr & 0x3FFF);
             if self.state.vram_addr != previous_vram_addr {
-                cartridge.vram_address_change(address, self.ppu_bus_tick(), true, interrupt);
+                cartridge.notify_ppu_bus_event(
+                    PpuBusEvent::AddressBusUpdate {
+                        address,
+                        ppu_tick: self.ppu_bus_tick(),
+                        from_cpu_register: true,
+                    },
+                    interrupt,
+                );
             }
         }
         result
