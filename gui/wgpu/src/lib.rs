@@ -559,12 +559,70 @@ struct Renderer {
     config: SurfaceConfiguration,
     frame_texture: Texture,
     frame_upload_buffer: Buffer,
+    frame_upload_layout: FrameUploadLayout,
+    frame_upload_staging: Box<[u8]>,
     _frame_sampler: Sampler,
     _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
     pipeline: RenderPipeline,
     logical_size: LogicalSize,
     content_size: PhysicalSize,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct FrameUploadLayout {
+    copy_bytes_per_row: u32,
+    upload_bytes_per_row: u32,
+    buffer_size: u64,
+}
+
+impl FrameUploadLayout {
+    fn for_logical_size(logical_size: LogicalSize) -> Result<Self, String> {
+        let copy_bytes_per_row = logical_size
+            .width
+            .checked_mul(4)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| "frame upload row size overflowed u32".to_string())?;
+        let upload_bytes_per_row =
+            align_copy_bytes_per_row(copy_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer_size = u64::from(upload_bytes_per_row)
+            .checked_mul(logical_size.height as u64)
+            .ok_or_else(|| "frame upload buffer size overflowed u64".to_string())?;
+        Ok(Self {
+            copy_bytes_per_row,
+            upload_bytes_per_row,
+            buffer_size,
+        })
+    }
+}
+
+fn align_copy_bytes_per_row(bytes_per_row: u32, alignment: u32) -> u32 {
+    bytes_per_row.div_ceil(alignment) * alignment
+}
+
+fn pack_frame_rows(
+    source: &[u8],
+    height: usize,
+    destination: &mut [u8],
+    layout: FrameUploadLayout,
+) {
+    let copy_bytes_per_row = layout.copy_bytes_per_row as usize;
+    let upload_bytes_per_row = layout.upload_bytes_per_row as usize;
+    debug_assert_eq!(source.len(), copy_bytes_per_row * height);
+    debug_assert!(destination.len() >= upload_bytes_per_row * height);
+
+    if copy_bytes_per_row == upload_bytes_per_row {
+        destination[..source.len()].copy_from_slice(source);
+        return;
+    }
+
+    for (source_row, destination_row) in source
+        .chunks_exact(copy_bytes_per_row)
+        .zip(destination.chunks_exact_mut(upload_bytes_per_row))
+        .take(height)
+    {
+        destination_row[..copy_bytes_per_row].copy_from_slice(source_row);
+    }
 }
 
 impl Renderer {
@@ -611,6 +669,7 @@ impl Renderer {
             config.alpha_mode = CompositeAlphaMode::Opaque;
         }
         surface.configure(&device, &config);
+        let frame_upload_layout = FrameUploadLayout::for_logical_size(logical_size)?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
             label: Some("nerust_frame_texture"),
@@ -628,10 +687,12 @@ impl Renderer {
         });
         let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_frame_upload_buffer"),
-            size: (logical_size.width * logical_size.height * 4) as u64,
+            size: frame_upload_layout.buffer_size,
             usage: BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        let frame_upload_staging =
+            vec![0; frame_upload_layout.buffer_size as usize].into_boxed_slice();
         let frame_view = frame_texture.create_view(&TextureViewDescriptor::default());
         let frame_sampler = device.create_sampler(&SamplerDescriptor {
             label: Some("nerust_frame_sampler"),
@@ -721,6 +782,8 @@ impl Renderer {
             config,
             frame_texture,
             frame_upload_buffer,
+            frame_upload_layout,
+            frame_upload_staging,
             _frame_sampler: frame_sampler,
             _bind_group_layout: bind_group_layout,
             bind_group,
@@ -756,15 +819,28 @@ impl Renderer {
         Ok(())
     }
 
-    fn update_frame_texture(&self, encoder: &mut wgpu::CommandEncoder, frame_buffer: &[u8]) {
+    fn update_frame_texture(&mut self, encoder: &mut wgpu::CommandEncoder, frame_buffer: &[u8]) {
+        let upload_bytes = if self.frame_upload_layout.copy_bytes_per_row
+            == self.frame_upload_layout.upload_bytes_per_row
+        {
+            frame_buffer
+        } else {
+            pack_frame_rows(
+                frame_buffer,
+                self.logical_size.height,
+                &mut self.frame_upload_staging,
+                self.frame_upload_layout,
+            );
+            &self.frame_upload_staging
+        };
         self.queue
-            .write_buffer(&self.frame_upload_buffer, 0, frame_buffer);
+            .write_buffer(&self.frame_upload_buffer, 0, upload_bytes);
         encoder.copy_buffer_to_texture(
             TexelCopyBufferInfo {
                 buffer: &self.frame_upload_buffer,
                 layout: TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some((self.logical_size.width * 4) as u32),
+                    bytes_per_row: Some(self.frame_upload_layout.upload_bytes_per_row),
                     rows_per_image: Some(self.logical_size.height as u32),
                 },
             },
@@ -1115,11 +1191,64 @@ impl Default for Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_viewport, keycode_button, window_title};
+    use super::{
+        FrameUploadLayout, compute_viewport, keycode_button, pack_frame_rows, window_title,
+    };
     use nerust_console::ConsoleMetrics;
     use nerust_core::controller::standard_controller::Buttons;
-    use nerust_screen_traits::PhysicalSize;
+    use nerust_screen_traits::{LogicalSize, PhysicalSize};
     use tao::{dpi::PhysicalSize as TaoPhysicalSize, keyboard::KeyCode};
+
+    #[test]
+    fn aligned_upload_layout_keeps_native_row_pitch() {
+        let layout = FrameUploadLayout::for_logical_size(LogicalSize {
+            width: 256,
+            height: 240,
+        })
+        .expect("layout should be valid");
+
+        assert_eq!(layout.copy_bytes_per_row, 1024);
+        assert_eq!(layout.upload_bytes_per_row, 1024);
+        assert_eq!(layout.buffer_size, 245_760);
+    }
+
+    #[test]
+    fn unaligned_upload_layout_rounds_up_to_copy_alignment() {
+        let layout = FrameUploadLayout::for_logical_size(LogicalSize {
+            width: 602,
+            height: 240,
+        })
+        .expect("layout should be valid");
+
+        assert_eq!(layout.copy_bytes_per_row, 2408);
+        assert_eq!(
+            layout.upload_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+            0
+        );
+        assert_eq!(layout.upload_bytes_per_row, 2560);
+        assert_eq!(layout.buffer_size, 614_400);
+    }
+
+    #[test]
+    fn pack_frame_rows_inserts_row_padding_without_reordering_pixels() {
+        let layout = FrameUploadLayout {
+            copy_bytes_per_row: 8,
+            upload_bytes_per_row: 16,
+            buffer_size: 32,
+        };
+        let source = [
+            1_u8, 2, 3, 4, 5, 6, 7, 8, //
+            9, 10, 11, 12, 13, 14, 15, 16,
+        ];
+        let mut destination = [0_u8; 32];
+
+        pack_frame_rows(&source, 2, &mut destination, layout);
+
+        assert_eq!(&destination[0..8], &source[0..8]);
+        assert_eq!(&destination[16..24], &source[8..16]);
+        assert_eq!(&destination[8..16], &[0; 8]);
+        assert_eq!(&destination[24..32], &[0; 8]);
+    }
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
