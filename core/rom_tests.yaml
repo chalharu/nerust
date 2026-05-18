@@ -595,10 +595,10 @@ cases:
       - {frame: 120, action: check_screen, hash: "0xF4E380CDA04C1BC7"}
   - id: mapper.holy_mapperel.m1_sxrom
     category: mapper
-    description: "Verifies mapper 1 SxROM bank switching and WRAM handling using Holy Mapperel."
+    description: "Verifies mapper 1 MMC1 bank switching and WRAM protection using Holy Mapperel."
     rom: holy-mapperel/testroms/M1_P128K_C32K_W8K.nes
     events:
-      - {frame: 120, action: check_screen, hash: "0x9267CA6C596A7D05"}
+      - {frame: 120, action: check_screen, hash: "0x2DE2FC3DAAEB4C03"}
   - id: mapper.holy_mapperel.m2_uxrom
     category: mapper
     description: "Verifies mapper 2 UxROM bank switching and CHR RAM handling using Holy Mapperel."
