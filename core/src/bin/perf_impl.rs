@@ -16,8 +16,8 @@ use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_sound_traits::MixerInput;
 use rom_test::{
-    ButtonCode, CaseHarness, CaseOutcome, ControllerPad, PadState, RomCase, drive_case,
-    load_default_manifest, read_rom, validate_case,
+    ButtonCode, CaseHarness, CaseOutcome, ControllerPad, PadState, RomAssertion, RomCase,
+    drive_case, load_default_manifest, read_rom, validate_case,
 };
 use std::time::{Duration, Instant};
 
@@ -297,38 +297,10 @@ impl CaseHarness for PerfRunner {
         self.frame_counter
     }
 
-    fn on_check_screen(
+    fn on_assert(
         &mut self,
         _frame: u64,
-        _expected_hash: u64,
-    ) -> Result<(), rom_test::RomTestError> {
-        Ok(())
-    }
-
-    fn on_check_work_ram(
-        &mut self,
-        _frame: u64,
-        _address: usize,
-        _expected_value: u8,
-    ) -> Result<(), rom_test::RomTestError> {
-        Ok(())
-    }
-
-    fn on_check_cartridge_ram(
-        &mut self,
-        _frame: u64,
-        _address: usize,
-        _expected_value: u8,
-        _expect_open_bus: bool,
-    ) -> Result<(), rom_test::RomTestError> {
-        Ok(())
-    }
-
-    fn on_check_ppu_vram(
-        &mut self,
-        _frame: u64,
-        _address: usize,
-        _expected_value: u8,
+        _assertion: &RomAssertion,
     ) -> Result<(), rom_test::RomTestError> {
         Ok(())
     }
