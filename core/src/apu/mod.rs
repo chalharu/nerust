@@ -6,6 +6,8 @@
 
 mod dmc;
 mod envelope;
+#[cfg(test)]
+mod fft_test;
 mod frame_counter;
 mod length_counter;
 mod noise;
