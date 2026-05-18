@@ -17,6 +17,11 @@
 *.nes.ram.nl
 *.cdl
 */*.nes
+!mmc3bigchrram/mmc3bigchrram.nes
+!mmc3o/mmc3o.nes
+!mmc3o/mmc3o_1M_CR32.nes
+!mmc3spaminc/mmc3spaminc.nes
+!mmc3spaminc/mmc3spaminc-tg.nes
 */*.nsf
 *.sav
 *.zip
