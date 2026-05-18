@@ -13,18 +13,19 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use nerust_console::Console;
+use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_timer::{CLOCK_RATE, Timer};
+use nerust_timer::CLOCK_RATE;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
 use std::num::NonZeroU32;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -109,18 +110,35 @@ fn create_window(
     (window, gl_context, gl_surface)
 }
 
+const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
+    let state = if paused { "Nes -- Paused" } else { "Nes" };
+    if console_metrics.loaded {
+        format!(
+            "{state} | FPS {:.1} | Speed x{:.2}",
+            console_metrics.emulation_fps, console_metrics.speed_multiplier
+        )
+    } else {
+        format!("{state} | No ROM")
+    }
+}
+
 pub struct Window {
     view: Option<GlView>,
     gl_context: Option<PossiblyCurrentContext>,
     gl_surface: Option<Surface<WindowSurface>>,
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
-    timer: Timer,
     keys: Buttons,
     paused: bool,
     console: Console,
     physical_size: PhysicalSize,
     logical_size: LogicalSize,
+    last_title_update: Instant,
+    last_presented_frame_counter: u64,
+    needs_redraw: bool,
 }
 
 impl Window {
@@ -143,12 +161,14 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            timer: Timer::new(),
             keys: Buttons::empty(),
             paused: false,
             console,
             physical_size,
             logical_size,
+            last_title_update: Instant::now(),
+            last_presented_frame_counter: 0,
+            needs_redraw: true,
         }
     }
 
@@ -159,7 +179,7 @@ impl Window {
     pub fn run(&mut self) {
         self.console.resume();
         let event_loop = self.event_loop.take().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
+        event_loop.set_control_flow(ControlFlow::Wait);
         event_loop.run_app(self).unwrap();
     }
 
@@ -179,6 +199,7 @@ impl Window {
         self.gl_surface = Some(gl_surface);
         self.view = Some(view);
         self.on_resize(initial_size);
+        self.refresh_window_title();
     }
 
     fn on_update(&mut self) {
@@ -194,6 +215,9 @@ impl Window {
             .unwrap()
             .swap_buffers(self.gl_context.as_ref().unwrap())
             .unwrap();
+        self.last_presented_frame_counter = self.console.metrics().frame_counter;
+        self.needs_redraw = false;
+        self.maybe_refresh_window_title(Instant::now());
     }
 
     fn on_resize(&mut self, physical_size: WinitPhysicalSize<u32>) {
@@ -221,6 +245,7 @@ impl Window {
             physical_size.width as i32,
             physical_size.height as i32,
         );
+        self.needs_redraw = true;
     }
 
     fn on_close(&mut self) {
@@ -231,6 +256,41 @@ impl Window {
         self.gl_surface = None;
         self.gl_context = None;
         self.window = None;
+    }
+
+    fn current_window_title(&self) -> String {
+        window_title(self.paused, self.console.metrics())
+    }
+
+    fn refresh_window_title(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(self.current_window_title().as_str());
+        }
+    }
+
+    fn maybe_refresh_window_title(&mut self, now: Instant) {
+        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
+            self.last_title_update = now;
+            self.refresh_window_title();
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+
+        self.paused = paused;
+        if self.paused {
+            self.console.pause();
+        } else {
+            self.console.resume();
+            self.needs_redraw = true;
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+        }
+        self.refresh_window_title();
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
@@ -253,15 +313,7 @@ impl Window {
             PhysicalKey::Code(KeyCode::ArrowLeft) => Buttons::LEFT,
             PhysicalKey::Code(KeyCode::ArrowRight) => Buttons::RIGHT,
             PhysicalKey::Code(KeyCode::Space) if input.state == ElementState::Pressed => {
-                self.paused = !self.paused;
-                let title = if self.paused {
-                    self.console.pause();
-                    "Nes -- Paused".to_string()
-                } else {
-                    self.console.resume();
-                    "Nes".to_string()
-                };
-                self.window.as_ref().unwrap().set_title(title.as_str());
+                self.set_paused(!self.paused);
                 Buttons::empty()
             }
             PhysicalKey::Code(KeyCode::Escape) => {
@@ -296,17 +348,36 @@ impl ApplicationHandler for Window {
                 self.on_close();
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => self.on_resize(size),
+            WindowEvent::Resized(size) => {
+                self.on_resize(size);
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.as_ref() {
-            self.timer.wait();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        self.maybe_refresh_window_title(now);
+
+        let Some(window) = self.window.as_ref() else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        };
+
+        let metrics = self.console.metrics();
+        if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
             window.request_redraw();
+        }
+
+        if self.needs_redraw || (metrics.loaded && !metrics.paused) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 
@@ -328,5 +399,35 @@ impl Drop for Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_title;
+    use nerust_console::ConsoleMetrics;
+
+    #[test]
+    fn window_title_surfaces_runtime_metrics() {
+        let title = window_title(
+            false,
+            ConsoleMetrics {
+                loaded: true,
+                emulation_fps: 59.9,
+                speed_multiplier: 1.01,
+                ..ConsoleMetrics::default()
+            },
+        );
+
+        assert!(title.contains("FPS 59.9"));
+        assert!(title.contains("Speed x1.01"));
+    }
+
+    #[test]
+    fn window_title_marks_no_rom() {
+        let title = window_title(true, ConsoleMetrics::default());
+
+        assert!(title.contains("Paused"));
+        assert!(title.contains("No ROM"));
     }
 }
