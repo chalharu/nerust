@@ -1621,7 +1621,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: cpu/nestest.nes
+    rom: nes-test-roms/other/nestest.nes
     perf: true
     sub_mapper_type: 4
     mmc3_irq_variant: nec
@@ -1666,7 +1666,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: cpu/nestest.nes
+    rom: nes-test-roms/other/nestest.nes
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
 "#,
@@ -1679,7 +1679,7 @@ cases:
             manifest.case("cpu.nestest").unwrap().resolved_rom_path,
             Path::new("/tmp/config")
                 .join("fixtures/roms")
-                .join("cpu/nestest.nes")
+                .join("nes-test-roms/other/nestest.nes")
         );
     }
 
@@ -1767,7 +1767,7 @@ cases:
             id: "frame-zero".to_string(),
             category: RomCategory::Cpu,
             description: "Frame-zero dispatch regression.".to_string(),
-            rom: "cpu/nestest.nes".to_string(),
+            rom: "nes-test-roms/other/nestest.nes".to_string(),
             perf: false,
             sub_mapper_type: None,
             mmc3_irq_variant: None,
@@ -1928,7 +1928,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: cpu/nestest.nes
+    rom: nes-test-roms/other/nestest.nes
     sub_mapper_type: 16
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
