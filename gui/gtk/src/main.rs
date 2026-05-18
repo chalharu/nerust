@@ -6,7 +6,7 @@ use self::window::{Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_console::Console;
+use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
@@ -16,6 +16,21 @@ use nerust_sound_openal::{OpenAl, prepare_macos_runtime};
 use nerust_timer::CLOCK_RATE;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
+
+const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
+fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
+    let state = if paused { "Nes -- Paused" } else { "Nes" };
+    if console_metrics.loaded {
+        format!(
+            "{state} | FPS {:.1} | Speed x{:.2}",
+            console_metrics.emulation_fps, console_metrics.speed_multiplier
+        )
+    } else {
+        format!("{state} | No ROM")
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct State {
@@ -74,6 +89,10 @@ impl State {
 
     pub(crate) fn loaded(&self) -> bool {
         self.loaded
+    }
+
+    pub(crate) fn title(&self) -> String {
+        window_title(self.paused, self.console.metrics())
     }
 
     pub(crate) fn unload(&mut self) {
@@ -193,4 +212,26 @@ fn main() {
     }
 
     let _ = app.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_title;
+    use nerust_console::ConsoleMetrics;
+
+    #[test]
+    fn window_title_surfaces_runtime_metrics() {
+        let title = window_title(
+            false,
+            ConsoleMetrics {
+                loaded: true,
+                emulation_fps: 59.9,
+                speed_multiplier: 1.01,
+                ..ConsoleMetrics::default()
+            },
+        );
+
+        assert!(title.contains("FPS 59.9"));
+        assert!(title.contains("Speed x1.01"));
+    }
 }
