@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 MMC3 big CHR RAM
 ================
 

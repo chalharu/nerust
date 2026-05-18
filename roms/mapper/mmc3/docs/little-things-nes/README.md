@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # little things
 
 One-off tech demos and test ROMs for NES
@@ -31,7 +33,8 @@ prior to 2019.
 - File extractor for Family Computer Disk System (FDS) images
 - [FME-7 big PRG RAM](https://forums.nesdev.com/viewtopic.php?p=142573#p142573)
 - [FME-7 IRQ acknowledgment](https://forums.nesdev.com/viewtopic.php?p=142243#p142243)
-- [gmewav](https://forums.nesdev.com/viewtopic.php?f=6&t=16218): render anything libgme or DUMB plays to a WAV file
+- [gmewav](https://forums.nesdev.com/viewtopic.php?f=6&t=16218):
+  render anything libgme or DUMB plays to a WAV file
 - GNOME vs. KDE: Battle of the Desktops:
   Bingo-inspired 2-player game
 - Hello World program produced while learning ca65
@@ -53,7 +56,8 @@ prior to 2019.
 - Nibbles:
   the snake game people have loved since the QBasic era, which
   ended up on a few famiclones' built-in pirate multicarts
-- [OAM reset quirk](https://forums.nesdev.com/viewtopic.php?f=9&t=9628): 2 sprites will be missing after Reset
+- [OAM reset quirk](https://forums.nesdev.com/viewtopic.php?f=9&t=9628):
+  2 sprites will be missing after Reset
 - [Password save](https://forums.nesdev.com/viewtopic.php?p=64656#p64656)
 - [PAL chroma phase](https://forums.nesdev.com/viewtopic.php?p=133629#p133629):
   investigate how a TV comb filter combines scanlines in the video
