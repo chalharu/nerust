@@ -1,6 +1,7 @@
 # MMC3 test ROM sources
 
-This directory keeps the upstream documentation that corresponds to the MMC3-family test ROM binaries bundled under `roms/mapper/mmc3/`.
+This directory keeps the upstream documentation that corresponds to the
+MMC3-family test ROM binaries bundled under `roms/mapper/mmc3/`.
 
 ## christopherpow/nes-test-roms
 
@@ -14,7 +15,9 @@ This directory keeps the upstream documentation that corresponds to the MMC3-fam
   - `nes-test-roms/mmc3_test-readme.txt`
   - `nes-test-roms/mmc3_test_2-readme.txt`
 
-The upstream repository does not currently expose GitHub license metadata, so the per-suite readmes are stored here together with the ROMs for provenance.
+The upstream repository does not currently expose GitHub license metadata,
+so the per-suite readmes are stored here together with the ROMs for
+provenance.
 
 ## pinobatch/little-things-nes
 
@@ -31,4 +34,6 @@ The upstream repository does not currently expose GitHub license metadata, so th
   - `little-things-nes/mmc3o-LICENSE.txt`
   - `little-things-nes/mmc3spaminc-README.md`
 
-The upstream README notes that licensing for the repository merits an audit, so the available upstream documentation is stored alongside the ROM bundle instead of only keeping the finished binaries.
+The upstream README notes that licensing for the repository merits an audit,
+so the available upstream documentation is stored alongside the ROM bundle
+instead of only keeping the finished binaries.
