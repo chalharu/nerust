@@ -11,9 +11,8 @@ use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
-use nerust_timer::CLOCK_RATE;
+use nerust_timer::{CLOCK_RATE, TARGET_FPS};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -254,22 +253,20 @@ struct Viewport {
 }
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-const SKIPPED_PRESENT_SLEEP: Duration = Duration::from_millis(5);
 
-fn window_title(paused: bool, render_fps: f32, console_metrics: ConsoleMetrics) -> String {
+fn frame_interval() -> Duration {
+    Duration::from_secs_f64(1.0 / TARGET_FPS as f64)
+}
+
+fn window_title(paused: bool, _render_fps: f32, console_metrics: ConsoleMetrics) -> String {
     let state = if paused { "Nes -- Paused" } else { "Nes" };
-    let fps = if console_metrics.loaded {
-        console_metrics.emulation_fps
-    } else {
-        render_fps
-    };
     if console_metrics.loaded {
         format!(
             "{state} | FPS {:.1} | Speed x{:.2}",
-            fps, console_metrics.speed_multiplier
+            console_metrics.emulation_fps, console_metrics.speed_multiplier
         )
     } else {
-        format!("{state} | FPS {:.1} | No ROM", fps)
+        format!("{state} | No ROM")
     }
 }
 
@@ -938,7 +935,6 @@ pub struct Window {
     last_render_error: Option<String>,
     keys: Buttons,
     paused: bool,
-    last_presented: bool,
     console: Console,
     app_menu: AppMenu,
     physical_size: PhysicalSize,
@@ -947,6 +943,9 @@ pub struct Window {
     render_fps: f32,
     render_started_at: Instant,
     last_title_update: Instant,
+    last_presented_frame_counter: u64,
+    next_redraw_at: Instant,
+    needs_redraw: bool,
 }
 
 impl Window {
@@ -981,7 +980,6 @@ impl Window {
             last_render_error: None,
             keys: Buttons::empty(),
             paused: false,
-            last_presented: true,
             console,
             app_menu,
             physical_size,
@@ -990,6 +988,9 @@ impl Window {
             render_fps: 0.0,
             render_started_at: Instant::now(),
             last_title_update: Instant::now(),
+            last_presented_frame_counter: 0,
+            next_redraw_at: Instant::now(),
+            needs_redraw: true,
         }
     }
 
@@ -1005,54 +1006,77 @@ impl Window {
         self.console.resume();
         let event_loop = self.event_loop.take().unwrap();
 
-        event_loop.run(move |event, event_loop, control_flow| {
-            *control_flow = ControlFlow::Poll;
-
-            match event {
-                Event::NewEvents(StartCause::Init) => self.ensure_window(event_loop),
-                Event::WindowEvent {
-                    event, window_id, ..
-                } if self
+        event_loop.run(move |event, event_loop, control_flow| match event {
+            Event::NewEvents(StartCause::Init) => {
+                self.ensure_window(event_loop);
+                *control_flow = ControlFlow::Wait;
+            }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self
+                .window
+                .as_ref()
+                .is_some_and(|window| window_id == window.id()) =>
+            {
+                match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Focused(false) => self.clear_keys(),
+                    WindowEvent::Resized(_) => {
+                        if let Some(renderer) = self.renderer.as_mut() {
+                            renderer.resize_to_target();
+                        }
+                        self.needs_redraw = true;
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                    WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
+                    _ => (),
+                }
+            }
+            Event::RedrawRequested(window_id)
+                if self
                     .window
                     .as_ref()
                     .is_some_and(|window| window_id == window.id()) =>
-                {
-                    match event {
-                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                        WindowEvent::Focused(false) => self.clear_keys(),
-                        WindowEvent::Resized(_) => {
-                            if let Some(renderer) = self.renderer.as_mut() {
-                                renderer.resize_to_target();
-                            }
-                        }
-                        WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
-                        _ => (),
-                    }
-                }
-                Event::RedrawRequested(window_id)
-                    if self
-                        .window
-                        .as_ref()
-                        .is_some_and(|window| window_id == window.id()) =>
-                {
-                    self.on_update()
-                }
-                Event::MainEventsCleared => {
-                    if let Some(window) = self.window.as_ref() {
-                        if !self.last_presented {
-                            thread::sleep(SKIPPED_PRESENT_SLEEP);
-                        }
-                        window.request_redraw();
-                    }
-                }
-                Event::UserEvent(UserEvent::Menu(command)) => {
-                    self.on_menu_command(control_flow, command);
-                }
-                Event::LoopDestroyed => {
-                    self.app_menu.clear_event_handler();
-                }
-                _ => (),
+            {
+                self.on_update()
             }
+            Event::MainEventsCleared => {
+                let now = Instant::now();
+                self.maybe_refresh_window_title(now);
+
+                if self.window.is_none() {
+                    *control_flow = ControlFlow::Wait;
+                    return;
+                }
+
+                let metrics = self.console.metrics();
+                let should_redraw =
+                    self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter;
+                if !should_redraw && (!metrics.loaded || metrics.paused) {
+                    *control_flow = ControlFlow::Wait;
+                    return;
+                }
+
+                if now < self.next_redraw_at {
+                    *control_flow = ControlFlow::WaitUntil(self.next_redraw_at);
+                    return;
+                }
+
+                self.advance_redraw_deadline(now);
+                *control_flow = ControlFlow::WaitUntil(self.next_redraw_at);
+                if should_redraw {
+                    self.window.as_ref().unwrap().request_redraw();
+                }
+            }
+            Event::UserEvent(UserEvent::Menu(command)) => {
+                self.on_menu_command(control_flow, command);
+            }
+            Event::LoopDestroyed => {
+                self.app_menu.clear_event_handler();
+            }
+            _ => (),
         });
     }
 
@@ -1078,6 +1102,8 @@ impl Window {
         .unwrap();
         self.window = Some(window);
         self.renderer = Some(renderer);
+        self.needs_redraw = true;
+        self.refresh_window_title();
     }
 
     fn current_window_title(&self) -> String {
@@ -1090,6 +1116,30 @@ impl Window {
         }
     }
 
+    fn maybe_refresh_window_title(&mut self, now: Instant) {
+        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
+            self.last_title_update = now;
+            self.refresh_window_title();
+        }
+    }
+
+    fn advance_redraw_deadline(&mut self, now: Instant) {
+        if self.next_redraw_at > now {
+            return;
+        }
+
+        let interval = frame_interval();
+        let interval_nanos = interval.as_nanos();
+        let skipped_intervals = now.duration_since(self.next_redraw_at).as_nanos() / interval_nanos;
+        let skipped_intervals = skipped_intervals.saturating_add(1);
+        let skipped_intervals = skipped_intervals.min(u128::from(u32::MAX)) as u32;
+        let advance = interval.checked_mul(skipped_intervals).unwrap_or(interval);
+        self.next_redraw_at = self.next_redraw_at + advance;
+        if self.next_redraw_at <= now {
+            self.next_redraw_at = now + interval;
+        }
+    }
+
     fn record_render_frame(&mut self) {
         self.render_frame_count += 1;
         let now = Instant::now();
@@ -1099,10 +1149,7 @@ impl Window {
             self.render_frame_count = 0;
             self.render_started_at = now;
         }
-        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
-            self.last_title_update = now;
-            self.refresh_window_title();
-        }
+        self.maybe_refresh_window_title(now);
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -1115,6 +1162,11 @@ impl Window {
             self.console.pause();
         } else {
             self.console.resume();
+            self.needs_redraw = true;
+            self.next_redraw_at = Instant::now();
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
         }
         self.app_menu.update(self.paused);
         self.refresh_window_title();
@@ -1140,15 +1192,18 @@ impl Window {
         match render_result {
             Ok(presented) => {
                 self.last_render_error = None;
-                self.last_presented = presented;
                 if presented {
+                    self.last_presented_frame_counter = self.console.metrics().frame_counter;
+                    self.needs_redraw = false;
                     self.record_render_frame();
+                } else {
+                    self.needs_redraw = true;
                 }
             }
             Err(err) => {
                 let should_log = self.last_render_error.as_deref() != Some(err.as_str());
                 self.last_render_error = Some(err.clone());
-                self.last_presented = false;
+                self.needs_redraw = true;
                 if should_log {
                     log::error!("{err}");
                 }
