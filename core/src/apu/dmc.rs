@@ -198,7 +198,7 @@ impl DMC {
                 self.value += 2;
             }
         } else {
-            self.value -= 2;
+            self.value = self.value.saturating_sub(2);
         }
 
         self.shift_register >>= 1;
@@ -206,5 +206,29 @@ impl DMC {
 
     pub(crate) fn output(&self) -> u8 {
         self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DMC;
+
+    #[test]
+    fn step_shifter_clamps_output_at_zero() {
+        let mut dmc = DMC::new();
+        dmc.write_value(0);
+        dmc.step_shifter();
+
+        assert_eq!(dmc.output(), 0);
+    }
+
+    #[test]
+    fn step_shifter_increases_output_by_two_for_set_bit() {
+        let mut dmc = DMC::new();
+        dmc.write_value(4);
+        dmc.shift_register = 1;
+        dmc.step_shifter();
+
+        assert_eq!(dmc.output(), 6);
     }
 }

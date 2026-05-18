@@ -59,6 +59,7 @@ pub(crate) fn read_ines<I: Iterator<Item = u8>>(
         mirror_mode,
         has_battery,
         sub_mapper_type,
+        mmc3_irq_variant_override: None,
         trainer,
     })
 }
