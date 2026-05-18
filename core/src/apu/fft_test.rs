@@ -32,7 +32,7 @@ where
     captured
 }
 
-pub(crate) fn dominant_frequency(samples: &[f32], sample_rate: f32) -> f32 {
+pub(crate) fn power_spectrum(samples: &[f32]) -> Vec<f32> {
     assert!(samples.len() > 1);
     assert!(samples.len().is_power_of_two());
 
@@ -49,10 +49,19 @@ pub(crate) fn dominant_frequency(samples: &[f32], sample_rate: f32) -> f32 {
 
     fft(&mut spectrum);
 
+    spectrum
+        .iter()
+        .take(samples.len() / 2)
+        .map(|value| value.magnitude_squared())
+        .collect()
+}
+
+pub(crate) fn dominant_frequency(samples: &[f32], sample_rate: f32) -> f32 {
+    let spectrum = power_spectrum(samples);
+
     let mut best_bin = 1_usize;
     let mut best_magnitude = 0.0_f32;
-    for (index, value) in spectrum.iter().enumerate().take(samples.len() / 2).skip(1) {
-        let magnitude = value.magnitude_squared();
+    for (index, magnitude) in spectrum.iter().copied().enumerate().skip(1) {
         if magnitude > best_magnitude {
             best_magnitude = magnitude;
             best_bin = index;
@@ -64,6 +73,75 @@ pub(crate) fn dominant_frequency(samples: &[f32], sample_rate: f32) -> f32 {
 
 pub(crate) fn dominant_frequency_tolerance(sample_rate: f32, sample_count: usize) -> f32 {
     1.5 * sample_rate / sample_count as f32
+}
+
+pub(crate) fn peak_power_near_frequency(
+    spectrum: &[f32],
+    sample_rate: f32,
+    frequency: f32,
+    search_radius_bins: usize,
+) -> f32 {
+    let (start, end) = band_bounds(
+        spectrum.len(),
+        sample_rate,
+        frequency.max(0.0),
+        frequency.max(0.0),
+    );
+    let start = start.saturating_sub(search_radius_bins).max(1);
+    let end = end
+        .saturating_add(search_radius_bins)
+        .min(spectrum.len().saturating_sub(1));
+    spectrum[start..=end].iter().copied().fold(0.0, f32::max)
+}
+
+pub(crate) fn average_band_power(
+    spectrum: &[f32],
+    sample_rate: f32,
+    start_frequency: f32,
+    end_frequency: f32,
+) -> f32 {
+    let (start, end) = band_bounds(spectrum.len(), sample_rate, start_frequency, end_frequency);
+    let band = &spectrum[start..=end];
+    band.iter().copied().sum::<f32>() / band.len() as f32
+}
+
+pub(crate) fn spectral_flatness(
+    spectrum: &[f32],
+    sample_rate: f32,
+    start_frequency: f32,
+    end_frequency: f32,
+) -> f32 {
+    let (start, end) = band_bounds(spectrum.len(), sample_rate, start_frequency, end_frequency);
+    let band = &spectrum[start..=end];
+    let arithmetic_mean = band.iter().copied().sum::<f32>() / band.len() as f32;
+    let geometric_mean = (band
+        .iter()
+        .copied()
+        .map(|value| value.max(f32::MIN_POSITIVE).ln())
+        .sum::<f32>()
+        / band.len() as f32)
+        .exp();
+    geometric_mean / arithmetic_mean.max(f32::MIN_POSITIVE)
+}
+
+fn band_bounds(
+    spectrum_len: usize,
+    sample_rate: f32,
+    start_frequency: f32,
+    end_frequency: f32,
+) -> (usize, usize) {
+    assert!(spectrum_len > 1);
+    assert!(end_frequency >= start_frequency);
+
+    let max_bin = spectrum_len.saturating_sub(1).max(1);
+    let sample_count = spectrum_len * 2;
+    let start = frequency_bin(start_frequency, sample_rate, sample_count).clamp(1, max_bin);
+    let end = frequency_bin(end_frequency, sample_rate, sample_count).clamp(start, max_bin);
+    (start, end)
+}
+
+fn frequency_bin(frequency: f32, sample_rate: f32, sample_count: usize) -> usize {
+    ((frequency * sample_count as f32 / sample_rate).round() as usize).min(sample_count / 2)
 }
 
 fn fft(values: &mut [Complex]) {

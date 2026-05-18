@@ -204,12 +204,16 @@ mod tests {
         CPU_CLOCK_HZ / (16.0 * f32::from(DMC_TABLE[rate_index]))
     }
 
-    fn test_single_sample_dmc(rate_index: u8, sample_byte: u8) -> (DMC, Interrupt) {
+    fn test_single_sample_dmc(
+        rate_index: u8,
+        sample_byte: u8,
+        initial_value: u8,
+    ) -> (DMC, Interrupt) {
         let mut interrupt = Interrupt::new();
         let mut dmc = DMC::new();
         dmc.reset();
         dmc.write_control(0x40 | rate_index, &mut interrupt);
-        dmc.write_value(64);
+        dmc.write_value(initial_value);
         dmc.write_length(0);
         dmc.set_enabled(true, &mut interrupt);
         if interrupt.dmc_dma_request.take().is_some() {
@@ -273,7 +277,7 @@ mod tests {
     fn fft_peak_matches_expected_single_sample_frequency() {
         let rate_index = 11_usize;
         let sample_byte = 0xF0;
-        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte);
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 64);
         let samples = capture_samples(FFT_SAMPLE_COUNT, || {
             step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
         });
@@ -283,5 +287,46 @@ mod tests {
             (dominant - expected_single_sample_frequency(rate_index)).abs()
                 <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
         );
+    }
+
+    #[test]
+    fn single_sample_output_stays_within_expected_level_range() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xF0;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 64);
+        let bit_cycles = usize::from(DMC_TABLE[rate_index]) << 1;
+
+        for _ in 0..(bit_cycles * 8) {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte);
+        }
+
+        let samples = capture_samples(bit_cycles * 16, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+        let min = samples.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mean = samples.iter().copied().sum::<f32>() / samples.len() as f32;
+
+        assert_eq!(min, 56.0);
+        assert_eq!(max, 64.0);
+        assert!((mean - 60.0).abs() <= 0.1);
+    }
+
+    #[test]
+    fn single_sample_output_clamps_at_upper_dac_limit() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xFF;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 126);
+        let bit_cycles = usize::from(DMC_TABLE[rate_index]) << 1;
+
+        for _ in 0..(bit_cycles * 8) {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte);
+        }
+
+        let samples = capture_samples(bit_cycles * 8, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+
+        assert!(samples.iter().all(|sample| *sample == 126.0));
     }
 }

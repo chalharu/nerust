@@ -191,7 +191,7 @@ impl Pulse {
 mod tests {
     use super::super::fft_test::{
         CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
-        dominant_frequency_tolerance,
+        dominant_frequency_tolerance, peak_power_near_frequency, power_spectrum,
     };
     use super::Pulse;
 
@@ -269,6 +269,31 @@ mod tests {
             (dominant - expected_frequency(0x0020)).abs()
                 <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
         );
+    }
+
+    #[test]
+    fn fft_fixed_pulse_keeps_expected_odd_harmonic_profile() {
+        let raw_period = 0x0020;
+        let mut pulse = test_fixed_pulse(true, raw_period);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            pulse.step_timer();
+            f32::from(pulse.output())
+        });
+        let spectrum = power_spectrum(&samples);
+        let fundamental = expected_frequency(raw_period);
+        let first = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental, 2);
+        let second = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 2.0, 2);
+        let third = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 3.0, 2);
+        let fourth = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 4.0, 2);
+        let fifth = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 5.0, 2);
+
+        assert!(first > third * 5.0);
+        assert!(third > fifth * 2.0);
+        assert!(third > first * 0.07);
+        assert!(fifth > first * 0.025);
+        assert!(first > second * 1_000.0);
+        assert!(third > second * 100.0);
+        assert!(fifth > fourth * 100.0);
     }
 
     #[test]
