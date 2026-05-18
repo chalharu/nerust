@@ -1134,7 +1134,7 @@ impl Window {
         let skipped_intervals = skipped_intervals.saturating_add(1);
         let skipped_intervals = skipped_intervals.min(u128::from(u32::MAX)) as u32;
         let advance = interval.checked_mul(skipped_intervals).unwrap_or(interval);
-        self.next_redraw_at = self.next_redraw_at + advance;
+        self.next_redraw_at += advance;
         if self.next_redraw_at <= now {
             self.next_redraw_at = now + interval;
         }
