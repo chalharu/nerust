@@ -12,6 +12,9 @@
 /map.txt
 /nsfmap.txt
 /testroms/
+!/testroms/
+/testroms/*
+!/testroms/M118_P128K_C64K.nes
 __pycache__/
 *.pyc
 /mapperel-primary.nes
@@ -22,5 +25,4 @@ __pycache__/
 
 # this is NES homebrew, not DSiWare
 *.DS_Store
-
 
