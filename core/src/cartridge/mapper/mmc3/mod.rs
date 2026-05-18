@@ -8,10 +8,12 @@ mod mmc3_nec;
 mod mmc6;
 mod shared;
 mod standard;
+mod txsrom;
 
 use self::mmc3_nec::Mmc3Nec;
 use self::mmc6::Mmc6;
 use self::standard::Mmc3;
+use self::txsrom::TxSrom;
 use crate::Mmc3IrqVariant;
 use crate::cartridge::Cartridge;
 use crate::cartridge::error::CartridgeError;
@@ -48,6 +50,10 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
         Mapper4Model::Mmc3Nec { bus_conflicts } => Box::new(Mmc3Nec::new(data, bus_conflicts)),
         Mapper4Model::Mmc6 => Box::new(Mmc6::new(data)),
     })
+}
+
+pub(crate) fn try_from_txsrom(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
+    Ok(Box::new(TxSrom::new(data)))
 }
 
 #[cfg(test)]

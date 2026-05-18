@@ -11,6 +11,7 @@ pub enum MirrorMode {
     Single0,
     Single1,
     Four,
+    Custom([u8; 4]),
 }
 
 impl MirrorMode {
@@ -32,6 +33,7 @@ impl MirrorMode {
             MirrorMode::Single0 => [0, 0, 0, 0],
             MirrorMode::Single1 => [1, 1, 1, 1],
             MirrorMode::Four => [0, 1, 2, 3],
+            MirrorMode::Custom(lut) => lut,
         }
     }
 

@@ -586,6 +586,12 @@ cases:
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
       - {frame: 420, action: check_screen, hash: "0xA6F9AD85D279CE5F"}
+  - id: mapper.holy_mapperel.m118_txsrom
+    category: mapper
+    description: "Verifies Mapper 118 TxSROM nametable banking and MMC3-family PRG/CHR/IRQ behavior using Holy Mapperel."
+    rom: holy-mapperel/testroms/M118_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x33516EB854B1A7E4"}
   - id: mapper.mmc3bigchrram
     category: mapper
     description: "Verifies 32 KiB MMC3 CHR RAM support using the mmc3bigchrram little-things ROM."
