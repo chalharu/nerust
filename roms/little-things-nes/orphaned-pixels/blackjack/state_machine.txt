@@ -1,0 +1,121 @@
+Blackjack game states
+=====================
+
+Approach
+--------
+A sign on the table indicates the rule variant in effect.
+
+- Minimum bet is 10 cio
+- Four decks
+- Blackjack pays 3:2
+- Insurance: A up pays 2:1; 10 up pays 11:1
+- Dealer stands on 18 or hard 17
+- Hole card used
+- Surrender if no dealer blackjack
+- Resplit as space allows; split aces may not be hit
+- Double on any first 2 cards and after split non-aces
+- 7 cards without busting worth 21
+
+Find a table with a minimum bet between 1/50 and 1/20 of player bankroll.  Then the game proceeds through phases from wager through payout, repeating until the player declines wager or the minimum bet exceeds the bankroll.
+
+Wager
+-----
+```
+If less than one-fourth of the shoe remains or the game uses one deck:
+    Reshuffle
+Choose a multiple of the ante no greater than bankroll
+Move this amount from bankroll to wager
+If not all bases are filled and ante does not exceed bankroll:
+    Offer another hand
+```
+
+Insure
+------
+```
+Each player draws two cards
+Dealer draws one upcard and one hole card
+If dealer upcard is A or 10 and ante does not exceed bankroll:
+    Offer "Insure"
+        Move the greater of half total wager and bankroll from bankroll to insurance
+```
+
+Insurance payout
+----------------
+In hole-card blackjack, insurance payout happens before player opening.  In no-hole blackjack, more common outside North America, insurance payout happens before dealer hit.
+```
+If insurance was taken:
+    Reveal hole card
+If dealer's total is 21:
+    Reveal hole card
+    For each player who does not have blackjack (10-A not resulting from split):
+        Discard hand and wager
+    If dealer upcard is A:
+        Add 2 times insurance to bankroll
+        Return insurance to bankroll
+    If dealer upcard is 10:
+        Add 11 times insurance to bankroll
+        Return insurance to bankroll
+Otherwise:
+    Discard insurance
+```
+
+Player opening
+--------------
+```
+If hand is 10 and A: Player has blackjack
+    End phase
+If hand value is 15-17 and upcard is high and either the hole card is not revealed or dealer's total is less than 21:
+    Offer "Surrender"
+        Add half hand's wager to bankroll
+        Discard hand and wager
+If wager exceeds bankroll:
+    End phase
+If hand is a pair, not 5-5 or 10-10, and a base is open:
+    Offer "Split"
+        Move 2nd card to hand at open base
+        Move wager's value from bankroll to new hand's wager
+        Draw one card on each
+        If moved card was A: Decline Hit
+        Disqualify both hands for blackjack
+Otherwise:
+    Offer "Double"
+        Move wager's value from bankroll and add it to wager
+        Draw one card
+        Decline Hit
+```
+
+Player hit
+----------
+```
+While total is less than 21 and hand has fewer than 7 cards and hit not declined:
+    Offer "Hit"
+        Draw one card
+If hand total exceeds 21:
+    Discard hand and wager
+```
+
+Dealer hit
+----------
+```
+Reveal hole card
+If no player remains: End phase
+While total is less than 18 and hard total is less than 17 and hand has fewer than 7 cards:
+    Draw one card
+```
+
+Payout
+------
+```
+If player has blackjack and dealer does not: Win at 3:2
+If dealer total exceeds 21: Win at 1:1
+If player or dealer has 7 cards: Change total to 21
+If dealer total exceeds player total: Lose
+If player total exceeds dealer total: Win at 1:1
+Otherwise: Push at 0:1
+If win or push:
+    Add payout factor times hand's wager to bankroll
+    Return wager to bankroll
+    Discard hand
+Otherwise:
+    Discard hand and wager
+```
