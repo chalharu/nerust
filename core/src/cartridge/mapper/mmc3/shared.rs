@@ -569,3 +569,93 @@ impl Mapper for Mapper4Shared {
         self.irq.on_address_bus_update(address, ppu_tick, interrupt);
     }
 }
+
+pub(super) trait Mapper4Wrapper {
+    const NAME: &'static str;
+
+    fn shared_ref(&self) -> &Mapper4Shared;
+    fn shared_mut(&mut self) -> &mut Mapper4Shared;
+}
+
+impl<T> CartridgeDataDao for T
+where
+    T: Mapper4Wrapper,
+{
+    fn data_mut(&mut self) -> &mut CartridgeData {
+        self.shared_mut().data_mut()
+    }
+
+    fn data_ref(&self) -> &CartridgeData {
+        self.shared_ref().data_ref()
+    }
+}
+
+impl<T> MapperStateDao for T
+where
+    T: Mapper4Wrapper,
+{
+    fn mapper_state_mut(&mut self) -> &mut MapperState {
+        self.shared_mut().mapper_state_mut()
+    }
+
+    fn mapper_state_ref(&self) -> &MapperState {
+        self.shared_ref().mapper_state_ref()
+    }
+}
+
+impl<T> Mapper for T
+where
+    T: Mapper4Wrapper,
+{
+    fn name(&self) -> &str {
+        Self::NAME
+    }
+
+    fn program_page_len(&self) -> usize {
+        self.shared_ref().program_page_len()
+    }
+
+    fn character_page_len(&self) -> usize {
+        self.shared_ref().character_page_len()
+    }
+
+    fn read_ram(&self, index: usize) -> Option<u8> {
+        self.shared_ref().read_ram(index)
+    }
+
+    fn write_ram(&mut self, index: usize, data: u8) {
+        self.shared_mut().write_ram(index, data);
+    }
+
+    fn save_len_default(&self) -> usize {
+        self.shared_ref().save_len_default()
+    }
+
+    fn ram_len_default(&self) -> usize {
+        self.shared_ref().ram_len_default()
+    }
+
+    fn ram_page_len_default(&self) -> usize {
+        self.shared_ref().ram_page_len_default()
+    }
+
+    fn battery_default(&self) -> bool {
+        self.shared_ref().battery_default()
+    }
+
+    fn initialize(&mut self) {
+        self.shared_mut().initialize();
+    }
+
+    fn bus_conflicts(&self) -> bool {
+        self.shared_ref().bus_conflicts()
+    }
+
+    fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.shared_mut().write_register(address, value, interrupt);
+    }
+
+    fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
+        self.shared_mut().notify_ppu_bus_event(event, interrupt);
+    }
+}
