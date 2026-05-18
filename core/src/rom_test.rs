@@ -280,25 +280,72 @@ pub struct RomEvent {
 
 impl RomEvent {
     fn validate(&self, case_id: &str) -> Result<(), RomTestError> {
-        match self.kind {
-            RomEventKind::CheckWorkRam { address, .. } if address > 0x1FFF => {
-                Err(RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
-                )))
-            }
-            RomEventKind::CheckCartridgeRam { address, .. }
-                if !(0x6000..=0x7FFF).contains(&address) =>
-            {
-                Err(RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` uses check_cartridge_ram outside cartridge RAM at address 0x{address:04X}"
-                )))
-            }
-            RomEventKind::CheckPpuVram { address, .. } if !(0x2000..=0x3FFF).contains(&address) => {
-                Err(RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` uses check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}"
-                )))
-            }
-            _ => Ok(()),
+        if let Some(assertion) = self.kind.assertion() {
+            assertion.validate(case_id)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAssertionSpace {
+    WorkRam,
+    CartridgeRam,
+    PpuVram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RomAssertion {
+    Screen {
+        #[serde(with = "hex_u64")]
+        hash: u64,
+    },
+    Memory {
+        space: MemoryAssertionSpace,
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
+        #[serde(default)]
+        open_bus: bool,
+    },
+}
+
+impl RomAssertion {
+    fn validate(&self, case_id: &str) -> Result<(), RomTestError> {
+        match self {
+            RomAssertion::Screen { .. } => Ok(()),
+            RomAssertion::Memory {
+                space,
+                address,
+                open_bus,
+                ..
+            } => match space {
+                MemoryAssertionSpace::WorkRam if *address > 0x1FFF => {
+                    Err(RomTestError::InvalidManifest(format!(
+                        "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
+                    )))
+                }
+                MemoryAssertionSpace::CartridgeRam if !(0x6000..=0x7FFF).contains(address) => {
+                    Err(RomTestError::InvalidManifest(format!(
+                        "ROM case `{case_id}` uses check_cartridge_ram outside cartridge RAM at address 0x{address:04X}"
+                    )))
+                }
+                MemoryAssertionSpace::PpuVram if !(0x2000..=0x3FFF).contains(address) => {
+                    Err(RomTestError::InvalidManifest(format!(
+                        "ROM case `{case_id}` uses check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}"
+                    )))
+                }
+                MemoryAssertionSpace::WorkRam | MemoryAssertionSpace::PpuVram if *open_bus => {
+                    Err(RomTestError::InvalidManifest(format!(
+                        "ROM case `{case_id}` uses open_bus with a non-cartridge memory assertion at address 0x{address:04X}"
+                    )))
+                }
+                _ => Ok(()),
+            },
         }
     }
 }
@@ -306,6 +353,10 @@ impl RomEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RomEventKind {
+    Assert {
+        #[serde(flatten)]
+        assertion: RomAssertion,
+    },
     CheckScreen {
         #[serde(with = "hex_u64")]
         hash: u64,
@@ -339,6 +390,40 @@ pub enum RomEventKind {
     Microphone {
         state: PadState,
     },
+}
+
+impl RomEventKind {
+    fn assertion(&self) -> Option<RomAssertion> {
+        match self {
+            RomEventKind::Assert { assertion } => Some(assertion.clone()),
+            RomEventKind::CheckScreen { hash } => Some(RomAssertion::Screen { hash: *hash }),
+            RomEventKind::CheckWorkRam { address, value } => Some(RomAssertion::Memory {
+                space: MemoryAssertionSpace::WorkRam,
+                address: *address,
+                value: *value,
+                open_bus: false,
+            }),
+            RomEventKind::CheckCartridgeRam {
+                address,
+                value,
+                open_bus,
+            } => Some(RomAssertion::Memory {
+                space: MemoryAssertionSpace::CartridgeRam,
+                address: *address,
+                value: *value,
+                open_bus: *open_bus,
+            }),
+            RomEventKind::CheckPpuVram { address, value } => Some(RomAssertion::Memory {
+                space: MemoryAssertionSpace::PpuVram,
+                address: *address,
+                value: *value,
+                open_bus: false,
+            }),
+            RomEventKind::Reset
+            | RomEventKind::StandardController { .. }
+            | RomEventKind::Microphone { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,26 +521,7 @@ pub struct ExecutionTotals {
 pub trait CaseHarness {
     fn run_frame(&mut self) -> u64;
     fn frame_counter(&self) -> u64;
-    fn on_check_screen(&mut self, frame: u64, expected_hash: u64) -> Result<(), RomTestError>;
-    fn on_check_work_ram(
-        &mut self,
-        frame: u64,
-        address: usize,
-        expected_value: u8,
-    ) -> Result<(), RomTestError>;
-    fn on_check_cartridge_ram(
-        &mut self,
-        frame: u64,
-        address: usize,
-        expected_value: u8,
-        expect_open_bus: bool,
-    ) -> Result<(), RomTestError>;
-    fn on_check_ppu_vram(
-        &mut self,
-        frame: u64,
-        address: usize,
-        expected_value: u8,
-    ) -> Result<(), RomTestError>;
+    fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError>;
     fn on_reset(&mut self) -> Result<(), RomTestError>;
     fn on_standard_controller(
         &mut self,
@@ -710,24 +776,8 @@ impl ValidationRunner {
             failures: self.failures,
         })
     }
-}
 
-impl CaseHarness for ValidationRunner {
-    fn run_frame(&mut self) -> u64 {
-        let steps = self.core.run_frame(
-            &mut self.screen_buffer,
-            &mut self.controller,
-            &mut self.mixer,
-        );
-        self.frame_counter += 1;
-        steps
-    }
-
-    fn frame_counter(&self) -> u64 {
-        self.frame_counter
-    }
-
-    fn on_check_screen(&mut self, frame: u64, expected_hash: u64) -> Result<(), RomTestError> {
+    fn record_screen_assert(&mut self, frame: u64, expected_hash: u64) -> Result<(), RomTestError> {
         let actual_hash = screen_hash(&self.screen_buffer);
         if self.options.check_expectations && actual_hash != expected_hash {
             self.failures.push(format!(
@@ -751,7 +801,7 @@ impl CaseHarness for ValidationRunner {
         Ok(())
     }
 
-    fn on_check_work_ram(
+    fn record_work_ram_assert(
         &mut self,
         frame: u64,
         address: usize,
@@ -779,7 +829,7 @@ impl CaseHarness for ValidationRunner {
         Ok(())
     }
 
-    fn on_check_cartridge_ram(
+    fn record_cartridge_ram_assert(
         &mut self,
         frame: u64,
         address: usize,
@@ -822,7 +872,7 @@ impl CaseHarness for ValidationRunner {
         Ok(())
     }
 
-    fn on_check_ppu_vram(
+    fn record_ppu_vram_assert(
         &mut self,
         frame: u64,
         address: usize,
@@ -848,6 +898,47 @@ impl CaseHarness for ValidationRunner {
             actual_value,
         });
         Ok(())
+    }
+}
+
+impl CaseHarness for ValidationRunner {
+    fn run_frame(&mut self) -> u64 {
+        let steps = self.core.run_frame(
+            &mut self.screen_buffer,
+            &mut self.controller,
+            &mut self.mixer,
+        );
+        self.frame_counter += 1;
+        steps
+    }
+
+    fn frame_counter(&self) -> u64 {
+        self.frame_counter
+    }
+
+    fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
+        match assertion {
+            RomAssertion::Screen { hash } => self.record_screen_assert(frame, *hash),
+            RomAssertion::Memory {
+                space,
+                address,
+                value,
+                open_bus,
+            } => match space {
+                MemoryAssertionSpace::WorkRam => {
+                    self.record_work_ram_assert(frame, usize::from(*address), *value)
+                }
+                MemoryAssertionSpace::CartridgeRam => self.record_cartridge_ram_assert(
+                    frame,
+                    usize::from(*address),
+                    *value,
+                    *open_bus,
+                ),
+                MemoryAssertionSpace::PpuVram => {
+                    self.record_ppu_vram_assert(frame, usize::from(*address), *value)
+                }
+            },
+        }
     }
 
     fn on_reset(&mut self) -> Result<(), RomTestError> {
@@ -1275,36 +1366,24 @@ fn dispatch_pending_events<H: CaseHarness>(
             break;
         }
 
-        match event.kind {
-            RomEventKind::CheckScreen { hash } => {
-                harness.on_check_screen(event.frame, hash)?;
-            }
-            RomEventKind::CheckWorkRam { address, value } => {
-                harness.on_check_work_ram(event.frame, usize::from(address), value)?;
-            }
-            RomEventKind::CheckCartridgeRam {
-                address,
-                value,
-                open_bus,
-            } => {
-                harness.on_check_cartridge_ram(
-                    event.frame,
-                    usize::from(address),
-                    value,
-                    open_bus,
-                )?;
-            }
-            RomEventKind::CheckPpuVram { address, value } => {
-                harness.on_check_ppu_vram(event.frame, usize::from(address), value)?;
-            }
-            RomEventKind::Reset => {
-                harness.on_reset()?;
-            }
-            RomEventKind::StandardController { pad, button, state } => {
-                harness.on_standard_controller(pad, button, state)?;
-            }
-            RomEventKind::Microphone { state } => {
-                harness.on_microphone(state)?;
+        if let Some(assertion) = event.kind.assertion() {
+            harness.on_assert(event.frame, &assertion)?;
+        } else {
+            match event.kind {
+                RomEventKind::Reset => {
+                    harness.on_reset()?;
+                }
+                RomEventKind::StandardController { pad, button, state } => {
+                    harness.on_standard_controller(pad, button, state)?;
+                }
+                RomEventKind::Microphone { state } => {
+                    harness.on_microphone(state)?;
+                }
+                RomEventKind::Assert { .. }
+                | RomEventKind::CheckScreen { .. }
+                | RomEventKind::CheckWorkRam { .. }
+                | RomEventKind::CheckCartridgeRam { .. }
+                | RomEventKind::CheckPpuVram { .. } => unreachable!(),
             }
         }
 
@@ -1650,6 +1729,43 @@ cases:
     }
 
     #[test]
+    fn parse_manifest_with_generic_assertions() {
+        let mut manifest = serde_yaml::from_str::<RomManifest>(
+            r#"
+cases:
+  - id: mapper.generic_assert
+    category: mapper
+    description: Generic assertion parsing regression.
+    rom: nes-test-roms/mmc3_test/6-MMC6.nes
+    events:
+      - { frame: 15, action: assert, kind: memory, space: cartridge_ram, address: "0x6000", value: "0x00", open_bus: true }
+      - { frame: 15, action: assert, kind: screen, hash: "0x464033EFDAB11D8E" }
+"#,
+        )
+        .expect("manifest should parse");
+        manifest.resolve_paths(&default_manifest_path());
+        manifest.validate().expect("manifest should validate");
+
+        match &manifest.case("mapper.generic_assert").unwrap().events[0].kind {
+            RomEventKind::Assert {
+                assertion:
+                    RomAssertion::Memory {
+                        space,
+                        address,
+                        value,
+                        open_bus,
+                    },
+            } => {
+                assert_eq!(*space, MemoryAssertionSpace::CartridgeRam);
+                assert_eq!(*address, 0x6000);
+                assert_eq!(*value, 0x00);
+                assert!(*open_bus);
+            }
+            other => panic!("unexpected event kind: {other:?}"),
+        }
+    }
+
+    #[test]
     fn default_manifest_contains_perf_cases() {
         let manifest = load_default_manifest().expect("default manifest should load");
         assert!(manifest.case("cpu.nestest").is_some());
@@ -1700,43 +1816,21 @@ cases:
                 self.frame_counter
             }
 
-            fn on_check_screen(
+            fn on_assert(
                 &mut self,
                 frame: u64,
-                _expected_hash: u64,
+                assertion: &RomAssertion,
             ) -> Result<(), RomTestError> {
-                self.events.push(format!("check@{frame}"));
-                Ok(())
-            }
-
-            fn on_check_work_ram(
-                &mut self,
-                frame: u64,
-                _address: usize,
-                _expected_value: u8,
-            ) -> Result<(), RomTestError> {
-                self.events.push(format!("ram@{frame}"));
-                Ok(())
-            }
-
-            fn on_check_cartridge_ram(
-                &mut self,
-                frame: u64,
-                _address: usize,
-                _expected_value: u8,
-                _expect_open_bus: bool,
-            ) -> Result<(), RomTestError> {
-                self.events.push(format!("cart@{frame}"));
-                Ok(())
-            }
-
-            fn on_check_ppu_vram(
-                &mut self,
-                frame: u64,
-                _address: usize,
-                _expected_value: u8,
-            ) -> Result<(), RomTestError> {
-                self.events.push(format!("ppu@{frame}"));
+                match assertion {
+                    RomAssertion::Screen { .. } => self.events.push(format!("check@{frame}")),
+                    RomAssertion::Memory { space, .. } => match space {
+                        MemoryAssertionSpace::WorkRam => self.events.push(format!("ram@{frame}")),
+                        MemoryAssertionSpace::CartridgeRam => {
+                            self.events.push(format!("cart@{frame}"))
+                        }
+                        MemoryAssertionSpace::PpuVram => self.events.push(format!("ppu@{frame}")),
+                    },
+                }
                 Ok(())
             }
 
@@ -1892,6 +1986,27 @@ cases:
             event.validate("mapper.mmc3bigchrram"),
             Err(RomTestError::InvalidManifest(message))
                 if message.contains("check_ppu_vram outside PPU nametable/palette space")
+        ));
+    }
+
+    #[test]
+    fn generic_memory_assert_rejects_open_bus_outside_cartridge_ram() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::Assert {
+                assertion: RomAssertion::Memory {
+                    space: MemoryAssertionSpace::WorkRam,
+                    address: 0x0000,
+                    value: 0,
+                    open_bus: true,
+                },
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.generic_assert"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("open_bus with a non-cartridge memory assertion")
         ));
     }
 
