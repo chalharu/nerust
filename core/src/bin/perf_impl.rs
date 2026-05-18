@@ -257,11 +257,12 @@ struct PerfRunner {
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, rom_test::RomTestError> {
         let mut input = rom_bytes.iter().copied();
-        let core =
-            Core::new(&mut input).map_err(|error| rom_test::RomTestError::CoreConstruction {
+        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
+            rom_test::RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         Ok(Self {
             core,
             screen: PerfScreen::new(),
@@ -305,6 +306,25 @@ impl CaseHarness for PerfRunner {
     }
 
     fn on_check_work_ram(
+        &mut self,
+        _frame: u64,
+        _address: usize,
+        _expected_value: u8,
+    ) -> Result<(), rom_test::RomTestError> {
+        Ok(())
+    }
+
+    fn on_check_cartridge_ram(
+        &mut self,
+        _frame: u64,
+        _address: usize,
+        _expected_value: u8,
+        _expect_open_bus: bool,
+    ) -> Result<(), rom_test::RomTestError> {
+        Ok(())
+    }
+
+    fn on_check_ppu_vram(
         &mut self,
         _frame: u64,
         _address: usize,

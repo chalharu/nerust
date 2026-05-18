@@ -8,9 +8,8 @@ pub(crate) mod error;
 pub(crate) mod format;
 pub(crate) mod mapper;
 use self::format::CartridgeDataDao;
-use crate::MirrorMode;
-use crate::OpenBusReadResult;
 use crate::cpu::interrupt::Interrupt;
+use crate::{CoreOptions, MirrorMode, OpenBusReadResult};
 use std::cmp;
 
 #[typetag::serde(tag = "type")]
@@ -329,13 +328,29 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn step(&mut self) {}
 
-    fn vram_address_change(&mut self, _address: usize) {}
+    fn vram_address_change(
+        &mut self,
+        _address: usize,
+        _ppu_tick: u64,
+        _address_register_change: bool,
+        _interrupt: &mut Interrupt,
+    ) {
+    }
 }
 
 pub(crate) fn try_from<I: Iterator<Item = u8>>(
     input: &mut I,
 ) -> Result<Box<dyn Cartridge>, error::CartridgeError> {
-    let mut result = mapper::try_from(format::CartridgeData::try_from(input)?);
+    try_from_with_options(input, CoreOptions::default())
+}
+
+pub(crate) fn try_from_with_options<I: Iterator<Item = u8>>(
+    input: &mut I,
+    options: CoreOptions,
+) -> Result<Box<dyn Cartridge>, error::CartridgeError> {
+    let mut data = format::CartridgeData::try_from(input)?;
+    data.set_mmc3_irq_variant_override(options.mmc3_irq_variant);
+    let mut result = mapper::try_from(data);
     if let Ok(ref mut r) = result {
         Cartridge::initialize(r.as_mut());
     }

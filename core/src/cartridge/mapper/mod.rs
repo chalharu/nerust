@@ -7,15 +7,16 @@
 mod axrom;
 mod bnrom;
 mod cnrom;
+mod mmc3;
 mod nina001;
 mod nrom;
 mod sxrom;
 mod uxrom;
-//mod mmc3;
 
 use self::axrom::AxRom;
 use self::bnrom::BNRom;
 use self::cnrom::CNRom;
+use self::mmc3::Mmc3;
 use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
@@ -30,6 +31,7 @@ pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, Cartri
         1 => Ok(Box::new(SxRom::new(data))),
         2 => Ok(Box::new(UxRom::new(data))),
         3 => Ok(Box::new(CNRom::new_mapper3(data))),
+        4 => Ok(Box::new(Mmc3::new(data))),
         7 => Ok(Box::new(AxRom::new(data))),
         34 => match data.sub_mapper_type() {
             0 => {

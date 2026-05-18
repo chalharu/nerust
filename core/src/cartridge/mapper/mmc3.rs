@@ -8,8 +8,12 @@
 
 use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
 use super::{Cartridge, CartridgeData};
-use crate::MirrorMode;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::{MirrorMode, Mmc3IrqVariant};
+
+// MMC3 clocks on A12 rising edges only after A12 remained low for three falling
+// edges of M2, which corresponds to roughly 9 PPU ticks.
+const A12_LOW_FILTER_TICKS: u64 = 9;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mmc3 {
@@ -23,9 +27,8 @@ pub(crate) struct Mmc3 {
     irq_reload: bool,        // $C001-$DFFF, odd
     irq_counter: u8,
     irq_enabled: bool, // disable = $E000-$FFFE, even , enable = $E001-$FFFF, odd
-    irq_next: bool,
-    cycle: u64,
-    prev_cycle: u64,
+    last_a12_high: bool,
+    last_a12_low_tick: u64,
 }
 
 #[typetag::serde]
@@ -37,26 +40,108 @@ impl Mmc3 {
             cartridge_data: data,
             state: MapperState::new(),
             bank_select: 0,
-            bank_data: [0; 8],
+            bank_data: [0, 0, 0, 0, 0, 0, 0, 1],
             mirroring: 0,
-            program_ram_protect: 0,
+            program_ram_protect: 0x80,
             irq_latch: 0,
             irq_reload: false,
             irq_counter: 0,
             irq_enabled: false,
-            irq_next: false,
-            cycle: 0,
-            prev_cycle: 0,
+            last_a12_high: false,
+            last_a12_low_tick: 0,
+        }
+    }
+
+    fn clear_ram_mapping(&mut self) {
+        for slot in &mut self.mapper_state_mut().sram_page_table {
+            *slot = None;
+        }
+    }
+
+    fn program_bank_count(&self) -> usize {
+        self.data_ref().prog_rom_len() / self.program_page_len()
+    }
+
+    fn character_bank_count(&self) -> usize {
+        if self.mapper_state_ref().character_mapping_mode == crate::cartridge::MappingMode::Ram {
+            self.mapper_state_ref().vram.len() / self.character_page_len()
+        } else {
+            self.data_ref().char_rom_len() / self.character_page_len()
+        }
+    }
+
+    fn map_program_bank(&mut self, slot: usize, bank: usize) {
+        if self.program_bank_count() > 0 {
+            self.change_program_page(slot, bank % self.program_bank_count());
+        }
+    }
+
+    fn map_character_bank(&mut self, slot: usize, bank: usize) {
+        if self.character_bank_count() > 0 {
+            self.change_character_page(slot, bank % self.character_bank_count());
+        }
+    }
+
+    fn program_ram_enabled(&self) -> bool {
+        if self.is_mmc6() {
+            self.mmc6_program_ram_chip_enabled()
+        } else {
+            !self.mapper_state_ref().sram.is_empty() && (self.program_ram_protect & 0x80) != 0
+        }
+    }
+
+    fn program_ram_write_enabled(&self) -> bool {
+        if self.is_mmc6() {
+            self.mmc6_program_ram_chip_enabled()
+        } else {
+            self.program_ram_enabled() && (self.program_ram_protect & 0x40) == 0
+        }
+    }
+
+    fn is_mmc6(&self) -> bool {
+        self.data_ref().sub_mapper_type() == 1
+    }
+
+    fn mmc6_program_ram_chip_enabled(&self) -> bool {
+        !self.mapper_state_ref().sram.is_empty() && (self.bank_select & 0x20) != 0
+    }
+
+    fn mmc6_ram_address(index: usize) -> Option<(usize, bool)> {
+        if !(0x1000..=0x1FFF).contains(&index) {
+            return None;
+        }
+
+        let address = (index - 0x1000) & 0x03FF;
+        Some((address, address >= 0x0200))
+    }
+
+    fn mmc6_bank_read_enabled(&self, high_bank: bool) -> bool {
+        if high_bank {
+            (self.program_ram_protect & 0x80) != 0
+        } else {
+            (self.program_ram_protect & 0x20) != 0
+        }
+    }
+
+    fn mmc6_bank_write_enabled(&self, high_bank: bool) -> bool {
+        if high_bank {
+            (self.program_ram_protect & 0x40) != 0
+        } else {
+            (self.program_ram_protect & 0x10) != 0
         }
     }
 
     fn write_bank_select(&mut self, value: u8) {
         self.bank_select = value;
+        if self.is_mmc6() && !self.mmc6_program_ram_chip_enabled() {
+            self.program_ram_protect = 0;
+        }
         self.update_offsets();
     }
 
     fn write_bank_data(&mut self, value: u8) {
-        let selecter = self.bank_select & 0x07;
+        let selecter = (self.bank_select & 0x07) as usize;
+        // For banks 0 and 1, low bit is ignored
         self.bank_data[selecter] = if selecter <= 1 { value & !0x01 } else { value };
         self.update_offsets();
     }
@@ -64,7 +149,7 @@ impl Mmc3 {
     fn write_mirroring(&mut self, value: u8) {
         self.mirroring = value;
 
-        if self.get_mirror_mode() != MirrorMode::Four {
+        if !matches!(self.get_mirror_mode(), MirrorMode::Four) {
             self.set_mirror_mode(match value & 1 {
                 0 => MirrorMode::Vertical,
                 1 => MirrorMode::Horizontal,
@@ -84,75 +169,107 @@ impl Mmc3 {
 
     fn write_disable_irq(&mut self, _value: u8, interrupt: &mut Interrupt) {
         self.irq_enabled = false;
-        interrupt.clear_irq(IrqSource::External);
+        interrupt.clear_irq(IrqSource::EXTERNAL);
     }
 
     fn write_enable_irq(&mut self, _value: u8) {
         self.irq_enabled = true;
     }
 
+    fn write_program_ram_protect(&mut self, value: u8) {
+        if self.is_mmc6() {
+            if self.mmc6_program_ram_chip_enabled() {
+                self.program_ram_protect = value & 0xF0;
+            }
+        } else {
+            self.program_ram_protect = value;
+        }
+        self.update_offsets();
+    }
+
+    fn uses_old_style_irq(&self) -> bool {
+        if self.is_mmc6() {
+            return false;
+        }
+
+        match self.data_ref().mmc3_irq_variant_override() {
+            Some(Mmc3IrqVariant::Sharp) => false,
+            Some(Mmc3IrqVariant::Nec) => true,
+            None => self.data_ref().sub_mapper_type() == 4,
+        }
+    }
+
+    fn write_control(&mut self, _value: u8) {
+        // MMC3 does not use the MMC1-style control; keep for compatibility with initialize call.
+        self.update_offsets();
+    }
+
     fn update_offsets(&mut self) {
-        /*
-                    if(_romInfo.MapperID == 4 && _romInfo.SubMapperID == 1) {
-                        //bool wramEnabled = (_state.Reg8000 & 0x20) == 0x20;
-                        RemoveCpuMemoryMapping(0x6000, 0x7000);
+        let prg_bank_count = self.program_bank_count();
+        let last_bank = prg_bank_count.saturating_sub(1);
+        let second_last_bank = prg_bank_count.saturating_sub(2);
 
-                        uint8_t firstBankAccess = (_state.RegA001 & 0x10 ? MemoryAccessType::Write : 0) | (_state.RegA001 & 0x20 ? MemoryAccessType::Read : 0);
-                        uint8_t lastBankAccess = (_state.RegA001 & 0x40 ? MemoryAccessType::Write : 0) | (_state.RegA001 & 0x80 ? MemoryAccessType::Read : 0);
+        if (self.bank_select & 0x40) == 0 {
+            self.map_program_bank(0, usize::from(self.bank_data[6]));
+            self.map_program_bank(1, usize::from(self.bank_data[7]));
+            self.map_program_bank(2, second_last_bank);
+            self.map_program_bank(3, last_bank);
+        } else {
+            self.map_program_bank(0, second_last_bank);
+            self.map_program_bank(1, usize::from(self.bank_data[7]));
+            self.map_program_bank(2, usize::from(self.bank_data[6]));
+            self.map_program_bank(3, last_bank);
+        }
 
-                        for(int i = 0; i < 4; i++) {
-                            SetCpuMemoryMapping(0x7000 + i * 0x400, 0x71FF + i * 0x400, 0, PrgMemoryType::SaveRam, firstBankAccess);
-                            SetCpuMemoryMapping(0x7200 + i * 0x400, 0x73FF + i * 0x400, 1, PrgMemoryType::SaveRam, lastBankAccess);
-                        }
-                    } else {
-                        _wramEnabled = (_state.RegA001 & 0x80) == 0x80;
-                        _wramWriteProtected = (_state.RegA001 & 0x40) == 0x40;
+        if (self.bank_select & 0x80) == 0 {
+            self.map_character_bank(0, usize::from(self.bank_data[0] & !0x01));
+            self.map_character_bank(1, usize::from(self.bank_data[0] | 0x01));
+            self.map_character_bank(2, usize::from(self.bank_data[1] & !0x01));
+            self.map_character_bank(3, usize::from(self.bank_data[1] | 0x01));
+            self.map_character_bank(4, usize::from(self.bank_data[2]));
+            self.map_character_bank(5, usize::from(self.bank_data[3]));
+            self.map_character_bank(6, usize::from(self.bank_data[4]));
+            self.map_character_bank(7, usize::from(self.bank_data[5]));
+        } else {
+            self.map_character_bank(0, usize::from(self.bank_data[2]));
+            self.map_character_bank(1, usize::from(self.bank_data[3]));
+            self.map_character_bank(2, usize::from(self.bank_data[4]));
+            self.map_character_bank(3, usize::from(self.bank_data[5]));
+            self.map_character_bank(4, usize::from(self.bank_data[0] & !0x01));
+            self.map_character_bank(5, usize::from(self.bank_data[0] | 0x01));
+            self.map_character_bank(6, usize::from(self.bank_data[1] & !0x01));
+            self.map_character_bank(7, usize::from(self.bank_data[1] | 0x01));
+        }
 
-                        if(_romInfo.SubMapperID == 0) {
-                            if(_wramEnabled) {
-                                SetCpuMemoryMapping(0x6000, 0x7FFF, 0, HasBattery() ? PrgMemoryType::SaveRam : PrgMemoryType::WorkRam, _wramEnabled && !_wramWriteProtected ? MemoryAccessType::ReadWrite : MemoryAccessType::Read);
-                            } else {
-                                RemoveCpuMemoryMapping(0x6000, 0x7FFF);
-                            }
-                        }
-                    }
+        if self.is_mmc6() {
+            self.clear_ram_mapping();
+        } else if self.program_ram_enabled() {
+            self.change_ram_page(0, 0);
+        } else {
+            self.clear_ram_mapping();
+        }
+    }
 
-                    _chrMode = (_state.Reg8000 & 0x80) >> 7;
-                    _prgMode = (_state.Reg8000 & 0x40) >> 6;
+    fn clock_irq_counter(&mut self, interrupt: &mut Interrupt) {
+        let counter = self.irq_counter;
+        let reload_pending = self.irq_reload;
 
-                    if(_chrMode == 0) {
-                        SelectCHRPage(0, _registers[0] & 0xFE);
-                        SelectCHRPage(1, _registers[0] | 0x01);
-                        SelectCHRPage(2, _registers[1] & 0xFE);
-                        SelectCHRPage(3, _registers[1] | 0x01);
+        if counter == 0 || reload_pending {
+            self.irq_counter = self.irq_latch;
+            self.irq_reload = false;
+        } else {
+            self.irq_counter = counter.wrapping_sub(1);
+        }
 
-                        SelectCHRPage(4, _registers[2]);
-                        SelectCHRPage(5, _registers[3]);
-                        SelectCHRPage(6, _registers[4]);
-                        SelectCHRPage(7, _registers[5]);
-                    } else if(_chrMode == 1) {
-                        SelectCHRPage(0, _registers[2]);
-                        SelectCHRPage(1, _registers[3]);
-                        SelectCHRPage(2, _registers[4]);
-                        SelectCHRPage(3, _registers[5]);
+        let irq_triggered = if self.uses_old_style_irq() {
+            (!reload_pending && counter == 1) || (reload_pending && self.irq_counter == 0)
+        } else {
+            self.irq_counter == 0
+        };
 
-                        SelectCHRPage(4, _registers[0] & 0xFE);
-                        SelectCHRPage(5, _registers[0] | 0x01);
-                        SelectCHRPage(6, _registers[1] & 0xFE);
-                        SelectCHRPage(7, _registers[1] | 0x01);
-                    }
-                    if(_prgMode == 0) {
-                        SelectPRGPage(0, _registers[6]);
-                        SelectPRGPage(1, _registers[7]);
-                        SelectPRGPage(2, -2);
-                        SelectPRGPage(3, -1);
-                    } else if(_prgMode == 1) {
-                        SelectPRGPage(0, -2);
-                        SelectPRGPage(1, _registers[7]);
-                        SelectPRGPage(2, _registers[6]);
-                        SelectPRGPage(3, -1);
-                    }
-        */
+        if irq_triggered && self.irq_enabled {
+            interrupt.set_irq(IrqSource::EXTERNAL);
+        }
     }
 }
 
@@ -183,6 +300,50 @@ impl Mapper for Mmc3 {
         0x0400
     }
 
+    fn read_ram(&self, index: usize) -> Option<u8> {
+        if self.is_mmc6() {
+            let (address, high_bank) = Self::mmc6_ram_address(index)?;
+            if !self.mmc6_program_ram_chip_enabled() {
+                return None;
+            }
+
+            let low_bank_read_enabled = self.mmc6_bank_read_enabled(false);
+            let high_bank_read_enabled = self.mmc6_bank_read_enabled(true);
+            if !low_bank_read_enabled && !high_bank_read_enabled {
+                return None;
+            }
+
+            if self.mmc6_bank_read_enabled(high_bank) {
+                Some(self.mapper_state_ref().sram[address])
+            } else {
+                Some(0)
+            }
+        } else if self.program_ram_enabled() {
+            self.ram_address(index)
+                .map(|address| self.mapper_state_ref().sram[address])
+        } else {
+            None
+        }
+    }
+
+    fn write_ram(&mut self, index: usize, data: u8) {
+        if self.is_mmc6() {
+            let Some((address, high_bank)) = Self::mmc6_ram_address(index) else {
+                return;
+            };
+            if self.mmc6_program_ram_chip_enabled()
+                && self.mmc6_bank_read_enabled(high_bank)
+                && self.mmc6_bank_write_enabled(high_bank)
+            {
+                self.mapper_state_mut().sram[address] = data;
+            }
+        } else if self.program_ram_write_enabled()
+            && let Some(address) = self.ram_address(index)
+        {
+            self.mapper_state_mut().sram[address] = data;
+        }
+    }
+
     fn save_len_default(&self) -> usize {
         if self.data_ref().sub_mapper_type() == 1 {
             0x0400
@@ -211,7 +372,8 @@ impl Mapper for Mmc3 {
         true
     }
     fn initialize(&mut self) {
-        self.write_control(0x0C);
+        self.program_ram_protect = if self.is_mmc6() { 0 } else { 0x80 };
+        self.write_control(0);
     }
 
     fn name(&self) -> &str {
@@ -236,9 +398,136 @@ impl Mapper for Mmc3 {
         }
     }
 
-    fn step(&mut self) {
-        self.cycle += 1;
+    fn vram_address_change(
+        &mut self,
+        address: usize,
+        ppu_tick: u64,
+        _address_register_change: bool,
+        interrupt: &mut Interrupt,
+    ) {
+        let a12_high = (address & 0x1000) != 0;
+
+        if a12_high {
+            if !self.last_a12_high
+                && ppu_tick.saturating_sub(self.last_a12_low_tick) >= A12_LOW_FILTER_TICKS
+            {
+                self.clock_irq_counter(interrupt);
+            }
+        } else if self.last_a12_high {
+            self.last_a12_low_tick = ppu_tick;
+        }
+
+        self.last_a12_high = a12_high;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::cartridge::format::CartridgeData;
+    use crate::cpu::interrupt::{Interrupt, IrqSource};
+
+    fn new_mapper(sub_mapper_type: u8) -> Mmc3 {
+        let mut rom = vec![
+            0x4E,
+            0x45,
+            0x53,
+            0x1A,
+            0x02,
+            0x01,
+            0x40,
+            0x08,
+            sub_mapper_type << 4,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        let data =
+            CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse");
+        let mut mapper = Mmc3::new(data);
+        Cartridge::initialize(&mut mapper);
+        mapper
     }
 
-    fn vram_address_change(&mut self, address: usize) {}
+    #[test]
+    fn mmc6_maps_ram_at_7000_with_1kb_mirroring() {
+        let mut mapper = new_mapper(1);
+
+        mapper.write_bank_select(0x20);
+        mapper.write_program_ram_protect(0xF0);
+        Mapper::write_ram(&mut mapper, 0x1000, 0x12);
+        Mapper::write_ram(&mut mapper, 0x1200, 0x34);
+
+        assert_eq!(Mapper::read_ram(&mapper, 0x0000), None);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), Some(0x12));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1400), Some(0x12));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1200), Some(0x34));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1600), Some(0x34));
+    }
+
+    #[test]
+    fn mmc6_respects_chip_enable_and_half_bank_permissions() {
+        let mut mapper = new_mapper(1);
+
+        mapper.write_program_ram_protect(0xF0);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_bank_select(0x20);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_program_ram_protect(0x30);
+        Mapper::write_ram(&mut mapper, 0x1000, 0x56);
+        Mapper::write_ram(&mut mapper, 0x1200, 0x78);
+
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), Some(0x56));
+        assert_eq!(Mapper::read_ram(&mapper, 0x1200), Some(0x00));
+
+        mapper.write_bank_select(0x00);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+
+        mapper.write_bank_select(0x20);
+        assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+    }
+
+    #[test]
+    fn mmc6_defaults_to_sharp_irq_behavior() {
+        let mapper = new_mapper(1);
+
+        assert!(!mapper.uses_old_style_irq());
+    }
+
+    #[test]
+    fn mmc6_cpu_6000_reads_as_open_bus_zero() {
+        let mapper = new_mapper(1);
+        let read_result = Cartridge::read(&mapper, 0x6000);
+
+        assert_eq!(read_result.data, 0);
+        assert_eq!(read_result.mask, 0);
+    }
+
+    #[test]
+    fn register_changes_still_require_filtered_a12_low_time() {
+        let mut mapper = new_mapper(0);
+        let mut interrupt = Interrupt::new();
+        mapper.irq_counter = 1;
+        mapper.irq_enabled = true;
+
+        mapper.vram_address_change(0x0FFF, 0, true, &mut interrupt);
+        mapper.vram_address_change(0x1000, 8, true, &mut interrupt);
+
+        assert_eq!(mapper.irq_counter, 1);
+        assert!(!interrupt.get_irq(IrqSource::EXTERNAL));
+
+        mapper.vram_address_change(0x0FFF, 9, true, &mut interrupt);
+        mapper.vram_address_change(0x1000, 18, true, &mut interrupt);
+
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(interrupt.get_irq(IrqSource::EXTERNAL));
+    }
 }

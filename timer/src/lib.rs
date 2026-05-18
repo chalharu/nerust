@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const CLOCK_RATE: usize = 1_789_773;
+pub const TARGET_FPS: f32 = CLOCK_RATE as f32 * 3.0 / 89_341.5_f32;
 
 #[derive(Debug)]
 pub struct Timer {
@@ -67,7 +68,7 @@ impl Timer {
         }
     }
 
-    pub fn as_fps(&mut self) -> f32 {
+    pub fn as_fps(&self) -> f32 {
         self.fps
     }
 }

@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use nerust_core::{Core, CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
@@ -145,6 +145,10 @@ pub struct RomCase {
     pub rom: String,
     #[serde(default)]
     pub perf: bool,
+    #[serde(default)]
+    pub sub_mapper_type: Option<u8>,
+    #[serde(default)]
+    pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
     pub events: Vec<RomEvent>,
     #[serde(default)]
     pub expected_audio: Option<AudioExpectation>,
@@ -169,6 +173,14 @@ impl RomCase {
             return Err(RomTestError::InvalidManifest(format!(
                 "ROM case `{}` must define a description",
                 self.id
+            )));
+        }
+        if let Some(sub_mapper_type) = self.sub_mapper_type
+            && sub_mapper_type > 0x0F
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` uses unsupported sub_mapper_type {}; NES 2.0 submappers must fit in 4 bits",
+                self.id, sub_mapper_type
             )));
         }
         let rom_path = self.resolved_rom_path()?;
@@ -213,6 +225,12 @@ impl RomCase {
         self.expected_audio
             .as_ref()
             .map_or(DEFAULT_AUDIO_SAMPLE_RATE, |expected| expected.sample_rate)
+    }
+
+    pub fn core_options(&self) -> CoreOptions {
+        CoreOptions {
+            mmc3_irq_variant: self.mmc3_irq_variant,
+        }
     }
 
     fn resolve_rom_path(&mut self, rom_root: &Path) {
@@ -268,6 +286,18 @@ impl RomEvent {
                     "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
                 )))
             }
+            RomEventKind::CheckCartridgeRam { address, .. }
+                if !(0x6000..=0x7FFF).contains(&address) =>
+            {
+                Err(RomTestError::InvalidManifest(format!(
+                    "ROM case `{case_id}` uses check_cartridge_ram outside cartridge RAM at address 0x{address:04X}"
+                )))
+            }
+            RomEventKind::CheckPpuVram { address, .. } if !(0x2000..=0x3FFF).contains(&address) => {
+                Err(RomTestError::InvalidManifest(format!(
+                    "ROM case `{case_id}` uses check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}"
+                )))
+            }
             _ => Ok(()),
         }
     }
@@ -281,6 +311,20 @@ pub enum RomEventKind {
         hash: u64,
     },
     CheckWorkRam {
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
+    },
+    CheckCartridgeRam {
+        #[serde(with = "hex_u16")]
+        address: u16,
+        #[serde(with = "hex_u8")]
+        value: u8,
+        #[serde(default)]
+        open_bus: bool,
+    },
+    CheckPpuVram {
         #[serde(with = "hex_u16")]
         address: u16,
         #[serde(with = "hex_u8")]
@@ -399,6 +443,19 @@ pub trait CaseHarness {
         address: usize,
         expected_value: u8,
     ) -> Result<(), RomTestError>;
+    fn on_check_cartridge_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+        expect_open_bus: bool,
+    ) -> Result<(), RomTestError>;
+    fn on_check_ppu_vram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError>;
     fn on_reset(&mut self) -> Result<(), RomTestError>;
     fn on_standard_controller(
         &mut self,
@@ -459,6 +516,37 @@ impl WorkRamCheck {
 }
 
 #[derive(Debug, Clone)]
+pub struct CartridgeRamCheck {
+    pub frame: u64,
+    pub address: u16,
+    pub expected_value: u8,
+    pub actual_value: u8,
+    pub expected_open_bus: bool,
+    pub actual_open_bus: bool,
+}
+
+impl CartridgeRamCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_open_bus == self.actual_open_bus
+            && (self.expected_open_bus || self.expected_value == self.actual_value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PpuVramCheck {
+    pub frame: u64,
+    pub address: u16,
+    pub expected_value: u8,
+    pub actual_value: u8,
+}
+
+impl PpuVramCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_value == self.actual_value
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioObservation {
     pub sample_rate: u32,
     pub samples: u64,
@@ -477,6 +565,8 @@ pub struct CaseValidation {
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
     pub work_ram_checks: Vec<WorkRamCheck>,
+    pub cartridge_ram_checks: Vec<CartridgeRamCheck>,
+    pub ppu_vram_checks: Vec<PpuVramCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }
@@ -533,6 +623,8 @@ pub struct ValidationRunner {
     pad2: Buttons,
     screen_checks: Vec<ScreenCheck>,
     work_ram_checks: Vec<WorkRamCheck>,
+    cartridge_ram_checks: Vec<CartridgeRamCheck>,
+    ppu_vram_checks: Vec<PpuVramCheck>,
     failures: Vec<String>,
     options: ValidationOptions,
 }
@@ -544,9 +636,11 @@ impl ValidationRunner {
         options: ValidationOptions,
     ) -> Result<Self, RomTestError> {
         let mut input = rom_bytes.iter().copied();
-        let core = Core::new(&mut input).map_err(|error| RomTestError::CoreConstruction {
-            case_id: case.id.clone(),
-            message: error.to_string(),
+        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
+            RomTestError::CoreConstruction {
+                case_id: case.id.clone(),
+                message: error.to_string(),
+            }
         })?;
 
         Ok(Self {
@@ -566,6 +660,8 @@ impl ValidationRunner {
             pad2: Buttons::empty(),
             screen_checks: Vec::new(),
             work_ram_checks: Vec::new(),
+            cartridge_ram_checks: Vec::new(),
+            ppu_vram_checks: Vec::new(),
             failures: Vec::new(),
             options,
         })
@@ -608,6 +704,8 @@ impl ValidationRunner {
             final_screen_hash,
             screen_checks: self.screen_checks,
             work_ram_checks: self.work_ram_checks,
+            cartridge_ram_checks: self.cartridge_ram_checks,
+            ppu_vram_checks: self.ppu_vram_checks,
             audio,
             failures: self.failures,
         })
@@ -673,6 +771,77 @@ impl CaseHarness for ValidationRunner {
         }
 
         self.work_ram_checks.push(WorkRamCheck {
+            frame,
+            address: u16::try_from(address).expect("address range validated before dispatch"),
+            expected_value,
+            actual_value,
+        });
+        Ok(())
+    }
+
+    fn on_check_cartridge_ram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+        expect_open_bus: bool,
+    ) -> Result<(), RomTestError> {
+        let read_result = self.core.peek_cartridge_ram(address).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "ROM case `{}` requested check_cartridge_ram outside cartridge RAM at address 0x{address:04X}",
+                self.case_id
+            ))
+        })?;
+        let actual_value = read_result.data;
+        let actual_open_bus = read_result.mask != 0xFF;
+        if self.options.check_expectations && actual_open_bus != expect_open_bus {
+            self.failures.push(format!(
+                "{}: cartridge RAM bus state mismatch at frame {} address 0x{:04X} (expected {}, actual {})",
+                self.case_id,
+                frame,
+                address,
+                if expect_open_bus { "open bus" } else { "mapped RAM" },
+                if actual_open_bus { "open bus" } else { "mapped RAM" }
+            ));
+        }
+        if self.options.check_expectations && !expect_open_bus && actual_value != expected_value {
+            self.failures.push(format!(
+                "{}: cartridge RAM mismatch at frame {} address 0x{:04X} (expected 0x{:02X}, actual 0x{:02X})",
+                self.case_id, frame, address, expected_value, actual_value
+            ));
+        }
+
+        self.cartridge_ram_checks.push(CartridgeRamCheck {
+            frame,
+            address: u16::try_from(address).expect("address range validated before dispatch"),
+            expected_value,
+            actual_value,
+            expected_open_bus: expect_open_bus,
+            actual_open_bus,
+        });
+        Ok(())
+    }
+
+    fn on_check_ppu_vram(
+        &mut self,
+        frame: u64,
+        address: usize,
+        expected_value: u8,
+    ) -> Result<(), RomTestError> {
+        let actual_value = self.core.peek_ppu_vram(address).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "ROM case `{}` requested check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}",
+                self.case_id
+            ))
+        })?;
+        if self.options.check_expectations && actual_value != expected_value {
+            self.failures.push(format!(
+                "{}: PPU VRAM mismatch at frame {} address 0x{:04X} (expected 0x{:02X}, actual 0x{:02X})",
+                self.case_id, frame, address, expected_value, actual_value
+            ));
+        }
+
+        self.ppu_vram_checks.push(PpuVramCheck {
             frame,
             address: u16::try_from(address).expect("address range validated before dispatch"),
             expected_value,
@@ -751,10 +920,32 @@ pub fn load_default_manifest() -> Result<RomManifest, RomTestError> {
 
 pub fn read_rom(case: &RomCase) -> Result<Vec<u8>, RomTestError> {
     let rom_path = case.resolved_rom_path()?.to_path_buf();
-    fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
+    let rom_bytes = fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
         path: rom_path,
         source,
-    })
+    })?;
+
+    apply_case_rom_overrides(case, rom_bytes)
+}
+
+fn apply_case_rom_overrides(
+    case: &RomCase,
+    mut rom_bytes: Vec<u8>,
+) -> Result<Vec<u8>, RomTestError> {
+    if let Some(sub_mapper_type) = case.sub_mapper_type {
+        if rom_bytes.len() < 16 || &rom_bytes[..4] != b"NES\x1A" {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` cannot override sub_mapper_type without a 16-byte iNES/NES 2.0 header",
+                case.id
+            )));
+        }
+
+        let was_nes20 = (rom_bytes[7] & 0x0C) == 0x08;
+        rom_bytes[7] = (rom_bytes[7] & 0xF3) | 0x08;
+        rom_bytes[8] = if was_nes20 { rom_bytes[8] & 0x0F } else { 0 } | (sub_mapper_type << 4);
+    }
+
+    Ok(rom_bytes)
 }
 
 pub fn validate_case(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
@@ -969,6 +1160,66 @@ pub fn write_html_report(
                     html.push_str("</tbody></table>");
                 }
 
+                if !validation.cartridge_ram_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Cartridge RAM checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Expected bus</th><th>Actual bus</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.cartridge_ram_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
+                             <td><code>0x{:02X}</code></td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.address,
+                            check.expected_value,
+                            check.actual_value,
+                            if check.expected_open_bus {
+                                "open bus"
+                            } else {
+                                "mapped RAM"
+                            },
+                            if check.actual_open_bus {
+                                "open bus"
+                            } else {
+                                "mapped RAM"
+                            },
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+
+                if !validation.ppu_vram_checks.is_empty() {
+                    html.push_str(
+                        "<h4>PPU VRAM checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.ppu_vram_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
+                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.address,
+                            check.expected_value,
+                            check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+
                 html.push_str("</section>");
             }
             CaseOutcome::InternalError {
@@ -1030,6 +1281,21 @@ fn dispatch_pending_events<H: CaseHarness>(
             }
             RomEventKind::CheckWorkRam { address, value } => {
                 harness.on_check_work_ram(event.frame, usize::from(address), value)?;
+            }
+            RomEventKind::CheckCartridgeRam {
+                address,
+                value,
+                open_bus,
+            } => {
+                harness.on_check_cartridge_ram(
+                    event.frame,
+                    usize::from(address),
+                    value,
+                    open_bus,
+                )?;
+            }
+            RomEventKind::CheckPpuVram { address, value } => {
+                harness.on_check_ppu_vram(event.frame, usize::from(address), value)?;
             }
             RomEventKind::Reset => {
                 harness.on_reset()?;
@@ -1355,8 +1621,10 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: cpu/nestest.nes
+    rom: nes-test-roms/other/nestest.nes
     perf: true
+    sub_mapper_type: 4
+    mmc3_irq_variant: nec
     expected_audio:
       sample_rate: 192000
       samples: 287270
@@ -1371,6 +1639,14 @@ cases:
         manifest.resolve_paths(&default_manifest_path());
         manifest.validate().expect("manifest should validate");
         assert!(manifest.case("cpu.nestest").unwrap().perf);
+        assert_eq!(
+            manifest.case("cpu.nestest").unwrap().sub_mapper_type,
+            Some(4)
+        );
+        assert_eq!(
+            manifest.case("cpu.nestest").unwrap().mmc3_irq_variant,
+            Some(Mmc3IrqVariant::Nec)
+        );
     }
 
     #[test]
@@ -1390,7 +1666,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: cpu/nestest.nes
+    rom: nes-test-roms/other/nestest.nes
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
 "#,
@@ -1403,7 +1679,7 @@ cases:
             manifest.case("cpu.nestest").unwrap().resolved_rom_path,
             Path::new("/tmp/config")
                 .join("fixtures/roms")
-                .join("cpu/nestest.nes")
+                .join("nes-test-roms/other/nestest.nes")
         );
     }
 
@@ -1443,6 +1719,27 @@ cases:
                 Ok(())
             }
 
+            fn on_check_cartridge_ram(
+                &mut self,
+                frame: u64,
+                _address: usize,
+                _expected_value: u8,
+                _expect_open_bus: bool,
+            ) -> Result<(), RomTestError> {
+                self.events.push(format!("cart@{frame}"));
+                Ok(())
+            }
+
+            fn on_check_ppu_vram(
+                &mut self,
+                frame: u64,
+                _address: usize,
+                _expected_value: u8,
+            ) -> Result<(), RomTestError> {
+                self.events.push(format!("ppu@{frame}"));
+                Ok(())
+            }
+
             fn on_reset(&mut self) -> Result<(), RomTestError> {
                 self.events.push(format!("reset@{}", self.frame_counter));
                 Ok(())
@@ -1470,8 +1767,10 @@ cases:
             id: "frame-zero".to_string(),
             category: RomCategory::Cpu,
             description: "Frame-zero dispatch regression.".to_string(),
-            rom: "cpu/nestest.nes".to_string(),
+            rom: "nes-test-roms/other/nestest.nes".to_string(),
             perf: false,
+            sub_mapper_type: None,
+            mmc3_irq_variant: None,
             events: vec![
                 RomEvent {
                     frame: 0,
@@ -1500,6 +1799,21 @@ cases:
                 },
                 RomEvent {
                     frame: 1,
+                    kind: RomEventKind::CheckCartridgeRam {
+                        address: 0x6000,
+                        value: 0x00,
+                        open_bus: false,
+                    },
+                },
+                RomEvent {
+                    frame: 1,
+                    kind: RomEventKind::CheckPpuVram {
+                        address: 0x2000,
+                        value: 0x00,
+                    },
+                },
+                RomEvent {
+                    frame: 1,
                     kind: RomEventKind::CheckScreen { hash: 1 },
                 },
             ],
@@ -1522,6 +1836,8 @@ cases:
                 "controller@0".to_string(),
                 "microphone@0".to_string(),
                 "ram@1".to_string(),
+                "cart@1".to_string(),
+                "ppu@1".to_string(),
                 "check@1".to_string()
             ]
         );
@@ -1542,5 +1858,145 @@ cases:
             Err(RomTestError::InvalidManifest(message))
                 if message.contains("check_work_ram outside CPU work RAM")
         ));
+    }
+
+    #[test]
+    fn check_cartridge_ram_rejects_addresses_outside_cartridge_ram() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::CheckCartridgeRam {
+                address: 0x5FFF,
+                value: 0,
+                open_bus: false,
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.mmc3_test.1-clocking"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("check_cartridge_ram outside cartridge RAM")
+        ));
+    }
+
+    #[test]
+    fn check_ppu_vram_rejects_addresses_outside_nametable_space() {
+        let event = RomEvent {
+            frame: 0,
+            kind: RomEventKind::CheckPpuVram {
+                address: 0x1FFF,
+                value: 0,
+            },
+        };
+
+        assert!(matches!(
+            event.validate("mapper.mmc3bigchrram"),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("check_ppu_vram outside PPU nametable/palette space")
+        ));
+    }
+
+    #[test]
+    fn rom_case_builds_core_options() {
+        let case = RomCase {
+            id: "mapper.option".to_string(),
+            category: RomCategory::Mapper,
+            description: "Option regression.".to_string(),
+            rom: "mapper/option.nes".to_string(),
+            perf: false,
+            sub_mapper_type: Some(4),
+            mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+            events: vec![RomEvent {
+                frame: 1,
+                kind: RomEventKind::CheckScreen { hash: 1 },
+            }],
+            expected_audio: None,
+            resolved_rom_path: PathBuf::new(),
+        };
+
+        assert_eq!(
+            case.core_options().mmc3_irq_variant,
+            Some(Mmc3IrqVariant::Nec)
+        );
+        assert_eq!(case.sub_mapper_type, Some(4));
+    }
+
+    #[test]
+    fn rom_case_rejects_submapper_values_outside_nes20_range() {
+        let mut manifest = serde_yaml::from_str::<RomManifest>(
+            r#"
+cases:
+  - id: cpu.nestest
+    category: cpu
+    description: Best first-pass CPU validation ROM.
+    rom: nes-test-roms/other/nestest.nes
+    sub_mapper_type: 16
+    events:
+      - { frame: 1, action: check_screen, hash: "0x1" }
+"#,
+        )
+        .expect("manifest should parse");
+        manifest.resolve_paths(&default_manifest_path());
+
+        assert!(matches!(
+            manifest.validate(),
+            Err(RomTestError::InvalidManifest(message))
+                if message.contains("sub_mapper_type")
+        ));
+    }
+
+    #[test]
+    fn submapper_override_promotes_rom_header_in_memory() {
+        let case = RomCase {
+            id: "mapper.override".to_string(),
+            category: RomCategory::Mapper,
+            description: "Override regression.".to_string(),
+            rom: "mapper/override.nes".to_string(),
+            perf: false,
+            sub_mapper_type: Some(1),
+            mmc3_irq_variant: None,
+            events: vec![RomEvent {
+                frame: 1,
+                kind: RomEventKind::CheckScreen { hash: 1 },
+            }],
+            expected_audio: None,
+            resolved_rom_path: PathBuf::new(),
+        };
+        let rom_bytes = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+
+        let overridden = apply_case_rom_overrides(&case, rom_bytes).expect("override should work");
+
+        assert_eq!(overridden[7], 0x08);
+        assert_eq!(overridden[8], 0x10);
+    }
+
+    #[test]
+    fn submapper_override_clears_ines_prg_ram_bits_when_promoting_to_nes20() {
+        let case = RomCase {
+            id: "mapper.override".to_string(),
+            category: RomCategory::Mapper,
+            description: "Override regression.".to_string(),
+            rom: "mapper/override.nes".to_string(),
+            perf: false,
+            sub_mapper_type: Some(1),
+            mmc3_irq_variant: None,
+            events: vec![RomEvent {
+                frame: 1,
+                kind: RomEventKind::CheckScreen { hash: 1 },
+            }],
+            expected_audio: None,
+            resolved_rom_path: PathBuf::new(),
+        };
+        let rom_bytes = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+
+        let overridden = apply_case_rom_overrides(&case, rom_bytes).expect("override should work");
+
+        assert_eq!(overridden[7], 0x08);
+        assert_eq!(overridden[8], 0x10);
     }
 }
