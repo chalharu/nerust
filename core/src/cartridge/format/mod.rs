@@ -7,7 +7,7 @@
 pub(crate) mod ines;
 pub(crate) mod nes20;
 use super::error::CartridgeError;
-use crate::MirrorMode;
+use crate::{MirrorMode, Mmc3IrqVariant};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub struct CartridgeData {
@@ -23,6 +23,8 @@ pub struct CartridgeData {
     mirror_mode: MirrorMode,
     has_battery: bool,
     sub_mapper_type: u8,
+    #[serde(default)]
+    mmc3_irq_variant_override: Option<Mmc3IrqVariant>,
     trainer: Vec<u8>,
 }
 
@@ -58,6 +60,17 @@ impl CartridgeData {
 
     pub(crate) fn sub_mapper_type(&self) -> u8 {
         self.sub_mapper_type
+    }
+
+    pub(crate) fn mmc3_irq_variant_override(&self) -> Option<Mmc3IrqVariant> {
+        self.mmc3_irq_variant_override
+    }
+
+    pub(crate) fn set_mmc3_irq_variant_override(
+        &mut self,
+        mmc3_irq_variant_override: Option<Mmc3IrqVariant>,
+    ) {
+        self.mmc3_irq_variant_override = mmc3_irq_variant_override;
     }
 
     // pub(crate) fn program_bank_offset(&self, mut index: isize) -> usize {
