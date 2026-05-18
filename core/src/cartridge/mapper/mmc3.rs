@@ -189,7 +189,7 @@ impl Mmc3 {
 
     fn uses_old_style_irq(&self) -> bool {
         if self.is_mmc6() {
-            return false;
+            return true;
         }
 
         match self.data_ref().mmc3_irq_variant_override() {
@@ -496,10 +496,10 @@ mod tests {
     }
 
     #[test]
-    fn mmc6_defaults_to_sharp_irq_behavior() {
+    fn mmc6_defaults_to_old_style_irq_behavior() {
         let mapper = new_mapper(1);
 
-        assert!(!mapper.uses_old_style_irq());
+        assert!(mapper.uses_old_style_irq());
     }
 
     #[test]
@@ -509,6 +509,54 @@ mod tests {
 
         assert_eq!(read_result.data, 0);
         assert_eq!(read_result.mask, 0);
+    }
+
+    #[test]
+    fn mmc6_does_not_retrigger_irq_when_reloading_after_natural_zero() {
+        let mut mapper = new_mapper(1);
+        let mut interrupt = Interrupt::new();
+
+        mapper.irq_enabled = true;
+        mapper.write_irq_latch(1);
+        mapper.write_irq_reload(0);
+
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 1);
+        assert!(!interrupt.get_irq(IrqSource::EXTERNAL));
+
+        mapper.write_irq_latch(0);
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(interrupt.get_irq(IrqSource::EXTERNAL));
+
+        interrupt.clear_irq(IrqSource::EXTERNAL);
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(!interrupt.get_irq(IrqSource::EXTERNAL));
+    }
+
+    #[test]
+    fn standard_mmc3_retriggers_irq_when_reloading_after_natural_zero() {
+        let mut mapper = new_mapper(0);
+        let mut interrupt = Interrupt::new();
+
+        mapper.irq_enabled = true;
+        mapper.write_irq_latch(1);
+        mapper.write_irq_reload(0);
+
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 1);
+        assert!(!interrupt.get_irq(IrqSource::EXTERNAL));
+
+        mapper.write_irq_latch(0);
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(interrupt.get_irq(IrqSource::EXTERNAL));
+
+        interrupt.clear_irq(IrqSource::EXTERNAL);
+        mapper.clock_irq_counter(&mut interrupt);
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(interrupt.get_irq(IrqSource::EXTERNAL));
     }
 
     #[test]
