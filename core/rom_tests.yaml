@@ -586,6 +586,49 @@ cases:
     events:
       - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
       - {frame: 420, action: check_screen, hash: "0xA6F9AD85D279CE5F"}
+  # Selected Holy Mapperel cases settle on a stable final result screen by frame 120.
+  - id: mapper.holy_mapperel.m0_nrom
+    category: mapper
+    description: "Verifies mapper 0 NROM board detection, PRG banking assumptions, and CHR ROM access using Holy Mapperel."
+    rom: holy-mapperel/testroms/M0_P32K_C8K_V.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0xF4E380CDA04C1BC7"}
+  - id: mapper.holy_mapperel.m1_sxrom
+    category: mapper
+    description: "Verifies mapper 1 SxROM bank switching and WRAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M1_P128K_C32K_W8K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x9267CA6C596A7D05"}
+  - id: mapper.holy_mapperel.m2_uxrom
+    category: mapper
+    description: "Verifies mapper 2 UxROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M2_P128K_CR8K_V.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x0A523DDBAC532F5E"}
+  - id: mapper.holy_mapperel.m3_cnrom
+    category: mapper
+    description: "Verifies mapper 3 CNROM CHR bank switching using Holy Mapperel."
+    rom: holy-mapperel/testroms/M3_P32K_C32K_H.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x1EBBC563125EC623"}
+  - id: mapper.holy_mapperel.m4_txrom
+    category: mapper
+    description: "Verifies mapper 4 TxROM PRG/CHR banking and IRQ behavior using Holy Mapperel."
+    rom: holy-mapperel/testroms/M4_P256K_C256K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x42AF4D67533098A5"}
+  - id: mapper.holy_mapperel.m7_axrom
+    category: mapper
+    description: "Verifies mapper 7 AxROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M7_P128K_CR8K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x5CA6F6F925EC6560"}
+  - id: mapper.holy_mapperel.m34_bnrom
+    category: mapper
+    description: "Verifies mapper 34 BNROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M34_P128K_CR8K_H.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0xAF70FBE0E3D1E1FC"}
   - id: mapper.holy_mapperel.m118_txsrom
     category: mapper
     description: "Verifies Mapper 118 TxSROM nametable banking and MMC3-family PRG/CHR/IRQ behavior using Holy Mapperel."
