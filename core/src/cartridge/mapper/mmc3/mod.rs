@@ -4,14 +4,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod mmc3;
 mod mmc3_nec;
 mod mmc6;
 mod shared;
+mod standard;
 
-use self::mmc3::Mmc3;
 use self::mmc3_nec::Mmc3Nec;
 use self::mmc6::Mmc6;
+use self::standard::Mmc3;
 use crate::Mmc3IrqVariant;
 use crate::cartridge::Cartridge;
 use crate::cartridge::error::CartridgeError;

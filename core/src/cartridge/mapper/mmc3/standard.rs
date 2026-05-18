@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::shared::{Mapper4Config, Mapper4Shared};
+use super::shared::{
+    IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, PrgRamModel,
+};
 use crate::cartridge::format::CartridgeData;
 use crate::cartridge::{
     Cartridge, CartridgeDataDao, Mapper, MapperState, MapperStateDao, PpuBusEvent,
@@ -69,28 +71,32 @@ impl Mmc3 {
         match deserialized {
             Mmc3Deserialized::Current { shared } => Self { shared },
             Mmc3Deserialized::Legacy(legacy) => Self {
-                shared: Mapper4Shared::from_serialized_parts(
+                shared: Mapper4Shared::from_legacy_state(
                     legacy.cartridge_data,
-                    legacy.state,
-                    legacy.bank_select,
-                    legacy.bank_data,
-                    legacy.mirroring,
-                    legacy.program_ram_protect,
-                    legacy.irq.variant.into(),
-                    legacy.irq.latch,
-                    legacy.irq.reload,
-                    legacy.irq.counter,
-                    legacy.irq.enabled,
-                    legacy.irq.last_a12_high,
-                    legacy.irq.last_a12_low_tick,
-                    legacy.prg_ram_model.into(),
+                    LegacyMapper4State {
+                        state: legacy.state,
+                        bank_select: legacy.bank_select,
+                        bank_data: legacy.bank_data,
+                        mirroring: legacy.mirroring,
+                        program_ram_protect: legacy.program_ram_protect,
+                        irq: LegacyIrqState {
+                            variant: legacy.irq.variant.into(),
+                            latch: legacy.irq.latch,
+                            reload: legacy.irq.reload,
+                            counter: legacy.irq.counter,
+                            enabled: legacy.irq.enabled,
+                            last_a12_high: legacy.irq.last_a12_high,
+                            last_a12_low_tick: legacy.irq.last_a12_low_tick,
+                        },
+                        prg_ram_model: legacy.prg_ram_model.into(),
+                    },
                 ),
             },
         }
     }
 }
 
-impl From<LegacyIrqVariant> for super::shared::IrqVariant {
+impl From<LegacyIrqVariant> for IrqVariant {
     fn from(value: LegacyIrqVariant) -> Self {
         match value {
             LegacyIrqVariant::Sharp => Self::Sharp,
@@ -99,7 +105,7 @@ impl From<LegacyIrqVariant> for super::shared::IrqVariant {
     }
 }
 
-impl From<LegacyPrgRamModel> for super::shared::PrgRamModel {
+impl From<LegacyPrgRamModel> for PrgRamModel {
     fn from(value: LegacyPrgRamModel) -> Self {
         match value {
             LegacyPrgRamModel::Standard => Self::Standard,
@@ -245,14 +251,8 @@ mod tests {
             prg_ram_model: LegacyPrgRamModel::Mmc6,
         }));
 
-        assert_eq!(
-            mapper.shared.prg_ram_model(),
-            super::super::shared::PrgRamModel::Mmc6
-        );
-        assert_eq!(
-            mapper.shared.irq_variant(),
-            super::super::shared::IrqVariant::NecOldStyle
-        );
+        assert_eq!(mapper.shared.prg_ram_model(), PrgRamModel::Mmc6);
+        assert_eq!(mapper.shared.irq_variant(), IrqVariant::NecOldStyle);
         assert!(!Mapper::bus_conflicts(&mapper.shared));
     }
 }

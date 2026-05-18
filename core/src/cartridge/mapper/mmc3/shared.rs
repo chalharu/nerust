@@ -142,6 +142,26 @@ impl IrqUnit {
     }
 }
 
+pub(super) struct LegacyIrqState {
+    pub(super) variant: IrqVariant,
+    pub(super) latch: u8,
+    pub(super) reload: bool,
+    pub(super) counter: u8,
+    pub(super) enabled: bool,
+    pub(super) last_a12_high: bool,
+    pub(super) last_a12_low_tick: u64,
+}
+
+pub(super) struct LegacyMapper4State {
+    pub(super) state: MapperState,
+    pub(super) bank_select: u8,
+    pub(super) bank_data: [u8; 8],
+    pub(super) mirroring: u8,
+    pub(super) program_ram_protect: u8,
+    pub(super) irq: LegacyIrqState,
+    pub(super) prg_ram_model: PrgRamModel,
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mapper4Shared {
     cartridge_data: CartridgeData,
@@ -168,43 +188,31 @@ impl Mapper4Shared {
         }
     }
 
-    pub(super) fn from_serialized_parts(
+    pub(super) fn from_legacy_state(
         cartridge_data: CartridgeData,
-        state: MapperState,
-        bank_select: u8,
-        bank_data: [u8; 8],
-        mirroring: u8,
-        program_ram_protect: u8,
-        irq_variant: IrqVariant,
-        latch: u8,
-        reload: bool,
-        counter: u8,
-        enabled: bool,
-        last_a12_high: bool,
-        last_a12_low_tick: u64,
-        prg_ram_model: PrgRamModel,
+        legacy: LegacyMapper4State,
     ) -> Self {
         Self {
             config: Mapper4Config::from_parts(
-                irq_variant,
-                prg_ram_model,
+                legacy.irq.variant,
+                legacy.prg_ram_model,
                 cartridge_data.sub_mapper_type() == 2,
             ),
             irq: IrqUnit {
-                variant: irq_variant,
-                latch,
-                reload,
-                counter,
-                enabled,
-                last_a12_high,
-                last_a12_low_tick,
+                variant: legacy.irq.variant,
+                latch: legacy.irq.latch,
+                reload: legacy.irq.reload,
+                counter: legacy.irq.counter,
+                enabled: legacy.irq.enabled,
+                last_a12_high: legacy.irq.last_a12_high,
+                last_a12_low_tick: legacy.irq.last_a12_low_tick,
             },
             cartridge_data,
-            state,
-            bank_select,
-            bank_data,
-            mirroring,
-            program_ram_protect,
+            state: legacy.state,
+            bank_select: legacy.bank_select,
+            bank_data: legacy.bank_data,
+            mirroring: legacy.mirroring,
+            program_ram_protect: legacy.program_ram_protect,
         }
     }
 
