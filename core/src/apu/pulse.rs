@@ -148,21 +148,21 @@ impl Pulse {
     }
 
     pub(crate) fn step_sweep(&mut self) {
-        self.sweep_value = self.sweep_value.wrapping_sub(1);
-        if self.sweep_value == 0 {
-            if self.sweep_enabled
-                && self.sweep_shift > 0
-                && self.period >= 8
-                && self.sweep_target_period <= 0x7FF
-            {
-                self.sweep();
-            }
-            self.sweep_value = self.sweep_period;
+        let divider_expired = self.sweep_value == 0;
+        if divider_expired
+            && self.sweep_enabled
+            && self.sweep_shift > 0
+            && self.period >= 8
+            && self.sweep_target_period <= 0x7FF
+        {
+            self.set_period(self.sweep_target_period);
         }
 
-        if self.sweep_reload {
+        if divider_expired || self.sweep_reload {
             self.sweep_value = self.sweep_period;
             self.sweep_reload = false;
+        } else {
+            self.sweep_value -= 1;
         }
     }
 
@@ -170,10 +170,9 @@ impl Pulse {
         let delta = self.period >> self.sweep_shift;
         self.sweep_target_period = if self.sweep_negate {
             self.period
-                .wrapping_sub(delta)
-                .wrapping_sub(if self.is_first_channel { 1 } else { 0 })
+                .saturating_sub(delta + if self.is_first_channel { 1 } else { 0 })
         } else {
-            self.period.wrapping_add(delta)
+            self.period + delta
         }
     }
 
@@ -185,5 +184,57 @@ impl Pulse {
         } else {
             Envelope::get_volume(self)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pulse;
+
+    #[test]
+    fn step_sweep_applies_target_period_when_divider_expires() {
+        let mut pulse = Pulse::new(true);
+        pulse.set_period(0x0100);
+        pulse.write_sweep(0b1000_0001);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0180);
+        assert_eq!(pulse.timer.get_period(), 0x0301);
+        assert_eq!(pulse.sweep_target_period, 0x0240);
+        assert_eq!(pulse.sweep_value, pulse.sweep_period);
+    }
+
+    #[test]
+    fn step_sweep_preserves_negate_difference_between_pulse_channels() {
+        let mut pulse1 = Pulse::new(true);
+        pulse1.set_period(0x0020);
+        pulse1.write_sweep(0b1000_1001);
+        pulse1.step_sweep();
+
+        let mut pulse2 = Pulse::new(false);
+        pulse2.set_period(0x0020);
+        pulse2.write_sweep(0b1000_1001);
+        pulse2.step_sweep();
+
+        assert_eq!(pulse1.period, 0x000F);
+        assert_eq!(pulse2.period, 0x0010);
+    }
+
+    #[test]
+    fn step_sweep_reload_delays_update_until_divider_expires_when_nonzero() {
+        let mut pulse = Pulse::new(true);
+        pulse.set_period(0x0100);
+        pulse.sweep_value = 1;
+        pulse.write_sweep(0b1000_0010);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0100);
+        assert_eq!(pulse.sweep_value, pulse.sweep_period);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0100);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0140);
     }
 }

@@ -312,7 +312,7 @@ cases:
     expected_audio:
       sample_rate: 192000
       samples: 287270
-      hash: "0x34BB3FFDF962043D"
+      hash: "0xD5BFE5997FBAFC8B"
     events:
       - {frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E"}
       - {frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed}
