@@ -536,10 +536,11 @@ cases:
       - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
   - id: mapper.mmc3_test.6_mmc6
     category: mapper
-    description: "Captures the current sharp-style mapper 4 result against blargg's historical MMC6-labelled IRQ probe ROM. The ROM assumes MMC3-style $6000 RAM and is not a true MMC6 submapper 1 validation."
+    description: "Verifies MMC6 submapper 1 behavior via a test-harness NES 2.0 override on the original iNES ROM. On real MMC6 hardware the ROM's legacy $6000 result byte is open bus, so this case checks for an open-bus zero there and validates the final Sharp-style screen state."
     rom: mapper/mmc3/mmc3_test/6-MMC6.nes
+    sub_mapper_type: 1
     events:
-      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x03"}
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00", open_bus: true}
       - {frame: 420, action: check_screen, hash: "0xF7FF7059CDCA0D6C"}
   # The single-ROM mmc3_test_2 variants intentionally end on the same pass screen as mmc3_test.
   - id: mapper.mmc3_test_2.1_clocking

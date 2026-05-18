@@ -11,7 +11,9 @@ use super::{Cartridge, CartridgeData};
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::{MirrorMode, Mmc3IrqVariant};
 
-const A12_LOW_FILTER_TICKS: u64 = 12;
+// MMC3 clocks on A12 rising edges only after A12 remained low for three falling
+// edges of M2, which corresponds to roughly 9 PPU ticks.
+const A12_LOW_FILTER_TICKS: u64 = 9;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mmc3 {
@@ -400,15 +402,14 @@ impl Mapper for Mmc3 {
         &mut self,
         address: usize,
         ppu_tick: u64,
-        address_register_change: bool,
+        _address_register_change: bool,
         interrupt: &mut Interrupt,
     ) {
         let a12_high = (address & 0x1000) != 0;
 
         if a12_high {
             if !self.last_a12_high
-                && (address_register_change
-                    || ppu_tick.saturating_sub(self.last_a12_low_tick) >= A12_LOW_FILTER_TICKS)
+                && ppu_tick.saturating_sub(self.last_a12_low_tick) >= A12_LOW_FILTER_TICKS
             {
                 self.clock_irq_counter(interrupt);
             }
@@ -425,6 +426,7 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
     use crate::cartridge::format::CartridgeData;
+    use crate::cpu::interrupt::{Interrupt, IrqSource};
 
     fn new_mapper(sub_mapper_type: u8) -> Mmc3 {
         let mut rom = vec![
@@ -491,5 +493,41 @@ mod tests {
 
         mapper.write_bank_select(0x20);
         assert_eq!(Mapper::read_ram(&mapper, 0x1000), None);
+    }
+
+    #[test]
+    fn mmc6_defaults_to_sharp_irq_behavior() {
+        let mapper = new_mapper(1);
+
+        assert!(!mapper.uses_old_style_irq());
+    }
+
+    #[test]
+    fn mmc6_cpu_6000_reads_as_open_bus_zero() {
+        let mapper = new_mapper(1);
+        let read_result = Cartridge::read(&mapper, 0x6000);
+
+        assert_eq!(read_result.data, 0);
+        assert_eq!(read_result.mask, 0);
+    }
+
+    #[test]
+    fn register_changes_still_require_filtered_a12_low_time() {
+        let mut mapper = new_mapper(0);
+        let mut interrupt = Interrupt::new();
+        mapper.irq_counter = 1;
+        mapper.irq_enabled = true;
+
+        mapper.vram_address_change(0x0FFF, 0, true, &mut interrupt);
+        mapper.vram_address_change(0x1000, 8, true, &mut interrupt);
+
+        assert_eq!(mapper.irq_counter, 1);
+        assert!(!interrupt.get_irq(IrqSource::EXTERNAL));
+
+        mapper.vram_address_change(0x0FFF, 9, true, &mut interrupt);
+        mapper.vram_address_change(0x1000, 18, true, &mut interrupt);
+
+        assert_eq!(mapper.irq_counter, 0);
+        assert!(interrupt.get_irq(IrqSource::EXTERNAL));
     }
 }

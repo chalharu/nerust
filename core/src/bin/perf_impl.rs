@@ -319,6 +319,7 @@ impl CaseHarness for PerfRunner {
         _frame: u64,
         _address: usize,
         _expected_value: u8,
+        _expect_open_bus: bool,
     ) -> Result<(), rom_test::RomTestError> {
         Ok(())
     }
