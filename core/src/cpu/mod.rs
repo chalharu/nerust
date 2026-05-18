@@ -513,7 +513,6 @@ impl<'de> serde::Deserialize<'de> for Core {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge;
     use crate::controller::standard_controller::StandardController;
     use strum::IntoEnumIterator;
 
@@ -535,18 +534,9 @@ mod tests {
         }
     }
 
-    fn nrom_cartridge() -> Box<dyn crate::cartridge::Cartridge> {
-        let mut rom = vec![
-            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-        cartridge::try_from(&mut rom.into_iter()).expect("cartridge should parse")
-    }
-
     fn dmc_dma_stall_cycles(cpu: &mut Core) -> usize {
         let mut ppu = Ppu::new();
-        let mut cartridge = nrom_cartridge();
+        let mut cartridge = super::super::nrom_test_cartridge();
         let mut controller = StandardController::new();
         let mut apu = Apu::new(cpu.interrupt_mut());
         let mut stalled_cycles = 0;
@@ -598,7 +588,7 @@ mod tests {
         let mut cpu = prepare_read_cycle_cpu();
         cpu.cycles = 0;
         let mut ppu = Ppu::new();
-        let mut cartridge = nrom_cartridge();
+        let mut cartridge = super::super::nrom_test_cartridge();
         let mut controller = StandardController::new();
         let mut apu = Apu::new(cpu.interrupt_mut());
 
@@ -637,7 +627,7 @@ mod tests {
         });
 
         let mut ppu = Ppu::new();
-        let mut cartridge = nrom_cartridge();
+        let mut cartridge = super::super::nrom_test_cartridge();
         let mut controller = StandardController::new();
         let mut apu = Apu::new(cpu.interrupt_mut());
 
@@ -672,7 +662,7 @@ mod tests {
         });
 
         let mut ppu = Ppu::new();
-        let mut cartridge = nrom_cartridge();
+        let mut cartridge = super::super::nrom_test_cartridge();
         let mut controller = StandardController::new();
         let mut apu = Apu::new(cpu.interrupt_mut());
 

@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::fft_test::CPU_CLOCK_HZ;
-use crate::Core;
 use crate::controller::standard_controller::StandardController;
+use crate::{CartridgeData, CartridgeDataParts, Core, MirrorMode, RomFormat};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
@@ -241,13 +241,42 @@ fn pulse_constant_volume_rom(length_index: u8, frame_counter_value: u8) -> Vec<u
     ])
 }
 
+fn cartridge_data_from_rom(rom: &[u8]) -> CartridgeData {
+    const HEADER_LEN: usize = 16;
+    const PRG_ROM_LEN: usize = 0x8000;
+    const CHR_ROM_LEN: usize = 0x2000;
+
+    assert_eq!(
+        rom.len(),
+        HEADER_LEN + PRG_ROM_LEN + CHR_ROM_LEN,
+        "test ROM should have the expected NROM layout",
+    );
+
+    CartridgeData::new(CartridgeDataParts {
+        format: RomFormat::INes,
+        prog_rom: rom[HEADER_LEN..HEADER_LEN + PRG_ROM_LEN].to_vec(),
+        char_rom: rom[HEADER_LEN + PRG_ROM_LEN..].to_vec(),
+        pram_length: 0,
+        save_pram_length: 0,
+        vram_length: 0,
+        save_vram_length: 0,
+        mapper_type: 0,
+        mirror_mode: MirrorMode::Horizontal,
+        has_battery: false,
+        sub_mapper_type: 0,
+        trainer: Vec::new(),
+    })
+    .expect("test cartridge data should be valid")
+}
+
 fn run_rom_until_silence(
     rom: Vec<u8>,
     sample_rate: u32,
     max_frames: usize,
     silence_tail_seconds: f32,
 ) -> AudioCapture {
-    let mut core = Core::new(&mut rom.into_iter()).expect("test ROM should load");
+    let cartridge_data = cartridge_data_from_rom(&rom);
+    let mut core = Core::new(cartridge_data).expect("test ROM should load");
     core.reset();
 
     let mut screen = NullScreen;

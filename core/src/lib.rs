@@ -226,3 +226,25 @@ impl OpenBusReadResult {
         Self { data, mask }
     }
 }
+
+#[cfg(test)]
+fn nrom_test_cartridge() -> Box<dyn Cartridge> {
+    cartridge::try_from(
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 0,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid"),
+    )
+    .expect("cartridge should construct")
+}
