@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
-use crate::surface::{RenderSurface, SurfaceTarget};
+use crate::surface::SurfaceTarget;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
@@ -14,13 +14,13 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
-use nerust_wgpuwrap::{RenderOutcome, Renderer};
+use nerust_wgpuwrap::{RenderOutcome, RenderSurface, Renderer, SurfaceSize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
-    dpi::LogicalSize as TaoLogicalSize,
+    dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, Event, KeyEvent, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
     keyboard::KeyCode,
@@ -65,10 +65,14 @@ fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
         ))
 }
 
+fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
+    SurfaceSize::new(size.width, size.height)
+}
+
 pub struct Window {
     event_loop: Option<EventLoop<UserEvent>>,
     window: Option<Arc<TaoWindow>>,
-    render_surface: Option<RenderSurface>,
+    render_surface: Option<RenderSurface<SurfaceTarget>>,
     renderer: Option<Renderer>,
     last_render_error: Option<String>,
     keys: Buttons,
@@ -222,9 +226,8 @@ impl Window {
         self.app_menu.update(self.paused);
         let render_surface = RenderSurface::new(surface_target).unwrap();
         let renderer = pollster::block_on(Renderer::new(
-            render_surface.instance(),
-            render_surface.surface(),
-            render_surface.surface_size(window.inner_size()),
+            &render_surface,
+            render_surface.surface_size(window_surface_size(window.inner_size())),
             self.logical_size,
             self.physical_size,
         ))
@@ -294,7 +297,11 @@ impl Window {
     }
 
     fn reconfigure_surface(&mut self) {
-        let Some(window_size) = self.window.as_ref().map(|window| window.inner_size()) else {
+        let Some(window_size) = self
+            .window
+            .as_ref()
+            .map(|window| window_surface_size(window.inner_size()))
+        else {
             return;
         };
         let (Some(renderer), Some(render_surface)) =
@@ -302,14 +309,15 @@ impl Window {
         else {
             return;
         };
-        renderer.reconfigure_surface(
-            render_surface.surface(),
-            render_surface.surface_size(window_size),
-        );
+        renderer.reconfigure_surface(render_surface, render_surface.surface_size(window_size));
     }
 
     fn on_update(&mut self) {
-        let Some(window_size) = self.window.as_ref().map(|window| window.inner_size()) else {
+        let Some(window_size) = self
+            .window
+            .as_ref()
+            .map(|window| window_surface_size(window.inner_size()))
+        else {
             return;
         };
         let (Some(renderer), Some(render_surface)) =
@@ -319,7 +327,7 @@ impl Window {
         };
         let surface_size = render_surface.surface_size(window_size);
         let render_result = self.console.with_frame_buffer(|frame_buffer| {
-            renderer.render(render_surface.surface(), surface_size, frame_buffer)
+            renderer.render(render_surface, surface_size, frame_buffer)
         });
 
         match render_result {
@@ -338,7 +346,7 @@ impl Window {
                     Ok(()) => {
                         self.last_render_error = None;
                         renderer.reconfigure_surface(
-                            render_surface.surface(),
+                            render_surface,
                             render_surface.surface_size(window_size),
                         );
                     }

@@ -6,9 +6,17 @@
 
 use nerust_screen_traits::PhysicalSize;
 use nerust_wgpuwrap::SurfaceSize;
+use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+)))]
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
-use tao::{dpi::PhysicalSize as TaoPhysicalSize, window::Window as TaoWindow};
-use wgpu::{Instance, Surface};
+use tao::window::Window as TaoWindow;
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -23,50 +31,11 @@ use {
         prelude::{BoxExt, ObjectType, WidgetExt},
     },
     raw_window_handle::{
-        HandleError, RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
-        XlibDisplayHandle, XlibWindowHandle,
+        WaylandDisplayHandle, WaylandWindowHandle, XlibDisplayHandle, XlibWindowHandle,
     },
     std::ptr::NonNull,
     tao::platform::unix::WindowExtUnix,
 };
-
-pub(crate) struct RenderSurface {
-    // The surface must drop before the target widget/handles and their backing instance.
-    surface: Surface<'static>,
-    surface_target: SurfaceTarget,
-    instance: Instance,
-}
-
-impl RenderSurface {
-    pub(crate) fn new(surface_target: SurfaceTarget) -> Result<Self, String> {
-        let instance = Instance::default();
-        surface_target.prepare();
-        let surface = surface_target.create_surface(&instance)?;
-        Ok(Self {
-            surface,
-            surface_target,
-            instance,
-        })
-    }
-
-    pub(crate) fn surface(&self) -> &Surface<'static> {
-        &self.surface
-    }
-
-    pub(crate) fn instance(&self) -> &Instance {
-        &self.instance
-    }
-
-    pub(crate) fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
-        self.surface_target.surface_size(fallback)
-    }
-
-    pub(crate) fn recreate_surface(&mut self) -> Result<(), String> {
-        self.surface_target.prepare();
-        self.surface = self.surface_target.create_surface(&self.instance)?;
-        Ok(())
-    }
-}
 
 pub(crate) struct SurfaceTarget {
     kind: SurfaceTargetKind,
@@ -102,7 +71,7 @@ impl SurfaceTarget {
         ))]
         {
             Self {
-                kind: SurfaceTargetKind::Gtk(GtkRenderTarget::new(&window, content_size)),
+                kind: SurfaceTargetKind::Gtk(GtkRenderTarget::new(window, content_size)),
             }
         }
 
@@ -120,7 +89,11 @@ impl SurfaceTarget {
             }
         }
     }
+}
 
+// Safety: `SurfaceTarget` owns the platform objects backing the raw handles it returns,
+// and those objects remain alive for the lifetime of the corresponding `RenderSurface`.
+unsafe impl nerust_wgpuwrap::SurfaceTargetSource for SurfaceTarget {
     fn prepare(&self) {
         #[cfg(any(
             target_os = "linux",
@@ -134,7 +107,7 @@ impl SurfaceTarget {
         }
     }
 
-    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
+    fn surface_size(&self, fallback: SurfaceSize) -> SurfaceSize {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -160,7 +133,7 @@ impl SurfaceTarget {
         }
     }
 
-    fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
+    fn raw_window_handle(&self) -> Result<RawWindowHandle, HandleError> {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -170,20 +143,7 @@ impl SurfaceTarget {
         ))]
         {
             match &self.kind {
-                SurfaceTargetKind::Gtk(target) => unsafe {
-                    let raw_display_handle = target
-                        .raw_display_handle()
-                        .map_err(|err| format!("failed to acquire raw display handle: {err:?}"))?;
-                    let raw_window_handle = target
-                        .raw_window_handle()
-                        .map_err(|err| format!("failed to acquire raw window handle: {err:?}"))?;
-                    instance
-                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                            raw_display_handle: Some(raw_display_handle),
-                            raw_window_handle,
-                        })
-                        .map_err(|err| format!("failed to create wgpu surface: {err:?}"))
-                },
+                SurfaceTargetKind::Gtk(target) => target.raw_window_handle(),
             }
         }
 
@@ -196,9 +156,39 @@ impl SurfaceTarget {
         )))]
         {
             match &self.kind {
-                SurfaceTargetKind::Window(window) => instance
-                    .create_surface(window.clone())
-                    .map_err(|err| format!("failed to create wgpu surface: {err:?}")),
+                SurfaceTargetKind::Window(window) => {
+                    window.window_handle().map(|handle| handle.as_raw())
+                }
+            }
+        }
+    }
+
+    fn raw_display_handle(&self) -> Result<Option<RawDisplayHandle>, HandleError> {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        {
+            match &self.kind {
+                SurfaceTargetKind::Gtk(target) => target.raw_display_handle().map(Some),
+            }
+        }
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )))]
+        {
+            match &self.kind {
+                SurfaceTargetKind::Window(window) => {
+                    window.display_handle().map(|handle| Some(handle.as_raw()))
+                }
             }
         }
     }
@@ -212,6 +202,7 @@ impl SurfaceTarget {
     target_os = "openbsd"
 ))]
 struct GtkRenderTarget {
+    _window: Arc<TaoWindow>,
     widget: EventBox,
 }
 
@@ -223,7 +214,7 @@ struct GtkRenderTarget {
     target_os = "openbsd"
 ))]
 impl GtkRenderTarget {
-    fn new(window: &TaoWindow, content_size: PhysicalSize) -> Self {
+    fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
         let widget = EventBox::new();
         widget.set_hexpand(true);
         widget.set_vexpand(true);
@@ -233,14 +224,17 @@ impl GtkRenderTarget {
             .expect("tao default_vbox must exist for Linux menu integration")
             .pack_start(&widget, true, true, 0);
 
-        Self { widget }
+        Self {
+            _window: window,
+            widget,
+        }
     }
 
     fn prepare(&self) {
         self.widget.realize();
     }
 
-    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
+    fn surface_size(&self, fallback: SurfaceSize) -> SurfaceSize {
         let width = self.widget.allocated_width();
         let height = self.widget.allocated_height();
         if width > 0 && height > 0 {
