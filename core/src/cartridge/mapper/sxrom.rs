@@ -251,7 +251,9 @@ impl Mapper for SxRom {
     }
 
     fn write_ram(&mut self, index: usize, data: u8) {
-        if self.program_ram_enabled() && let Some(address) = self.ram_address(index) {
+        if self.program_ram_enabled()
+            && let Some(address) = self.ram_address(index)
+        {
             self.mapper_state_mut().sram[address] = data;
         }
     }
