@@ -84,6 +84,11 @@ impl ValidationRunner {
     fn run_case(mut self, case: &RomCase) -> Result<CaseValidation, RomTestError> {
         let totals = drive_case(case, &mut self)?;
         let final_screen_hash = screen_hash(&self.screen_buffer);
+        let final_screenshot_png = if self.options.capture_screenshots {
+            Some(encode_screenshot_png(&self.screen_buffer)?)
+        } else {
+            None
+        };
         let audio = AudioObservation {
             sample_rate: self.mixer.sample_rate(),
             samples: self.mixer.samples(),
@@ -116,6 +121,7 @@ impl ValidationRunner {
             frames: totals.frames,
             steps: totals.steps,
             final_screen_hash,
+            final_screenshot_png,
             screen_checks: self.screen_checks,
             work_ram_checks: self.work_ram_checks,
             cartridge_ram_checks: self.cartridge_ram_checks,
