@@ -22,6 +22,14 @@
 !/testroms/M7_P128K_CR8K.nes
 !/testroms/M34_P128K_CR8K_H.nes
 !/testroms/M118_P128K_C64K.nes
+!/testroms/M9_P128K_C64K.nes
+!/testroms/M10_P128K_C64K_W8K.nes
+!/testroms/M11_P64K_CR32K_V.nes
+!/testroms/M28_P512K_CR32K.nes
+!/testroms/M66_P64K_C16K_V.nes
+!/testroms/M69_P128K_C64K_W8K.nes
+!/testroms/M78.3_P128K_C64K.nes
+!/testroms/M180_P128K_CR8K_H.nes
 __pycache__/
 *.pyc
 /mapperel-primary.nes

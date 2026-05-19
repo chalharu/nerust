@@ -67,6 +67,28 @@ mod tests {
         cartridge::try_from(cartridge_data).expect("cartridge should construct")
     }
 
+    fn mmc2_cartridge() -> Box<dyn Cartridge> {
+        let character_rom = (0u8..32)
+            .flat_map(|bank| std::iter::repeat_n(bank, 0x1000))
+            .collect();
+        let cartridge_data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom: vec![0; 0x20000],
+            char_rom: character_rom,
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 9,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        cartridge::try_from(cartridge_data).expect("cartridge should construct")
+    }
+
     #[test]
     fn background_color_zero_uses_universal_backdrop() {
         assert_eq!(Core::background_palette_index(0x00, 0), 0x00);
@@ -108,6 +130,22 @@ mod tests {
         assert_eq!(ppu.scan_line, 1);
         assert_eq!(ppu.cycle, 0);
         assert_eq!(ppu.ppu_bus_tick(), 11);
+    }
+
+    #[test]
+    fn cpu_ppudata_reads_can_toggle_mmc2_latches() {
+        let mut ppu = Core::new();
+        let mut cartridge = mmc2_cartridge();
+        let mut interrupt = Interrupt::new();
+
+        cartridge.write(0xB000, 0x02, &mut interrupt);
+        cartridge.write(0xC000, 0x03, &mut interrupt);
+        assert_eq!(cartridge.read(0x0000).data, 0x02);
+
+        ppu.state.vram_addr = 0x0FE8;
+        let _ = ppu.read_data(cartridge.as_mut(), &mut interrupt);
+
+        assert_eq!(cartridge.read(0x0000).data, 0x03);
     }
 }
 
@@ -533,12 +571,7 @@ impl Core {
         } else {
             self.vram_read_delay = 6;
             let addr = self.state.vram_addr as usize;
-            let mut value = self.read_vram_internal(
-                addr,
-                cartridge,
-                interrupt,
-                self.scan_line > 240 || !self.render_executing,
-            );
+            let mut value = self.read_vram_internal(addr, cartridge, interrupt, false);
             // emulate buffered reads
             let mask = if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
@@ -757,13 +790,7 @@ impl Core {
         let addr = (self.state.vram_addr & 0x3FFF) as usize;
 
         if addr < 0x3F00 {
-            self.write_vram_internal(
-                addr,
-                value,
-                cartridge,
-                interrupt,
-                self.scan_line > 240 || !self.render_executing,
-            );
+            self.write_vram_internal(addr, value, cartridge, interrupt, false);
         } else {
             self.write_palette(addr, value);
         }

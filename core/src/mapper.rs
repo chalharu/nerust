@@ -7,7 +7,7 @@
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper_state::{MapperStateDao, MappingMode};
 use crate::ppu_bus_event::PpuBusEvent;
-use crate::{CartridgeData, MirrorMode};
+use crate::{CartridgeData, MirrorMode, OpenBusReadResult};
 
 pub(crate) trait CartridgeDataDao {
     fn data_mut(&mut self) -> &mut CartridgeData;
@@ -28,6 +28,12 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
     }
 
     fn write_register(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
+
+    fn read_expansion(&self, _address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(0, 0)
+    }
+
+    fn write_expansion(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
 
     fn battery_default(&self) -> bool {
         false
@@ -148,7 +154,7 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
         }
     }
 
-    fn step(&mut self) {}
+    fn step(&mut self, _interrupt: &mut Interrupt) {}
 
     /// Notify the mapper of an observable PPU bus event.
     ///

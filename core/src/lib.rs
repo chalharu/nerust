@@ -191,7 +191,7 @@ impl Core {
                 result = true;
             }
         }
-        self.cartridge.step();
+        self.cartridge.step(self.cpu.interrupt_mut());
         self.apu.step(&mut self.cpu, mixer, mixer_sample_rate);
 
         result
