@@ -25,17 +25,11 @@ pub fn main() {
 fn run() -> Result<(), String> {
     let matches = Command::new("perf")
         .about("Benchmark perf-enabled ROM test cases from rom_test/rom_tests.yaml")
-        .arg(
-            Arg::new("rounds")
-                .long("rounds")
-                .value_name("N")
-                .default_value("5"),
-        )
+        .arg(Arg::new("rounds").long("rounds").value_name("N"))
         .arg(
             Arg::new("warmup-rounds")
                 .long("warmup-rounds")
-                .value_name("N")
-                .default_value("1"),
+                .value_name("N"),
         )
         .arg(
             Arg::new("case")
@@ -47,7 +41,8 @@ fn run() -> Result<(), String> {
 
     let rounds = matches
         .get_one::<String>("rounds")
-        .expect("rounds has a default value")
+        .map(String::as_str)
+        .unwrap_or("5")
         .parse::<usize>()
         .map_err(|error| format!("invalid --rounds value: {error}"))?;
     if rounds == 0 {
@@ -56,7 +51,8 @@ fn run() -> Result<(), String> {
 
     let warmup_rounds = matches
         .get_one::<String>("warmup-rounds")
-        .expect("warmup-rounds has a default value")
+        .map(String::as_str)
+        .unwrap_or("1")
         .parse::<usize>()
         .map_err(|error| format!("invalid --warmup-rounds value: {error}"))?;
 
