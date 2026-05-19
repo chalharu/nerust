@@ -1,0 +1,393 @@
+// Copyright (c) 2018 Mitsuharu Seki
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
+use nerust_console::{Console, ConsoleMetrics};
+use nerust_core::CoreOptions;
+use nerust_core::controller::standard_controller::Buttons;
+use nerust_screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_sound_openal::OpenAl;
+use nerust_timer::CLOCK_RATE;
+use nerust_wgpuwrap::{Renderer, SurfaceTarget};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use tao::platform::macos::EventLoopExtMacOS;
+use tao::{
+    dpi::LogicalSize as TaoLogicalSize,
+    event::{ElementState, Event, KeyEvent, StartCause, WindowEvent},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
+    keyboard::KeyCode,
+    window::{Window as TaoWindow, WindowBuilder},
+};
+
+const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+fn window_title(paused: bool, _render_fps: f32, console_metrics: ConsoleMetrics) -> String {
+    let state = if paused { "Nes -- Paused" } else { "Nes" };
+    if console_metrics.loaded {
+        format!(
+            "{state} | FPS {:.1} | Speed x{:.2}",
+            console_metrics.emulation_fps, console_metrics.speed_multiplier
+        )
+    } else {
+        format!("{state} | No ROM")
+    }
+}
+
+fn keycode_button(code: KeyCode) -> Buttons {
+    match code {
+        KeyCode::KeyZ => Buttons::A,
+        KeyCode::KeyX => Buttons::B,
+        KeyCode::KeyC => Buttons::SELECT,
+        KeyCode::KeyV => Buttons::START,
+        KeyCode::ArrowUp => Buttons::UP,
+        KeyCode::ArrowDown => Buttons::DOWN,
+        KeyCode::ArrowLeft => Buttons::LEFT,
+        KeyCode::ArrowRight => Buttons::RIGHT,
+        _ => Buttons::empty(),
+    }
+}
+
+fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
+    WindowBuilder::new()
+        .with_title(title)
+        .with_inner_size(TaoLogicalSize::new(
+            f64::from(size.width),
+            f64::from(size.height),
+        ))
+}
+
+pub struct Window {
+    event_loop: Option<EventLoop<UserEvent>>,
+    window: Option<Arc<TaoWindow>>,
+    renderer: Option<Renderer>,
+    last_render_error: Option<String>,
+    keys: Buttons,
+    paused: bool,
+    console: Console,
+    app_menu: AppMenu,
+    physical_size: PhysicalSize,
+    logical_size: LogicalSize,
+    render_frame_count: u32,
+    render_fps: f32,
+    render_started_at: Instant,
+    last_title_update: Instant,
+    last_presented_frame_counter: u64,
+    needs_redraw: bool,
+}
+
+impl Window {
+    pub fn new() -> Self {
+        let screen_buffer = ScreenBuffer::new(
+            FilterType::NtscComposite,
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        );
+        let physical_size = screen_buffer.physical_size();
+        let logical_size = screen_buffer.logical_size();
+        let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
+        let console = Console::new(speaker, screen_buffer);
+
+        let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+        #[cfg(target_os = "macos")]
+        let event_loop = {
+            let mut event_loop = event_loop;
+            // Explicitly let macOS activate the app even when another app is currently active.
+            event_loop.set_activate_ignoring_other_apps(true);
+            event_loop
+        };
+        let proxy = event_loop.create_proxy();
+        let app_menu = AppMenu::new(proxy);
+
+        Self {
+            event_loop: Some(event_loop),
+            window: None,
+            renderer: None,
+            last_render_error: None,
+            keys: Buttons::empty(),
+            paused: false,
+            console,
+            app_menu,
+            physical_size,
+            logical_size,
+            render_frame_count: 0,
+            render_fps: 0.0,
+            render_started_at: Instant::now(),
+            last_title_update: Instant::now(),
+            last_presented_frame_counter: 0,
+            needs_redraw: true,
+        }
+    }
+
+    pub fn load(&mut self, data: Vec<u8>) {
+        self.load_with_options(data, CoreOptions::default());
+    }
+
+    pub fn load_with_options(&mut self, data: Vec<u8>, options: CoreOptions) {
+        self.console.load_with_options(data, options);
+    }
+
+    pub fn run(mut self) {
+        self.console.resume();
+        let event_loop = self.event_loop.take().unwrap();
+
+        event_loop.run(move |event, event_loop, control_flow| match event {
+            Event::NewEvents(StartCause::Init) => {
+                self.ensure_window(event_loop);
+                *control_flow = ControlFlow::Wait;
+            }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self
+                .window
+                .as_ref()
+                .is_some_and(|window| window_id == window.id()) =>
+            {
+                match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Focused(false) => self.clear_keys(),
+                    WindowEvent::Resized(_) => {
+                        if let Some(renderer) = self.renderer.as_mut() {
+                            renderer.resize_to_target();
+                        }
+                        self.needs_redraw = true;
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                    WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
+                    _ => (),
+                }
+            }
+            Event::RedrawRequested(window_id)
+                if self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window_id == window.id()) =>
+            {
+                self.on_update()
+            }
+            Event::MainEventsCleared => {
+                let now = Instant::now();
+                self.maybe_refresh_window_title(now);
+
+                let Some(window) = self.window.as_ref() else {
+                    *control_flow = ControlFlow::Wait;
+                    return;
+                };
+
+                let metrics = self.console.metrics();
+                if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
+                    window.request_redraw();
+                }
+
+                if self.needs_redraw || (metrics.loaded && !metrics.paused) {
+                    *control_flow = ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL);
+                } else {
+                    *control_flow = ControlFlow::Wait;
+                }
+            }
+            Event::UserEvent(UserEvent::Menu(command)) => {
+                self.on_menu_command(control_flow, command);
+            }
+            Event::LoopDestroyed => {
+                self.app_menu.clear_event_handler();
+            }
+            _ => (),
+        });
+    }
+
+    fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let window = Arc::new(
+            create_window_builder(self.physical_size, self.current_window_title())
+                .build(event_loop)
+                .unwrap(),
+        );
+        let surface_target = SurfaceTarget::new(window.clone(), self.physical_size);
+        self.app_menu.init_for_window(&window);
+        self.app_menu.update(self.paused);
+        let renderer = Renderer::new(
+            window.clone(),
+            surface_target,
+            self.logical_size,
+            self.physical_size,
+        )
+        .unwrap();
+        self.window = Some(window);
+        self.renderer = Some(renderer);
+        self.needs_redraw = true;
+        self.refresh_window_title();
+    }
+
+    fn current_window_title(&self) -> String {
+        window_title(self.paused, self.render_fps, self.console.metrics())
+    }
+
+    fn refresh_window_title(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(&self.current_window_title());
+        }
+    }
+
+    fn maybe_refresh_window_title(&mut self, now: Instant) {
+        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
+            self.last_title_update = now;
+            self.refresh_window_title();
+        }
+    }
+
+    fn record_render_frame(&mut self) {
+        self.render_frame_count += 1;
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.render_started_at);
+        if elapsed >= TITLE_UPDATE_INTERVAL {
+            self.render_fps = self.render_frame_count as f32 / elapsed.as_secs_f32();
+            self.render_frame_count = 0;
+            self.render_started_at = now;
+        }
+        self.maybe_refresh_window_title(now);
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+
+        self.paused = paused;
+        if self.paused {
+            self.console.pause();
+        } else {
+            self.console.resume();
+            self.needs_redraw = true;
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+        }
+        self.app_menu.update(self.paused);
+        self.refresh_window_title();
+    }
+
+    fn on_menu_command(&mut self, control_flow: &mut ControlFlow, command: MenuCommand) {
+        match command {
+            MenuCommand::Pause => self.set_paused(true),
+            MenuCommand::Resume => self.set_paused(false),
+            MenuCommand::Reset => self.console.reset(),
+            MenuCommand::Quit => *control_flow = ControlFlow::Exit,
+        }
+    }
+
+    fn on_update(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let render_result = self
+            .console
+            .with_frame_buffer(|frame_buffer| renderer.render(frame_buffer));
+
+        match render_result {
+            Ok(presented) => {
+                self.last_render_error = None;
+                if presented {
+                    self.last_presented_frame_counter = self.console.metrics().frame_counter;
+                    self.needs_redraw = false;
+                    self.record_render_frame();
+                } else {
+                    self.needs_redraw = true;
+                }
+            }
+            Err(err) => {
+                let should_log = self.last_render_error.as_deref() != Some(err.as_str());
+                self.last_render_error = Some(err.clone());
+                self.needs_redraw = true;
+                if should_log {
+                    log::error!("{err}");
+                }
+            }
+        }
+    }
+
+    fn on_keyboard_input(&mut self, input: KeyEvent) {
+        let code = match input.physical_key {
+            KeyCode::Space if input.state == ElementState::Pressed && !input.repeat => {
+                self.set_paused(!self.paused);
+                Buttons::empty()
+            }
+            KeyCode::Escape if input.state == ElementState::Released => {
+                self.console.reset();
+                Buttons::empty()
+            }
+            code => keycode_button(code),
+        };
+
+        self.keys = match input.state {
+            ElementState::Pressed => self.keys | code,
+            ElementState::Released => self.keys & !code,
+            _ => self.keys,
+        };
+        self.console.set_pad1(self.keys);
+    }
+
+    fn clear_keys(&mut self) {
+        self.keys = Buttons::empty();
+        self.console.set_pad1(self.keys);
+    }
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keycode_button, window_title};
+    use nerust_console::ConsoleMetrics;
+    use nerust_core::controller::standard_controller::Buttons;
+    use tao::keyboard::KeyCode;
+
+    #[test]
+    fn keycode_mapping_matches_controller_layout() {
+        assert_eq!(keycode_button(KeyCode::KeyZ).bits(), Buttons::A.bits());
+        assert_eq!(keycode_button(KeyCode::KeyX).bits(), Buttons::B.bits());
+        assert_eq!(keycode_button(KeyCode::ArrowUp).bits(), Buttons::UP.bits());
+        assert_eq!(
+            keycode_button(KeyCode::ArrowRight).bits(),
+            Buttons::RIGHT.bits()
+        );
+        assert_eq!(
+            keycode_button(KeyCode::Enter).bits(),
+            Buttons::empty().bits()
+        );
+    }
+
+    #[test]
+    fn window_title_surfaces_runtime_metrics() {
+        let title = window_title(
+            false,
+            59.9,
+            ConsoleMetrics {
+                loaded: true,
+                emulation_fps: 59.9,
+                speed_multiplier: 1.01,
+                ..ConsoleMetrics::default()
+            },
+        );
+
+        assert!(title.contains("FPS 59.9"));
+        assert!(title.contains("Speed x1.01"));
+    }
+}
