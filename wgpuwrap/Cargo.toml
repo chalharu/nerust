@@ -1,0 +1,11 @@
+[package]
+name = "nerust_wgpuwrap"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+nerust_screen_traits.workspace = true
+raw-window-handle.workspace = true
+wgpu.workspace = true
