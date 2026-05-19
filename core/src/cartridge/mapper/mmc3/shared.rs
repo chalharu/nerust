@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::MirrorMode;
-use crate::cartridge::format::CartridgeData;
-use crate::cartridge::{CartridgeDataDao, Mapper, MapperState, MapperStateDao, PpuBusEvent};
+use crate::cartridge_api::{CartridgeDataDao, Mapper, MapperState, MapperStateDao, PpuBusEvent};
+use crate::cartridge_data::CartridgeData;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
@@ -262,7 +262,8 @@ impl Mapper4Shared {
     }
 
     fn character_bank_count(&self) -> usize {
-        if self.mapper_state_ref().character_mapping_mode == crate::cartridge::MappingMode::Ram {
+        if self.mapper_state_ref().character_mapping_mode == crate::cartridge_api::MappingMode::Ram
+        {
             self.mapper_state_ref().vram.len() / 0x0400
         } else {
             self.data_ref().char_rom_len() / 0x0400

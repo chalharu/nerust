@@ -6,7 +6,7 @@
 
 pub(crate) mod ines;
 pub(crate) mod nes20;
-use super::error::CartridgeError;
+use crate::cartridge_error::CartridgeError;
 use crate::{MirrorMode, Mmc3IrqVariant};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
@@ -160,9 +160,4 @@ impl CartridgeData {
     pub(crate) fn trainer(&self) -> &[u8] {
         &self.trainer
     }
-}
-
-pub trait CartridgeDataDao {
-    fn data_mut(&mut self) -> &mut CartridgeData;
-    fn data_ref(&self) -> &CartridgeData;
 }

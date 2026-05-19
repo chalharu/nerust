@@ -4,47 +4,22 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::super::error::CartridgeError;
 use super::CartridgeData;
 use crate::MirrorMode;
+use crate::cartridge_error::CartridgeError;
+use std::cmp;
 
-pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
+pub(crate) fn read_ines<I: Iterator<Item = u8>>(
     headers: &[u8],
     input: &mut I,
 ) -> Result<CartridgeData, CartridgeError> {
-    let upper_rom_size = usize::from(headers[9]);
-    let prom_length = (usize::from(headers[4]) | ((upper_rom_size & 0x0F) << 8)) * 0x4000;
-    let crom_length = (usize::from(headers[5]) | ((upper_rom_size & 0xF0) << 4)) * 0x2000;
+    let prom_length = usize::from(headers[4]) * 0x4000;
+    let crom_length = usize::from(headers[5]) * 0x2000;
     let flags1 = headers[6];
     let flags2 = headers[7];
-    let mapper_variant = headers[8];
-    let pram_length_data = usize::from(headers[10]);
-    let vram_length_data = usize::from(headers[11]);
+    let pram_length = cmp::max(usize::from(headers[8]), 1) * 0x2000;
 
-    let pram_length = if pram_length_data & 0xF0 == 0 {
-        0
-    } else {
-        1 << (6 + (pram_length_data >> 4))
-    };
-    let save_pram_length = if pram_length_data.trailing_zeros() >= 4 {
-        0
-    } else {
-        1 << (6 + (pram_length_data & 0x0F))
-    };
-    let vram_length = if vram_length_data & 0xF0 == 0 {
-        if crom_length != 0 { 0 } else { 0x2000 }
-    } else {
-        1 << (6 + (vram_length_data >> 4))
-    };
-    let save_vram_length = if vram_length_data.trailing_zeros() >= 4 {
-        0
-    } else {
-        1 << (6 + (vram_length_data & 0x0F))
-    };
-
-    let mapper_type =
-        u16::from(flags1 >> 4) | u16::from(flags2 & 0xf0) | (u16::from(mapper_variant & 0x0F) << 8);
-    let sub_mapper_type = mapper_variant >> 4;
+    let mapper_type = u16::from((flags1 >> 4) | (flags2 & 0xf0));
     let mirror_type = (flags1 & 1) | ((flags1 >> 2) & 2);
     let has_battery = (flags1 & 2) == 2;
     let has_trainer = (flags1 & 4) == 4;
@@ -70,19 +45,21 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     } else {
         Vec::new()
     };
+    let vram_length = if crom_length != 0 { 0 } else { 0x2000 };
     let mirror_mode = MirrorMode::try_from(mirror_type).map_err(|_| CartridgeError::DataError)?;
+    let sub_mapper_type = 0;
     Ok(CartridgeData {
         prog_rom,
         char_rom,
+        pram_length,
+        save_pram_length: 0,
+        vram_length,
+        save_vram_length: 0,
         mapper_type,
         mirror_mode,
         has_battery,
         sub_mapper_type,
         mmc3_irq_variant_override: None,
-        pram_length,
-        save_pram_length,
-        vram_length,
-        save_vram_length,
         trainer,
     })
 }
