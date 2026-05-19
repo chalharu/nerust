@@ -4,18 +4,32 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod action53;
 mod axrom;
 mod bnrom;
 mod cnrom;
+mod color_dreams;
+mod crazy_climber;
+mod fme7;
+mod gnrom;
+mod mapper78;
+mod mmc2;
 mod mmc3;
 mod nina001;
 mod nrom;
 mod sxrom;
 mod uxrom;
 
+use self::action53::Action53;
 use self::axrom::AxRom;
 use self::bnrom::BNRom;
 use self::cnrom::CNRom;
+use self::color_dreams::ColorDreams;
+use self::crazy_climber::CrazyClimber;
+use self::fme7::Fme7;
+use self::gnrom::GnRom;
+use self::mapper78::Mapper78;
+use self::mmc2::Mmc2;
 use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
@@ -34,7 +48,15 @@ pub(crate) fn try_from(
         3 => Ok(Box::new(CNRom::new_mapper3(data))),
         4 => mmc3::try_from(data, mmc3_irq_variant),
         7 => Ok(Box::new(AxRom::new(data))),
+        9 => Ok(Box::new(Mmc2::new_mapper9(data))),
+        10 => Ok(Box::new(Mmc2::new_mapper10(data))),
+        11 => Ok(Box::new(ColorDreams::new(data))),
+        28 => Ok(Box::new(Action53::new(data))),
+        66 => Ok(Box::new(GnRom::new(data))),
+        69 => Ok(Box::new(Fme7::new(data))),
+        78 => Ok(Box::new(Mapper78::new(data))),
         118 => mmc3::try_from_txsrom(data),
+        180 => Ok(Box::new(CrazyClimber::new(data))),
         34 => match data.sub_mapper_type() {
             0 => {
                 if data.char_rom_len() > 0 {

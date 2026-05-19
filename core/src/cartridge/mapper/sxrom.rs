@@ -239,7 +239,7 @@ impl Mapper for SxRom {
         }
     }
 
-    fn step(&mut self) {
+    fn step(&mut self, _interrupt: &mut Interrupt) {
         self.cycle += 1;
     }
 
