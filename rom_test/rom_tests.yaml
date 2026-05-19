@@ -937,6 +937,36 @@ cases:
       - {frame: 30, action: check_work_ram, address: "0x0008", value: "0x59"}
       - {frame: 30, action: check_work_ram, address: "0x0009", value: "0x69"}
       - {frame: 30, action: check_screen, hash: "0x5ED324908D3A418B"}
+  - id: mapper.mmc5test.default
+    category: mapper
+    description: "Verifies the older interactive MMC5 test ROM's default result screen."
+    rom: nes-test-roms/mmc5test/mmc5test.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x6D2621A729CB171D"}
+  - id: mapper.mmc5test.start_changes_screen
+    category: mapper
+    description: "Verifies the older interactive MMC5 test ROM's START-driven alternate screen."
+    rom: nes-test-roms/mmc5test/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 300, action: check_screen, hash: "0xA04D6AA89C779CB1"}
+  - id: mapper.mmc5test.left_changes_screen
+    category: mapper
+    description: "Verifies one LEFT-driven alternate screen in the older interactive MMC5 test ROM."
+    rom: nes-test-roms/mmc5test/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 300, action: check_screen, hash: "0xFD0FC79CCF3E3BD2"}
+  - id: mapper.mmc5test.right_changes_screen
+    category: mapper
+    description: "Verifies one RIGHT-driven alternate screen in the older interactive MMC5 test ROM."
+    rom: nes-test-roms/mmc5test/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 300, action: check_screen, hash: "0x0F519565B1F6EDF4"}
   - id: input.allpads
     category: input
     description: "Detects connected controllers and exercises every single-button input on the allpads 1P NES controller screen."
