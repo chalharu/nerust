@@ -4,8 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod app_menu;
+mod renderer;
 mod surface;
-mod window;
+mod upload;
 
-pub use window::Window;
+pub use renderer::{RenderOutcome, Renderer};
+pub use surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};

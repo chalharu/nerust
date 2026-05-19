@@ -2285,10 +2285,19 @@ dependencies = [
  "nerust_screen_traits",
  "nerust_sound_openal",
  "nerust_timer",
+ "nerust_wgpuwrap",
  "pollster",
  "raw-window-handle",
  "simple_logger",
  "tao",
+]
+
+[[package]]
+name = "nerust_wgpuwrap"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_traits",
+ "raw-window-handle",
  "wgpu",
 ]
 
