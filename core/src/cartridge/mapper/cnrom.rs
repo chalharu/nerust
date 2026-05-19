@@ -6,8 +6,9 @@
 
 // Mapper 3 or 185
 
-use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::{Cartridge, CartridgeData};
+use crate::cartridge_api::Cartridge;
+use crate::cartridge_api::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
+use crate::cartridge_data::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]

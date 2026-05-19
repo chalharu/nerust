@@ -11,13 +11,16 @@
 
 mod apu;
 mod cartridge;
+mod cartridge_api;
+mod cartridge_data;
+mod cartridge_error;
 pub mod controller;
 mod cpu;
 mod ppu;
 mod status;
 
 use self::apu::Core as Apu;
-use self::cartridge::Cartridge;
+use self::cartridge_api::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
@@ -125,10 +128,10 @@ impl Core {
 
     pub fn inspect_rom(data: &[u8]) -> Result<RomInfo, Error> {
         if data.len() < 16 {
-            return Err(cartridge::error::CartridgeError::UnexpectedEof.into());
+            return Err(cartridge_error::CartridgeError::UnexpectedEof.into());
         }
         if data[0..4] != [0x4E, 0x45, 0x53, 0x1A] {
-            return Err(cartridge::error::CartridgeError::DataError.into());
+            return Err(cartridge_error::CartridgeError::DataError.into());
         }
 
         let format = if (data[7] & 0x0C) == 0x08 {
@@ -137,7 +140,7 @@ impl Core {
             RomFormat::INes
         };
         let mut input = data.iter().copied();
-        let cartridge_data = cartridge::format::CartridgeData::try_from(&mut input)?;
+        let cartridge_data = cartridge_data::CartridgeData::try_from(&mut input)?;
 
         Ok(RomInfo {
             format,

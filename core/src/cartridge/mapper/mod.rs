@@ -20,9 +20,9 @@ use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
 use self::uxrom::UxRom;
-use super::Cartridge;
-use super::error::CartridgeError;
-use super::format::CartridgeData;
+use crate::cartridge_api::Cartridge;
+use crate::cartridge_data::CartridgeData;
+use crate::cartridge_error::CartridgeError;
 
 pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
     match data.mapper_type() {

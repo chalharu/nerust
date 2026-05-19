@@ -8,8 +8,8 @@ use super::shared::{
     IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
     PrgRamModel,
 };
-use crate::cartridge::format::CartridgeData;
-use crate::cartridge::{Cartridge, MapperState};
+use crate::cartridge_api::{Cartridge, MapperState};
+use crate::cartridge_data::CartridgeData;
 
 #[derive(serde_derive::Serialize)]
 pub(super) struct Mmc3 {
@@ -141,7 +141,7 @@ impl Mapper4Wrapper for Mmc3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Mapper;
+    use crate::cartridge_api::Mapper;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         let mut rom = vec![

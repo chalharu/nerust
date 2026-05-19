@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
-use crate::cartridge::Cartridge;
-use crate::cartridge::format::CartridgeData;
+use crate::cartridge_api::Cartridge;
+use crate::cartridge_data::CartridgeData;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc6 {

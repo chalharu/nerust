@@ -6,9 +6,10 @@
 
 // Mapper 1
 
-use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::{Cartridge, CartridgeData};
 use crate::MirrorMode;
+use crate::cartridge_api::Cartridge;
+use crate::cartridge_api::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
+use crate::cartridge_data::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
@@ -262,8 +263,8 @@ impl Mapper for SxRom {
 #[cfg(test)]
 mod tests {
     use super::SxRom;
-    use crate::cartridge::format::CartridgeData;
-    use crate::cartridge::{Cartridge, Mapper};
+    use crate::cartridge_api::{Cartridge, Mapper};
+    use crate::cartridge_data::CartridgeData;
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
         let mut rom = vec![
