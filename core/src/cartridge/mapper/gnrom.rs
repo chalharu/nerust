@@ -110,7 +110,7 @@ mod tests {
 
         mapper.write_register(0x8000, 0x12, &mut interrupt);
 
-        assert_eq!(mapper.program_address(0x0000), Some(0x01 * 0x8000));
+        assert_eq!(mapper.program_address(0x0000), Some(0x8000));
         assert_eq!(mapper.character_address(0x0000), Some(0x02 * 0x2000));
     }
 }
