@@ -83,12 +83,26 @@ impl SxRom {
         self.update_offsets();
     }
 
-    fn update_offsets(&mut self) {
-        let extra_reg = if self.last_chr_bank && (self.control & 0x10) == 0x10 {
+    fn active_extra_register(&self) -> u8 {
+        if self.last_chr_bank && (self.control & 0x10) == 0x10 {
             self.chr_bank_1
         } else {
             self.chr_bank_0
-        };
+        }
+    }
+
+    fn uses_chr_bank_ram_protect(&self) -> bool {
+        self.data_ref().char_rom_len() == 0 && self.data_ref().prog_rom_len() <= 0x40000
+    }
+
+    fn program_ram_enabled(&self) -> bool {
+        !self.mapper_state_ref().sram.is_empty()
+            && (self.prg_bank & 0x10) == 0
+            && !(self.uses_chr_bank_ram_protect() && (self.active_extra_register() & 0x10) != 0)
+    }
+
+    fn update_offsets(&mut self) {
+        let extra_reg = self.active_extra_register();
 
         if (self.prg_bank & 0x10) != 0x10 {
             if self.data_ref().pram_length() + self.data_ref().save_pram_length() > 0x4000 {
@@ -225,5 +239,96 @@ impl Mapper for SxRom {
 
     fn step(&mut self) {
         self.cycle += 1;
+    }
+
+    fn read_ram(&self, index: usize) -> Option<u8> {
+        if self.program_ram_enabled() {
+            self.ram_address(index)
+                .map(|address| self.mapper_state_ref().sram[address])
+        } else {
+            None
+        }
+    }
+
+    fn write_ram(&mut self, index: usize, data: u8) {
+        if self.program_ram_enabled()
+            && let Some(address) = self.ram_address(index)
+        {
+            self.mapper_state_mut().sram[address] = data;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SxRom;
+    use crate::cartridge::format::CartridgeData;
+    use crate::cartridge::{Cartridge, Mapper};
+
+    fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
+        let mut rom = vec![
+            0x4E,
+            0x45,
+            0x53,
+            0x1A,
+            (prg_rom_len / 0x4000) as u8,
+            (chr_rom_len / 0x2000) as u8,
+            0x10,
+            0x00,
+            prg_ram_banks_8k,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        rom.resize(16 + prg_rom_len + chr_rom_len, 0x00);
+
+        let data = CartridgeData::try_from(&mut rom.into_iter()).expect("test rom should parse");
+        let mut mapper = SxRom::new(data);
+        Cartridge::initialize(&mut mapper);
+        mapper
+    }
+
+    fn write_program_ram(mapper: &mut SxRom, value: u8) {
+        <SxRom as Mapper>::write_ram(mapper, 0x0000, value);
+    }
+
+    fn read_program_ram(mapper: &SxRom) -> Option<u8> {
+        <SxRom as Mapper>::read_ram(mapper, 0x0000)
+    }
+
+    #[test]
+    fn prg_bank_bit4_disables_program_ram() {
+        let mut mapper = new_mapper(0x20000, 0x8000, 1);
+
+        write_program_ram(&mut mapper, 0x6B);
+        assert_eq!(read_program_ram(&mapper), Some(0x6B));
+
+        mapper.write_prog_bank(0x10);
+        write_program_ram(&mut mapper, 0x80);
+        assert_eq!(read_program_ram(&mapper), None);
+
+        mapper.write_prog_bank(0x00);
+        assert_eq!(read_program_ram(&mapper), Some(0x6B));
+    }
+
+    #[test]
+    fn chr_bank_bit4_disables_program_ram_only_for_chr_ram_boards_up_to_256k_prg() {
+        let mut snrom = new_mapper(0x20000, 0x0000, 1);
+        write_program_ram(&mut snrom, 0x6B);
+        snrom.write_char_bank_0(0x10);
+        write_program_ram(&mut snrom, 0x80);
+        snrom.write_char_bank_0(0x00);
+        assert_eq!(read_program_ram(&snrom), Some(0x6B));
+
+        let mut sxrom = new_mapper(0x80000, 0x0000, 1);
+        write_program_ram(&mut sxrom, 0x6B);
+        sxrom.write_char_bank_0(0x10);
+        write_program_ram(&mut sxrom, 0x80);
+        sxrom.write_char_bank_0(0x00);
+        assert_eq!(read_program_ram(&sxrom), Some(0x80));
     }
 }

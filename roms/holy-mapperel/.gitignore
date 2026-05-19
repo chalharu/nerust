@@ -14,6 +14,13 @@
 /testroms/
 !/testroms/
 /testroms/*
+!/testroms/M0_P32K_C8K_V.nes
+!/testroms/M1_P128K_C32K_W8K.nes
+!/testroms/M2_P128K_CR8K_V.nes
+!/testroms/M3_P32K_C32K_H.nes
+!/testroms/M4_P256K_C256K.nes
+!/testroms/M7_P128K_CR8K.nes
+!/testroms/M34_P128K_CR8K_H.nes
 !/testroms/M118_P128K_C64K.nes
 __pycache__/
 *.pyc
@@ -25,4 +32,3 @@ __pycache__/
 
 # this is NES homebrew, not DSiWare
 *.DS_Store
-
