@@ -96,6 +96,7 @@ cargo run -p nerust_core --features rom-tooling --bin perf --release -- \
 - MMC1 SxRom (Mapper 1)
 - UxRom (Mapper 2)
 - CnRom (Mapper 3, Mapper 185)
+- MMC3 / MMC6 (Mapper 4)
 - AxRom (Mapper 7)
 - BnRom (Mapper 34)
 - NINA-001 (Mapper 34)
