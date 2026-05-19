@@ -20,17 +20,19 @@ use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
 use self::uxrom::UxRom;
-use super::Cartridge;
-use super::error::CartridgeError;
-use super::format::CartridgeData;
+use crate::cart_device::Cartridge;
+use crate::{CartridgeData, CartridgeError, Mmc3IrqVariant};
 
-pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
+pub(crate) fn try_from(
+    data: CartridgeData,
+    mmc3_irq_variant: Option<Mmc3IrqVariant>,
+) -> Result<Box<dyn Cartridge>, CartridgeError> {
     match data.mapper_type() {
         0 => Ok(Box::new(NRom::new(data))),
         1 => Ok(Box::new(SxRom::new(data))),
         2 => Ok(Box::new(UxRom::new(data))),
         3 => Ok(Box::new(CNRom::new_mapper3(data))),
-        4 => mmc3::try_from(data),
+        4 => mmc3::try_from(data, mmc3_irq_variant),
         7 => Ok(Box::new(AxRom::new(data))),
         118 => mmc3::try_from_txsrom(data),
         34 => match data.sub_mapper_type() {

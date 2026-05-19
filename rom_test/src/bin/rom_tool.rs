@@ -4,11 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[path = "../rom_test/mod.rs"]
-mod rom_test;
-
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use rom_test::{
+use nerust_rom_test::{
     CaseOutcome, ValidationOptions, default_output_root, load_default_manifest, load_manifest,
     validate_case, write_html_report,
 };
@@ -23,7 +20,7 @@ pub fn main() {
 
 fn run() -> Result<(), String> {
     let matches = Command::new("rom_tool")
-        .about("ROM test validation and capture tooling backed by core/rom_tests.yaml")
+        .about("ROM test validation and capture tooling backed by rom_test/rom_tests.yaml")
         .arg(
             Arg::new("manifest")
                 .long("manifest")
@@ -106,7 +103,7 @@ fn run() -> Result<(), String> {
 }
 
 fn run_command(
-    manifest: &rom_test::RomManifest,
+    manifest: &nerust_rom_test::RomManifest,
     case_ids: &[String],
     perf_only: bool,
     options: ValidationOptions,

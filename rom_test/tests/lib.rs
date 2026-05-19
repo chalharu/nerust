@@ -4,14 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[allow(
-    dead_code,
-    reason = "the integration test links the shared ROM tooling module but does not exercise every helper"
-)]
-#[path = "../src/rom_test/mod.rs"]
-mod rom_test;
-
-use rom_test::{CaseOutcome, ValidationOptions, load_default_manifest, validate_case};
+use nerust_rom_test::{
+    CaseOutcome, RomManifest, ValidationOptions, load_default_manifest, validate_case,
+};
 use std::sync::OnceLock;
 
 #[test]
@@ -24,8 +19,8 @@ fn rom_manifest_is_well_formed() {
     );
 }
 
-fn manifest() -> &'static rom_test::RomManifest {
-    static MANIFEST: OnceLock<rom_test::RomManifest> = OnceLock::new();
+fn manifest() -> &'static RomManifest {
+    static MANIFEST: OnceLock<RomManifest> = OnceLock::new();
     MANIFEST.get_or_init(|| load_default_manifest().expect("ROM manifest should load"))
 }
 

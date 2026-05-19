@@ -5,56 +5,21 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::error::RomTestError;
-use super::events::{
-    ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEventKind,
-};
+use super::events::{ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion};
+use super::harness::{CaseHarness, apply_button_state, drive_case};
 use super::manifest::{RomCase, read_rom};
 use super::media::{HashingMixer, encode_screenshot_png, screen_hash};
 use super::results::{
     AudioObservation, CartridgeRamCheck, CaseOutcome, CaseValidation, ExecutionTotals,
     PpuVramCheck, ScreenCheck, ValidationOptions, WorkRamCheck,
 };
+use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::MixerInput;
-
-pub trait CaseHarness {
-    fn run_frame(&mut self) -> u64;
-    fn frame_counter(&self) -> u64;
-    fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError>;
-    fn on_reset(&mut self) -> Result<(), RomTestError>;
-    fn on_standard_controller(
-        &mut self,
-        pad: ControllerPad,
-        button: ButtonCode,
-        state: PadState,
-    ) -> Result<(), RomTestError>;
-    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError>;
-}
-
-pub fn drive_case<H: CaseHarness>(
-    case: &RomCase,
-    harness: &mut H,
-) -> Result<ExecutionTotals, RomTestError> {
-    let final_frame = case.final_frame();
-    let mut total_steps = 0_u64;
-    let mut next_event = 0_usize;
-
-    dispatch_pending_events(case, harness, &mut next_event)?;
-
-    while harness.frame_counter() < final_frame {
-        total_steps += harness.run_frame();
-        dispatch_pending_events(case, harness, &mut next_event)?;
-    }
-
-    Ok(ExecutionTotals {
-        frames: harness.frame_counter(),
-        steps: total_steps,
-    })
-}
 
 struct ValidationRunner {
     case_id: String,
@@ -79,13 +44,18 @@ impl ValidationRunner {
         rom_bytes: &[u8],
         options: ValidationOptions,
     ) -> Result<Self, RomTestError> {
-        let mut input = rom_bytes.iter().copied();
-        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
-            RomTestError::CoreConstruction {
+        let cartridge_data =
+            parse_cartridge_bytes(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
+        let core =
+            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
+                RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
 
         Ok(Self {
             case_id: case.id.clone(),
@@ -364,48 +334,4 @@ pub fn validate_case(case: &RomCase, options: ValidationOptions) -> CaseOutcome 
             message: error.to_string(),
         },
     }
-}
-
-fn apply_button_state(current: Buttons, button: Buttons, state: PadState) -> Buttons {
-    match state {
-        PadState::Pressed => current | button,
-        PadState::Released => current & !button,
-    }
-}
-
-fn dispatch_pending_events<H: CaseHarness>(
-    case: &RomCase,
-    harness: &mut H,
-    next_event: &mut usize,
-) -> Result<(), RomTestError> {
-    while let Some(event) = case.events.get(*next_event) {
-        if event.frame != harness.frame_counter() {
-            break;
-        }
-
-        if let Some(assertion) = event.kind.assertion() {
-            harness.on_assert(event.frame, &assertion)?;
-        } else {
-            match event.kind {
-                RomEventKind::Reset => {
-                    harness.on_reset()?;
-                }
-                RomEventKind::StandardController { pad, button, state } => {
-                    harness.on_standard_controller(pad, button, state)?;
-                }
-                RomEventKind::Microphone { state } => {
-                    harness.on_microphone(state)?;
-                }
-                RomEventKind::Assert { .. }
-                | RomEventKind::CheckScreen { .. }
-                | RomEventKind::CheckWorkRam { .. }
-                | RomEventKind::CheckCartridgeRam { .. }
-                | RomEventKind::CheckPpuVram { .. } => unreachable!(),
-            }
-        }
-
-        *next_event += 1;
-    }
-
-    Ok(())
 }

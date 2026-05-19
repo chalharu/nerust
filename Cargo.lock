@@ -1624,12 +1624,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
-name = "hound"
-version = "3.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
-
-[[package]]
 name = "icu_collections"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2114,11 +2108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_cartridge_data"
+version = "0.1.0"
+dependencies = [
+ "nerust_core",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nerust_console"
 version = "0.1.0"
 dependencies = [
  "crc",
  "log",
+ "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
  "nerust_screen_traits",
@@ -2131,20 +2134,13 @@ name = "nerust_core"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
- "clap",
- "crc",
- "hound",
  "log",
- "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_serialize",
  "nerust_sound_traits",
- "png",
  "serde",
  "serde_bytes",
  "serde_derive",
- "serde_yaml",
  "strum",
  "strum_macros",
  "thiserror 2.0.18",
@@ -2201,6 +2197,25 @@ dependencies = [
  "nerust_timer",
  "shared_library",
  "simple_logger",
+]
+
+[[package]]
+name = "nerust_rom_test"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crc",
+ "nerust_cartridge_data",
+ "nerust_core",
+ "nerust_screen_buffer",
+ "nerust_screen_filter",
+ "nerust_screen_traits",
+ "nerust_sound_traits",
+ "png",
+ "serde",
+ "serde_derive",
+ "serde_yaml",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
