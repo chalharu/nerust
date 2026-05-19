@@ -877,6 +877,54 @@ cases:
       - {frame: 120, action: check_ppu_vram, address: "0x2253", value: "0x04"}
       - {frame: 120, action: check_ppu_vram, address: "0x2256", value: "0x07"}
       - {frame: 120, action: check_screen, hash: "0x67DA23E87CACF921"}
+  - id: mapper.mmc5test_v2.a_toggles_obj_pattern
+    category: mapper
+    description: "Verifies the interactive MMC5 OBJ pattern-table toggle by pressing A in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 120, action: check_screen, hash: "0x53A59874D0D87DAD"}
+  - id: mapper.mmc5test_v2.b_toggles_bg_pattern
+    category: mapper
+    description: "Verifies the interactive MMC5 BG pattern-table toggle by pressing B in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 120, action: check_screen, hash: "0xEBBB6ABE1F2C89C0"}
+  - id: mapper.mmc5test_v2.select_toggles_exram
+    category: mapper
+    description: "Verifies the interactive MMC5 ExRAM toggle by pressing Select in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 120, action: check_screen, hash: "0xA0888990F605C6E0"}
+  - id: mapper.mmc5test_v2.up_toggles_fill_mode
+    category: mapper
+    description: "Verifies the interactive MMC5 fill-mode toggle by pressing Up in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 120, action: check_screen, hash: "0x7341B2D6266C0E60"}
+  - id: mapper.mmc5test_v2.left_changes_bank_order
+    category: mapper
+    description: "Verifies one alternate MMC5 CHR bank write order by pressing Left in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 120, action: check_screen, hash: "0x600034F3BBB91DEE"}
+  - id: mapper.mmc5test_v2.right_changes_bank_order
+    category: mapper
+    description: "Verifies another MMC5 CHR bank write order by pressing Right in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 120, action: check_screen, hash: "0x9DF1DCA0201397CA"}
   - id: mapper.mmc5exram.executes_exram
     category: mapper
     description: "Verifies that the dedicated MMC5 ExRAM test can execute code from $5C00-$5FFF by checking raster-bar state that is updated from executable ExRAM."
