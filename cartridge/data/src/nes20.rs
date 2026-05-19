@@ -19,26 +19,34 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     let mapper_variant = headers[8];
     let pram_length_data = usize::from(headers[10]);
     let vram_length_data = usize::from(headers[11]);
+    let pram_length_shift = pram_length_data & 0x0F;
+    let save_pram_length_shift = pram_length_data >> 4;
+    let vram_length_shift = vram_length_data & 0x0F;
+    let save_vram_length_shift = vram_length_data >> 4;
 
-    let pram_length = if pram_length_data & 0xF0 == 0 {
+    let pram_length = if pram_length_shift == 0 {
         0
     } else {
-        1 << (6 + (pram_length_data >> 4))
+        1 << (6 + pram_length_shift)
     };
-    let save_pram_length = if pram_length_data.trailing_zeros() >= 4 {
+    let save_pram_length = if save_pram_length_shift == 0 {
         0
     } else {
-        1 << (6 + (pram_length_data & 0x0F))
+        1 << (6 + save_pram_length_shift)
     };
-    let vram_length = if vram_length_data & 0xF0 == 0 {
-        if crom_length != 0 { 0 } else { 0x2000 }
+    let vram_length = if vram_length_shift == 0 {
+        if crom_length == 0 && save_vram_length_shift == 0 {
+            0x2000
+        } else {
+            0
+        }
     } else {
-        1 << (6 + (vram_length_data >> 4))
+        1 << (6 + vram_length_shift)
     };
-    let save_vram_length = if vram_length_data.trailing_zeros() >= 4 {
+    let save_vram_length = if save_vram_length_shift == 0 {
         0
     } else {
-        1 << (6 + (vram_length_data & 0x0F))
+        1 << (6 + save_vram_length_shift)
     };
 
     let mapper_type =

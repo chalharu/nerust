@@ -51,7 +51,8 @@ impl Memory {
             0x2000..=0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
             0x4015 => apu.read_register(address, interrupt),
             0x4016 | 0x4017 => controller.read(address & 1),
-            0x4000..=0x4014 | 0x4018..=0x5FFF => OpenBusReadResult::new(0, 0), // TODO: I/O registers
+            0x4000..=0x4014 | 0x4018..=0x401F => OpenBusReadResult::new(0, 0), // TODO: I/O registers
+            0x4020..=0x5FFF => cartridge.read(address),
             0x6000..=0xFFFF => cartridge.read(address),
             _ => {
                 log::error!("unhandled cpu memory read at address: 0x{:04X}", address);
@@ -117,7 +118,8 @@ impl Memory {
             0x4015 => apu.write_register(address, value, interrupt),
             0x4016 => controller.write(value),
             0x4017 => apu.write_register(address, value, interrupt),
-            0x4018..=0x5FFF => (), // TODO: I/O registers
+            0x4018..=0x401F => (), // TODO: I/O registers
+            0x4020..=0x5FFF => cartridge.write(address, value, interrupt),
             0x6000..=0xFFFF => cartridge.write(address, value, interrupt),
             _ => {
                 log::error!("unhandled cpu memory write at address: 0x{:04X}", address);
