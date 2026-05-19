@@ -513,6 +513,7 @@ impl<'de> serde::Deserialize<'de> for Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::standard_controller::StandardController;
     use strum::IntoEnumIterator;
 
     macro_rules! cpu_stepfunc_pair_array {
@@ -531,6 +532,156 @@ mod tests {
             assert_eq!(state as usize, index);
             assert!(std::ptr::fn_addr_eq(CPU_STEPFUNCS[index], expected_func));
         }
+    }
+
+    fn dmc_dma_stall_cycles(cpu: &mut Core) -> usize {
+        let mut ppu = Ppu::new();
+        let mut cartridge = super::super::nrom_test_cartridge();
+        let mut controller = StandardController::new();
+        let mut apu = Apu::new(cpu.interrupt_mut());
+        let mut stalled_cycles = 0;
+
+        while cpu.dmc_dma.is_some() {
+            cpu.cycles += 1;
+            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+                stalled_cycles += 1;
+            }
+        }
+
+        stalled_cycles
+    }
+
+    fn prepare_read_cycle_cpu() -> Core {
+        let mut cpu = Core::new();
+        cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
+        cpu.internal_stat.step = 1;
+        cpu
+    }
+
+    fn set_write_cycle(cpu: &mut Core) {
+        cpu.set_cpu_state(CpuStatesEnum::Pha);
+        cpu.internal_stat.step = 1;
+    }
+
+    #[test]
+    fn load_dmc_dma_stalls_cpu_for_three_cycles_in_common_case() {
+        let mut cpu = prepare_read_cycle_cpu();
+        cpu.cycles = 0;
+        cpu.dmc_dma = Some(DmcDmaState::from_kind(DmcDmaKind::Load));
+
+        assert_eq!(dmc_dma_stall_cycles(&mut cpu), 3);
+        assert!(cpu.dmc_dma.is_none());
+    }
+
+    #[test]
+    fn reload_dmc_dma_stalls_cpu_for_four_cycles_in_common_case() {
+        let mut cpu = prepare_read_cycle_cpu();
+        cpu.cycles = 1;
+        cpu.dmc_dma = Some(DmcDmaState::from_kind(DmcDmaKind::Reload));
+
+        assert_eq!(dmc_dma_stall_cycles(&mut cpu), 4);
+        assert!(cpu.dmc_dma.is_none());
+    }
+
+    #[test]
+    fn load_dmc_dma_reads_pending_sample_byte() {
+        let mut cpu = prepare_read_cycle_cpu();
+        cpu.cycles = 0;
+        let mut ppu = Ppu::new();
+        let mut cartridge = super::super::nrom_test_cartridge();
+        let mut controller = StandardController::new();
+        let mut apu = Apu::new(cpu.interrupt_mut());
+
+        apu.write_register(0x4010, 0x00, cpu.interrupt_mut());
+        apu.write_register(0x4012, 0x00, cpu.interrupt_mut());
+        apu.write_register(0x4013, 0x00, cpu.interrupt_mut());
+        apu.write_register(0x4015, 0x10, cpu.interrupt_mut());
+        cpu.dmc_dma = Some(DmcDmaState::from_kind(DmcDmaKind::Load));
+
+        assert_eq!(
+            apu.read_register(0x4015, cpu.interrupt_mut()).data & 0x10,
+            0x10
+        );
+
+        while cpu.dmc_dma.is_some() {
+            cpu.cycles += 1;
+            cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu);
+        }
+
+        assert_eq!(
+            apu.read_register(0x4015, cpu.interrupt_mut()).data & 0x10,
+            0x00
+        );
+    }
+
+    #[test]
+    fn load_dmc_dma_adds_alignment_cycle_after_write_delayed_halt() {
+        let mut cpu = prepare_read_cycle_cpu();
+        cpu.cycles = 0;
+        cpu.dmc_dma = Some(DmcDmaState {
+            delay: 0,
+            halt_on_get_cycle: true,
+            halted_on_get_cycle: false,
+            attempted_halt: false,
+            phase: DmcDmaPhase::WaitForHalt,
+        });
+
+        let mut ppu = Ppu::new();
+        let mut cartridge = super::super::nrom_test_cartridge();
+        let mut controller = StandardController::new();
+        let mut apu = Apu::new(cpu.interrupt_mut());
+
+        set_write_cycle(&mut cpu);
+        cpu.cycles += 1;
+        assert!(!cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu));
+
+        cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
+        cpu.internal_stat.step = 1;
+
+        let mut stalled = 0;
+        while cpu.dmc_dma.is_some() {
+            cpu.cycles += 1;
+            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+                stalled += 1;
+            }
+        }
+
+        assert_eq!(stalled, 4);
+    }
+
+    #[test]
+    fn reload_dmc_dma_skips_alignment_when_write_delay_flips_parity() {
+        let mut cpu = prepare_read_cycle_cpu();
+        cpu.cycles = 1;
+        cpu.dmc_dma = Some(DmcDmaState {
+            delay: 0,
+            halt_on_get_cycle: false,
+            halted_on_get_cycle: false,
+            attempted_halt: false,
+            phase: DmcDmaPhase::WaitForHalt,
+        });
+
+        let mut ppu = Ppu::new();
+        let mut cartridge = super::super::nrom_test_cartridge();
+        let mut controller = StandardController::new();
+        let mut apu = Apu::new(cpu.interrupt_mut());
+
+        set_write_cycle(&mut cpu);
+        cpu.cycles += 1;
+        assert!(!cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu));
+
+        cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
+        cpu.internal_stat.step = 1;
+
+        let mut stalled = 0;
+        while cpu.dmc_dma.is_some() {
+            cpu.cycles += 1;
+            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+                stalled += 1;
+            }
+        }
+
+        assert_eq!(stalled, 3);
     }
 }
 

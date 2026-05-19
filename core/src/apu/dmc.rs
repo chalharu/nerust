@@ -5,9 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::Cartridge;
 use crate::cpu::interrupt::*;
-use std::mem;
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_DMC
@@ -36,7 +34,6 @@ pub(crate) struct DMC {
     need_buffer: bool,
     is_loop: bool,
     irq: bool,
-    prev_reg_value: u8,
     timer: TimerDao,
 }
 
@@ -64,7 +61,6 @@ impl DMC {
             sample_length: 0,
             is_loop: false,
             irq: false,
-            prev_reg_value: 0,
             timer: TimerDao::new(),
         }
     }
@@ -89,17 +85,7 @@ impl DMC {
     }
 
     pub(crate) fn write_value(&mut self, value: u8) {
-        let prev_value = mem::replace(&mut self.value, value & 0x7F);
-        self.prev_reg_value = self.value;
-
-        let output_diff = self.value.abs_diff(prev_value);
-        if output_diff > 50 {
-            if self.value > prev_value {
-                self.value -= output_diff >> 1;
-            } else {
-                self.value += output_diff >> 1;
-            }
-        }
+        self.value = value & 0x7F;
     }
 
     pub(crate) fn write_address(&mut self, value: u8) {
@@ -159,7 +145,7 @@ impl DMC {
         }
     }
 
-    pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt, cartridge: &mut dyn Cartridge) {
+    pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt) {
         if self.timer.step_timer() {
             if self.enabled {
                 self.step_shifter();
@@ -168,15 +154,11 @@ impl DMC {
                 self.bit_count -= 1;
             }
 
-            self.step_reader(interrupt, cartridge);
+            self.step_reader(interrupt);
         }
     }
 
-    pub(crate) fn step_reader(
-        &mut self,
-        interrupt: &mut Interrupt,
-        _cartridge: &mut dyn Cartridge,
-    ) {
+    pub(crate) fn step_reader(&mut self, interrupt: &mut Interrupt) {
         if self.bit_count == 0 {
             self.bit_count = 8;
             if self.need_buffer {
@@ -211,7 +193,46 @@ impl DMC {
 
 #[cfg(test)]
 mod tests {
-    use super::DMC;
+    use super::super::fft_test::{
+        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+        dominant_frequency_tolerance,
+    };
+    use super::{DMC, DMC_TABLE};
+    use crate::cpu::interrupt::Interrupt;
+
+    fn expected_single_sample_frequency(rate_index: usize) -> f32 {
+        CPU_CLOCK_HZ / (16.0 * f32::from(DMC_TABLE[rate_index]))
+    }
+
+    fn test_single_sample_dmc(
+        rate_index: u8,
+        sample_byte: u8,
+        initial_value: u8,
+    ) -> (DMC, Interrupt) {
+        let mut interrupt = Interrupt::new();
+        let mut dmc = DMC::new();
+        dmc.reset();
+        dmc.write_control(0x40 | rate_index, &mut interrupt);
+        dmc.write_value(initial_value);
+        dmc.write_length(0);
+        dmc.set_enabled(true, &mut interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, &mut interrupt);
+        }
+        dmc.step_reader(&mut interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, &mut interrupt);
+        }
+        (dmc, interrupt)
+    }
+
+    fn step_single_sample_dmc(dmc: &mut DMC, interrupt: &mut Interrupt, sample_byte: u8) -> f32 {
+        dmc.step_timer(interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            dmc.fill(sample_byte, interrupt);
+        }
+        f32::from(dmc.output())
+    }
 
     #[test]
     fn step_shifter_clamps_output_at_zero() {
@@ -230,5 +251,82 @@ mod tests {
         dmc.step_shifter();
 
         assert_eq!(dmc.output(), 6);
+    }
+
+    #[test]
+    fn write_value_updates_output_immediately_without_smoothing() {
+        let mut dmc = DMC::new();
+
+        dmc.write_value(0x7F);
+        assert_eq!(dmc.output(), 0x7F);
+
+        dmc.write_value(0);
+        assert_eq!(dmc.output(), 0);
+    }
+
+    #[test]
+    fn write_value_masks_to_seven_bits() {
+        let mut dmc = DMC::new();
+
+        dmc.write_value(0xFF);
+
+        assert_eq!(dmc.output(), 0x7F);
+    }
+
+    #[test]
+    fn fft_peak_matches_expected_single_sample_frequency() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xF0;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 64);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+        let dominant = dominant_frequency(&samples, CPU_CLOCK_HZ);
+
+        assert!(
+            (dominant - expected_single_sample_frequency(rate_index)).abs()
+                <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
+        );
+    }
+
+    #[test]
+    fn single_sample_output_stays_within_expected_level_range() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xF0;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 64);
+        let bit_cycles = usize::from(DMC_TABLE[rate_index]) << 1;
+
+        for _ in 0..(bit_cycles * 8) {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte);
+        }
+
+        let samples = capture_samples(bit_cycles * 16, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+        let min = samples.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mean = samples.iter().copied().sum::<f32>() / samples.len() as f32;
+
+        assert_eq!(min, 56.0);
+        assert_eq!(max, 64.0);
+        assert!((mean - 60.0).abs() <= 0.1);
+    }
+
+    #[test]
+    fn single_sample_output_clamps_at_upper_dac_limit() {
+        let rate_index = 11_usize;
+        let sample_byte = 0xFF;
+        let (mut dmc, mut interrupt) = test_single_sample_dmc(rate_index as u8, sample_byte, 126);
+        let bit_cycles = usize::from(DMC_TABLE[rate_index]) << 1;
+
+        for _ in 0..(bit_cycles * 8) {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte);
+        }
+
+        let samples = capture_samples(bit_cycles * 8, || {
+            step_single_sample_dmc(&mut dmc, &mut interrupt, sample_byte)
+        });
+
+        assert!(samples.iter().all(|sample| *sample == 126.0));
     }
 }

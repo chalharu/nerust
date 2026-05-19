@@ -88,8 +88,8 @@ impl Core {
     ) -> Result<Core, Error> {
         cartridge_data.validate()?;
         let mut cpu = Cpu::new();
-        let mut cartridge = cartridge::try_from_with_options(cartridge_data, options)?;
-        let apu = Apu::new(cpu.interrupt_mut(), cartridge.as_mut());
+        let cartridge = cartridge::try_from_with_options(cartridge_data, options)?;
+        let apu = Apu::new(cpu.interrupt_mut());
         Ok(Self {
             cpu,
             ppu: Ppu::new(),
@@ -101,8 +101,7 @@ impl Core {
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.reset();
-        self.apu
-            .reset(self.cpu.interrupt_mut(), self.cartridge.as_mut());
+        self.apu.reset(self.cpu.interrupt_mut());
     }
 
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
@@ -193,12 +192,7 @@ impl Core {
             }
         }
         self.cartridge.step();
-        self.apu.step(
-            &mut self.cpu,
-            self.cartridge.as_mut(),
-            mixer,
-            mixer_sample_rate,
-        );
+        self.apu.step(&mut self.cpu, mixer, mixer_sample_rate);
 
         result
     }
@@ -231,4 +225,26 @@ impl OpenBusReadResult {
     pub fn new(data: u8, mask: u8) -> Self {
         Self { data, mask }
     }
+}
+
+#[cfg(test)]
+fn nrom_test_cartridge() -> Box<dyn Cartridge> {
+    cartridge::try_from(
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 0,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid"),
+    )
+    .expect("cartridge should construct")
 }
