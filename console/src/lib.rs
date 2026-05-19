@@ -5,8 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::{Core, CoreOptions, Mmc3IrqVariant};
+use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
@@ -52,11 +53,11 @@ fn mmc3_irq_variant_label(value: Option<Mmc3IrqVariant>) -> &'static str {
     }
 }
 
-fn print_rom_metadata(data: &[u8], options: CoreOptions) {
+fn print_rom_metadata(data: &[u8], cartridge_data: &CartridgeData, options: CoreOptions) {
     let body = data.get(16..).unwrap_or(&[]);
     let body_crc64 = crc64(body);
 
-    match Core::inspect_rom(data) {
+    match Core::inspect_cartridge(cartridge_data, data.len()) {
         Ok(info) => {
             println!(
                 "ROM: body_crc64=0x{body_crc64:016X} format={} mapper={} submapper={} mirror={:?} battery={} trainer={} raw={} body={}",
@@ -183,13 +184,28 @@ impl Console {
     }
 
     pub fn load_with_options(&self, data: Vec<u8>, options: CoreOptions) {
-        print_rom_metadata(&data, options);
-        if self
-            .data_sender
-            .send(ConsoleData::Load { data, options })
-            .is_err()
-        {
-            log::warn!("Core load send failed");
+        match parse_cartridge_bytes(&data) {
+            Ok(cartridge_data) => {
+                print_rom_metadata(&data, &cartridge_data, options);
+                if self
+                    .data_sender
+                    .send(ConsoleData::Load {
+                        cartridge_data,
+                        options,
+                    })
+                    .is_err()
+                {
+                    log::warn!("Core load send failed");
+                }
+            }
+            Err(error) => {
+                let body_crc64 = crc64(data.get(16..).unwrap_or(&[]));
+                println!(
+                    "ROM: body_crc64=0x{body_crc64:016X} parse_error={error} mmc3_irq_variant={}",
+                    mmc3_irq_variant_label(options.mmc3_irq_variant),
+                );
+                self.unload();
+            }
         }
     }
 
@@ -216,7 +232,10 @@ impl Drop for Console {
 }
 
 enum ConsoleData {
-    Load { data: Vec<u8>, options: CoreOptions },
+    Load {
+        cartridge_data: CartridgeData,
+        options: CoreOptions,
+    },
     Resume,
     Pause,
     Reset,
@@ -303,11 +322,14 @@ impl ConsoleRunner {
             self.publish_metrics(core.is_some());
             if let Ok(event) = self.data_receiver.try_recv() {
                 match event {
-                    ConsoleData::Load { data, options } => {
+                    ConsoleData::Load {
+                        cartridge_data,
+                        options,
+                    } => {
                         self.screen_buffer.clear();
                         self.publish_frame();
                         self.frame_counter = 0;
-                        core = Core::new_with_options(&mut data.into_iter(), options).ok();
+                        core = Core::new_with_options(cartridge_data, options).ok();
                     }
                     ConsoleData::Resume => {
                         self.paused = false;

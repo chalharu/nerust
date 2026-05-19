@@ -14,6 +14,7 @@ use super::results::{
     AudioObservation, CartridgeRamCheck, CaseOutcome, CaseValidation, ExecutionTotals,
     PpuVramCheck, ScreenCheck, ValidationOptions, WorkRamCheck,
 };
+use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_screen_buffer::ScreenBuffer;
@@ -79,13 +80,18 @@ impl ValidationRunner {
         rom_bytes: &[u8],
         options: ValidationOptions,
     ) -> Result<Self, RomTestError> {
-        let mut input = rom_bytes.iter().copied();
-        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
-            RomTestError::CoreConstruction {
+        let cartridge_data =
+            parse_cartridge_bytes(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
+        let core =
+            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
+                RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
 
         Ok(Self {
             case_id: case.id.clone(),

@@ -143,28 +143,24 @@ impl Mapper4Wrapper for Mmc3 {
 mod tests {
     use super::*;
     use crate::mapper::Mapper;
+    use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
-        let mut rom = vec![
-            0x4E,
-            0x45,
-            0x53,
-            0x1A,
-            0x02,
-            0x01,
-            0x40,
-            0x08,
-            sub_mapper_type << 4,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-        CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse")
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 4,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid")
     }
 
     #[test]

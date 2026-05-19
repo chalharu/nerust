@@ -15,9 +15,9 @@ use self::mmc6::Mmc6;
 use self::standard::Mmc3;
 use self::txsrom::TxSrom;
 use super::CartridgeData;
+use crate::CartridgeError;
 use crate::Mmc3IrqVariant;
 use crate::cart_device::Cartridge;
-use crate::cartridge_error::CartridgeError;
 #[cfg(test)]
 use crate::mapper::Mapper;
 #[cfg(test)]
@@ -30,13 +30,16 @@ enum Mapper4Model {
     Mmc6,
 }
 
-fn resolve_mapper4_model(data: &CartridgeData) -> Mapper4Model {
+fn resolve_mapper4_model(
+    data: &CartridgeData,
+    mmc3_irq_variant: Option<Mmc3IrqVariant>,
+) -> Mapper4Model {
     if data.sub_mapper_type() == 1 {
         return Mapper4Model::Mmc6;
     }
 
     let bus_conflicts = data.sub_mapper_type() == 2;
-    match data.mmc3_irq_variant_override() {
+    match mmc3_irq_variant {
         Some(Mmc3IrqVariant::Sharp) => Mapper4Model::Mmc3 { bus_conflicts },
         Some(Mmc3IrqVariant::Nec) => Mapper4Model::Mmc3Nec { bus_conflicts },
         None if data.sub_mapper_type() == 4 => Mapper4Model::Mmc3Nec {
@@ -46,8 +49,11 @@ fn resolve_mapper4_model(data: &CartridgeData) -> Mapper4Model {
     }
 }
 
-pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
-    Ok(match resolve_mapper4_model(&data) {
+pub(crate) fn try_from(
+    data: CartridgeData,
+    mmc3_irq_variant: Option<Mmc3IrqVariant>,
+) -> Result<Box<dyn Cartridge>, CartridgeError> {
+    Ok(match resolve_mapper4_model(&data, mmc3_irq_variant) {
         Mapper4Model::Mmc3 { bus_conflicts } => Box::new(Mmc3::new(data, bus_conflicts)),
         Mapper4Model::Mmc3Nec { bus_conflicts } => Box::new(Mmc3Nec::new(data, bus_conflicts)),
         Mapper4Model::Mmc6 => Box::new(Mmc6::new(data)),
@@ -64,38 +70,24 @@ mod tests {
     use super::*;
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::{Interrupt, IrqSource};
-
-    fn test_data_with_override(
-        sub_mapper_type: u8,
-        irq_variant: Option<Mmc3IrqVariant>,
-    ) -> CartridgeData {
-        let mut rom = vec![
-            0x4E,
-            0x45,
-            0x53,
-            0x1A,
-            0x02,
-            0x01,
-            0x40,
-            0x08,
-            sub_mapper_type << 4,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-        let mut data =
-            CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse");
-        data.set_mmc3_irq_variant_override(irq_variant);
-        data
-    }
+    use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
-        test_data_with_override(sub_mapper_type, None)
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 4,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid")
     }
 
     fn new_mmc3(sub_mapper_type: u8) -> Mmc3 {
@@ -119,7 +111,7 @@ mod tests {
     #[test]
     fn submapper0_resolves_to_standard_mmc3() {
         assert_eq!(
-            resolve_mapper4_model(&test_data(0)),
+            resolve_mapper4_model(&test_data(0), None),
             Mapper4Model::Mmc3 {
                 bus_conflicts: false
             }
@@ -128,13 +120,16 @@ mod tests {
 
     #[test]
     fn submapper1_resolves_to_mmc6() {
-        assert_eq!(resolve_mapper4_model(&test_data(1)), Mapper4Model::Mmc6);
+        assert_eq!(
+            resolve_mapper4_model(&test_data(1), None),
+            Mapper4Model::Mmc6
+        );
     }
 
     #[test]
     fn submapper2_resolves_to_bus_conflict_mmc3() {
         assert_eq!(
-            resolve_mapper4_model(&test_data(2)),
+            resolve_mapper4_model(&test_data(2), None),
             Mapper4Model::Mmc3 {
                 bus_conflicts: true
             }
@@ -144,7 +139,7 @@ mod tests {
     #[test]
     fn submapper4_resolves_to_nec_mmc3() {
         assert_eq!(
-            resolve_mapper4_model(&test_data(4)),
+            resolve_mapper4_model(&test_data(4), None),
             Mapper4Model::Mmc3Nec {
                 bus_conflicts: false
             }
@@ -154,7 +149,7 @@ mod tests {
     #[test]
     fn sharp_override_forces_standard_mmc3() {
         assert_eq!(
-            resolve_mapper4_model(&test_data_with_override(4, Some(Mmc3IrqVariant::Sharp))),
+            resolve_mapper4_model(&test_data(4), Some(Mmc3IrqVariant::Sharp)),
             Mapper4Model::Mmc3 {
                 bus_conflicts: false
             }
@@ -164,7 +159,7 @@ mod tests {
     #[test]
     fn nec_override_forces_nec_mmc3() {
         assert_eq!(
-            resolve_mapper4_model(&test_data_with_override(0, Some(Mmc3IrqVariant::Nec))),
+            resolve_mapper4_model(&test_data(0), Some(Mmc3IrqVariant::Nec)),
             Mapper4Model::Mmc3Nec {
                 bus_conflicts: false
             }

@@ -1,0 +1,10 @@
+[package]
+name = "nerust_cartridge_data"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+nerust_core.workspace = true
+thiserror.workspace = true

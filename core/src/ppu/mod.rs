@@ -36,6 +36,7 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cartridge;
     use crate::cpu::interrupt::Interrupt;
+    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
     use nerust_screen_traits::Screen;
 
     #[derive(Default)]
@@ -48,12 +49,22 @@ mod tests {
     }
 
     fn nrom_cartridge() -> Box<dyn Cartridge> {
-        let mut rom = vec![
-            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-        cartridge::try_from(&mut rom.into_iter()).expect("cartridge should parse")
+        let cartridge_data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 0,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        cartridge::try_from(cartridge_data).expect("cartridge should construct")
     }
 
     #[test]

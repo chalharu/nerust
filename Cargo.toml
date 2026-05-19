@@ -1,8 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
+  "cartridge/data",
   "console",
   "core",
+  "rom_test",
   "gui/gtk",
   "gui/glutin",
   "gui/wgpu",
@@ -20,8 +22,10 @@ members = [
   "wgpuwrap",
 ]
 default-members = [
+  "cartridge/data",
   "console",
   "core",
+  "rom_test",
   "gui/glutin",
   "glwrap",
   "nes_ntsc",
@@ -65,8 +69,10 @@ lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.29", default-features = false }
 muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
+nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_core = { version = "=0.1.0", path = "core" }
+nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
 nerust_wgpuwrap = { version = "=0.1.0", path = "wgpuwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
