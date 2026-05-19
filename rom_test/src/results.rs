@@ -110,7 +110,6 @@ pub struct CaseValidation {
     pub frames: u64,
     pub steps: u64,
     pub final_screen_hash: u64,
-    pub final_screenshot_png: Option<Vec<u8>>,
     pub screen_checks: Vec<ScreenCheck>,
     pub work_ram_checks: Vec<WorkRamCheck>,
     pub cartridge_ram_checks: Vec<CartridgeRamCheck>,
