@@ -22,6 +22,10 @@
 !mmc3o/mmc3o_1M_CR32.nes
 !mmc3spaminc/mmc3spaminc.nes
 !mmc3spaminc/mmc3spaminc-tg.nes
+!test28/test28.nes
+!test78/test78-submapper3.nes
+!fme7ramtest/fme7ramtest.nes
+!fme7acktest/fme7acktest.nes
 */*.nsf
 *.sav
 *.zip

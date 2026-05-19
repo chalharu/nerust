@@ -41,6 +41,7 @@ pub(crate) trait Cartridge: Mapper {
     fn read(&self, address: usize) -> OpenBusReadResult {
         match address {
             0..=0x1FFF => self.read_character(address),
+            0x4020..=0x5FFF => Mapper::read_expansion(self, address),
             0x6000..=0x7FFF => Cartridge::read_ram(self, address - 0x6000),
             0x8000..=0xFFFF => self.read_program(address - 0x8000),
             _ => {
@@ -88,6 +89,7 @@ pub(crate) trait Cartridge: Mapper {
     fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         match address {
             0..=0x1FFF => self.write_character(address, value),
+            0x4020..=0x5FFF => Mapper::write_expansion(self, address, value, interrupt),
             0x6000..=0x7FFF => Cartridge::write_ram(self, address, value, interrupt),
             0x8000..=0xFFFF => self.write_program(address, value, interrupt),
             _ => {

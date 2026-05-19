@@ -635,6 +635,155 @@ cases:
     rom: holy-mapperel/testroms/M118_P128K_C64K.nes
     events:
       - {frame: 120, action: check_screen, hash: "0x33516EB854B1A7E4"}
+  - id: mapper.holy_mapperel.m9_mmc2
+    category: mapper
+    description: "Verifies mapper 9 MMC2 PRG banking, latch-driven CHR banks, and mirroring using Holy Mapperel."
+    rom: holy-mapperel/testroms/M9_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x09"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m10_mmc4
+    category: mapper
+    description: "Verifies mapper 10 MMC4 PRG banking, latch-driven CHR banks, mirroring, and WRAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M10_P128K_C64K_W8K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x0A"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m11_color_dreams
+    category: mapper
+    description: "Verifies mapper 11 Color Dreams PRG banking, CHR RAM banking, and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M11_P64K_CR32K_V.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x0B"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x0F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x03"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m28_action53
+    category: mapper
+    description: "Verifies mapper 28 Action 53 PRG/CHR RAM banking and mirroring control using Holy Mapperel."
+    rom: holy-mapperel/testroms/M28_P512K_CR32K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x1C"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x7F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x03"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m66_gnrom
+    category: mapper
+    description: "Verifies mapper 66 GNROM PRG/CHR banking and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M66_P64K_C16K_V.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x42"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x0F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m69_fme7
+    category: mapper
+    description: "Verifies mapper 69 FME-7 PRG/CHR banking, WRAM control, and IRQ wiring using Holy Mapperel."
+    rom: holy-mapperel/testroms/M69_P128K_C64K_W8K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x45"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m78_3_holy_diver
+    category: mapper
+    description: "Verifies mapper 78 submapper 3 Holy Diver PRG/CHR banking and mirroring polarity using Holy Mapperel."
+    rom: holy-mapperel/testroms/M78.3_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x4E"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.holy_mapperel.m180_crazy_climber
+    category: mapper
+    description: "Verifies mapper 180 Crazy Climber PRG banking, CHR RAM banking, and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M180_P128K_CR8K_H.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0xB4"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+  - id: mapper.test28.action53
+    category: mapper
+    description: "Runs the Action 53 comprehensive mapper 28 test ROM through its automated PRG and CHR test flow."
+    rom: little-things-nes/test28/test28.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1800, action: check_work_ram, address: "0x00FC", value: "0x1E"}
+      - {frame: 1800, action: check_work_ram, address: "0x00FD", value: "0xF0"}
+      - {frame: 1800, action: check_work_ram, address: "0x00FE", value: "0x00"}
+  - id: mapper.test78.submapper3
+    category: mapper
+    description: "Verifies mapper 78 submapper 3 mirroring polarity using the dedicated Holy Diver test ROM."
+    rom: little-things-nes/test78/test78-submapper3.nes
+    events:
+      - {frame: 10, action: check_work_ram, address: "0x0011", value: "0x35"}
+  - id: mapper.fme7ramtest
+    category: mapper
+    description: "Verifies 32 KiB mapper 69 WRAM banking at $6000 using the dedicated FME-7 RAM test ROM."
+    rom: little-things-nes/fme7ramtest/fme7ramtest.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0xC0"}
+      - {frame: 120, action: check_work_ram, address: "0x0016", value: "0xC1"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0xC2"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xC3"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0xC0"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0xC1"}
+      - {frame: 120, action: check_work_ram, address: "0x001B", value: "0xC2"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xC3"}
+      - {frame: 120, action: check_work_ram, address: "0x0025", value: "0x00"}
+  - id: mapper.fme7acktest
+    category: mapper
+    description: "Verifies mapper 69 IRQ acknowledgment behavior using the dedicated FME-7 ACK test ROM."
+    rom: little-things-nes/fme7acktest/fme7acktest.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x001B", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x02"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x02"}
   - id: mapper.mmc3bigchrram
     category: mapper
     description: "Verifies 32 KiB MMC3 CHR RAM support using the mmc3bigchrram little-things ROM."

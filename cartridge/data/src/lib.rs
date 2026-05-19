@@ -91,9 +91,39 @@ mod tests {
         assert_eq!(data.mapper_type(), 0);
         assert_eq!(data.sub_mapper_type(), 3);
         assert_eq!(data.mirror_mode(), MirrorMode::Single0);
-        assert_eq!(data.pram_length(), 1 << (6 + 5));
-        assert_eq!(data.save_pram_length(), 1 << (6 + 4));
-        assert_eq!(data.vram_length(), 1 << (6 + 7));
-        assert_eq!(data.save_vram_length(), 1 << (6 + 6));
+        assert_eq!(data.pram_length(), 1 << (6 + 4));
+        assert_eq!(data.save_pram_length(), 1 << (6 + 5));
+        assert_eq!(data.vram_length(), 1 << (6 + 6));
+        assert_eq!(data.save_vram_length(), 1 << (6 + 7));
+    }
+
+    #[test]
+    fn nes20_chr_ram_sizes_do_not_add_implicit_extra_bank() {
+        let mut rom = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x04, 0x00, 0xB1, 0x08, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        rom.resize(16 + 0x10000, 0);
+
+        let data = parse_cartridge_bytes(&rom).expect("rom should parse");
+
+        assert_eq!(data.char_rom_len(), 0);
+        assert_eq!(data.vram_length(), 1 << (6 + 9));
+        assert_eq!(data.save_vram_length(), 0);
+    }
+
+    #[test]
+    fn nes20_chr_nvram_only_does_not_inject_implicit_chr_ram() {
+        let mut rom = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x04, 0x00, 0x08, 0x08, 0x00, 0x00, 0x00, 0x90, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        rom.resize(16 + 0x10000, 0);
+
+        let data = parse_cartridge_bytes(&rom).expect("rom should parse");
+
+        assert_eq!(data.char_rom_len(), 0);
+        assert_eq!(data.vram_length(), 0);
+        assert_eq!(data.save_vram_length(), 1 << (6 + 9));
     }
 }
