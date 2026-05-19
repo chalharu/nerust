@@ -20,7 +20,7 @@ use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
 use self::uxrom::UxRom;
-use crate::cartridge_api::Cartridge;
+use crate::cart_device::Cartridge;
 use crate::cartridge_data::CartridgeData;
 use crate::cartridge_error::CartridgeError;
 

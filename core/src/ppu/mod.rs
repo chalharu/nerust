@@ -9,8 +9,9 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
-use crate::cartridge_api::{Cartridge, PpuBusEvent};
+use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
+use crate::ppu_bus_event::PpuBusEvent;
 use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
 use std::cmp;
@@ -32,8 +33,8 @@ struct DecayableOpenBus {
 #[cfg(test)]
 mod tests {
     use super::Core;
+    use crate::cart_device::Cartridge;
     use crate::cartridge;
-    use crate::cartridge_api::Cartridge;
     use crate::cpu::interrupt::Interrupt;
     use nerust_screen_traits::Screen;
 

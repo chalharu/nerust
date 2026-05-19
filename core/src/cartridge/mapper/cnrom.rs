@@ -6,10 +6,11 @@
 
 // Mapper 3 or 185
 
-use crate::cartridge_api::Cartridge;
-use crate::cartridge_api::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use crate::cartridge_data::CartridgeData;
+use super::CartridgeData;
+use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
+use crate::mapper::{CartridgeDataDao, Mapper};
+use crate::mapper_state::{MapperState, MapperStateDao};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct CNRom {

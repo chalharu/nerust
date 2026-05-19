@@ -10,17 +10,20 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod apu;
+mod cart_device;
 mod cartridge;
-mod cartridge_api;
 mod cartridge_data;
 mod cartridge_error;
 pub mod controller;
 mod cpu;
+mod mapper;
+mod mapper_state;
 mod ppu;
+mod ppu_bus_event;
 mod status;
 
 use self::apu::Core as Apu;
-use self::cartridge_api::Cartridge;
+use self::cart_device::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
