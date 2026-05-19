@@ -4,21 +4,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#[allow(
-    dead_code,
-    reason = "the perf binary reuses the shared ROM tooling module but only needs a subset of its helpers"
-)]
-#[path = "../rom_test/mod.rs"]
-mod rom_test;
-
 use clap::{Arg, ArgAction, Command};
+use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_sound_traits::MixerInput;
-use rom_test::{
-    ButtonCode, CaseHarness, CaseOutcome, ControllerPad, PadState, RomAssertion, RomCase,
-    drive_case, load_default_manifest, read_rom, validate_case,
+use nerust_rom_test::{
+    self as rom_test, ButtonCode, CaseHarness, CaseOutcome, ControllerPad, PadState, RomAssertion,
+    RomCase, drive_case, load_default_manifest, read_rom, validate_case,
 };
+use nerust_sound_traits::MixerInput;
 use std::time::{Duration, Instant};
 
 pub fn main() {
@@ -30,18 +24,12 @@ pub fn main() {
 
 fn run() -> Result<(), String> {
     let matches = Command::new("perf")
-        .about("Benchmark perf-enabled ROM test cases from core/rom_tests.yaml")
-        .arg(
-            Arg::new("rounds")
-                .long("rounds")
-                .value_name("N")
-                .default_value("5"),
-        )
+        .about("Benchmark perf-enabled ROM test cases from rom_test/rom_tests.yaml")
+        .arg(Arg::new("rounds").long("rounds").value_name("N"))
         .arg(
             Arg::new("warmup-rounds")
                 .long("warmup-rounds")
-                .value_name("N")
-                .default_value("1"),
+                .value_name("N"),
         )
         .arg(
             Arg::new("case")
@@ -53,7 +41,8 @@ fn run() -> Result<(), String> {
 
     let rounds = matches
         .get_one::<String>("rounds")
-        .expect("rounds has a default value")
+        .map(String::as_str)
+        .unwrap_or("5")
         .parse::<usize>()
         .map_err(|error| format!("invalid --rounds value: {error}"))?;
     if rounds == 0 {
@@ -62,7 +51,8 @@ fn run() -> Result<(), String> {
 
     let warmup_rounds = matches
         .get_one::<String>("warmup-rounds")
-        .expect("warmup-rounds has a default value")
+        .map(String::as_str)
+        .unwrap_or("1")
         .parse::<usize>()
         .map_err(|error| format!("invalid --warmup-rounds value: {error}"))?;
 
@@ -256,13 +246,19 @@ struct PerfRunner {
 
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, rom_test::RomTestError> {
-        let mut input = rom_bytes.iter().copied();
-        let core = Core::new_with_options(&mut input, case.core_options()).map_err(|error| {
+        let cartridge_data = parse_cartridge_bytes(rom_bytes).map_err(|error| {
             rom_test::RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             }
         })?;
+        let core =
+            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
+                rom_test::RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
         Ok(Self {
             core,
             screen: PerfScreen::new(),

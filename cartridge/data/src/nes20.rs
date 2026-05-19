@@ -4,14 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::super::error::CartridgeError;
-use super::CartridgeData;
-use crate::MirrorMode;
+use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
+use nerust_core::{CartridgeData, CartridgeDataParts, RomFormat};
 
 pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     headers: &[u8],
     input: &mut I,
-) -> Result<CartridgeData, CartridgeError> {
+) -> Result<CartridgeData, CartridgeParseError> {
     let upper_rom_size = usize::from(headers[9]);
     let prom_length = (usize::from(headers[4]) | ((upper_rom_size & 0x0F) << 8)) * 0x4000;
     let crom_length = (usize::from(headers[5]) | ((upper_rom_size & 0xF0) << 4)) * 0x2000;
@@ -45,13 +44,13 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     let mapper_type =
         u16::from(flags1 >> 4) | u16::from(flags2 & 0xf0) | (u16::from(mapper_variant & 0x0F) << 8);
     let sub_mapper_type = mapper_variant >> 4;
-    let mirror_type = (flags1 & 1) | ((flags1 >> 2) & 2);
+    let mirror_mode = validate_mirror_mode((flags1 & 1) | ((flags1 >> 2) & 2))?;
     let has_battery = (flags1 & 2) == 2;
     let has_trainer = (flags1 & 4) == 4;
     let trainer = if has_trainer {
         let tmp = input.take(512).collect::<Vec<_>>();
         if tmp.len() != 512 {
-            return Err(CartridgeError::UnexpectedEof);
+            return Err(CartridgeParseError::UnexpectedEof);
         }
         tmp
     } else {
@@ -59,26 +58,25 @@ pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     };
     let prog_rom = input.take(prom_length).collect::<Vec<_>>();
     if prog_rom.len() != prom_length {
-        return Err(CartridgeError::UnexpectedEof);
+        return Err(CartridgeParseError::UnexpectedEof);
     }
     let char_rom = if crom_length != 0 {
         let tmp = input.take(crom_length).collect::<Vec<_>>();
         if tmp.len() != crom_length {
-            return Err(CartridgeError::UnexpectedEof);
+            return Err(CartridgeParseError::UnexpectedEof);
         }
         tmp
     } else {
         Vec::new()
     };
-    let mirror_mode = MirrorMode::try_from(mirror_type).map_err(|_| CartridgeError::DataError)?;
-    Ok(CartridgeData {
+    cartridge_data(CartridgeDataParts {
+        format: RomFormat::Nes20,
         prog_rom,
         char_rom,
         mapper_type,
         mirror_mode,
         has_battery,
         sub_mapper_type,
-        mmc3_irq_variant_override: None,
         pram_length,
         save_pram_length,
         vram_length,

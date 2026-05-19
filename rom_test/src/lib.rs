@@ -11,6 +11,7 @@
 
 mod error;
 mod events;
+mod harness;
 mod manifest;
 mod media;
 mod report;
@@ -24,6 +25,7 @@ pub use self::error::RomTestError;
 pub use self::events::{
     ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent, RomEventKind,
 };
+pub use self::harness::{CaseHarness, drive_case};
 pub use self::manifest::{
     AudioExpectation, DEFAULT_AUDIO_SAMPLE_RATE, RomCase, RomCategory, RomManifest,
     default_manifest_path, load_default_manifest, load_manifest, read_rom,
@@ -33,7 +35,7 @@ pub use self::results::{
     AudioObservation, CartridgeRamCheck, CaseOutcome, CaseValidation, ExecutionTotals,
     PpuVramCheck, ScreenCheck, ValidationOptions, WorkRamCheck,
 };
-pub use self::runner::{CaseHarness, drive_case, validate_case};
+pub use self::runner::validate_case;
 
 #[cfg(test)]
 pub(crate) use self::manifest::apply_case_rom_overrides;

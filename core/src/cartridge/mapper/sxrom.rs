@@ -6,10 +6,12 @@
 
 // Mapper 1
 
-use super::super::{CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use super::{Cartridge, CartridgeData};
+use super::CartridgeData;
 use crate::MirrorMode;
+use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
+use crate::mapper::{CartridgeDataDao, Mapper};
+use crate::mapper_state::{MapperState, MapperStateDao};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -262,31 +264,26 @@ impl Mapper for SxRom {
 #[cfg(test)]
 mod tests {
     use super::SxRom;
-    use crate::cartridge::format::CartridgeData;
-    use crate::cartridge::{Cartridge, Mapper};
+    use crate::cart_device::Cartridge;
+    use crate::mapper::Mapper;
+    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
-        let mut rom = vec![
-            0x4E,
-            0x45,
-            0x53,
-            0x1A,
-            (prg_rom_len / 0x4000) as u8,
-            (chr_rom_len / 0x2000) as u8,
-            0x10,
-            0x00,
-            prg_ram_banks_8k,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ];
-        rom.resize(16 + prg_rom_len + chr_rom_len, 0x00);
-
-        let data = CartridgeData::try_from(&mut rom.into_iter()).expect("test rom should parse");
+        let data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; prg_rom_len],
+            char_rom: vec![0; chr_rom_len],
+            pram_length: usize::from(prg_ram_banks_8k.max(1)) * 0x2000,
+            save_pram_length: 0,
+            vram_length: if chr_rom_len == 0 { 0x2000 } else { 0 },
+            save_vram_length: 0,
+            mapper_type: 1,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
         let mut mapper = SxRom::new(data);
         Cartridge::initialize(&mut mapper);
         mapper
