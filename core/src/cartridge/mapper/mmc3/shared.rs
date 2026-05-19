@@ -4,10 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use super::CartridgeData;
 use crate::MirrorMode;
-use crate::cartridge_api::{CartridgeDataDao, Mapper, MapperState, MapperStateDao, PpuBusEvent};
-use crate::cartridge_data::CartridgeData;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::mapper::{CartridgeDataDao, Mapper};
+use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::ppu_bus_event::PpuBusEvent;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 
@@ -262,8 +264,7 @@ impl Mapper4Shared {
     }
 
     fn character_bank_count(&self) -> usize {
-        if self.mapper_state_ref().character_mapping_mode == crate::cartridge_api::MappingMode::Ram
-        {
+        if self.mapper_state_ref().character_mapping_mode == crate::mapper_state::MappingMode::Ram {
             self.mapper_state_ref().vram.len() / 0x0400
         } else {
             self.data_ref().char_rom_len() / 0x0400

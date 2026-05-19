@@ -4,9 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
-use crate::cartridge_api::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cart_device::Cartridge;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct TxSrom {
@@ -40,8 +40,9 @@ impl Mapper4Wrapper for TxSrom {
 mod tests {
     use super::*;
     use crate::MirrorMode;
-    use crate::cartridge_api::{Cartridge, Mapper};
+    use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::Interrupt;
+    use crate::mapper::Mapper;
 
     fn test_data() -> CartridgeData {
         let mut rom = vec![

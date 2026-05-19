@@ -6,7 +6,7 @@
 
 mod mapper;
 use crate::CoreOptions;
-use crate::cartridge_api::Cartridge;
+use crate::cart_device::Cartridge;
 use crate::cartridge_data::CartridgeData;
 use crate::cartridge_error::CartridgeError;
 

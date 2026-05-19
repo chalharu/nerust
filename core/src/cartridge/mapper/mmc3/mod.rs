@@ -14,12 +14,14 @@ use self::mmc3_nec::Mmc3Nec;
 use self::mmc6::Mmc6;
 use self::standard::Mmc3;
 use self::txsrom::TxSrom;
+use super::CartridgeData;
 use crate::Mmc3IrqVariant;
-use crate::cartridge_api::Cartridge;
-#[cfg(test)]
-use crate::cartridge_api::{Mapper, PpuBusEvent};
-use crate::cartridge_data::CartridgeData;
+use crate::cart_device::Cartridge;
 use crate::cartridge_error::CartridgeError;
+#[cfg(test)]
+use crate::mapper::Mapper;
+#[cfg(test)]
+use crate::ppu_bus_event::PpuBusEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -60,7 +62,7 @@ pub(crate) fn try_from_txsrom(data: CartridgeData) -> Result<Box<dyn Cartridge>,
 mod tests {
     use super::shared::{IrqVariant, PrgRamModel};
     use super::*;
-    use crate::cartridge_api::Cartridge;
+    use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::{Interrupt, IrqSource};
 
     fn test_data_with_override(
