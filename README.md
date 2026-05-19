@@ -78,7 +78,7 @@ NESdev-style categories and short descriptions for each case.
 
 ```sh
 # Validate configured ROM cases, print per-case progress,
-# and write an HTML report to target/rom-tests/validate/
+# and write an HTML report with per-case screenshots to target/rom-tests/validate/
 cargo run -p nerust_core --features rom-tooling --bin rom_tool -- validate
 
 # Capture actual hashes/screenshots with the same progress output

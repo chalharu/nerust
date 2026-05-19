@@ -121,6 +121,28 @@ pub fn write_html_report(
                 }
                 html.push_str("</p>");
 
+                let final_screenshot_rel =
+                    if let Some(bytes) = validation.final_screenshot_png.as_deref() {
+                        let relative = format!(
+                            "screenshots/{}/final.png",
+                            sanitize_for_path(&validation.case_id)
+                        );
+                        write_screenshot(output_dir, &relative, bytes)?;
+                        Some(relative)
+                    } else {
+                        None
+                    };
+                if let Some(relative) = &final_screenshot_rel {
+                    write!(
+                        html,
+                        "<h4>Final screenshot</h4><p><a href=\"{}\"><img class=\"thumb\" src=\"{}\" alt=\"{} final screen\"></a></p>",
+                        escape_html(relative),
+                        escape_html(relative),
+                        escape_html(&validation.case_id)
+                    )
+                    .unwrap();
+                }
+
                 if !validation.failures.is_empty() {
                     html.push_str("<h4>Failures</h4><ul>");
                     for failure in &validation.failures {
@@ -143,21 +165,7 @@ pub fn write_html_report(
                                 check.frame,
                                 index + 1
                             );
-                            let absolute = output_dir.join(&relative);
-                            if let Some(parent) = absolute.parent() {
-                                fs::create_dir_all(parent).map_err(|source| {
-                                    RomTestError::CreateDirectory {
-                                        path: parent.to_path_buf(),
-                                        source,
-                                    }
-                                })?;
-                            }
-                            fs::write(&absolute, bytes).map_err(|source| {
-                                RomTestError::WriteFile {
-                                    path: absolute.clone(),
-                                    source,
-                                }
-                            })?;
+                            write_screenshot(output_dir, &relative, bytes)?;
                             Some(relative)
                         } else {
                             None
@@ -335,4 +343,73 @@ fn sanitize_for_path(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn write_screenshot(output_dir: &Path, relative: &str, bytes: &[u8]) -> Result<(), RomTestError> {
+    let absolute = output_dir.join(relative);
+    if let Some(parent) = absolute.parent() {
+        fs::create_dir_all(parent).map_err(|source| RomTestError::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&absolute, bytes).map_err(|source| RomTestError::WriteFile {
+        path: absolute,
+        source,
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::RomCategory;
+    use crate::results::{AudioObservation, CaseOutcome, CaseValidation};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn report_writes_final_screenshot_without_screen_checks() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let output_dir = std::env::temp_dir().join(format!("nerust-rom-test-report-{unique}"));
+        let screenshot = vec![1, 2, 3, 4];
+
+        let outcome = CaseOutcome::Completed(CaseValidation {
+            case_id: "mapper.holy_mapperel.m9_mmc2".to_string(),
+            category: RomCategory::Mapper,
+            description: "test".to_string(),
+            rom: "holy-mapperel/testroms/M9_P128K_C64K.nes".to_string(),
+            frames: 120,
+            steps: 1,
+            final_screen_hash: 0x1234,
+            final_screenshot_png: Some(screenshot.clone()),
+            screen_checks: Vec::new(),
+            work_ram_checks: Vec::new(),
+            cartridge_ram_checks: Vec::new(),
+            ppu_vram_checks: Vec::new(),
+            audio: AudioObservation {
+                sample_rate: 48_000,
+                samples: 0,
+                hash: 0,
+                expected: None,
+            },
+            failures: Vec::new(),
+        });
+
+        let summary = write_html_report(&output_dir, "ROM validation report", &[outcome])
+            .expect("report should be written");
+        let html = fs::read_to_string(&summary.report_path).expect("report html should exist");
+        let screenshot_path = output_dir.join("screenshots/mapper_holy_mapperel_m9_mmc2/final.png");
+
+        assert!(html.contains("Final screenshot"));
+        assert!(html.contains("screenshots/mapper_holy_mapperel_m9_mmc2/final.png"));
+        assert_eq!(
+            fs::read(&screenshot_path).expect("final screenshot should be written"),
+            screenshot
+        );
+
+        fs::remove_dir_all(&output_dir).expect("temporary report directory should be removable");
+    }
 }
