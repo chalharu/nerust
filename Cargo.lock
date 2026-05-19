@@ -2290,7 +2290,6 @@ dependencies = [
  "raw-window-handle",
  "simple_logger",
  "tao",
- "wgpu",
 ]
 
 [[package]]
@@ -2298,6 +2297,7 @@ name = "nerust_wgpuwrap"
 version = "0.1.0"
 dependencies = [
  "nerust_screen_traits",
+ "raw-window-handle",
  "wgpu",
 ]
 

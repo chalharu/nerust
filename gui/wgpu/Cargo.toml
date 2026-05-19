@@ -21,7 +21,6 @@ raw-window-handle.workspace = true
 simple_logger.workspace = true
 tao.workspace = true
 nerust_wgpuwrap.workspace = true
-wgpu.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gdkwayland-sys = "=0.18.2"

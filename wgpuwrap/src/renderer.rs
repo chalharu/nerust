@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::upload::{FrameUploadLayout, pack_frame_rows};
+use crate::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
@@ -17,18 +18,6 @@ use wgpu::{
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureViewDescriptor, TextureViewDimension,
 };
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct SurfaceSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl SurfaceSize {
-    pub const fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
-    }
-}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RenderOutcome {
@@ -90,13 +79,14 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(
-        instance: &wgpu::Instance,
-        surface: &Surface<'_>,
+    pub async fn new<T: SurfaceTargetSource>(
+        render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         logical_size: LogicalSize,
         content_size: PhysicalSize,
     ) -> Result<Self, String> {
+        let instance = render_surface.instance();
+        let surface = render_surface.surface();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -261,10 +251,15 @@ impl Renderer {
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
     }
 
-    pub fn reconfigure_surface(&mut self, surface: &Surface<'_>, surface_size: SurfaceSize) {
+    pub fn reconfigure_surface<T: SurfaceTargetSource>(
+        &mut self,
+        render_surface: &RenderSurface<T>,
+        surface_size: SurfaceSize,
+    ) {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
+        let surface = render_surface.surface();
         self.config.width = surface_size.width;
         self.config.height = surface_size.height;
         surface.configure(&self.device, &self.config);
@@ -309,12 +304,13 @@ impl Renderer {
         );
     }
 
-    pub fn render(
+    pub fn render<T: SurfaceTargetSource>(
         &mut self,
-        surface: &Surface<'_>,
+        render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         frame_buffer: &[u8],
     ) -> Result<RenderOutcome, String> {
+        let surface = render_surface.surface();
         let (surface_texture, suboptimal) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -322,7 +318,7 @@ impl Renderer {
                 return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.reconfigure_surface(surface, surface_size);
+                self.reconfigure_surface(render_surface, surface_size);
                 return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -377,7 +373,7 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
         if suboptimal {
-            self.reconfigure_surface(surface, surface_size);
+            self.reconfigure_surface(render_surface, surface_size);
         }
         Ok(RenderOutcome::Presented)
     }
