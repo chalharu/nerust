@@ -182,12 +182,11 @@ impl Mapper for Fme7 {
     }
 
     fn write_ram(&mut self, index: usize, data: u8) {
-        if self.ram_is_enabled() {
-            if let Some(address) = self.ram_base_address(index)
-                && let Some(slot) = self.mapper_state_mut().sram.get_mut(address)
-            {
-                *slot = data;
-            }
+        if self.ram_is_enabled()
+            && let Some(address) = self.ram_base_address(index)
+            && let Some(slot) = self.mapper_state_mut().sram.get_mut(address)
+        {
+            *slot = data;
         }
     }
 
