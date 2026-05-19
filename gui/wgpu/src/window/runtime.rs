@@ -80,7 +80,6 @@ pub(crate) struct WindowRuntime {
     console: Console,
     app_menu: AppMenu,
     physical_size: PhysicalSize,
-    logical_size: LogicalSize,
     render_frame_count: u32,
     render_fps: f32,
     render_started_at: Instant,
@@ -91,17 +90,17 @@ pub(crate) struct WindowRuntime {
 
 impl WindowRuntime {
     pub(crate) fn new() -> Self {
-        let screen_buffer = ScreenBuffer::new(
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-        );
-        let physical_size = screen_buffer.physical_size();
-        let logical_size = screen_buffer.logical_size();
+        let filter_type = FilterType::NtscComposite;
+        let source_logical_size = LogicalSize {
+            width: 256,
+            height: 240,
+        };
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(speaker, screen_buffer);
+        let console = Console::new(
+            speaker,
+            ScreenBuffer::new_gpu(filter_type, source_logical_size),
+        );
+        let video_info = console.video_info();
 
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
@@ -124,8 +123,7 @@ impl WindowRuntime {
             paused: false,
             console,
             app_menu,
-            physical_size,
-            logical_size,
+            physical_size: video_info.physical_size,
             render_frame_count: 0,
             render_fps: 0.0,
             render_started_at: Instant::now(),
@@ -228,7 +226,8 @@ impl WindowRuntime {
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             render_surface.surface_size(window_surface_size(window.inner_size())),
-            self.logical_size,
+            self.console.video_info().filter_type,
+            self.console.source_logical_size(),
             self.physical_size,
         ))
         .unwrap();

@@ -6,17 +6,19 @@
 
 use crate::upload::{FrameUploadLayout, pack_frame_rows};
 use crate::{RenderSurface, SurfaceSize, SurfaceTargetSource};
+use nerust_screen_filter::{
+    FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+};
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
-    ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, FilterMode,
-    FragmentState, LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
+    ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, FragmentState,
+    LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface,
-    SurfaceConfiguration, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
-    Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
+    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferInfo,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -67,22 +69,37 @@ pub struct Renderer {
     queue: Queue,
     config: SurfaceConfiguration,
     frame_texture: Texture,
+    _palette_texture: Texture,
+    _ntsc_primary_texture: Texture,
+    _ntsc_secondary_texture: Texture,
     frame_upload_buffer: Buffer,
     frame_upload_layout: FrameUploadLayout,
     frame_upload_staging: Box<[u8]>,
-    _frame_sampler: Sampler,
+    _uniforms_buffer: Buffer,
     _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
     pipeline: RenderPipeline,
-    logical_size: LogicalSize,
+    source_logical_size: LogicalSize,
     content_size: PhysicalSize,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+struct FilterUniforms {
+    source_width: u32,
+    source_height: u32,
+    output_width: u32,
+    output_height: u32,
+    filter_mode: u32,
+    _padding: [u32; 3],
 }
 
 impl Renderer {
     pub async fn new<T: SurfaceTargetSource>(
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
-        logical_size: LogicalSize,
+        filter_type: FilterType,
+        source_logical_size: LogicalSize,
         content_size: PhysicalSize,
     ) -> Result<Self, String> {
         let instance = render_surface.instance();
@@ -117,22 +134,52 @@ impl Renderer {
             config.alpha_mode = CompositeAlphaMode::Opaque;
         }
         surface.configure(&device, &config);
-        let frame_upload_layout = FrameUploadLayout::for_logical_size(logical_size)?;
+        let logical_size = filter_type.layout(source_logical_size).logical_size;
+        let frame_upload_layout = FrameUploadLayout::for_logical_size(source_logical_size, 1)?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
             label: Some("nerust_frame_texture"),
             size: Extent3d {
-                width: logical_size.width as u32,
-                height: logical_size.height as u32,
+                width: source_logical_size.width as u32,
+                height: source_logical_size.height as u32,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::R8Unorm,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
+        let palette_texture = create_texture_from_bytes(
+            &device,
+            &queue,
+            "nerust_palette_texture",
+            TextureFormat::Rgba8Unorm,
+            Extent3d {
+                width: PALETTE_TEXTURE_WIDTH,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            &filter_type.encoded_palette_rgba8(),
+        );
+        let (ntsc_primary_data, ntsc_secondary_data, ntsc_size) = encode_ntsc_textures(filter_type);
+        let ntsc_primary_texture = create_texture_from_bytes(
+            &device,
+            &queue,
+            "nerust_ntsc_primary_texture",
+            TextureFormat::Rgba8Unorm,
+            ntsc_size,
+            &ntsc_primary_data,
+        );
+        let ntsc_secondary_texture = create_texture_from_bytes(
+            &device,
+            &queue,
+            "nerust_ntsc_secondary_texture",
+            TextureFormat::Rgba8Unorm,
+            ntsc_size,
+            &ntsc_secondary_data,
+        );
         let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_frame_upload_buffer"),
             size: frame_upload_layout.buffer_size,
@@ -142,12 +189,29 @@ impl Renderer {
         let frame_upload_staging =
             vec![0; frame_upload_layout.buffer_size as usize].into_boxed_slice();
         let frame_view = frame_texture.create_view(&TextureViewDescriptor::default());
-        let frame_sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("nerust_frame_sampler"),
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            ..Default::default()
+        let palette_view = palette_texture.create_view(&TextureViewDescriptor::default());
+        let ntsc_primary_view = ntsc_primary_texture.create_view(&TextureViewDescriptor::default());
+        let ntsc_secondary_view =
+            ntsc_secondary_texture.create_view(&TextureViewDescriptor::default());
+        let uniforms = FilterUniforms {
+            source_width: source_logical_size.width as u32,
+            source_height: source_logical_size.height as u32,
+            output_width: logical_size.width as u32,
+            output_height: logical_size.height as u32,
+            filter_mode: if matches!(filter_type, FilterType::None) {
+                0
+            } else {
+                1
+            },
+            _padding: [0; 3],
+        };
+        let uniforms_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("nerust_filter_uniforms"),
+            size: std::mem::size_of::<FilterUniforms>() as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+            mapped_at_creation: false,
         });
+        queue.write_buffer(&uniforms_buffer, 0, cast_bytes(&uniforms));
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("nerust_frame_bind_group_layout"),
@@ -157,7 +221,7 @@ impl Renderer {
                     visibility: ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
-                        sample_type: TextureSampleType::Float { filterable: true },
+                        sample_type: TextureSampleType::Float { filterable: false },
                         view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
@@ -165,7 +229,41 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(SamplerBindingType::Filtering),
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -180,7 +278,19 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&frame_sampler),
+                    resource: wgpu::BindingResource::TextureView(&palette_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ntsc_primary_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&ntsc_secondary_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: uniforms_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -225,14 +335,17 @@ impl Renderer {
             queue,
             config,
             frame_texture,
+            _palette_texture: palette_texture,
+            _ntsc_primary_texture: ntsc_primary_texture,
+            _ntsc_secondary_texture: ntsc_secondary_texture,
             frame_upload_buffer,
             frame_upload_layout,
             frame_upload_staging,
-            _frame_sampler: frame_sampler,
+            _uniforms_buffer: uniforms_buffer,
             _bind_group_layout: bind_group_layout,
             bind_group,
             pipeline,
-            logical_size,
+            source_logical_size,
             content_size,
         })
     }
@@ -273,7 +386,7 @@ impl Renderer {
         } else {
             pack_frame_rows(
                 frame_buffer,
-                self.logical_size.height,
+                self.source_logical_size.height,
                 &mut self.frame_upload_staging,
                 self.frame_upload_layout,
             );
@@ -287,7 +400,7 @@ impl Renderer {
                 layout: TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(self.frame_upload_layout.upload_bytes_per_row),
-                    rows_per_image: Some(self.logical_size.height as u32),
+                    rows_per_image: Some(self.source_logical_size.height as u32),
                 },
             },
             TexelCopyTextureInfo {
@@ -297,8 +410,8 @@ impl Renderer {
                 aspect: wgpu::TextureAspect::All,
             },
             Extent3d {
-                width: self.logical_size.width as u32,
-                height: self.logical_size.height as u32,
+                width: self.source_logical_size.width as u32,
+                height: self.source_logical_size.height as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -377,6 +490,72 @@ impl Renderer {
         }
         Ok(RenderOutcome::Presented)
     }
+}
+
+fn cast_bytes<T>(value: &T) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
+    }
+}
+
+fn create_texture_from_bytes(
+    device: &Device,
+    queue: &Queue,
+    label: &str,
+    format: TextureFormat,
+    size: Extent3d,
+    bytes: &[u8],
+) -> Texture {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some(label),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytes,
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(size.width * 4),
+            rows_per_image: Some(size.height),
+        },
+        size,
+    );
+    texture
+}
+
+fn encode_ntsc_textures(filter_type: FilterType) -> (Box<[u8]>, Box<[u8]>, Extent3d) {
+    let Some(textures) = filter_type.encoded_ntsc_textures_rgba8() else {
+        return (
+            vec![0; 4].into_boxed_slice(),
+            vec![0; 4].into_boxed_slice(),
+            Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+    };
+
+    (
+        textures.primary_rgba8,
+        textures.secondary_rgba8,
+        Extent3d {
+            width: NTSC_TEXTURE_WIDTH,
+            height: NTSC_TEXTURE_HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    )
 }
 
 #[cfg(test)]

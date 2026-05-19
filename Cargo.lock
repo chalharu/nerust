@@ -2130,6 +2130,7 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
+ "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_sound_traits",
  "nerust_timer",
@@ -2248,7 +2249,7 @@ dependencies = [
  "gl",
  "log",
  "nerust_glwrap",
- "nerust_screen_buffer",
+ "nerust_screen_filter",
  "nerust_screen_traits",
 ]
 
@@ -2318,6 +2319,7 @@ dependencies = [
 name = "nerust_wgpuwrap"
 version = "0.1.0"
 dependencies = [
+ "nerust_screen_filter",
  "nerust_screen_traits",
  "raw-window-handle",
  "wgpu",

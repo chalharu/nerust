@@ -115,6 +115,26 @@ impl From<u32> for RGB {
     }
 }
 
+pub const BLACK: u8 = NES_NTSC_BLACK;
+pub const SHADER_COLOR_COUNT: usize = NES_NTSC_PALETTE_SIZE;
+pub const SHADER_PHASE_COUNT: usize = NES_NTSC_BURST_COUNT;
+pub const SHADER_PHASE_ENTRY_COUNT: usize = NES_NTSC_BURST_SIZE;
+pub const SHADER_CHANNEL_BIAS: i16 = 512;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct ShaderKernelEntry {
+    pub red: i16,
+    pub green: i16,
+    pub blue: i16,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ShaderKernelEntryI32 {
+    red: i32,
+    green: i32,
+    blue: i32,
+}
+
 // pub trait NesNtscExt<I1: IntoIterator<Item = u8>, I2: Iterator<Item = I1>> {
 //     fn filter(self, kernel: &NesNtsc) -> NesNtscIterator<I1, I2>;
 // }
@@ -290,6 +310,225 @@ impl NesNtsc {
         out[i] = out[i]
             .wrapping_add(error)
             .wrapping_sub(fourth.wrapping_mul(3));
+    }
+
+    fn gen_shader_kernel(filter_impl: &Init, yiq: (f32, f32, f32)) -> Vec<ShaderKernelEntryI32> {
+        let y = yiq.0 - RGB_OFFSET;
+        let (_, mut i, mut q) = yiq;
+        let mut out = Vec::new();
+        for rgb in filter_impl.to_rgb.iter() {
+            for pixel in NES_NTSC_PIXELS.iter() {
+                let yy = y * filter_impl.fringing * pixel.negate;
+                let ic0 = (i + yy) * pixel.kernel[0];
+                let qc1 = (q + yy) * pixel.kernel[1];
+                let ic2 = (i - yy) * pixel.kernel[2];
+                let qc3 = (q - yy) * pixel.kernel[3];
+
+                let factor = filter_impl.artifacts * pixel.negate;
+                let ii = i * factor;
+                let yc0 = (y + ii) * pixel.kernel[0];
+                let yc2 = (y - ii) * pixel.kernel[2];
+
+                let qq = q * factor;
+                let yc1 = (y + qq) * pixel.kernel[1];
+                let yc3 = (y - qq) * pixel.kernel[3];
+
+                let mut offset = pixel.offset;
+                for _ in 0..RGB_KERNEL_SIZE {
+                    let yiq = (
+                        filter_impl.kernel[offset + KERNEL_SIZE] * yc0
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 1] * yc1
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 2] * yc2
+                            + filter_impl.kernel[offset + KERNEL_SIZE + 3] * yc3
+                            + RGB_OFFSET,
+                        filter_impl.kernel[offset] * ic0 + filter_impl.kernel[offset + 2] * ic2,
+                        filter_impl.kernel[offset + 1] * qc1 + filter_impl.kernel[offset + 3] * qc3,
+                    );
+
+                    if RESCALE_OUT <= 1 {
+                        offset -= 1;
+                    } else if offset < KERNEL_SIZE * 2 * (RESCALE_OUT - 1) {
+                        offset += KERNEL_SIZE * 2 - 1;
+                    } else {
+                        offset -= KERNEL_SIZE * 2 * (RESCALE_OUT - 1) + 2;
+                    }
+
+                    let rgb = Self::yiq_to_rgb_f32(yiq, rgb);
+                    out.push(ShaderKernelEntryI32 {
+                        red: rgb.0 as i32 - i32::from(SHADER_CHANNEL_BIAS),
+                        green: rgb.1 as i32 - i32::from(SHADER_CHANNEL_BIAS),
+                        blue: rgb.2 as i32 - i32::from(SHADER_CHANNEL_BIAS),
+                    });
+                }
+            }
+            let iq = rotate_iq((i, q), -0.866_025, -0.5);
+            i = iq.0;
+            q = iq.1;
+        }
+        for _ in out.len()..NES_NTSC_ENTRY_SIZE {
+            out.push(ShaderKernelEntryI32 {
+                red: 0,
+                green: 0,
+                blue: 0,
+            });
+        }
+        out
+    }
+
+    fn merge_shader_kernel_fields(io: &mut [ShaderKernelEntryI32]) {
+        for i in 0..BURST_SIZE {
+            let p0 = io[i];
+            let p1 = io[i + BURST_SIZE];
+            let p2 = io[i + BURST_SIZE * 2];
+            io[i] = ShaderKernelEntryI32 {
+                red: (p0.red + p1.red) / 2,
+                green: (p0.green + p1.green) / 2,
+                blue: (p0.blue + p1.blue) / 2,
+            };
+            io[i + BURST_SIZE] = ShaderKernelEntryI32 {
+                red: (p1.red + p2.red) / 2,
+                green: (p1.green + p2.green) / 2,
+                blue: (p1.blue + p2.blue) / 2,
+            };
+            io[i + BURST_SIZE * 2] = ShaderKernelEntryI32 {
+                red: (p2.red + p0.red) / 2,
+                green: (p2.green + p0.green) / 2,
+                blue: (p2.blue + p0.blue) / 2,
+            };
+        }
+    }
+
+    fn round_div4(value: i32) -> i32 {
+        if value >= 0 {
+            (value + 2) / 4
+        } else {
+            -(((-value) + 2) / 4)
+        }
+    }
+
+    fn distribute_shader_error(
+        a: usize,
+        b: usize,
+        c: usize,
+        i: usize,
+        error: ShaderKernelEntryI32,
+        out: &mut [ShaderKernelEntryI32],
+    ) {
+        let fourth = ShaderKernelEntryI32 {
+            red: Self::round_div4(error.red),
+            green: Self::round_div4(error.green),
+            blue: Self::round_div4(error.blue),
+        };
+        for index in [a, b, c] {
+            out[index].red += fourth.red;
+            out[index].green += fourth.green;
+            out[index].blue += fourth.blue;
+        }
+        out[i].red += error.red - fourth.red * 3;
+        out[i].green += error.green - fourth.green * 3;
+        out[i].blue += error.blue - fourth.blue * 3;
+    }
+
+    fn correct_shader_errors(color: ShaderKernelEntryI32, kernel: &mut [ShaderKernelEntryI32]) {
+        for j in 0..BURST_COUNT {
+            let offset = j * ALIGNMENT_COUNT * RGB_KERNEL_SIZE;
+            let out = &mut kernel[offset..];
+            for i in 0..(RGB_KERNEL_SIZE / 2) {
+                let error = ShaderKernelEntryI32 {
+                    red: color.red
+                        - out[i].red
+                        - out[(i + 12) % 7 + 14].red
+                        - out[(i + 10) % 7 + 28].red
+                        - out[i + 7].red
+                        - out[i + 5 + 14].red
+                        - out[i + 3 + 28].red,
+                    green: color.green
+                        - out[i].green
+                        - out[(i + 12) % 7 + 14].green
+                        - out[(i + 10) % 7 + 28].green
+                        - out[i + 7].green
+                        - out[i + 5 + 14].green
+                        - out[i + 3 + 28].green,
+                    blue: color.blue
+                        - out[i].blue
+                        - out[(i + 12) % 7 + 14].blue
+                        - out[(i + 10) % 7 + 28].blue
+                        - out[i + 7].blue
+                        - out[i + 5 + 14].blue
+                        - out[i + 3 + 28].blue,
+                };
+                Self::distribute_shader_error(i + 3 + 28, i + 5 + 14, i + 7, i, error, out);
+            }
+        }
+    }
+
+    pub fn shader_kernel_entries(setup: &Setup) -> Box<[ShaderKernelEntry]> {
+        let filter_impl = Init::new(setup);
+
+        let gamma_factor = {
+            let gamma = setup.gamma() * -0.5 + 0.1333;
+            gamma.abs().powf(0.73).abs()
+        };
+
+        let merge_fields =
+            (setup.artifacts() <= -1.0 && setup.fringing() <= -1.0) || setup.merge_fields();
+
+        (0..NES_NTSC_PALETTE_SIZE)
+            .flat_map(|entry| {
+                let level = (entry >> 4) & 3;
+                let color = entry & 0x0F;
+                let (low, high) = match color {
+                    0 => (HIGH_LEVELS[level], HIGH_LEVELS[level]),
+                    0x0D => (LOW_LEVELS[level], LOW_LEVELS[level]),
+                    0x0E | 0x0F => (0.0, 0.0),
+                    _ => (LOW_LEVELS[level], HIGH_LEVELS[level]),
+                };
+
+                let yiq = {
+                    let sat = (high - low) * 0.5;
+                    let yiq = (
+                        ((high + low) * 0.5) * (setup.contrast() * 0.5 + 1.0)
+                            + setup.brightness() * 0.5
+                            - 0.5 / 256.0,
+                        Color(color).to_angle_sin() * sat,
+                        Color(color).to_angle_cos() * sat,
+                    );
+                    let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &DEFAULT_DECODER);
+                    let yiq = Self::rgb_to_yiq_f32(
+                        (r * gamma_factor - gamma_factor) * r + r,
+                        (g * gamma_factor - gamma_factor) * g + g,
+                        (b * gamma_factor - gamma_factor) * b + b,
+                    );
+                    (
+                        yiq.0 * RGB_UNIT as f32 + RGB_OFFSET,
+                        yiq.1 * RGB_UNIT as f32,
+                        yiq.2 * RGB_UNIT as f32,
+                    )
+                };
+
+                let (r, g, b) = Self::yiq_to_rgb_f32(yiq, &filter_impl.to_rgb[0]);
+                let color = ShaderKernelEntryI32 {
+                    red: r as i32,
+                    green: g as i32,
+                    blue: if (b as u32) < 0x3E0 { b as i32 } else { 0x3E0 },
+                };
+
+                let mut kernel = Self::gen_shader_kernel(&filter_impl, yiq);
+                if merge_fields {
+                    Self::merge_shader_kernel_fields(&mut kernel);
+                }
+                Self::correct_shader_errors(color, &mut kernel);
+                kernel
+                    .into_iter()
+                    .map(|entry| ShaderKernelEntry {
+                        red: entry.red as i16,
+                        green: entry.green as i16,
+                        blue: entry.blue as i16,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
     }
 
     pub fn new(setup: &Setup, width: usize) -> Self {
