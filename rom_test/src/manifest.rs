@@ -43,7 +43,6 @@ impl RomManifest {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn case(&self, id: &str) -> Option<&RomCase> {
         self.cases.iter().find(|case| case.id == id)
     }

@@ -4,11 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::MirrorMode;
-use crate::cartridge_data::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper_state::{MapperStateDao, MappingMode};
 use crate::ppu_bus_event::PpuBusEvent;
+use crate::{CartridgeData, MirrorMode};
 
 pub(crate) trait CartridgeDataDao {
     fn data_mut(&mut self) -> &mut CartridgeData;

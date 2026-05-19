@@ -34,7 +34,7 @@ pub(crate) trait Cartridge: Mapper {
         } else {
             self.mapper_state_mut().character_mapping_mode = MappingMode::Rom;
         };
-        self.set_mirror_mode(self.data_ref().get_mirror_mode());
+        self.set_mirror_mode(self.data_ref().mirror_mode());
         Mapper::initialize(self);
     }
 

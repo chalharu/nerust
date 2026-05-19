@@ -43,14 +43,24 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::{CartridgeDataParts, RomFormat};
 
     fn test_data() -> CartridgeData {
-        let mut rom = vec![
-            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x60, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-        CartridgeData::try_from(&mut rom.into_iter()).expect("cartridge data should parse")
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 118,
+            mirror_mode: MirrorMode::Four,
+            has_battery: false,
+            sub_mapper_type: 7,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid")
     }
 
     fn new_txsrom() -> TxSrom {

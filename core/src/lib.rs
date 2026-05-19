@@ -30,6 +30,8 @@ use self::ppu::Core as Ppu;
 use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
+pub use self::cartridge_data::{CartridgeData, CartridgeDataParts, RomFormat};
+pub use self::cartridge_error::CartridgeError;
 pub use self::status::mirror_mode::MirrorMode;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -47,21 +49,6 @@ pub enum Mmc3IrqVariant {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CoreOptions {
     pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RomFormat {
-    INes,
-    Nes20,
-}
-
-impl RomFormat {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::INes => "iNES",
-            Self::Nes20 => "NES 2.0",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,16 +78,17 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new<I: Iterator<Item = u8>>(input: &mut I) -> Result<Core, Error> {
-        Self::new_with_options(input, CoreOptions::default())
+    pub fn new(cartridge_data: CartridgeData) -> Result<Core, Error> {
+        Self::new_with_options(cartridge_data, CoreOptions::default())
     }
 
-    pub fn new_with_options<I: Iterator<Item = u8>>(
-        input: &mut I,
+    pub fn new_with_options(
+        cartridge_data: CartridgeData,
         options: CoreOptions,
     ) -> Result<Core, Error> {
+        cartridge_data.validate()?;
         let mut cpu = Cpu::new();
-        let mut cartridge = cartridge::try_from_with_options(input, options)?;
+        let mut cartridge = cartridge::try_from_with_options(cartridge_data, options)?;
         let apu = Apu::new(cpu.interrupt_mut(), cartridge.as_mut());
         Ok(Self {
             cpu,
@@ -129,27 +117,15 @@ impl Core {
         }
     }
 
-    pub fn inspect_rom(data: &[u8]) -> Result<RomInfo, Error> {
-        if data.len() < 16 {
-            return Err(cartridge_error::CartridgeError::UnexpectedEof.into());
-        }
-        if data[0..4] != [0x4E, 0x45, 0x53, 0x1A] {
-            return Err(cartridge_error::CartridgeError::DataError.into());
-        }
-
-        let format = if (data[7] & 0x0C) == 0x08 {
-            RomFormat::Nes20
-        } else {
-            RomFormat::INes
-        };
-        let mut input = data.iter().copied();
-        let cartridge_data = cartridge_data::CartridgeData::try_from(&mut input)?;
-
+    pub fn inspect_cartridge(
+        cartridge_data: &CartridgeData,
+        raw_file_len: usize,
+    ) -> Result<RomInfo, Error> {
         Ok(RomInfo {
-            format,
+            format: cartridge_data.format(),
             mapper_type: cartridge_data.mapper_type(),
             sub_mapper_type: cartridge_data.sub_mapper_type(),
-            mirror_mode: cartridge_data.get_mirror_mode(),
+            mirror_mode: cartridge_data.mirror_mode(),
             has_battery: cartridge_data.has_battery(),
             trainer_len: cartridge_data.trainer().len(),
             prg_rom_len: cartridge_data.prog_rom_len(),
@@ -158,8 +134,8 @@ impl Core {
             save_prg_ram_len: cartridge_data.save_pram_length(),
             chr_ram_len: cartridge_data.vram_length(),
             save_chr_ram_len: cartridge_data.save_vram_length(),
-            raw_file_len: data.len(),
-            body_len: data.len().saturating_sub(16),
+            raw_file_len,
+            body_len: raw_file_len.saturating_sub(16),
         })
     }
 
@@ -254,36 +230,5 @@ pub struct OpenBusReadResult {
 impl OpenBusReadResult {
     pub fn new(data: u8, mask: u8) -> Self {
         Self { data, mask }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Core, MirrorMode, RomFormat};
-
-    #[test]
-    fn inspect_rom_reads_ines_metadata() {
-        let mut rom = vec![
-            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
-        rom.resize(16 + 0x8000 + 0x2000, 0);
-
-        let info = Core::inspect_rom(&rom).expect("rom info should parse");
-
-        assert_eq!(info.format, RomFormat::INes);
-        assert_eq!(info.mapper_type, 4);
-        assert_eq!(info.sub_mapper_type, 0);
-        assert_eq!(info.mirror_mode, MirrorMode::Vertical);
-        assert!(!info.has_battery);
-        assert_eq!(info.trainer_len, 0);
-        assert_eq!(info.prg_rom_len, 0x8000);
-        assert_eq!(info.chr_rom_len, 0x2000);
-        assert_eq!(info.prg_ram_len, 0x2000);
-        assert_eq!(info.save_prg_ram_len, 0);
-        assert_eq!(info.chr_ram_len, 0);
-        assert_eq!(info.save_chr_ram_len, 0);
-        assert_eq!(info.raw_file_len, rom.len());
-        assert_eq!(info.body_len, rom.len() - 16);
     }
 }
