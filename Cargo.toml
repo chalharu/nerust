@@ -17,6 +17,7 @@ members = [
   "sound/traits",
   "soundfilter",
   "timer",
+  "wgpuwrap",
 ]
 default-members = [
   "console",
@@ -67,6 +68,7 @@ muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
+nerust_wgpuwrap = { version = "=0.1.0", path = "wgpuwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
 nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
 nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }
