@@ -13,11 +13,16 @@ use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
 use gl::types::GLint;
 use nerust_glwrap::*;
+use nerust_screen_filter::{
+    FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+};
 use nerust_screen_traits::LogicalSize;
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;
 use std::rc::Rc;
+
+const GL_LUMINANCE: u32 = 0x1909;
 
 fn allocate(size: usize) -> Box<[u8]> {
     vec![0; size].into_boxed_slice()
@@ -25,21 +30,40 @@ fn allocate(size: usize) -> Box<[u8]> {
 
 #[derive(Debug)]
 pub struct GlView {
-    tex_name: u32,
+    frame_texture: u32,
+    palette_texture: u32,
+    ntsc_primary_texture: u32,
+    ntsc_secondary_texture: u32,
     shader: Option<Shader>,
     use_vao: bool,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
+    source_logical_size: LogicalSize,
+    single_channel_format: SingleChannelFormat,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SingleChannelFormat {
+    Red,
+    Luminance,
 }
 
 impl GlView {
     pub fn new() -> Self {
         Self {
-            tex_name: 0,
+            frame_texture: 0,
+            palette_texture: 0,
+            ntsc_primary_texture: 0,
+            ntsc_secondary_texture: 0,
             shader: None,
             use_vao: false,
             vba: None,
             vbo: None,
+            source_logical_size: LogicalSize {
+                width: 0,
+                height: 0,
+            },
+            single_channel_format: SingleChannelFormat::Red,
         }
     }
 
@@ -51,58 +75,65 @@ impl GlView {
         gl::load_with(get_proc_address);
     }
 
-    pub fn on_load(&mut self, logical_size: LogicalSize) {
-        let shader = compile_shader_program();
+    pub fn on_load(&mut self, filter_type: FilterType, source_logical_size: LogicalSize) {
+        let layout = filter_type.layout(source_logical_size);
+        let logical_size = layout.logical_size;
+        let (shader, single_channel_format) = compile_shader_program();
+        self.source_logical_size = source_logical_size;
+        self.single_channel_format = single_channel_format;
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
-        // テクスチャのセットアップ
-        gen_textures(1, &mut self.tex_name).unwrap();
-        pixel_storei(gl::UNPACK_ALIGNMENT, 4).unwrap();
+        let mut texture_names = [0; 4];
+        gen_textures(4, texture_names.as_mut_ptr()).unwrap();
+        self.frame_texture = texture_names[0];
+        self.palette_texture = texture_names[1];
+        self.ntsc_primary_texture = texture_names[2];
+        self.ntsc_secondary_texture = texture_names[3];
+        pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
 
-        bind_texture(gl::TEXTURE_2D, self.tex_name).unwrap();
-
-        let buffer_width = logical_size.width.next_power_of_two();
-        let buffer_height = logical_size.height.next_power_of_two();
-
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32).unwrap();
-        tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32).unwrap();
-        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-        // tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
-
-        {
-            tex_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as GLint,
-                buffer_width as i32,
-                buffer_height as i32,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                allocate(buffer_width * buffer_height * 4).as_ptr() as *const _,
-            )
-            .unwrap();
+        let frame_buffer_width = source_logical_size.width.next_power_of_two();
+        let frame_buffer_height = source_logical_size.height.next_power_of_two();
+        configure_palette_frame_texture(
+            0,
+            self.frame_texture,
+            frame_buffer_width,
+            frame_buffer_height,
+            single_channel_format,
+        );
+        configure_rgba_texture(
+            1,
+            self.palette_texture,
+            PALETTE_TEXTURE_WIDTH as usize,
+            1,
+            filter_type.encoded_palette_rgba8().as_ref(),
+        );
+        if let Some(textures) = filter_type.encoded_ntsc_textures_rgba8() {
+            configure_rgba_texture(
+                2,
+                self.ntsc_primary_texture,
+                NTSC_TEXTURE_WIDTH as usize,
+                NTSC_TEXTURE_HEIGHT as usize,
+                textures.primary_rgba8.as_ref(),
+            );
+            configure_rgba_texture(
+                3,
+                self.ntsc_secondary_texture,
+                NTSC_TEXTURE_WIDTH as usize,
+                NTSC_TEXTURE_HEIGHT as usize,
+                textures.secondary_rgba8.as_ref(),
+            );
+        } else {
+            configure_rgba_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
+            configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
         }
 
         // vbo
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
-            VertexData::new(
-                Vec2D::new(-1.0, -1.0),
-                Vec2D::new(0.0, logical_size.height as f32 / buffer_height as f32),
-            ),
-            VertexData::new(
-                Vec2D::new(1.0, 1.0),
-                Vec2D::new(logical_size.width as f32 / buffer_width as f32, 0.0),
-            ),
-            VertexData::new(
-                Vec2D::new(1.0, -1.0),
-                Vec2D::new(
-                    logical_size.width as f32 / buffer_width as f32,
-                    logical_size.height as f32 / buffer_height as f32,
-                ),
-            ),
+            VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 1.0)),
+            VertexData::new(Vec2D::new(1.0, 1.0), Vec2D::new(1.0, 0.0)),
+            VertexData::new(Vec2D::new(1.0, -1.0), Vec2D::new(1.0, 1.0)),
         ];
 
         let vbo = Rc::new(VertexBuffer::from_slice(&vertex_data).unwrap());
@@ -167,15 +198,54 @@ impl GlView {
             Mat4::identity().as_ptr(),
         )
         .unwrap();
-        uniform_1i(shader.get_uniform("screen_texture"), 0).unwrap();
+        uniform_1i(shader.get_uniform("frame_texture"), 0).unwrap();
+        uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
+        uniform_1i(shader.get_uniform("ntsc_primary_texture"), 2).unwrap();
+        uniform_1i(shader.get_uniform("ntsc_secondary_texture"), 3).unwrap();
+        uniform_1i(
+            shader.get_uniform("source_width"),
+            source_logical_size.width as i32,
+        )
+        .unwrap();
+        uniform_1i(
+            shader.get_uniform("source_height"),
+            source_logical_size.height as i32,
+        )
+        .unwrap();
+        uniform_1i(
+            shader.get_uniform("output_width"),
+            logical_size.width as i32,
+        )
+        .unwrap();
+        uniform_1i(
+            shader.get_uniform("output_height"),
+            logical_size.height as i32,
+        )
+        .unwrap();
+        uniform_1i(
+            shader.get_uniform("filter_mode"),
+            if matches!(filter_type, FilterType::None) {
+                0
+            } else {
+                1
+            },
+        )
+        .unwrap();
+        uniform_2f(
+            shader.get_uniform("frame_uv_size"),
+            source_logical_size.width as f32 / frame_buffer_width as f32,
+            source_logical_size.height as f32 / frame_buffer_height as f32,
+        )
+        .unwrap();
 
         // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
     }
 
-    pub fn on_update(&self, logical_size: LogicalSize, screen_ptr: *const u8) {
+    pub fn on_update(&self, screen_ptr: *const u8) {
         self.shader.as_ref().unwrap().use_program();
-        bind_texture(gl::TEXTURE_2D, self.tex_name).unwrap();
+        active_texture(gl::TEXTURE0).unwrap();
+        bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
         } else {
@@ -189,9 +259,12 @@ impl GlView {
             0,
             0,
             0,
-            logical_size.width as i32,
-            logical_size.height as i32,
-            gl::RGBA,
+            self.source_logical_size.width as i32,
+            self.source_logical_size.height as i32,
+            match self.single_channel_format {
+                SingleChannelFormat::Red => gl::RED,
+                SingleChannelFormat::Luminance => GL_LUMINANCE,
+            },
             gl::UNSIGNED_BYTE,
             screen_ptr as *const c_void,
         )
@@ -224,7 +297,13 @@ impl GlView {
     }
 
     pub fn on_close(&mut self) {
-        delete_textures(1, &self.tex_name).unwrap();
+        let textures = [
+            self.frame_texture,
+            self.palette_texture,
+            self.ntsc_primary_texture,
+            self.ntsc_secondary_texture,
+        ];
+        delete_textures(textures.len() as i32, textures.as_ptr()).unwrap();
     }
 }
 
@@ -234,7 +313,59 @@ impl Default for GlView {
     }
 }
 
-fn compile_shader_program() -> Shader {
+fn configure_palette_frame_texture(
+    unit: u32,
+    texture: u32,
+    width: usize,
+    height: usize,
+    format: SingleChannelFormat,
+) {
+    active_texture(gl::TEXTURE0 + unit).unwrap();
+    bind_texture(gl::TEXTURE_2D, texture).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+    let (internal_format, upload_format) = match format {
+        SingleChannelFormat::Red => (gl::R8 as GLint, gl::RED),
+        SingleChannelFormat::Luminance => (GL_LUMINANCE as GLint, GL_LUMINANCE),
+    };
+    tex_image_2d(
+        gl::TEXTURE_2D,
+        0,
+        internal_format,
+        width as i32,
+        height as i32,
+        0,
+        upload_format,
+        gl::UNSIGNED_BYTE,
+        allocate(width * height).as_ptr() as *const _,
+    )
+    .unwrap();
+}
+
+fn configure_rgba_texture(unit: u32, texture: u32, width: usize, height: usize, data: &[u8]) {
+    active_texture(gl::TEXTURE0 + unit).unwrap();
+    bind_texture(gl::TEXTURE_2D, texture).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+    tex_image_2d(
+        gl::TEXTURE_2D,
+        0,
+        gl::RGBA as GLint,
+        width as i32,
+        height as i32,
+        0,
+        gl::RGBA,
+        gl::UNSIGNED_BYTE,
+        data.as_ptr() as *const _,
+    )
+    .unwrap();
+}
+
+fn compile_shader_program() -> (Shader, SingleChannelFormat) {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
     let is_gles = context_version
@@ -273,7 +404,14 @@ fn compile_shader_program() -> Shader {
         match Shader::try_new(vertex, fragment) {
             Ok(shader) => {
                 log::info!("selected {name} shader pipeline");
-                return shader;
+                return (
+                    shader,
+                    if *name == "desktop-core" {
+                        SingleChannelFormat::Red
+                    } else {
+                        SingleChannelFormat::Luminance
+                    },
+                );
             }
             Err(err) => errors.push(format!("{name}: {err}")),
         }

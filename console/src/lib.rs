@@ -9,7 +9,8 @@ use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_traits::LogicalSize;
+use nerust_screen_filter::{FilterLayout, FilterType};
+use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
 use std::hash::{Hash, Hasher};
@@ -105,9 +106,36 @@ pub struct Console {
     data_sender: Sender<ConsoleData>,
     thread: Option<JoinHandle<()>>,
 
-    logical_size: LogicalSize,
+    video_info: ConsoleVideoInfo,
     frame_buffer: Arc<RwLock<Box<[u8]>>>,
     metrics: Arc<RwLock<ConsoleMetrics>>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum FrameFormat {
+    Rgba,
+    Palette,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConsoleVideoInfo {
+    pub filter_type: FilterType,
+    pub frame_format: FrameFormat,
+    pub source_logical_size: LogicalSize,
+    pub logical_size: LogicalSize,
+    pub physical_size: PhysicalSize,
+}
+
+impl ConsoleVideoInfo {
+    fn new(filter_type: FilterType, frame_format: FrameFormat, layout: FilterLayout) -> Self {
+        Self {
+            filter_type,
+            frame_format,
+            source_logical_size: layout.source_logical_size,
+            logical_size: layout.logical_size,
+            physical_size: layout.physical_size,
+        }
+    }
 }
 
 impl Console {
@@ -115,11 +143,33 @@ impl Console {
         speaker: S,
         screen_buffer: ScreenBuffer,
     ) -> Self {
+        let frame_format = if screen_buffer.publishes_palette_frame() {
+            FrameFormat::Palette
+        } else {
+            FrameFormat::Rgba
+        };
+        Self::spawn(
+            speaker,
+            ConsoleVideoInfo::new(
+                screen_buffer.filter_type(),
+                frame_format,
+                screen_buffer
+                    .filter_type()
+                    .layout(screen_buffer.source_logical_size()),
+            ),
+            screen_buffer,
+        )
+    }
+
+    fn spawn<S: 'static + Sound + MixerInput + Send>(
+        speaker: S,
+        video_info: ConsoleVideoInfo,
+        screen: ScreenBuffer,
+    ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
-        let logical_size = screen_buffer.logical_size();
-        let mut frame_buffer = vec![0; screen_buffer.frame_len()].into_boxed_slice();
-        screen_buffer.copy_display_buffer(frame_buffer.as_mut());
+        let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
+        screen.copy_frame_buffer(frame_buffer.as_mut());
         let frame_buffer = Arc::new(RwLock::new(frame_buffer));
         let metrics = Arc::new(RwLock::new(ConsoleMetrics {
             paused: true,
@@ -130,15 +180,13 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            logical_size,
+            video_info,
             frame_buffer: frame_buffer.clone(),
             metrics: metrics.clone(),
         };
 
         result.thread = Some(thread::spawn(move || {
-            let mut state =
-                ConsoleRunner::new(data_recv, stop_recv, screen_buffer, frame_buffer, metrics);
-
+            let mut state = ConsoleRunner::new(data_recv, stop_recv, screen, frame_buffer, metrics);
             state.run(speaker);
         }));
 
@@ -146,7 +194,19 @@ impl Console {
     }
 
     pub fn logical_size(&self) -> LogicalSize {
-        self.logical_size
+        self.video_info.logical_size
+    }
+
+    pub fn source_logical_size(&self) -> LogicalSize {
+        self.video_info.source_logical_size
+    }
+
+    pub fn physical_size(&self) -> PhysicalSize {
+        self.video_info.physical_size
+    }
+
+    pub fn video_info(&self) -> ConsoleVideoInfo {
+        self.video_info
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
@@ -251,7 +311,7 @@ struct ConsoleRunner {
 
     stop_receiver: Receiver<()>,
     data_receiver: Receiver<ConsoleData>,
-    screen_buffer: ScreenBuffer,
+    screen: ScreenBuffer,
     frame_buffer: Arc<RwLock<Box<[u8]>>>,
     metrics: Arc<RwLock<ConsoleMetrics>>,
 }
@@ -260,7 +320,7 @@ impl ConsoleRunner {
     pub(crate) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
-        screen_buffer: ScreenBuffer,
+        screen: ScreenBuffer,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
         metrics: Arc<RwLock<ConsoleMetrics>>,
     ) -> Self {
@@ -272,7 +332,7 @@ impl ConsoleRunner {
             controller: StandardController::new(),
             paused: true,
             frame_counter: 0,
-            screen_buffer,
+            screen,
             frame_buffer,
             metrics,
         }
@@ -283,8 +343,7 @@ impl ConsoleRunner {
             .frame_buffer
             .write()
             .unwrap_or_else(|err| err.into_inner());
-        self.screen_buffer
-            .copy_display_buffer(frame_buffer.as_mut());
+        self.screen.copy_frame_buffer(frame_buffer.as_mut());
     }
 
     fn publish_metrics(&self, loaded: bool) {
@@ -314,7 +373,7 @@ impl ConsoleRunner {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.screen_buffer, &mut self.controller, &mut speaker);
+                core.run_frame(&mut self.screen, &mut self.controller, &mut speaker);
                 self.frame_counter += 1;
                 self.publish_frame();
             }
@@ -326,7 +385,7 @@ impl ConsoleRunner {
                         cartridge_data,
                         options,
                     } => {
-                        self.screen_buffer.clear();
+                        self.screen.clear();
                         self.publish_frame();
                         self.frame_counter = 0;
                         core = Core::new_with_options(cartridge_data, options).ok();
@@ -339,7 +398,7 @@ impl ConsoleRunner {
                         self.paused = true;
                         speaker.pause();
                         let mut hasher = Crc64Hasher::new();
-                        self.screen_buffer.hash(&mut hasher);
+                        self.screen.hash(&mut hasher);
                         log::info!(
                             "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
                             self.frame_counter,
@@ -357,7 +416,7 @@ impl ConsoleRunner {
                         self.paused = false;
                         self.frame_counter = 0;
                         core = None;
-                        self.screen_buffer.clear();
+                        self.screen.clear();
                         self.publish_frame();
                     } // _ => (),
                 }
