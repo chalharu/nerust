@@ -8,7 +8,7 @@
     dead_code,
     reason = "the integration test links the shared ROM tooling module but does not exercise every helper"
 )]
-#[path = "../src/rom_test.rs"]
+#[path = "../src/rom_test/mod.rs"]
 mod rom_test;
 
 use rom_test::{CaseOutcome, ValidationOptions, load_default_manifest, validate_case};

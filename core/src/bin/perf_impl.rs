@@ -8,7 +8,7 @@
     dead_code,
     reason = "the perf binary reuses the shared ROM tooling module but only needs a subset of its helpers"
 )]
-#[path = "../rom_test.rs"]
+#[path = "../rom_test/mod.rs"]
 mod rom_test;
 
 use clap::{Arg, ArgAction, Command};
