@@ -4,23 +4,38 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::surface::SurfaceTarget;
 use crate::upload::{FrameUploadLayout, pack_frame_rows};
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
-use std::sync::Arc;
-use tao::{dpi::PhysicalSize as TaoPhysicalSize, window::Window as TaoWindow};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
-    ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, Features,
-    FilterMode, FragmentState, Instance, Limits, LoadOp, MultisampleState, Operations, Origin3d,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PowerPreference, PresentMode,
-    PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
+    ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, FilterMode,
+    FragmentState, LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
     SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface,
     SurfaceConfiguration, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureViewDescriptor, TextureViewDimension,
 };
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct SurfaceSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl SurfaceSize {
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum RenderOutcome {
+    Presented,
+    Skipped,
+    RecreateSurface,
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Viewport {
@@ -30,7 +45,7 @@ struct Viewport {
     height: f32,
 }
 
-fn compute_viewport(window_size: TaoPhysicalSize<u32>, content_size: PhysicalSize) -> Viewport {
+fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalSize) -> Viewport {
     if window_size.width == 0
         || window_size.height == 0
         || content_size.width <= 0.0
@@ -59,11 +74,6 @@ fn compute_viewport(window_size: TaoPhysicalSize<u32>, content_size: PhysicalSiz
 }
 
 pub struct Renderer {
-    instance: Instance,
-    window: Arc<TaoWindow>,
-    // The surface must drop before the GTK render target that backs its raw handles.
-    surface: Surface<'static>,
-    surface_target: SurfaceTarget,
     device: Device,
     queue: Queue,
     config: SurfaceConfiguration,
@@ -80,33 +90,17 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(
-        window: Arc<TaoWindow>,
-        surface_target: SurfaceTarget,
+    pub async fn new(
+        instance: &wgpu::Instance,
+        surface: &Surface<'_>,
+        surface_size: SurfaceSize,
         logical_size: LogicalSize,
         content_size: PhysicalSize,
     ) -> Result<Self, String> {
-        pollster::block_on(Self::new_async(
-            window,
-            surface_target,
-            logical_size,
-            content_size,
-        ))
-    }
-
-    async fn new_async(
-        window: Arc<TaoWindow>,
-        surface_target: SurfaceTarget,
-        logical_size: LogicalSize,
-        content_size: PhysicalSize,
-    ) -> Result<Self, String> {
-        let instance = Instance::default();
-        surface_target.prepare();
-        let surface = surface_target.create_surface(&instance)?;
         let adapter = instance
-            .request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(surface),
                 force_fallback_adapter: false,
             })
             .await
@@ -114,18 +108,14 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("nerust_wgpu_device"),
-                required_features: Features::empty(),
-                required_limits: Limits::default(),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
                 ..Default::default()
             })
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
-        let mut config = Self::surface_config(
-            &surface,
-            &adapter,
-            surface_target.surface_size(window.inner_size()),
-        )?;
+        let mut config = Self::surface_config(surface, &adapter, surface_size)?;
         let caps = surface.get_capabilities(&adapter);
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
@@ -241,10 +231,6 @@ impl Renderer {
         });
 
         Ok(Self {
-            instance,
-            window,
-            surface_target,
-            surface,
             device,
             queue,
             config,
@@ -264,27 +250,24 @@ impl Renderer {
     fn surface_config(
         surface: &Surface<'_>,
         adapter: &wgpu::Adapter,
-        window_size: TaoPhysicalSize<u32>,
+        surface_size: SurfaceSize,
     ) -> Result<SurfaceConfiguration, String> {
         surface
-            .get_default_config(adapter, window_size.width.max(1), window_size.height.max(1))
+            .get_default_config(
+                adapter,
+                surface_size.width.max(1),
+                surface_size.height.max(1),
+            )
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
     }
 
-    pub fn resize_to_target(&mut self) {
-        let size = self.surface_target.surface_size(self.window.inner_size());
-        if size.width == 0 || size.height == 0 {
+    pub fn reconfigure_surface(&mut self, surface: &Surface<'_>, surface_size: SurfaceSize) {
+        if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
-        self.config.width = size.width;
-        self.config.height = size.height;
-        self.surface.configure(&self.device, &self.config);
-    }
-
-    fn recreate_surface(&mut self) -> Result<(), String> {
-        self.surface = self.surface_target.create_surface(&self.instance)?;
-        self.resize_to_target();
-        Ok(())
+        self.config.width = surface_size.width;
+        self.config.height = surface_size.height;
+        surface.configure(&self.device, &self.config);
     }
 
     fn update_frame_texture(&mut self, encoder: &mut wgpu::CommandEncoder, frame_buffer: &[u8]) {
@@ -326,20 +309,24 @@ impl Renderer {
         );
     }
 
-    pub fn render(&mut self, frame_buffer: &[u8]) -> Result<bool, String> {
-        let (surface_texture, suboptimal) = match self.surface.get_current_texture() {
+    pub fn render(
+        &mut self,
+        surface: &Surface<'_>,
+        surface_size: SurfaceSize,
+        frame_buffer: &[u8],
+    ) -> Result<RenderOutcome, String> {
+        let (surface_texture, suboptimal) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(false);
+                return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.resize_to_target();
-                return Ok(false);
+                self.reconfigure_surface(surface, surface_size);
+                return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.recreate_surface()?;
-                return Ok(false);
+                return Ok(RenderOutcome::RecreateSurface);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 return Err("wgpu surface validation error".to_string());
@@ -355,10 +342,7 @@ impl Renderer {
                 label: Some("nerust_render_encoder"),
             });
         self.update_frame_texture(&mut encoder, frame_buffer);
-        let viewport = compute_viewport(
-            self.surface_target.surface_size(self.window.inner_size()),
-            self.content_size,
-        );
+        let viewport = compute_viewport(surface_size, self.content_size);
 
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -393,22 +377,21 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
         if suboptimal {
-            self.resize_to_target();
+            self.reconfigure_surface(surface, surface_size);
         }
-        Ok(true)
+        Ok(RenderOutcome::Presented)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::compute_viewport;
+    use super::{SurfaceSize, compute_viewport};
     use nerust_screen_traits::PhysicalSize;
-    use tao::dpi::PhysicalSize as TaoPhysicalSize;
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
         let viewport = compute_viewport(
-            TaoPhysicalSize::new(1600, 900),
+            SurfaceSize::new(1600, 900),
             PhysicalSize {
                 width: 512.0,
                 height: 480.0,

@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod app_menu;
+mod surface;
 mod window;
 
 pub use window::Window;

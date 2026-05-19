@@ -2286,21 +2286,18 @@ dependencies = [
  "nerust_sound_openal",
  "nerust_timer",
  "nerust_wgpuwrap",
+ "pollster",
+ "raw-window-handle",
  "simple_logger",
  "tao",
+ "wgpu",
 ]
 
 [[package]]
 name = "nerust_wgpuwrap"
 version = "0.1.0"
 dependencies = [
- "gdkwayland-sys",
- "gdkx11-sys",
- "gtk",
  "nerust_screen_traits",
- "pollster",
- "raw-window-handle",
- "tao",
  "wgpu",
 ]
 

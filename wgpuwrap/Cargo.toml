@@ -7,12 +7,4 @@ edition.workspace = true
 
 [dependencies]
 nerust_screen_traits.workspace = true
-pollster.workspace = true
-raw-window-handle.workspace = true
-tao.workspace = true
 wgpu.workspace = true
-
-[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
-gdkwayland-sys = "=0.18.2"
-gdkx11-sys = "=0.18.2"
-gtk = "=0.18.2"
