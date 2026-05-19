@@ -15,6 +15,7 @@ mod gnrom;
 mod mapper78;
 mod mmc2;
 mod mmc3;
+mod mmc5;
 mod nina001;
 mod nrom;
 mod sxrom;
@@ -30,6 +31,7 @@ use self::fme7::Fme7;
 use self::gnrom::GnRom;
 use self::mapper78::Mapper78;
 use self::mmc2::Mmc2;
+use self::mmc5::Mmc5;
 use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
@@ -47,6 +49,7 @@ pub(crate) fn try_from(
         2 => Ok(Box::new(UxRom::new(data))),
         3 => Ok(Box::new(CNRom::new_mapper3(data))),
         4 => mmc3::try_from(data, mmc3_irq_variant),
+        5 => Ok(Box::new(Mmc5::new(data))),
         7 => Ok(Box::new(AxRom::new(data))),
         9 => Ok(Box::new(Mmc2::new_mapper9(data))),
         10 => Ok(Box::new(Mmc2::new_mapper10(data))),

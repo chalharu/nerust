@@ -110,9 +110,7 @@ impl Memory {
     ) {
         match address {
             0..=0x1FFF => self.wram[address & 0x07FF] = value,
-            0x2000..=0x3FFF => {
-                ppu.write_register(0x2000 + (address & 7), value, cartridge, interrupt)
-            }
+            0x2000..=0x3FFF => ppu.write_register(address, value, cartridge, interrupt),
             0x4000..=0x4013 => apu.write_register(address, value, interrupt),
             0x4014 => interrupt.oam_dma = Some(value),
             0x4015 => apu.write_register(address, value, interrupt),
