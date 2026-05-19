@@ -148,21 +148,21 @@ impl Pulse {
     }
 
     pub(crate) fn step_sweep(&mut self) {
-        self.sweep_value = self.sweep_value.wrapping_sub(1);
-        if self.sweep_value == 0 {
-            if self.sweep_enabled
-                && self.sweep_shift > 0
-                && self.period >= 8
-                && self.sweep_target_period <= 0x7FF
-            {
-                self.sweep();
-            }
-            self.sweep_value = self.sweep_period;
+        let divider_expired = self.sweep_value == 0;
+        if divider_expired
+            && self.sweep_enabled
+            && self.sweep_shift > 0
+            && self.period >= 8
+            && self.sweep_target_period <= 0x7FF
+        {
+            self.set_period(self.sweep_target_period);
         }
 
-        if self.sweep_reload {
+        if divider_expired || self.sweep_reload {
             self.sweep_value = self.sweep_period;
             self.sweep_reload = false;
+        } else {
+            self.sweep_value -= 1;
         }
     }
 
@@ -170,10 +170,9 @@ impl Pulse {
         let delta = self.period >> self.sweep_shift;
         self.sweep_target_period = if self.sweep_negate {
             self.period
-                .wrapping_sub(delta)
-                .wrapping_sub(if self.is_first_channel { 1 } else { 0 })
+                .saturating_sub(delta + if self.is_first_channel { 1 } else { 0 })
         } else {
-            self.period.wrapping_add(delta)
+            self.period + delta
         }
     }
 
@@ -185,5 +184,143 @@ impl Pulse {
         } else {
             Envelope::get_volume(self)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::fft_test::{
+        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+        dominant_frequency_tolerance, peak_power_near_frequency, power_spectrum,
+    };
+    use super::Pulse;
+
+    fn expected_frequency(raw_period: u16) -> f32 {
+        CPU_CLOCK_HZ / (16.0 * (f32::from(raw_period) + 1.0))
+    }
+
+    fn test_fixed_pulse(is_first_channel: bool, raw_period: u16) -> Pulse {
+        let mut pulse = Pulse::new(is_first_channel);
+        pulse.write_control(0xBF);
+        pulse.length_counter.set_enabled(true);
+        pulse.write_timer_low(raw_period as u8);
+        pulse.write_timer_high(((raw_period >> 8) as u8 & 0x07) | 0xF8);
+        pulse.length_counter.step();
+        pulse
+    }
+
+    #[test]
+    fn step_sweep_applies_target_period_when_divider_expires() {
+        let mut pulse = Pulse::new(true);
+        pulse.set_period(0x0100);
+        pulse.write_sweep(0b1000_0001);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0180);
+        assert_eq!(pulse.timer.get_period(), 0x0301);
+        assert_eq!(pulse.sweep_target_period, 0x0240);
+        assert_eq!(pulse.sweep_value, pulse.sweep_period);
+    }
+
+    #[test]
+    fn step_sweep_preserves_negate_difference_between_pulse_channels() {
+        let mut pulse1 = Pulse::new(true);
+        pulse1.set_period(0x0020);
+        pulse1.write_sweep(0b1000_1001);
+        pulse1.step_sweep();
+
+        let mut pulse2 = Pulse::new(false);
+        pulse2.set_period(0x0020);
+        pulse2.write_sweep(0b1000_1001);
+        pulse2.step_sweep();
+
+        assert_eq!(pulse1.period, 0x000F);
+        assert_eq!(pulse2.period, 0x0010);
+    }
+
+    #[test]
+    fn step_sweep_reload_delays_update_until_divider_expires_when_nonzero() {
+        let mut pulse = Pulse::new(true);
+        pulse.set_period(0x0100);
+        pulse.sweep_value = 1;
+        pulse.write_sweep(0b1000_0010);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0100);
+        assert_eq!(pulse.sweep_value, pulse.sweep_period);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0100);
+
+        pulse.step_sweep();
+        assert_eq!(pulse.period, 0x0140);
+    }
+
+    #[test]
+    fn fft_peak_matches_expected_fixed_pulse_frequency() {
+        let mut pulse = test_fixed_pulse(true, 0x0020);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            pulse.step_timer();
+            f32::from(pulse.output())
+        });
+        let dominant = dominant_frequency(&samples, CPU_CLOCK_HZ);
+
+        assert!(
+            (dominant - expected_frequency(0x0020)).abs()
+                <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
+        );
+    }
+
+    #[test]
+    fn fft_fixed_pulse_keeps_expected_odd_harmonic_profile() {
+        let raw_period = 0x0020;
+        let mut pulse = test_fixed_pulse(true, raw_period);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            pulse.step_timer();
+            f32::from(pulse.output())
+        });
+        let spectrum = power_spectrum(&samples);
+        let fundamental = expected_frequency(raw_period);
+        let first = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental, 2);
+        let second = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 2.0, 2);
+        let third = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 3.0, 2);
+        let fourth = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 4.0, 2);
+        let fifth = peak_power_near_frequency(&spectrum, CPU_CLOCK_HZ, fundamental * 5.0, 2);
+
+        assert!(first > third * 5.0);
+        assert!(third > fifth * 2.0);
+        assert!(third > first * 0.07);
+        assert!(fifth > first * 0.025);
+        assert!(first > second * 1_000.0);
+        assert!(third > second * 100.0);
+        assert!(fifth > fourth * 100.0);
+    }
+
+    #[test]
+    fn fft_peak_moves_after_sweep_updates_period() {
+        let mut pulse = test_fixed_pulse(true, 0x0040);
+        let before = dominant_frequency(
+            &capture_samples(FFT_SAMPLE_COUNT, || {
+                pulse.step_timer();
+                f32::from(pulse.output())
+            }),
+            CPU_CLOCK_HZ,
+        );
+
+        pulse.write_sweep(0b1000_1001);
+        pulse.step_sweep();
+
+        let after = dominant_frequency(
+            &capture_samples(FFT_SAMPLE_COUNT, || {
+                pulse.step_timer();
+                f32::from(pulse.output())
+            }),
+            CPU_CLOCK_HZ,
+        );
+        let tolerance = dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT);
+
+        assert!((before - expected_frequency(0x0040)).abs() <= tolerance);
+        assert!((after - expected_frequency(0x001F)).abs() <= tolerance);
+        assert!(after > before * 1.8);
     }
 }

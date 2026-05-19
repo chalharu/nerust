@@ -109,3 +109,71 @@ impl Triangle {
         self.output_value
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::fft_test::{
+        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+        dominant_frequency_tolerance,
+    };
+    use super::Triangle;
+
+    fn expected_frequency(raw_period: u16) -> f32 {
+        CPU_CLOCK_HZ / (32.0 * (f32::from(raw_period) + 1.0))
+    }
+
+    fn test_triangle(raw_period: u16) -> Triangle {
+        let mut triangle = Triangle::new();
+        triangle.write_control(0xFF);
+        triangle.length_counter.set_enabled(true);
+        triangle.write_timer_low(raw_period as u8);
+        triangle.write_timer_high(((raw_period >> 8) as u8 & 0x07) | 0xF8);
+        triangle.length_counter.step();
+        triangle.step_counter();
+        triangle
+    }
+
+    #[test]
+    fn fft_peak_matches_expected_triangle_frequency() {
+        let mut triangle = test_triangle(0x0010);
+        let samples = capture_samples(FFT_SAMPLE_COUNT, || {
+            triangle.step_timer();
+            f32::from(triangle.output())
+        });
+        let dominant = dominant_frequency(&samples, CPU_CLOCK_HZ);
+
+        assert!(
+            (dominant - expected_frequency(0x0010)).abs()
+                <= dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT)
+        );
+    }
+
+    #[test]
+    fn fft_peak_moves_after_triangle_period_change() {
+        let mut triangle = test_triangle(0x0040);
+        let before = dominant_frequency(
+            &capture_samples(FFT_SAMPLE_COUNT, || {
+                triangle.step_timer();
+                f32::from(triangle.output())
+            }),
+            CPU_CLOCK_HZ,
+        );
+
+        triangle.write_timer_low(0x20);
+        triangle.write_timer_high(0xF8);
+        triangle.step_counter();
+
+        let after = dominant_frequency(
+            &capture_samples(FFT_SAMPLE_COUNT, || {
+                triangle.step_timer();
+                f32::from(triangle.output())
+            }),
+            CPU_CLOCK_HZ,
+        );
+        let tolerance = dominant_frequency_tolerance(CPU_CLOCK_HZ, FFT_SAMPLE_COUNT);
+
+        assert!((before - expected_frequency(0x0040)).abs() <= tolerance);
+        assert!((after - expected_frequency(0x0020)).abs() <= tolerance);
+        assert!(after > before);
+    }
+}
