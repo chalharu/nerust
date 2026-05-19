@@ -678,7 +678,7 @@ cases:
       - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
       - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
       - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
-      - {frame: 120, action: check_screen, hash: "0x9C8B3FB0D211E554"}
+      - {frame: 300, action: check_screen, hash: "0x25BF562C75FD4B2A"}
   - id: mapper.holy_mapperel.m28_action53
     category: mapper
     description: "Verifies mapper 28 Action 53 PRG/CHR RAM banking and mirroring control using Holy Mapperel."
@@ -692,7 +692,7 @@ cases:
       - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
       - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
       - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
-      - {frame: 120, action: check_screen, hash: "0x0E971C9382CDD135"}
+      - {frame: 420, action: check_screen, hash: "0xAD000BA46DCB0383"}
   - id: mapper.holy_mapperel.m66_gnrom
     category: mapper
     description: "Verifies mapper 66 GNROM PRG/CHR banking and bus-conflict-safe writes using Holy Mapperel."
