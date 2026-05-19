@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
+use crate::surface::{RenderSurface, SurfaceTarget};
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
@@ -13,7 +14,7 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
-use nerust_wgpuwrap::{Renderer, SurfaceTarget};
+use nerust_wgpuwrap::{RenderOutcome, Renderer};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
@@ -67,6 +68,7 @@ fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
 pub struct Window {
     event_loop: Option<EventLoop<UserEvent>>,
     window: Option<Arc<TaoWindow>>,
+    render_surface: Option<RenderSurface>,
     renderer: Option<Renderer>,
     last_render_error: Option<String>,
     keys: Buttons,
@@ -111,6 +113,7 @@ impl Window {
         Self {
             event_loop: Some(event_loop),
             window: None,
+            render_surface: None,
             renderer: None,
             last_render_error: None,
             keys: Buttons::empty(),
@@ -156,9 +159,7 @@ impl Window {
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                     WindowEvent::Focused(false) => self.clear_keys(),
                     WindowEvent::Resized(_) => {
-                        if let Some(renderer) = self.renderer.as_mut() {
-                            renderer.resize_to_target();
-                        }
+                        self.reconfigure_surface();
                         self.needs_redraw = true;
                         if let Some(window) = self.window.as_ref() {
                             window.request_redraw();
@@ -219,14 +220,17 @@ impl Window {
         let surface_target = SurfaceTarget::new(window.clone(), self.physical_size);
         self.app_menu.init_for_window(&window);
         self.app_menu.update(self.paused);
-        let renderer = Renderer::new(
-            window.clone(),
-            surface_target,
+        let render_surface = RenderSurface::new(surface_target).unwrap();
+        let renderer = pollster::block_on(Renderer::new(
+            render_surface.instance(),
+            render_surface.surface(),
+            render_surface.surface_size(window.inner_size()),
             self.logical_size,
             self.physical_size,
-        )
+        ))
         .unwrap();
         self.window = Some(window);
+        self.render_surface = Some(render_surface);
         self.renderer = Some(renderer);
         self.needs_redraw = true;
         self.refresh_window_title();
@@ -289,23 +293,62 @@ impl Window {
         }
     }
 
-    fn on_update(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else {
+    fn reconfigure_surface(&mut self) {
+        let Some(window_size) = self.window.as_ref().map(|window| window.inner_size()) else {
             return;
         };
-        let render_result = self
-            .console
-            .with_frame_buffer(|frame_buffer| renderer.render(frame_buffer));
+        let (Some(renderer), Some(render_surface)) =
+            (self.renderer.as_mut(), self.render_surface.as_mut())
+        else {
+            return;
+        };
+        renderer.reconfigure_surface(
+            render_surface.surface(),
+            render_surface.surface_size(window_size),
+        );
+    }
+
+    fn on_update(&mut self) {
+        let Some(window_size) = self.window.as_ref().map(|window| window.inner_size()) else {
+            return;
+        };
+        let (Some(renderer), Some(render_surface)) =
+            (self.renderer.as_mut(), self.render_surface.as_mut())
+        else {
+            return;
+        };
+        let surface_size = render_surface.surface_size(window_size);
+        let render_result = self.console.with_frame_buffer(|frame_buffer| {
+            renderer.render(render_surface.surface(), surface_size, frame_buffer)
+        });
 
         match render_result {
-            Ok(presented) => {
+            Ok(RenderOutcome::Presented) => {
                 self.last_render_error = None;
-                if presented {
-                    self.last_presented_frame_counter = self.console.metrics().frame_counter;
-                    self.needs_redraw = false;
-                    self.record_render_frame();
-                } else {
-                    self.needs_redraw = true;
+                self.last_presented_frame_counter = self.console.metrics().frame_counter;
+                self.needs_redraw = false;
+                self.record_render_frame();
+            }
+            Ok(RenderOutcome::Skipped) => {
+                self.needs_redraw = true;
+            }
+            Ok(RenderOutcome::RecreateSurface) => {
+                self.needs_redraw = true;
+                match render_surface.recreate_surface() {
+                    Ok(()) => {
+                        self.last_render_error = None;
+                        renderer.reconfigure_surface(
+                            render_surface.surface(),
+                            render_surface.surface_size(window_size),
+                        );
+                    }
+                    Err(err) => {
+                        let should_log = self.last_render_error.as_deref() != Some(err.as_str());
+                        self.last_render_error = Some(err.clone());
+                        if should_log {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
             Err(err) => {
@@ -349,6 +392,14 @@ impl Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        self.renderer = None;
+        self.render_surface = None;
+        self.window = None;
     }
 }
 

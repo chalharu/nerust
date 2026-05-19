@@ -5,6 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use nerust_screen_traits::PhysicalSize;
+use nerust_wgpuwrap::SurfaceSize;
 use std::sync::Arc;
 use tao::{dpi::PhysicalSize as TaoPhysicalSize, window::Window as TaoWindow};
 use wgpu::{Instance, Surface};
@@ -29,7 +30,45 @@ use {
     tao::platform::unix::WindowExtUnix,
 };
 
-pub struct SurfaceTarget {
+pub(crate) struct RenderSurface {
+    // The surface must drop before the target widget/handles and their backing instance.
+    surface: Surface<'static>,
+    surface_target: SurfaceTarget,
+    instance: Instance,
+}
+
+impl RenderSurface {
+    pub(crate) fn new(surface_target: SurfaceTarget) -> Result<Self, String> {
+        let instance = Instance::default();
+        surface_target.prepare();
+        let surface = surface_target.create_surface(&instance)?;
+        Ok(Self {
+            surface,
+            surface_target,
+            instance,
+        })
+    }
+
+    pub(crate) fn surface(&self) -> &Surface<'static> {
+        &self.surface
+    }
+
+    pub(crate) fn instance(&self) -> &Instance {
+        &self.instance
+    }
+
+    pub(crate) fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
+        self.surface_target.surface_size(fallback)
+    }
+
+    pub(crate) fn recreate_surface(&mut self) -> Result<(), String> {
+        self.surface_target.prepare();
+        self.surface = self.surface_target.create_surface(&self.instance)?;
+        Ok(())
+    }
+}
+
+pub(crate) struct SurfaceTarget {
     kind: SurfaceTargetKind,
 }
 
@@ -53,7 +92,7 @@ enum SurfaceTargetKind {
 }
 
 impl SurfaceTarget {
-    pub fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+    pub(crate) fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -82,7 +121,7 @@ impl SurfaceTarget {
         }
     }
 
-    pub(crate) fn prepare(&self) {
+    fn prepare(&self) {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -95,7 +134,7 @@ impl SurfaceTarget {
         }
     }
 
-    pub(crate) fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
+    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -117,14 +156,11 @@ impl SurfaceTarget {
             target_os = "openbsd"
         )))]
         {
-            let _ = fallback;
-            match &self.kind {
-                SurfaceTargetKind::Window(window) => window.inner_size(),
-            }
+            SurfaceSize::new(fallback.width, fallback.height)
         }
     }
 
-    pub(crate) fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
+    fn create_surface(&self, instance: &Instance) -> Result<Surface<'static>, String> {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -204,14 +240,14 @@ impl GtkRenderTarget {
         self.widget.realize();
     }
 
-    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> TaoPhysicalSize<u32> {
+    fn surface_size(&self, fallback: TaoPhysicalSize<u32>) -> SurfaceSize {
         let width = self.widget.allocated_width();
         let height = self.widget.allocated_height();
         if width > 0 && height > 0 {
             let scale = self.widget.scale_factor().max(1) as u32;
-            TaoPhysicalSize::new(width as u32 * scale, height as u32 * scale)
+            SurfaceSize::new(width as u32 * scale, height as u32 * scale)
         } else {
-            fallback
+            SurfaceSize::new(fallback.width, fallback.height)
         }
     }
 

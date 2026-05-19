@@ -5,8 +5,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod renderer;
-mod surface;
 mod upload;
 
-pub use renderer::Renderer;
-pub use surface::SurfaceTarget;
+pub use renderer::{RenderOutcome, Renderer, SurfaceSize};
