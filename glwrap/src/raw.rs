@@ -68,6 +68,10 @@ pub fn bind_texture(target: GLenum, texture: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BindTexture(target, texture) })
 }
 
+pub fn active_texture(texture: GLenum) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::ActiveTexture(texture) })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "OpenGL texture upload parameters map directly to the C API"
@@ -150,6 +154,10 @@ pub fn enable_vertex_attrib_array(index: GLuint) -> Result<(), Error> {
 
 pub fn uniform_1i(location: GLint, v0: GLint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Uniform1i(location, v0) })
+}
+
+pub fn uniform_2f(location: GLint, v0: GLfloat, v1: GLfloat) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::Uniform2f(location, v0, v1) })
 }
 
 pub fn uniform_matrix_4fv(

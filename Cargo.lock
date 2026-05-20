@@ -2130,6 +2130,7 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
+ "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_sound_traits",
  "nerust_timer",
@@ -2163,7 +2164,6 @@ dependencies = [
  "glutin-winit",
  "nerust_console",
  "nerust_core",
- "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_opengl",
  "nerust_screen_traits",
@@ -2196,7 +2196,6 @@ dependencies = [
  "log",
  "nerust_console",
  "nerust_core",
- "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_opengl",
  "nerust_screen_traits",
@@ -2248,7 +2247,7 @@ dependencies = [
  "gl",
  "log",
  "nerust_glwrap",
- "nerust_screen_buffer",
+ "nerust_screen_filter",
  "nerust_screen_traits",
 ]
 
@@ -2258,6 +2257,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "nerust_screen_wgpu"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_filter",
+ "nerust_screen_traits",
+ "nerust_wgpuwrap",
+ "wgpu",
 ]
 
 [[package]]
@@ -2302,9 +2311,9 @@ dependencies = [
  "muda",
  "nerust_console",
  "nerust_core",
- "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_traits",
+ "nerust_screen_wgpu",
  "nerust_sound_openal",
  "nerust_timer",
  "nerust_wgpuwrap",
@@ -2318,7 +2327,6 @@ dependencies = [
 name = "nerust_wgpuwrap"
 version = "0.1.0"
 dependencies = [
- "nerust_screen_traits",
  "raw-window-handle",
  "wgpu",
 ]

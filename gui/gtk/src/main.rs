@@ -8,7 +8,6 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
@@ -39,22 +38,19 @@ pub(crate) struct State {
     loaded: bool,
     console: Console,
     physical_size: PhysicalSize,
-    logical_size: LogicalSize,
 }
 
 impl State {
-    pub(crate) fn new(screen_buffer: ScreenBuffer) -> Self {
-        let physical_size = screen_buffer.physical_size();
-        let logical_size = screen_buffer.logical_size();
+    pub(crate) fn new(filter_type: FilterType, source_logical_size: LogicalSize) -> Self {
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(speaker, screen_buffer);
+        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
+        let physical_size = console.video().presentation().physical_size();
         Self {
             view: None,
             console,
             paused: false,
             loaded: false,
             physical_size,
-            logical_size,
         }
     }
 
@@ -112,13 +108,13 @@ fn build_window(app: &gtk::Application) -> Window {
         .object::<gio::Menu>("menu")
         .unwrap();
 
-    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(ScreenBuffer::new(
+    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(
         FilterType::NtscComposite,
         LogicalSize {
             width: 256,
             height: 240,
         },
-    ))));
+    )));
 
     app.set_menubar(Some(&menu));
     app.add_window(&window);
