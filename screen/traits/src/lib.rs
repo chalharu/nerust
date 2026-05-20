@@ -7,12 +7,11 @@
 mod logical_size;
 mod physical_size;
 mod rgb;
-mod video_frame;
+pub mod video_frame;
 
 pub use logical_size::LogicalSize;
 pub use physical_size::PhysicalSize;
 pub use rgb::RGB;
-pub use video_frame::{VideoFrameBuffer, VideoFrameFormat, VideoFrameSpec};
 
 pub trait Screen {
     fn push(&mut self, palette: u8);

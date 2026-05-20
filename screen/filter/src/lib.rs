@@ -5,8 +5,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod filters;
+pub mod presentation;
 
-use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB, VideoFrameFormat, VideoFrameSpec};
+use crate::presentation::{VideoFilterPipeline, VideoPresentation};
+use nerust_screen_traits::video_frame::{VideoFrameFormat, VideoFrameSpec};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
 use nes_ntsc::{Setup, ShaderKernelEntry};
 
 pub const BLACK_PALETTE_INDEX: u8 = nes_ntsc::BLACK;
@@ -22,13 +25,6 @@ pub struct FilterLayout {
     pub physical_size: PhysicalSize,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum VideoPresentationPipelineKind {
-    DirectRgba,
-    Palette,
-    Ntsc,
-}
-
 #[derive(Debug, Clone)]
 pub struct EncodedNtscTextures {
     pub primary_rgba8: Box<[u8]>,
@@ -38,104 +34,6 @@ pub struct EncodedNtscTextures {
 #[derive(Debug, Clone)]
 pub struct EncodedPackedNtscTexture {
     pub rgba8: Box<[u8]>,
-}
-
-#[derive(Debug, Clone)]
-pub enum VideoFilterPipeline {
-    DirectRgba,
-    Palette {
-        palette_rgba8: Box<[u8]>,
-    },
-    Ntsc {
-        palette_rgba8: Box<[u8]>,
-        packed_ntsc_rgba8: EncodedPackedNtscTexture,
-        split_ntsc_textures: EncodedNtscTextures,
-    },
-}
-
-impl VideoFilterPipeline {
-    pub fn kind(&self) -> VideoPresentationPipelineKind {
-        match self {
-            Self::DirectRgba => VideoPresentationPipelineKind::DirectRgba,
-            Self::Palette { .. } => VideoPresentationPipelineKind::Palette,
-            Self::Ntsc { .. } => VideoPresentationPipelineKind::Ntsc,
-        }
-    }
-
-    pub fn palette_rgba8(&self) -> Option<&[u8]> {
-        match self {
-            Self::Palette { palette_rgba8 } | Self::Ntsc { palette_rgba8, .. } => {
-                Some(palette_rgba8.as_ref())
-            }
-            Self::DirectRgba => None,
-        }
-    }
-
-    pub fn packed_ntsc_rgba8(&self) -> Option<&[u8]> {
-        match self {
-            Self::Ntsc {
-                packed_ntsc_rgba8, ..
-            } => Some(packed_ntsc_rgba8.rgba8.as_ref()),
-            Self::DirectRgba | Self::Palette { .. } => None,
-        }
-    }
-
-    pub fn split_ntsc_textures(&self) -> Option<&EncodedNtscTextures> {
-        match self {
-            Self::Ntsc {
-                split_ntsc_textures,
-                ..
-            } => Some(split_ntsc_textures),
-            Self::DirectRgba | Self::Palette { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct VideoPresentation {
-    frame_spec: VideoFrameSpec,
-    pipeline: VideoFilterPipeline,
-}
-
-impl VideoPresentation {
-    fn new(frame_spec: VideoFrameSpec, pipeline: VideoFilterPipeline) -> Self {
-        Self {
-            frame_spec,
-            pipeline,
-        }
-    }
-
-    pub fn source_logical_size(&self) -> LogicalSize {
-        self.frame_spec.source_logical_size()
-    }
-
-    pub fn logical_size(&self) -> LogicalSize {
-        self.frame_spec.logical_size()
-    }
-
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.frame_spec.physical_size()
-    }
-
-    pub fn frame_format(&self) -> VideoFrameFormat {
-        self.frame_spec.frame_format()
-    }
-
-    pub fn pipeline_kind(&self) -> VideoPresentationPipelineKind {
-        self.pipeline.kind()
-    }
-
-    pub fn palette_rgba8(&self) -> Option<&[u8]> {
-        self.pipeline.palette_rgba8()
-    }
-
-    pub fn packed_ntsc_rgba8(&self) -> Option<&[u8]> {
-        self.pipeline.packed_ntsc_rgba8()
-    }
-
-    pub fn split_ntsc_textures(&self) -> Option<&EncodedNtscTextures> {
-        self.pipeline.split_ntsc_textures()
-    }
 }
 
 pub trait NesFilter: Send {
@@ -261,6 +159,14 @@ impl FilterType {
         VideoPresentation::new(frame_spec, pipeline)
     }
 
+    pub fn rgba_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
+        self.presentation(source_logical_size, VideoFrameFormat::Rgba)
+    }
+
+    pub fn palette_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
+        self.presentation(source_logical_size, VideoFrameFormat::Palette)
+    }
+
     pub fn palette(self) -> [RGB; 64] {
         filters::rgb::PALETTE.map(RGB::from)
     }
@@ -334,9 +240,10 @@ impl FilterType {
 #[cfg(test)]
 mod tests {
     use super::{
-        FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH, VideoPresentationPipelineKind,
+        FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
+        presentation::VideoPresentationPipelineKind,
     };
-    use nerust_screen_traits::{LogicalSize, VideoFrameFormat};
+    use nerust_screen_traits::LogicalSize;
 
     fn decode_u16(high: u8, low: u8) -> i16 {
         (((u16::from(high) << 8) | u16::from(low)) as i32).wrapping_sub(i32::from(i16::MAX) + 1)
@@ -431,15 +338,15 @@ mod tests {
 
     #[test]
     fn palette_presentation_uses_palette_pipeline() {
-        let presentation = FilterType::None.presentation(
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            VideoFrameFormat::Palette,
-        );
+        let presentation = FilterType::None.palette_presentation(LogicalSize {
+            width: 256,
+            height: 240,
+        });
 
-        assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
+        assert_eq!(
+            presentation.frame_format(),
+            super::VideoFrameFormat::Palette
+        );
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::Palette
@@ -451,15 +358,15 @@ mod tests {
 
     #[test]
     fn ntsc_presentation_exposes_both_ntsc_asset_formats() {
-        let presentation = FilterType::NtscComposite.presentation(
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            VideoFrameFormat::Palette,
-        );
+        let presentation = FilterType::NtscComposite.palette_presentation(LogicalSize {
+            width: 256,
+            height: 240,
+        });
 
-        assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
+        assert_eq!(
+            presentation.frame_format(),
+            super::VideoFrameFormat::Palette
+        );
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::Ntsc
@@ -471,15 +378,12 @@ mod tests {
 
     #[test]
     fn rgba_presentation_uses_direct_pipeline() {
-        let presentation = FilterType::NtscComposite.presentation(
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            VideoFrameFormat::Rgba,
-        );
+        let presentation = FilterType::NtscComposite.rgba_presentation(LogicalSize {
+            width: 256,
+            height: 240,
+        });
 
-        assert_eq!(presentation.frame_format(), VideoFrameFormat::Rgba);
+        assert_eq!(presentation.frame_format(), super::VideoFrameFormat::Rgba);
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::DirectRgba

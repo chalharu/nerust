@@ -4,13 +4,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod video;
+
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_filter::{FilterType, VideoPresentation};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameBuffer};
+use nerust_screen_filter::FilterType;
+use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
 use std::hash::{Hash, Hasher};
@@ -18,6 +20,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
+pub use video::ConsoleVideo;
 
 // The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -110,22 +113,6 @@ pub struct Console {
     metrics: Arc<RwLock<ConsoleMetrics>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ConsoleVideo {
-    presentation: VideoPresentation,
-    frame_buffer: VideoFrameBuffer,
-}
-
-impl ConsoleVideo {
-    pub fn presentation(&self) -> &VideoPresentation {
-        &self.presentation
-    }
-
-    pub fn frame_buffer(&self) -> &VideoFrameBuffer {
-        &self.frame_buffer
-    }
-}
-
 impl Console {
     pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
@@ -160,10 +147,7 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo {
-                presentation: screen.video_presentation().clone(),
-                frame_buffer: VideoFrameBuffer::from_shared(frame_buffer.clone()),
-            },
+            video: ConsoleVideo::new(screen.video_presentation().clone(), frame_buffer.clone()),
             metrics: metrics.clone(),
         };
 
