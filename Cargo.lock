@@ -2262,6 +2262,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_screen_wgpu"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_filter",
+ "nerust_screen_traits",
+ "nerust_wgpuwrap",
+ "wgpu",
+]
+
+[[package]]
 name = "nerust_serialize"
 version = "0.1.0"
 dependencies = [
@@ -2306,6 +2316,7 @@ dependencies = [
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_traits",
+ "nerust_screen_wgpu",
  "nerust_sound_openal",
  "nerust_timer",
  "nerust_wgpuwrap",
@@ -2319,8 +2330,6 @@ dependencies = [
 name = "nerust_wgpuwrap"
 version = "0.1.0"
 dependencies = [
- "nerust_screen_filter",
- "nerust_screen_traits",
  "raw-window-handle",
  "wgpu",
 ]

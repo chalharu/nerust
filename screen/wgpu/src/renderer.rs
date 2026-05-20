@@ -5,11 +5,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::upload::{FrameUploadLayout, pack_frame_rows};
-use crate::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use nerust_screen_filter::{
     FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
 };
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_wgpuwrap::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
     ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, FragmentState,
@@ -560,8 +560,9 @@ fn encode_ntsc_textures(filter_type: FilterType) -> (Box<[u8]>, Box<[u8]>, Exten
 
 #[cfg(test)]
 mod tests {
-    use super::{SurfaceSize, compute_viewport};
+    use super::compute_viewport;
     use nerust_screen_traits::PhysicalSize;
+    use nerust_wgpuwrap::SurfaceSize;
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
