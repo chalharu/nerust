@@ -150,6 +150,26 @@ cases:
     rom: apu/test_apu_m/test_11.nes
     events:
       - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.nes_audio_tests.db_apu
+    category: apu
+    description: "Compares full-volume APU square and triangle output using bbbradsmith's nes-audio-tests db_apu ROM."
+    rom: nes-audio-tests/build/db_apu.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 1389462
+      hash: "0x61A285CE2E9FDCD8"
+    events:
+      - {frame: 435, action: check_screen, hash: "0x043E5A1ABD2618A6"}
+  - id: apu.nes_audio_tests.tri_silence
+    category: apu
+    description: "Exercises triangle silencing and linear-counter reload behavior using bbbradsmith's nes-audio-tests tri_silence ROM."
+    rom: nes-audio-tests/build/tri_silence.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 7935517
+      hash: "0x93977D99F3723CA9"
+    events:
+      - {frame: 2484, action: check_screen, hash: "0x043E5A1ABD2618A6"}
   - id: cpu.branch_timing_tests.1.Branch_Basics
     category: cpu
     description: "Tests timing of the branch instruction, including edge cases. Case: Branch Basics."
