@@ -15,7 +15,6 @@ use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
@@ -148,11 +147,8 @@ impl Window {
             height: 240,
         };
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(
-            speaker,
-            ScreenBuffer::new_gpu(filter_type, source_logical_size),
-        );
-        let video_info = console.video_info();
+        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
+        let physical_size = console.video().presentation().physical_size();
 
         Self {
             event_loop: Some(EventLoop::new().unwrap()),
@@ -163,7 +159,7 @@ impl Window {
             keys: Buttons::empty(),
             paused: false,
             console,
-            physical_size: video_info.physical_size,
+            physical_size,
             last_title_update: Instant::now(),
             last_presented_frame_counter: 0,
             needs_redraw: true,
@@ -189,8 +185,7 @@ impl Window {
         let (window, gl_context, gl_surface) = create_window(event_loop, self.physical_size);
         let mut view = GlView::new();
         view.use_vao(true);
-        let video_info = self.console.video_info();
-        view.on_load(video_info.filter_type, video_info.source_logical_size);
+        view.on_load(self.console.video().presentation()).unwrap();
         let initial_size = window.inner_size();
 
         self.window = Some(window);
@@ -202,9 +197,12 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        self.console.with_frame_buffer(|frame_buffer| {
-            self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
-        });
+        self.console
+            .video()
+            .frame_buffer()
+            .with_bytes(|frame_buffer| {
+                self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
+            });
         self.gl_surface
             .as_ref()
             .unwrap()

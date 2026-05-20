@@ -9,7 +9,6 @@ use crate::surface::SurfaceTarget;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_screen_wgpu::{RenderOutcome, Renderer};
@@ -97,11 +96,8 @@ impl WindowRuntime {
             height: 240,
         };
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(
-            speaker,
-            ScreenBuffer::new_gpu(filter_type, source_logical_size),
-        );
-        let video_info = console.video_info();
+        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
+        let physical_size = console.video().presentation().physical_size();
 
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
@@ -124,7 +120,7 @@ impl WindowRuntime {
             paused: false,
             console,
             app_menu,
-            physical_size: video_info.physical_size,
+            physical_size,
             render_frame_count: 0,
             render_fps: 0.0,
             render_started_at: Instant::now(),
@@ -227,9 +223,7 @@ impl WindowRuntime {
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             render_surface.surface_size(window_surface_size(window.inner_size())),
-            self.console.video_info().filter_type,
-            self.console.source_logical_size(),
-            self.physical_size,
+            self.console.video().presentation(),
         ))
         .unwrap();
         self.window = Some(window);
@@ -326,9 +320,11 @@ impl WindowRuntime {
             return;
         };
         let surface_size = render_surface.surface_size(window_size);
-        let render_result = self.console.with_frame_buffer(|frame_buffer| {
-            renderer.render(render_surface, surface_size, frame_buffer)
-        });
+        let render_result = self
+            .console
+            .video()
+            .frame_buffer()
+            .with_bytes(|frame_buffer| renderer.render(render_surface, surface_size, frame_buffer));
 
         match render_result {
             Ok(RenderOutcome::Presented) => {

@@ -90,8 +90,7 @@ impl GLAreaExtend for GLArea {
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            let video_info = state.console.video_info();
-            view.on_load(video_info.filter_type, video_info.source_logical_size);
+            view.on_load(state.console.video().presentation()).unwrap();
             state.view = Some(view);
         }
         self.resize(self.glarea().width(), self.glarea().height());
@@ -152,7 +151,9 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
         if let Some(ref view) = state.view {
             state
                 .console
-                .with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
+                .video()
+                .frame_buffer()
+                .with_bytes(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
         }
     }
     unsafe {

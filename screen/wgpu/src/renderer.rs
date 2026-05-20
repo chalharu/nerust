@@ -9,9 +9,10 @@ use crate::{
     upload::{FrameUploadLayout, pack_frame_rows},
 };
 use nerust_screen_filter::{
-    FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoPresentation,
+    VideoPresentationPipelineKind,
 };
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameFormat};
 use nerust_wgpuwrap::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
@@ -99,10 +100,15 @@ impl Renderer {
     pub async fn new<T: SurfaceTargetSource>(
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
-        filter_type: FilterType,
-        source_logical_size: LogicalSize,
-        content_size: PhysicalSize,
+        presentation: &VideoPresentation,
     ) -> Result<Self, String> {
+        if presentation.frame_format() != VideoFrameFormat::Palette {
+            return Err(
+                "nerust_screen_wgpu does not yet support DirectRgba video presentations"
+                    .to_string(),
+            );
+        }
+
         let instance = render_surface.instance();
         let surface = render_surface.surface();
         let adapter = instance
@@ -135,7 +141,9 @@ impl Renderer {
             config.alpha_mode = CompositeAlphaMode::Opaque;
         }
         surface.configure(&device, &config);
-        let logical_size = filter_type.layout(source_logical_size).logical_size;
+        let source_logical_size = presentation.source_logical_size();
+        let logical_size = presentation.logical_size();
+        let content_size = presentation.physical_size();
         let frame_upload_layout = FrameUploadLayout::for_logical_size(source_logical_size, 1)?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
@@ -162,9 +170,11 @@ impl Renderer {
                 height: 1,
                 depth_or_array_layers: 1,
             },
-            &filter_type.encoded_palette_rgba8(),
+            presentation.palette_rgba8().ok_or_else(|| {
+                "palette presentation data is missing palette texture bytes".to_string()
+            })?,
         );
-        let (ntsc_data, ntsc_size) = encode_ntsc_texture(filter_type);
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(presentation.packed_ntsc_rgba8());
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -302,7 +312,7 @@ impl Renderer {
             &pipeline_layout,
             &shader,
             config.format,
-            fragment_entry_point(filter_type, config.format.is_srgb()),
+            fragment_entry_point(presentation.pipeline_kind(), config.format.is_srgb()),
         );
 
         Ok(Self {
@@ -588,21 +598,23 @@ fn create_render_pipeline(
     })
 }
 
-fn fragment_entry_point(filter_type: FilterType, surface_is_srgb: bool) -> &'static str {
-    match (filter_type, surface_is_srgb) {
-        (FilterType::None, true) => "fs_palette_srgb",
-        (FilterType::None, false) => "fs_palette_linear",
-        (FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo, true) => {
-            "fs_ntsc_srgb"
-        }
-        (FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo, false) => {
-            "fs_ntsc_linear"
+fn fragment_entry_point(
+    pipeline_kind: VideoPresentationPipelineKind,
+    surface_is_srgb: bool,
+) -> &'static str {
+    match (pipeline_kind, surface_is_srgb) {
+        (VideoPresentationPipelineKind::Palette, true) => "fs_palette_srgb",
+        (VideoPresentationPipelineKind::Palette, false) => "fs_palette_linear",
+        (VideoPresentationPipelineKind::Ntsc, true) => "fs_ntsc_srgb",
+        (VideoPresentationPipelineKind::Ntsc, false) => "fs_ntsc_linear",
+        (VideoPresentationPipelineKind::DirectRgba, _) => {
+            unreachable!("DirectRgba presentations are rejected during renderer setup")
         }
     }
 }
 
-fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
-    let Some(texture) = filter_type.encoded_packed_ntsc_texture_rgba8() else {
+fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d) {
+    let Some(texture) = packed_ntsc_rgba8 else {
         return (
             vec![0; 4].into_boxed_slice(),
             Extent3d {
@@ -613,8 +625,8 @@ fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
         );
     };
 
-    let mut packed = Vec::with_capacity(texture.rgba8.len());
-    let mut chunks = texture.rgba8.chunks_exact(4);
+    let mut packed = Vec::with_capacity(texture.len());
+    let mut chunks = texture.chunks_exact(4);
     assert!(
         chunks.remainder().is_empty(),
         "packed NTSC texture must be a multiple of 4 bytes"
@@ -644,7 +656,7 @@ fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
 mod tests {
     use super::{compute_viewport, encode_ntsc_texture};
     use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
-    use nerust_screen_traits::PhysicalSize;
+    use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameFormat};
     use nerust_wgpuwrap::SurfaceSize;
 
     #[test]
@@ -665,11 +677,17 @@ mod tests {
 
     #[test]
     fn ntsc_texture_is_prepacked_for_r32uint_upload() {
-        let source = FilterType::NtscRGB
-            .encoded_packed_ntsc_texture_rgba8()
-            .expect("NTSC filter should provide a packed texture")
-            .rgba8;
-        let (packed, size) = encode_ntsc_texture(FilterType::NtscRGB);
+        let presentation = FilterType::NtscRGB.presentation(
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            VideoFrameFormat::Palette,
+        );
+        let source = presentation
+            .packed_ntsc_rgba8()
+            .expect("NTSC filter should provide a packed texture");
+        let (packed, size) = encode_ntsc_texture(Some(source));
 
         assert_eq!(size.width, NTSC_TEXTURE_WIDTH);
         assert_eq!(size.height, NTSC_TEXTURE_HEIGHT);

@@ -6,8 +6,8 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterLayout, FilterType, NesFilter};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen};
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter, VideoPresentation};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen, VideoFrameFormat};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -19,7 +19,7 @@ enum PublishMode {
 
 pub struct ScreenBuffer {
     filter_type: FilterType,
-    layout: FilterLayout,
+    video_presentation: VideoPresentation,
     publish_mode: PublishMode,
     filter: Option<Box<dyn NesFilter>>,
     dest: Option<ScreenBufferUnit>,
@@ -31,19 +31,29 @@ pub struct ScreenBuffer {
 
 impl ScreenBuffer {
     pub fn new(filter_type: FilterType, src_size: LogicalSize) -> Self {
-        Self::with_publish_mode(filter_type, src_size, PublishMode::FilteredRgba)
+        Self::with_publish_mode(
+            filter_type,
+            src_size,
+            PublishMode::FilteredRgba,
+            filter_type.presentation(src_size, VideoFrameFormat::Rgba),
+        )
     }
 
     pub fn new_gpu(filter_type: FilterType, src_size: LogicalSize) -> Self {
-        Self::with_publish_mode(filter_type, src_size, PublishMode::SourcePalette)
+        Self::with_publish_mode(
+            filter_type,
+            src_size,
+            PublishMode::SourcePalette,
+            filter_type.presentation(src_size, VideoFrameFormat::Palette),
+        )
     }
 
     fn with_publish_mode(
         filter_type: FilterType,
         src_size: LogicalSize,
         publish_mode: PublishMode,
+        video_presentation: VideoPresentation,
     ) -> Self {
-        let layout = filter_type.layout(src_size);
         let src_buffer_size = src_size.height * src_size.width;
         let src_buffer = allocate(src_buffer_size);
         let src_buffer_next = allocate(src_buffer_size);
@@ -62,7 +72,7 @@ impl ScreenBuffer {
 
         let mut result = Self {
             filter_type,
-            layout,
+            video_presentation,
             publish_mode,
             filter,
             src_buffer,
@@ -115,11 +125,11 @@ impl ScreenBuffer {
     }
 
     pub fn logical_size(&self) -> LogicalSize {
-        self.layout.logical_size
+        self.video_presentation.logical_size()
     }
 
     pub fn source_logical_size(&self) -> LogicalSize {
-        self.layout.source_logical_size
+        self.video_presentation.source_logical_size()
     }
 
     pub fn filter_type(&self) -> FilterType {
@@ -127,11 +137,15 @@ impl ScreenBuffer {
     }
 
     pub fn physical_size(&self) -> PhysicalSize {
-        self.layout.physical_size
+        self.video_presentation.physical_size()
     }
 
     pub fn publishes_palette_frame(&self) -> bool {
         matches!(self.publish_mode, PublishMode::SourcePalette)
+    }
+
+    pub fn video_presentation(&self) -> &VideoPresentation {
+        &self.video_presentation
     }
 
     pub fn clear(&mut self) {
@@ -191,8 +205,8 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::FilterType;
-    use nerust_screen_traits::{LogicalSize, Screen};
+    use nerust_screen_filter::{FilterType, VideoPresentationPipelineKind};
+    use nerust_screen_traits::{LogicalSize, Screen, VideoFrameFormat};
 
     #[test]
     fn all_filters_publish_full_frames() {
@@ -229,5 +243,13 @@ mod tests {
         let mut frame = vec![0; screen.frame_len()];
         screen.copy_frame_buffer(&mut frame);
         assert_eq!(frame, (0..8).map(|value| value as u8).collect::<Vec<_>>());
+        assert_eq!(
+            screen.video_presentation().frame_format(),
+            VideoFrameFormat::Palette
+        );
+        assert_eq!(
+            screen.video_presentation().pipeline_kind(),
+            VideoPresentationPipelineKind::Ntsc
+        );
     }
 }

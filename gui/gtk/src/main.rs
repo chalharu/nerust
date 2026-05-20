@@ -8,7 +8,6 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
@@ -44,17 +43,14 @@ pub(crate) struct State {
 impl State {
     pub(crate) fn new(filter_type: FilterType, source_logical_size: LogicalSize) -> Self {
         let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(
-            speaker,
-            ScreenBuffer::new_gpu(filter_type, source_logical_size),
-        );
-        let video_info = console.video_info();
+        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
+        let physical_size = console.video().presentation().physical_size();
         Self {
             view: None,
             console,
             paused: false,
             loaded: false,
-            physical_size: video_info.physical_size,
+            physical_size,
         }
     }
 

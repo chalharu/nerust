@@ -11,7 +11,6 @@ glutin.workspace = true
 glutin-winit.workspace = true
 nerust_console.workspace = true
 nerust_core.workspace = true
-nerust_screen_buffer.workspace = true
 nerust_screen_filter.workspace = true
 nerust_screen_opengl.workspace = true
 nerust_screen_traits.workspace = true
