@@ -10,6 +10,12 @@
 /// as the MMC3 family's A12-edge scanline-IRQ counter. The enum is forward-extensible:
 /// additional PPU-timing events (e.g. scanline boundaries) can be added without
 /// changing existing mapper implementations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PpuBusAccess {
+    Read,
+    Write,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PpuBusEvent {
     /// The PPU placed a new address on the bus (CHR address lines A0–A13 visible to
@@ -24,5 +30,6 @@ pub(crate) enum PpuBusEvent {
         address: usize,
         ppu_tick: u64,
         from_cpu_register: bool,
+        access: PpuBusAccess,
     },
 }

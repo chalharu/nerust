@@ -10,7 +10,7 @@ impl Mmc5 {
     }
 
     pub(super) fn extended_attributes_enabled(&self) -> bool {
-        self.substitutions_enabled && self.exram_mode == 1
+        self.substitutions_enabled && self.exram_mode == 1 && self.current_split_tile.is_none()
     }
 
     fn split_chr_banks_enabled(&self) -> bool {
@@ -93,6 +93,10 @@ impl Mmc5 {
         }
 
         let mapped = if matches!(access, PpuReadAccess::BackgroundPattern)
+            && let Some(split_tile) = self.current_split_tile
+        {
+            self.split_chr_address(address, split_tile)
+        } else if matches!(access, PpuReadAccess::BackgroundPattern)
             && self.extended_attributes_enabled()
         {
             self.extended_attribute_chr_bank() * 0x1000 + (address & 0x0FFF)

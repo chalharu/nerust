@@ -7,14 +7,14 @@
 #[cfg(test)]
 mod audio_regression_test;
 mod dmc;
-mod envelope;
+pub(crate) mod envelope;
 #[cfg(test)]
 mod fft_test;
 mod frame_counter;
-mod length_counter;
+pub(crate) mod length_counter;
 mod noise;
 mod pulse;
-mod timer;
+pub(crate) mod timer;
 mod triangle;
 
 use self::dmc::DMC;
@@ -166,6 +166,8 @@ impl Core {
         cpu: &mut Cpu,
         mixer: &mut M,
         mixer_sample_rate: u32,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
     ) {
         self.step_frame(cpu.interrupt_mut());
         if self.sample_accumulator >= CLOCK_RATE {
@@ -174,22 +176,37 @@ impl Core {
         self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
         if self.sample_accumulator >= CLOCK_RATE {
             self.sample_accumulator -= CLOCK_RATE;
-            self.send_sample(mixer);
+            self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
         }
     }
 
-    pub(crate) fn send_sample<M: MixerInput>(&self, mixer: &mut M) {
-        mixer.push(self.output());
+    pub(crate) fn send_sample<M: MixerInput>(
+        &self,
+        mixer: &mut M,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+    ) {
+        mixer.push(self.output(expansion_audio_output, expansion_audio_inverted));
         // let output = self.output();
         // let filtered = self.filter.step(output);
         // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
     }
 
-    pub(crate) fn output(&self) -> f32 {
-        self.pulse_table[usize::from(self.pulse1.output()) + usize::from(self.pulse2.output())]
+    pub(crate) fn output(
+        &self,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+    ) -> f32 {
+        let apu_output = self.pulse_table
+            [usize::from(self.pulse1.output()) + usize::from(self.pulse2.output())]
             + self.tnd_table[3 * usize::from(self.triangle.output())
                 + 2 * usize::from(self.noise.output())
-                + usize::from(self.dmc.output())]
+                + usize::from(self.dmc.output())];
+        if expansion_audio_inverted {
+            (0.5 + (apu_output - expansion_audio_output) * 0.5).clamp(0.0, 1.0)
+        } else {
+            (apu_output + expansion_audio_output).clamp(0.0, 1.0)
+        }
     }
 
     fn quarter_frame(&mut self) {
@@ -257,5 +274,21 @@ impl Core {
         self.triangle.set_enabled((value & 4) != 0);
         self.noise.set_enabled((value & 8) != 0);
         self.dmc.set_enabled((value & 16) != 0, interrupt);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Core;
+    use crate::cpu::interrupt::Interrupt;
+
+    #[test]
+    fn inverted_expansion_audio_mix_centers_silence_and_flips_contribution() {
+        let mut interrupt = Interrupt::new();
+        let apu = Core::new(&mut interrupt);
+
+        assert!((apu.output(0.0, false) - 0.0).abs() < f32::EPSILON);
+        assert!((apu.output(0.0, true) - 0.5).abs() < f32::EPSILON);
+        assert!(apu.output(0.25, true) < 0.5);
     }
 }

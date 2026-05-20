@@ -262,6 +262,7 @@ mod tests {
                 address: 0x0FE8,
                 ppu_tick: 0,
                 from_cpu_register: false,
+                access: crate::ppu_bus_event::PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -270,6 +271,7 @@ mod tests {
                 address: 0x1FE8,
                 ppu_tick: 1,
                 from_cpu_register: false,
+                access: crate::ppu_bus_event::PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -284,6 +286,7 @@ mod tests {
                 address: 0x0FD8,
                 ppu_tick: 2,
                 from_cpu_register: false,
+                access: crate::ppu_bus_event::PpuBusAccess::Read,
             },
             &mut interrupt,
         );

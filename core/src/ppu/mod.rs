@@ -11,7 +11,7 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
-use crate::ppu_bus_event::PpuBusEvent;
+use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
 use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
@@ -514,8 +514,15 @@ impl Core {
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> OpenBusReadResult {
-        let result = match address {
-            0x2002 => OpenBusReadResult::new(self.read_status(interrupt), 0b1110_0000),
+        let decoded = 0x2000 + (address & 7);
+        let result = match decoded {
+            0x2002 => {
+                let status = self.read_status(interrupt);
+                if address == 0x2002 {
+                    cartridge.notify_ppu_status_read(status, interrupt);
+                }
+                OpenBusReadResult::new(status, 0b1110_0000)
+            }
             0x2004 => OpenBusReadResult::new(self.read_oam(), 0xFF),
             0x2007 => self.read_data(cartridge, interrupt),
             _ => OpenBusReadResult::new(0, 0),
@@ -663,6 +670,7 @@ impl Core {
                     address,
                     ppu_tick: self.ppu_bus_tick(),
                     from_cpu_register: address_register_change,
+                    access: PpuBusAccess::Read,
                 },
                 interrupt,
             );
@@ -846,6 +854,7 @@ impl Core {
                     address,
                     ppu_tick: self.ppu_bus_tick(),
                     from_cpu_register: address_register_change,
+                    access: PpuBusAccess::Write,
                 },
                 interrupt,
             );
@@ -1363,6 +1372,7 @@ impl Core {
                         address,
                         ppu_tick: self.ppu_bus_tick(),
                         from_cpu_register: true,
+                        access: PpuBusAccess::Read,
                     },
                     interrupt,
                 );

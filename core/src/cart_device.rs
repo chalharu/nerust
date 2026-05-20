@@ -141,6 +141,20 @@ pub(crate) trait Cartridge: Mapper {
         self.get_mirror_mode()
     }
 
+    fn notify_cpu_read(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
+
+    fn notify_ppu_status_read(&mut self, _value: u8, _interrupt: &mut Interrupt) {}
+
+    fn notify_oam_dma(&mut self, _interrupt: &mut Interrupt) {}
+
+    fn expansion_audio_output(&self) -> f32 {
+        0.0
+    }
+
+    fn expansion_audio_inverted(&self) -> bool {
+        false
+    }
+
     fn notify_ppu_ctrl(&mut self, _value: u8) {}
 
     fn notify_ppu_mask(&mut self, _value: u8) {}

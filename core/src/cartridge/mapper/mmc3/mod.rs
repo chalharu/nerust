@@ -21,7 +21,7 @@ use crate::cart_device::Cartridge;
 #[cfg(test)]
 use crate::mapper::Mapper;
 #[cfg(test)]
-use crate::ppu_bus_event::PpuBusEvent;
+use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -298,6 +298,7 @@ mod tests {
                 address: 0x0FFF,
                 ppu_tick: 0,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -306,6 +307,7 @@ mod tests {
                 address: 0x1000,
                 ppu_tick: 8,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -326,6 +328,7 @@ mod tests {
                 address: 0x0FFF,
                 ppu_tick: 0,
                 from_cpu_register: false,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -334,6 +337,7 @@ mod tests {
                 address: 0x1000,
                 ppu_tick: 9,
                 from_cpu_register: false,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -354,6 +358,7 @@ mod tests {
                 address: 0x0FFF,
                 ppu_tick: 0,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -362,6 +367,7 @@ mod tests {
                 address: 0x1000,
                 ppu_tick: 8,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -374,6 +380,7 @@ mod tests {
                 address: 0x0FFF,
                 ppu_tick: 9,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -382,6 +389,7 @@ mod tests {
                 address: 0x1000,
                 ppu_tick: 18,
                 from_cpu_register: true,
+                access: PpuBusAccess::Read,
             },
             &mut interrupt,
         );

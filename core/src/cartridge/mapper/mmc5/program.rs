@@ -24,9 +24,7 @@ impl Mmc5 {
     }
 
     pub(super) fn write_exram_cpu(&mut self, address: usize, value: u8) {
-        // Modes 0/1 only expose ExRAM to the CPU during blanking, which we do not model.
-        // Keep CPU writes strict instead of accepting writes that hardware would reject.
-        if self.exram_mode == 2 {
+        if self.exram_mode == 2 || (self.exram_mode <= 1 && self.in_frame) {
             self.exram[address - 0x5C00] = value;
         }
     }
