@@ -8,16 +8,20 @@ use nerust_screen_traits::LogicalSize;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct FrameUploadLayout {
+    pub(crate) bytes_per_pixel: u32,
     pub(crate) copy_bytes_per_row: u32,
     pub(crate) upload_bytes_per_row: u32,
     pub(crate) buffer_size: u64,
 }
 
 impl FrameUploadLayout {
-    pub(crate) fn for_logical_size(logical_size: LogicalSize) -> Result<Self, String> {
+    pub(crate) fn for_logical_size(
+        logical_size: LogicalSize,
+        bytes_per_pixel: u32,
+    ) -> Result<Self, String> {
         let copy_bytes_per_row = logical_size
             .width
-            .checked_mul(4)
+            .checked_mul(bytes_per_pixel as usize)
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| "frame upload row size overflowed u32".to_string())?;
         let upload_bytes_per_row =
@@ -26,6 +30,7 @@ impl FrameUploadLayout {
             .checked_mul(logical_size.height as u64)
             .ok_or_else(|| "frame upload buffer size overflowed u64".to_string())?;
         Ok(Self {
+            bytes_per_pixel,
             copy_bytes_per_row,
             upload_bytes_per_row,
             buffer_size,
@@ -69,12 +74,16 @@ mod tests {
 
     #[test]
     fn aligned_upload_layout_keeps_native_row_pitch() {
-        let layout = FrameUploadLayout::for_logical_size(LogicalSize {
-            width: 256,
-            height: 240,
-        })
+        let layout = FrameUploadLayout::for_logical_size(
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            4,
+        )
         .expect("layout should be valid");
 
+        assert_eq!(layout.bytes_per_pixel, 4);
         assert_eq!(layout.copy_bytes_per_row, 1024);
         assert_eq!(layout.upload_bytes_per_row, 1024);
         assert_eq!(layout.buffer_size, 245_760);
@@ -82,10 +91,13 @@ mod tests {
 
     #[test]
     fn unaligned_upload_layout_rounds_up_to_copy_alignment() {
-        let layout = FrameUploadLayout::for_logical_size(LogicalSize {
-            width: 602,
-            height: 240,
-        })
+        let layout = FrameUploadLayout::for_logical_size(
+            LogicalSize {
+                width: 602,
+                height: 240,
+            },
+            4,
+        )
         .expect("layout should be valid");
 
         assert_eq!(layout.copy_bytes_per_row, 2408);
@@ -100,6 +112,7 @@ mod tests {
     #[test]
     fn pack_frame_rows_inserts_row_padding_without_reordering_pixels() {
         let layout = FrameUploadLayout {
+            bytes_per_pixel: 4,
             copy_bytes_per_row: 8,
             upload_bytes_per_row: 16,
             buffer_size: 32,
