@@ -2,8 +2,7 @@
 
 uniform sampler2D frame_texture;
 uniform sampler2D palette_texture;
-uniform sampler2D ntsc_primary_texture;
-uniform sampler2D ntsc_secondary_texture;
+uniform usampler2D ntsc_texture;
 uniform vec2 frame_uv_size;
 uniform int source_width;
 uniform int source_height;
@@ -15,15 +14,8 @@ out vec4 frag_color;
 
 const int BLACK_INDEX = 15;
 const int NTSC_ENTRY_STRIDE = 42;
-const int NTSC_CHANNEL_BIAS = 512;
-
-float texel_u8(vec4 texel, int channel) {
-    return floor(clamp(texel[channel], 0.0, 1.0) * 255.0 + 0.5);
-}
-
-int decode_u16(float high, float low) {
-    return int(high) * 256 + int(low) - 32768;
-}
+const uint NTSC_CLAMP_MASK = 0x300c03u;
+const uint NTSC_CLAMP_ADD = 0x20280a02u;
 
 vec2 center_uv(vec2 texture_size, float x, float y) {
     return vec2((x + 0.5) / texture_size.x, (y + 0.5) / texture_size.y);
@@ -45,16 +37,25 @@ vec3 palette_color(int index) {
     return texture(palette_texture, uv).rgb;
 }
 
-ivec3 ntsc_entry(int color, int phase, int offset) {
-    float row = float(phase * NTSC_ENTRY_STRIDE + offset);
-    vec2 uv = center_uv(vec2(64.0, 126.0), float(color), row);
-    vec4 primary = texture(ntsc_primary_texture, uv);
-    vec4 secondary = texture(ntsc_secondary_texture, uv);
-    return ivec3(
-        decode_u16(texel_u8(primary, 0), texel_u8(primary, 1)),
-        decode_u16(texel_u8(primary, 2), texel_u8(primary, 3)),
-        decode_u16(texel_u8(secondary, 0), texel_u8(secondary, 1))
-    );
+uint ntsc_entry(int color, int phase, int offset) {
+    int row = phase * NTSC_ENTRY_STRIDE + offset;
+    uvec4 packed = texelFetch(ntsc_texture, ivec2(color, row), 0);
+    return (packed.r << 24u) | (packed.g << 16u) | (packed.b << 8u) | packed.a;
+}
+
+uint clamp_impl(uint io) {
+    uint sub = (io >> 9u) & NTSC_CLAMP_MASK;
+    uint clamp = NTSC_CLAMP_ADD - sub;
+    return (io | clamp) & (clamp - sub);
+}
+
+vec3 rgb_out_impl(uint raw) {
+    uint rgb = ((raw >> 5u) & 0x00ff0000u) | ((raw >> 3u) & 0x0000ff00u) | ((raw >> 1u) & 0x000000ffu);
+    return vec3(
+        float((rgb >> 16u) & 0xffu),
+        float((rgb >> 8u) & 0xffu),
+        float(rgb & 0xffu)
+    ) / 255.0;
 }
 
 vec3 ntsc_color(int output_x, int output_y) {
@@ -72,14 +73,13 @@ vec3 ntsc_color(int output_x, int output_y) {
         palette_index(base + 2, output_y),
         palette_index(base + 3, output_y)
     );
-    ivec3 sum = ntsc_entry(current.x, phase, sample)
+    uint sum = ntsc_entry(current.x, phase, sample)
         + ntsc_entry(current.y, phase, (sample + 12) % 7 + 14)
         + ntsc_entry(current.z, phase, (sample + 10) % 7 + 28)
         + ntsc_entry(previous.x, phase, (sample + 7) % 14)
         + ntsc_entry(previous.y, phase, (sample + 5) % 7 + 21)
         + ntsc_entry(previous.z, phase, (sample + 3) % 7 + 35);
-    vec3 clamped = clamp(vec3(sum - ivec3(NTSC_CHANNEL_BIAS)), vec3(0.0), vec3(255.0));
-    return clamped / 255.0;
+    return rgb_out_impl(clamp_impl(sum));
 }
 
 void main(void){

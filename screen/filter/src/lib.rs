@@ -27,6 +27,10 @@ pub struct EncodedNtscTextures {
     pub secondary_rgba8: Box<[u8]>,
 }
 
+pub struct EncodedPackedNtscTexture {
+    pub rgba8: Box<[u8]>,
+}
+
 pub trait NesFilter: Send {
     fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
 
@@ -61,6 +65,21 @@ pub enum FilterType {
 }
 
 impl FilterType {
+    fn encode_ntsc_packed_entries_rgba8(entries: &[u32]) -> Box<[u8]> {
+        let color_count = PALETTE_TEXTURE_WIDTH as usize;
+        let texture_height = NTSC_TEXTURE_HEIGHT as usize;
+        let entry_stride = entries.len() / color_count;
+        debug_assert!(entry_stride >= texture_height);
+
+        let mut encoded = Vec::with_capacity(color_count * texture_height * 4);
+        for row in 0..texture_height {
+            for color in 0..color_count {
+                encoded.extend_from_slice(&entries[color * entry_stride + row].to_be_bytes());
+            }
+        }
+        encoded.into_boxed_slice()
+    }
+
     pub fn generate(self, size: LogicalSize) -> Box<dyn NesFilter> {
         match self {
             FilterType::None => Box::new(filters::rgb::NesRgb::new(size)),
@@ -126,6 +145,18 @@ impl FilterType {
             .map(|setup| nes_ntsc::NesNtsc::shader_kernel_entries(&setup))
     }
 
+    pub fn packed_kernel_entries(self) -> Option<Box<[u32]>> {
+        self.ntsc_setup()
+            .map(|setup| nes_ntsc::NesNtsc::packed_kernel_entries(&setup))
+    }
+
+    pub fn encoded_packed_ntsc_texture_rgba8(self) -> Option<EncodedPackedNtscTexture> {
+        self.packed_kernel_entries()
+            .map(|entries| EncodedPackedNtscTexture {
+                rgba8: Self::encode_ntsc_packed_entries_rgba8(entries.as_ref()),
+            })
+    }
+
     pub fn encoded_ntsc_textures_rgba8(self) -> Option<EncodedNtscTextures> {
         self.shader_kernel_entries().map(|entries| {
             let color_count = PALETTE_TEXTURE_WIDTH as usize;
@@ -165,6 +196,10 @@ mod tests {
     fn decode_u16(high: u8, low: u8) -> i16 {
         (((u16::from(high) << 8) | u16::from(low)) as i32).wrapping_sub(i32::from(i16::MAX) + 1)
             as i16
+    }
+
+    fn decode_u32(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_be_bytes(bytes[offset..offset + 4].try_into().expect("RGBA8 texel"))
     }
 
     #[test]
@@ -216,6 +251,35 @@ mod tests {
                     textures.secondary_rgba8[offset + 1]
                 ),
                 entry.blue
+            );
+        }
+    }
+
+    #[test]
+    fn encoded_packed_ntsc_texture_is_row_major_big_endian_and_complete() {
+        let entries = FilterType::NtscComposite
+            .packed_kernel_entries()
+            .expect("NTSC filters should expose packed entries");
+        let texture = FilterType::NtscComposite
+            .encoded_packed_ntsc_texture_rgba8()
+            .expect("NTSC filters should expose packed textures");
+        let color_count = PALETTE_TEXTURE_WIDTH as usize;
+        let texture_height = NTSC_TEXTURE_HEIGHT as usize;
+        let entry_stride = entries.len() / color_count;
+
+        assert_eq!(texture.rgba8.len(), color_count * texture_height * 4);
+
+        for (row, color) in [
+            (0, 0),
+            (0, color_count - 1),
+            (1, 1),
+            (texture_height / 2, color_count / 2),
+            (texture_height - 1, 0),
+        ] {
+            let offset = (row * color_count + color) * 4;
+            assert_eq!(
+                decode_u32(texture.rgba8.as_ref(), offset),
+                entries[color * entry_stride + row]
             );
         }
     }
