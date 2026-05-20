@@ -12,9 +12,10 @@ use nerust_core::controller::standard_controller::Buttons;
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_screen_wgpu::{RenderOutcome, Renderer};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
-use nerust_wgpuwrap::{RenderOutcome, RenderSurface, Renderer, SurfaceSize};
+use nerust_wgpuwrap::{RenderSurface, SurfaceSize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]

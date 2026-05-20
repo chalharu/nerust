@@ -61,11 +61,11 @@ impl<T: SurfaceTargetSource> RenderSurface<T> {
         Ok(())
     }
 
-    pub(crate) fn surface(&self) -> &Surface<'static> {
+    pub fn surface(&self) -> &Surface<'static> {
         &self.surface
     }
 
-    pub(crate) fn instance(&self) -> &Instance {
+    pub fn instance(&self) -> &Instance {
         &self.instance
     }
 }
