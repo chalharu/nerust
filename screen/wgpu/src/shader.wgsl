@@ -80,8 +80,7 @@ fn palette_color(index: u32) -> vec3<u32> {
 }
 
 fn ntsc_entry(color: u32, row: i32) -> u32 {
-    let packed = textureLoad(ntsc_texture, vec2<i32>(i32(color), row), 0);
-    return (packed.r << 24u) | (packed.g << 16u) | (packed.b << 8u) | packed.a;
+    return textureLoad(ntsc_texture, vec2<i32>(i32(color), row), 0).r;
 }
 
 fn clamp_impl(io: u32) -> u32 {
