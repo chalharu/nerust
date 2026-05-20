@@ -11,7 +11,7 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
-use crate::ppu_bus_event::PpuBusEvent;
+use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
 use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
 use std::cmp;
@@ -497,14 +497,10 @@ impl Core {
         self.has_next_sprite = false;
     }
 
-    pub(crate) fn peek_vram(
-        &self,
-        mut address: usize,
-        mirror_mode: crate::MirrorMode,
-    ) -> Option<u8> {
+    pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {
         address &= 0x3FFF;
         match address {
-            0x2000..=0x3EFF => Some(self.vram[mirror_mode.mirror_address(address) & 0x7FF]),
+            0x2000..=0x3EFF => cartridge.peek_ppu_nametable(address, &self.vram),
             0x3F00..=0x3FFF => Some(self.palette[Self::palette_address(address)]),
             _ => None,
         }
@@ -517,8 +513,15 @@ impl Core {
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> OpenBusReadResult {
-        let result = match address {
-            0x2002 => OpenBusReadResult::new(self.read_status(interrupt), 0b1110_0000),
+        let decoded = 0x2000 + (address & 7);
+        let result = match decoded {
+            0x2002 => {
+                let status = self.read_status(interrupt);
+                if address == 0x2002 {
+                    cartridge.notify_ppu_status_read(status, interrupt);
+                }
+                OpenBusReadResult::new(status, 0b1110_0000)
+            }
             0x2004 => OpenBusReadResult::new(self.read_oam(), 0xFF),
             0x2007 => self.read_data(cartridge, interrupt),
             _ => OpenBusReadResult::new(0, 0),
@@ -571,7 +574,8 @@ impl Core {
         } else {
             self.vram_read_delay = 6;
             let addr = self.state.vram_addr as usize;
-            let mut value = self.read_vram_internal(addr, cartridge, interrupt, false);
+            let mut value =
+                self.read_vram_internal(addr, cartridge, interrupt, false, PpuReadAccess::CpuData);
             // emulate buffered reads
             let mask = if (addr & 0x3FFF) < 0x3F00 {
                 mem::swap(&mut self.buffered_data, &mut value);
@@ -593,8 +597,13 @@ impl Core {
         if self.scan_line > 240 || !self.render_executing {
             self.state.vram_addr =
                 (self.state.vram_addr + if self.control.increment { 32 } else { 1 }) & 0x7FFF;
-            let _ =
-                self.read_vram_internal(self.state.vram_addr as usize, cartridge, interrupt, true);
+            let _ = self.read_vram_internal(
+                self.state.vram_addr as usize,
+                cartridge,
+                interrupt,
+                true,
+                PpuReadAccess::CpuData,
+            );
         } else {
             self.increment_x();
             self.increment_y();
@@ -639,8 +648,9 @@ impl Core {
         address: usize,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
+        access: PpuReadAccess,
     ) -> u8 {
-        self.read_vram_internal(address, cartridge, interrupt, false)
+        self.read_vram_internal(address, cartridge, interrupt, false, access)
     }
 
     #[inline]
@@ -650,6 +660,7 @@ impl Core {
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
         address_register_change: bool,
+        access: PpuReadAccess,
     ) -> u8 {
         address &= 0x3FFF;
         if self.render_executing || address <= 0x1FFF {
@@ -658,16 +669,22 @@ impl Core {
                     address,
                     ppu_tick: self.ppu_bus_tick(),
                     from_cpu_register: address_register_change,
+                    access: PpuBusAccess::Read,
                 },
                 interrupt,
             );
         }
         let result = match address {
-            0..=0x1FFF => cartridge.read(address),
-            0x2000..=0x3FFF => OpenBusReadResult::new(
-                self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF],
-                0xFF,
-            ),
+            0..=0x1FFF => cartridge.read_ppu_pattern(address, access, interrupt),
+            0x2000..=0x3EFF => cartridge.read_ppu_nametable(address, access, &mut self.vram),
+            0x3F00..=0x3FFF => {
+                let mirrored_nametable = 0x2000 | ((address - 0x1000) & 0x0FFF);
+                cartridge.read_ppu_nametable(
+                    mirrored_nametable,
+                    PpuReadAccess::CpuData,
+                    &mut self.vram,
+                )
+            }
             _ => {
                 log::error!("unhandled ppu memory read at address: 0x{:04X}", address);
                 OpenBusReadResult::new(0, 0)
@@ -699,9 +716,9 @@ impl Core {
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) {
-        match address {
-            0x2000 => self.write_control(value, interrupt),
-            0x2001 => self.write_mask(value),
+        match 0x2000 + (address & 7) {
+            0x2000 => self.write_control(address, value, cartridge, interrupt),
+            0x2001 => self.write_mask(address, value, cartridge),
             0x2003 => self.write_oam_address(value),
             0x2004 => self.write_oam_data(value),
             0x2005 => self.write_scroll(value),
@@ -713,10 +730,19 @@ impl Core {
     }
 
     #[inline]
-    fn write_control(&mut self, value: u8, interrupt: &mut Interrupt) {
+    fn write_control(
+        &mut self,
+        address: usize,
+        value: u8,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+    ) {
         let prev_nmi_output = self.control.nmi_output;
 
         self.control = Control::from(value);
+        if address == 0x2000 {
+            cartridge.notify_ppu_ctrl(value);
+        }
 
         // 画面の書き換え場所を変更
         self.state.temp_vram_addr =
@@ -734,8 +760,11 @@ impl Core {
     }
 
     #[inline]
-    fn write_mask(&mut self, value: u8) {
+    fn write_mask(&mut self, address: usize, value: u8, cartridge: &mut dyn Cartridge) {
         self.mask = Mask::from(value);
+        if address == 0x2001 {
+            cartridge.notify_ppu_mask(value);
+        }
     }
 
     #[inline]
@@ -824,14 +853,15 @@ impl Core {
                     address,
                     ppu_tick: self.ppu_bus_tick(),
                     from_cpu_register: address_register_change,
+                    access: PpuBusAccess::Write,
                 },
                 interrupt,
             );
         }
         match address {
-            0..=0x1FFF => cartridge.write(address, value, interrupt),
-            0x2000..=0x3FFF => {
-                self.vram[cartridge.mirror_mode().mirror_address(address) & 0x7FF] = value
+            0..=0x1FFF => cartridge.write_ppu_pattern(address, value, interrupt),
+            0x2000..=0x3EFF => {
+                cartridge.write_ppu_nametable(address, value, &mut self.vram, interrupt)
             }
             _ => log::error!("unhandled ppu memory write at address: 0x{:04X}", address),
         }
@@ -842,14 +872,18 @@ impl Core {
         self.previous_tile = mem::replace(&mut self.current_tile, self.next_tile);
         self.state.low_bit_shift |= u16::from(self.next_tile.low_byte);
         self.state.high_bit_shift |= u16::from(self.next_tile.high_byte);
-        self.next_tile.tile_addr =
-            (u16::from(self.read_vram(self.state.name_table_address(), cartridge, interrupt)) << 4)
-                | ((self.state.vram_addr >> 12) & 7)
-                | if self.control.background_table {
-                    0x1000
-                } else {
-                    0
-                };
+        self.next_tile.tile_addr = (u16::from(self.read_vram(
+            self.state.name_table_address(),
+            cartridge,
+            interrupt,
+            PpuReadAccess::BackgroundNameTable,
+        )) << 4)
+            | ((self.state.vram_addr >> 12) & 7)
+            | if self.control.background_table {
+                0x1000
+            } else {
+                0
+            };
     }
 
     #[inline]
@@ -861,20 +895,34 @@ impl Core {
         let v = self.state.vram_addr as usize;
         let address = self.state.attribute_address();
         let shift = ((v >> 4) & 4) | (v & 2);
-        self.next_tile.palette_offset =
-            ((self.read_vram(address, cartridge, interrupt) >> shift) & 3) << 2;
+        self.next_tile.palette_offset = ((self.read_vram(
+            address,
+            cartridge,
+            interrupt,
+            PpuReadAccess::BackgroundAttribute,
+        ) >> shift)
+            & 3)
+            << 2;
     }
 
     #[inline]
     fn fetch_low_tile_byte(&mut self, cartridge: &mut dyn Cartridge, interrupt: &mut Interrupt) {
-        self.next_tile.low_byte =
-            self.read_vram(self.next_tile.tile_addr as usize, cartridge, interrupt);
+        self.next_tile.low_byte = self.read_vram(
+            self.next_tile.tile_addr as usize,
+            cartridge,
+            interrupt,
+            PpuReadAccess::BackgroundPattern,
+        );
     }
 
     #[inline]
     fn fetch_high_tile_byte(&mut self, cartridge: &mut dyn Cartridge, interrupt: &mut Interrupt) {
-        self.next_tile.high_byte =
-            self.read_vram(self.next_tile.tile_addr as usize + 8, cartridge, interrupt);
+        self.next_tile.high_byte = self.read_vram(
+            self.next_tile.tile_addr as usize + 8,
+            cartridge,
+            interrupt,
+            PpuReadAccess::BackgroundPattern,
+        );
     }
 
     #[inline]
@@ -930,8 +978,18 @@ impl Core {
             self.tile_address(0xFF, 0)
         };
 
-        let low_byte = self.read_vram(read_address, cartridge, interrupt);
-        let high_byte = self.read_vram(read_address + 8, cartridge, interrupt);
+        let low_byte = self.read_vram(
+            read_address,
+            cartridge,
+            interrupt,
+            PpuReadAccess::SpritePattern,
+        );
+        let high_byte = self.read_vram(
+            read_address + 8,
+            cartridge,
+            interrupt,
+            PpuReadAccess::SpritePattern,
+        );
 
         if (self.sprite_index < self.sprite_count) && position_y < 240 {
             let info = &mut self.sprites[usize::from(self.sprite_index)];
@@ -1228,6 +1286,7 @@ impl Core {
                                         self.state.name_table_address(),
                                         cartridge,
                                         interrupt,
+                                        PpuReadAccess::BackgroundNameTable,
                                     );
                                 }
                                 3 => {
@@ -1235,6 +1294,7 @@ impl Core {
                                         self.state.attribute_address(),
                                         cartridge,
                                         interrupt,
+                                        PpuReadAccess::BackgroundAttribute,
                                     );
                                 }
                                 4 => self.fetch_sprite_pattern(cartridge, interrupt),
@@ -1269,6 +1329,7 @@ impl Core {
                                 self.state.name_table_address(),
                                 cartridge,
                                 interrupt,
+                                PpuReadAccess::BackgroundNameTable,
                             );
                         }
                     }
@@ -1279,6 +1340,7 @@ impl Core {
                                 self.state.name_table_address(),
                                 cartridge,
                                 interrupt,
+                                PpuReadAccess::BackgroundNameTable,
                             );
                             if self.scan_line == 0 && (self.frames & 1) != 0 {
                                 self.cycle += 1;
@@ -1309,6 +1371,7 @@ impl Core {
                         address,
                         ppu_tick: self.ppu_bus_tick(),
                         from_cpu_register: true,
+                        access: PpuBusAccess::Read,
                     },
                     interrupt,
                 );

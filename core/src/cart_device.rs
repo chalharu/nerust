@@ -7,6 +7,7 @@
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
+use crate::ppu_memory_access::PpuReadAccess;
 use crate::{MirrorMode, OpenBusReadResult};
 use std::cmp;
 
@@ -138,6 +139,63 @@ pub(crate) trait Cartridge: Mapper {
 
     fn mirror_mode(&self) -> MirrorMode {
         self.get_mirror_mode()
+    }
+
+    fn notify_cpu_read(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
+
+    fn notify_ppu_status_read(&mut self, _value: u8, _interrupt: &mut Interrupt) {}
+
+    fn notify_oam_dma(&mut self, _interrupt: &mut Interrupt) {}
+
+    fn expansion_audio_output(&self) -> f32 {
+        0.0
+    }
+
+    fn expansion_audio_inverted(&self) -> bool {
+        false
+    }
+
+    fn notify_ppu_ctrl(&mut self, _value: u8) {}
+
+    fn notify_ppu_mask(&mut self, _value: u8) {}
+
+    fn read_ppu_pattern(
+        &mut self,
+        address: usize,
+        _access: PpuReadAccess,
+        _interrupt: &mut Interrupt,
+    ) -> OpenBusReadResult {
+        self.read(address)
+    }
+
+    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.write(address, value, interrupt);
+    }
+
+    fn read_ppu_nametable(
+        &mut self,
+        address: usize,
+        _access: PpuReadAccess,
+        ciram: &mut [u8],
+    ) -> OpenBusReadResult {
+        OpenBusReadResult::new(
+            ciram[self.mirror_mode().mirror_address(address) & 0x7FF],
+            0xFF,
+        )
+    }
+
+    fn write_ppu_nametable(
+        &mut self,
+        address: usize,
+        value: u8,
+        ciram: &mut [u8],
+        _interrupt: &mut Interrupt,
+    ) {
+        ciram[self.mirror_mode().mirror_address(address) & 0x7FF] = value;
+    }
+
+    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
+        Some(ciram[self.mirror_mode().mirror_address(address) & 0x7FF])
     }
 }
 
