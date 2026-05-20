@@ -4,7 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::upload::{FrameUploadLayout, pack_frame_rows};
+use crate::{
+    srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
+    upload::{FrameUploadLayout, pack_frame_rows},
+};
 use nerust_screen_filter::{
     FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
 };
@@ -175,7 +178,7 @@ impl Renderer {
             &queue,
             "nerust_srgb_lut_texture",
             TextureFormat::R32Float,
-            include_bytes!(concat!(env!("OUT_DIR"), "/srgb_lut.bin")),
+            &SRGB_TO_LINEAR_LUT_BYTES,
         );
         let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_frame_upload_buffer"),
@@ -287,9 +290,7 @@ impl Renderer {
 
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("nerust_wgpu_shader"),
-            source: ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shader.wgsl")).into(),
-            ),
+            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("nerust_pipeline_layout"),
