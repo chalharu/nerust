@@ -9,8 +9,8 @@ use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
 use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_filter::{FilterLayout, FilterType};
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_screen_filter::{FilterType, VideoPresentation};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameBuffer};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
 use std::hash::{Hash, Hasher};
@@ -106,66 +106,46 @@ pub struct Console {
     data_sender: Sender<ConsoleData>,
     thread: Option<JoinHandle<()>>,
 
-    video_info: ConsoleVideoInfo,
-    frame_buffer: Arc<RwLock<Box<[u8]>>>,
+    video: ConsoleVideo,
     metrics: Arc<RwLock<ConsoleMetrics>>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum FrameFormat {
-    Rgba,
-    Palette,
+#[derive(Debug, Clone)]
+pub struct ConsoleVideo {
+    presentation: VideoPresentation,
+    frame_buffer: VideoFrameBuffer,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ConsoleVideoInfo {
-    pub filter_type: FilterType,
-    pub frame_format: FrameFormat,
-    pub source_logical_size: LogicalSize,
-    pub logical_size: LogicalSize,
-    pub physical_size: PhysicalSize,
-}
+impl ConsoleVideo {
+    pub fn presentation(&self) -> &VideoPresentation {
+        &self.presentation
+    }
 
-impl ConsoleVideoInfo {
-    fn new(filter_type: FilterType, frame_format: FrameFormat, layout: FilterLayout) -> Self {
-        Self {
-            filter_type,
-            frame_format,
-            source_logical_size: layout.source_logical_size,
-            logical_size: layout.logical_size,
-            physical_size: layout.physical_size,
-        }
+    pub fn frame_buffer(&self) -> &VideoFrameBuffer {
+        &self.frame_buffer
     }
 }
 
 impl Console {
+    pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
+        speaker: S,
+        filter_type: FilterType,
+        source_logical_size: LogicalSize,
+    ) -> Self {
+        Self::new(
+            speaker,
+            ScreenBuffer::new_gpu(filter_type, source_logical_size),
+        )
+    }
+
     pub fn new<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         screen_buffer: ScreenBuffer,
     ) -> Self {
-        let frame_format = if screen_buffer.publishes_palette_frame() {
-            FrameFormat::Palette
-        } else {
-            FrameFormat::Rgba
-        };
-        Self::spawn(
-            speaker,
-            ConsoleVideoInfo::new(
-                screen_buffer.filter_type(),
-                frame_format,
-                screen_buffer
-                    .filter_type()
-                    .layout(screen_buffer.source_logical_size()),
-            ),
-            screen_buffer,
-        )
+        Self::spawn(speaker, screen_buffer)
     }
 
-    fn spawn<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
-        video_info: ConsoleVideoInfo,
-        screen: ScreenBuffer,
-    ) -> Self {
+    fn spawn<S: 'static + Sound + MixerInput + Send>(speaker: S, screen: ScreenBuffer) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
         let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
@@ -180,8 +160,10 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video_info,
-            frame_buffer: frame_buffer.clone(),
+            video: ConsoleVideo {
+                presentation: screen.video_presentation().clone(),
+                frame_buffer: VideoFrameBuffer::from_shared(frame_buffer.clone()),
+            },
             metrics: metrics.clone(),
         };
 
@@ -194,27 +176,23 @@ impl Console {
     }
 
     pub fn logical_size(&self) -> LogicalSize {
-        self.video_info.logical_size
+        self.video().presentation().logical_size()
     }
 
     pub fn source_logical_size(&self) -> LogicalSize {
-        self.video_info.source_logical_size
+        self.video().presentation().source_logical_size()
     }
 
     pub fn physical_size(&self) -> PhysicalSize {
-        self.video_info.physical_size
+        self.video().presentation().physical_size()
     }
 
-    pub fn video_info(&self) -> ConsoleVideoInfo {
-        self.video_info
+    pub fn video(&self) -> &ConsoleVideo {
+        &self.video
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        let frame_buffer = self
-            .frame_buffer
-            .read()
-            .unwrap_or_else(|err| err.into_inner());
-        f(&frame_buffer)
+        self.video.frame_buffer().with_bytes(f)
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
