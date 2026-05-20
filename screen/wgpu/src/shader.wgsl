@@ -15,7 +15,15 @@ const FULLSCREEN_UVS: array<vec2<f32>, 3> = array<vec2<f32>, 3>(
     vec2<f32>(2.0, 0.0),
 );
 
-const NTSC_ROW_OFFSETS: array<array<i32, 6>, 7> = __NTSC_ROW_OFFSETS__;
+const NTSC_ROW_OFFSETS: array<array<i32, 6>, 7> = array<array<i32, 6>, 7>(
+    array<i32, 6>(0, 19, 31, 7, 26, 38),
+    array<i32, 6>(1, 20, 32, 8, 27, 39),
+    array<i32, 6>(2, 14, 33, 9, 21, 40),
+    array<i32, 6>(3, 15, 34, 10, 22, 41),
+    array<i32, 6>(4, 16, 28, 11, 23, 35),
+    array<i32, 6>(5, 17, 29, 12, 24, 36),
+    array<i32, 6>(6, 18, 30, 13, 25, 37),
+);
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {

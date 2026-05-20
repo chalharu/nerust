@@ -5,8 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod renderer;
-#[cfg(test)]
-mod shader_source;
+mod srgb_lut;
 mod upload;
 
 pub use renderer::{RenderOutcome, Renderer};
