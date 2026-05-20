@@ -25,6 +25,16 @@ const NTSC_ROW_OFFSETS: array<array<i32, 6>, 7> = array<array<i32, 6>, 7>(
     array<i32, 6>(6, 18, 30, 13, 25, 37),
 );
 
+const NTSC_SOURCE_OFFSETS: array<array<i32, 6>, 7> = array<array<i32, 6>, 7>(
+    array<i32, 6>(1, -1, 0, -2, -4, -3),
+    array<i32, 6>(1, -1, 0, -2, -4, -3),
+    array<i32, 6>(1, 2, 0, -2, -1, -3),
+    array<i32, 6>(1, 2, 0, -2, -1, -3),
+    array<i32, 6>(1, 2, 3, -2, -1, 0),
+    array<i32, 6>(1, 2, 3, -2, -1, 0),
+    array<i32, 6>(1, 2, 3, -2, -1, 0),
+);
+
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     let vertex = i32(vertex_index);
@@ -99,13 +109,14 @@ fn ntsc_color(output_x: i32, output_y: i32) -> vec3<u32> {
     let sample = output_x - chunk * 7;
     let base = chunk * 3;
     let phase_row = (output_y % 3) * NTSC_ENTRY_STRIDE;
+    let source_offsets = NTSC_SOURCE_OFFSETS[u32(sample)];
     let colors = array<u32, 6>(
-        palette_index(base + 1, output_y),
-        palette_index(base + 2, output_y),
-        palette_index(base + 3, output_y),
-        palette_index(base - 2, output_y),
-        palette_index(base - 1, output_y),
-        palette_index(base, output_y),
+        palette_index(base + source_offsets[0], output_y),
+        palette_index(base + source_offsets[1], output_y),
+        palette_index(base + source_offsets[2], output_y),
+        palette_index(base + source_offsets[3], output_y),
+        palette_index(base + source_offsets[4], output_y),
+        palette_index(base + source_offsets[5], output_y),
     );
     let offsets = NTSC_ROW_OFFSETS[u32(sample)];
     let entries = array<u32, 6>(
