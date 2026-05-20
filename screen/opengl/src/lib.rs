@@ -45,7 +45,7 @@ pub struct GlView {
 
 #[derive(Debug, Clone, Copy)]
 enum SingleChannelFormat {
-    Red,
+    RedInteger,
     Luminance,
 }
 
@@ -53,12 +53,17 @@ enum SingleChannelFormat {
 enum ShaderPipelineMode {
     DesktopCore,
     DesktopLegacy,
+    Gles3,
     Gles2,
 }
 
 impl ShaderPipelineMode {
     fn uses_packed_ntsc_lut(self) -> bool {
-        matches!(self, Self::DesktopCore)
+        matches!(self, Self::DesktopCore | Self::Gles3)
+    }
+
+    fn uses_integer_textures(self) -> bool {
+        matches!(self, Self::DesktopCore | Self::Gles3)
     }
 }
 
@@ -78,7 +83,7 @@ impl GlView {
                 width: 0,
                 height: 0,
             },
-            single_channel_format: SingleChannelFormat::Red,
+            single_channel_format: SingleChannelFormat::RedInteger,
         }
     }
 
@@ -93,7 +98,7 @@ impl GlView {
     pub fn on_load(&mut self, filter_type: FilterType, source_logical_size: LogicalSize) {
         let layout = filter_type.layout(source_logical_size);
         let logical_size = layout.logical_size;
-        let (shader, pipeline_mode, single_channel_format) = compile_shader_program();
+        let (shader, pipeline_mode, single_channel_format) = compile_shader_program(filter_type);
         self.source_logical_size = source_logical_size;
         self.pipeline_mode = pipeline_mode;
         self.single_channel_format = single_channel_format;
@@ -110,21 +115,38 @@ impl GlView {
 
         let frame_buffer_width = source_logical_size.width.next_power_of_two();
         let frame_buffer_height = source_logical_size.height.next_power_of_two();
-        configure_palette_frame_texture(
+        configure_frame_texture(
             0,
             self.frame_texture,
             frame_buffer_width,
             frame_buffer_height,
             single_channel_format,
         );
-        configure_rgba_texture(
-            1,
-            self.palette_texture,
-            PALETTE_TEXTURE_WIDTH as usize,
-            1,
-            filter_type.encoded_palette_rgba8().as_ref(),
-        );
-        if self.pipeline_mode.uses_packed_ntsc_lut() {
+        if self.pipeline_mode.uses_integer_textures() {
+            configure_rgba8ui_texture(
+                1,
+                self.palette_texture,
+                PALETTE_TEXTURE_WIDTH as usize,
+                1,
+                filter_type.encoded_palette_rgba8().as_ref(),
+            );
+        } else {
+            configure_rgba_texture(
+                1,
+                self.palette_texture,
+                PALETTE_TEXTURE_WIDTH as usize,
+                1,
+                filter_type.encoded_palette_rgba8().as_ref(),
+            );
+        }
+        if matches!(filter_type, FilterType::None) {
+            if self.pipeline_mode.uses_packed_ntsc_lut() {
+                configure_rgba8ui_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
+            } else {
+                configure_rgba_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
+                configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
+            }
+        } else if self.pipeline_mode.uses_packed_ntsc_lut() {
             if let Some(texture) = filter_type.encoded_packed_ntsc_texture_rgba8() {
                 configure_rgba8ui_texture(
                     2,
@@ -255,15 +277,6 @@ impl GlView {
             logical_size.height as i32,
         )
         .unwrap();
-        uniform_1i(
-            shader.get_uniform("filter_mode"),
-            if matches!(filter_type, FilterType::None) {
-                0
-            } else {
-                1
-            },
-        )
-        .unwrap();
         uniform_2f(
             shader.get_uniform("frame_uv_size"),
             source_logical_size.width as f32 / frame_buffer_width as f32,
@@ -295,7 +308,7 @@ impl GlView {
             self.source_logical_size.width as i32,
             self.source_logical_size.height as i32,
             match self.single_channel_format {
-                SingleChannelFormat::Red => gl::RED,
+                SingleChannelFormat::RedInteger => gl::RED_INTEGER,
                 SingleChannelFormat::Luminance => GL_LUMINANCE,
             },
             gl::UNSIGNED_BYTE,
@@ -346,7 +359,7 @@ impl Default for GlView {
     }
 }
 
-fn configure_palette_frame_texture(
+fn configure_frame_texture(
     unit: u32,
     texture: u32,
     width: usize,
@@ -360,7 +373,7 @@ fn configure_palette_frame_texture(
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
     let (internal_format, upload_format) = match format {
-        SingleChannelFormat::Red => (gl::R8 as GLint, gl::RED),
+        SingleChannelFormat::RedInteger => (gl::R8UI as GLint, gl::RED_INTEGER),
         SingleChannelFormat::Luminance => (GL_LUMINANCE as GLint, GL_LUMINANCE),
     };
     tex_image_2d(
@@ -419,12 +432,35 @@ fn configure_rgba8ui_texture(unit: u32, texture: u32, width: usize, height: usiz
     .unwrap();
 }
 
-fn compile_shader_program() -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
+fn build_glsl_source(
+    source: &str,
+    version_override: Option<&str>,
+    extra_preamble: &[&str],
+    define_palette: bool,
+) -> String {
+    let (version_line, body) = source
+        .split_once('\n')
+        .expect("GLSL source must start with a version line");
+    let mut output = String::new();
+    output.push_str(version_override.unwrap_or(version_line));
+    output.push('\n');
+    for line in extra_preamble {
+        output.push_str(line);
+        output.push('\n');
+    }
+    if define_palette {
+        output.push_str("#define NERUST_FILTER_PALETTE 1\n");
+    }
+    output.push_str(body);
+    output
+}
+
+fn compile_shader_program(
+    filter_type: FilterType,
+) -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
-    let is_gles = context_version
-        .as_deref()
-        .is_some_and(|version| version.contains("OpenGL ES"));
+    let is_gles = is_gles_context(context_version.as_deref());
 
     log::info!(
         "initializing OpenGL renderer with context {:?} and shading language {:?}",
@@ -432,38 +468,64 @@ fn compile_shader_program() -> (Shader, ShaderPipelineMode, SingleChannelFormat)
         shading_version
     );
 
-    let candidates: &[(&str, &str, &str)] = if is_gles {
-        &[(
-            "gles2",
-            include_str!("vertex.glsl"),
-            include_str!("flagment.glsl"),
-        )]
+    let is_palette = matches!(filter_type, FilterType::None);
+    let candidates: Vec<(&str, String, String)> = if is_gles {
+        vec![
+            (
+                "gles3",
+                build_glsl_source(
+                    include_str!("vertex_desktop.glsl"),
+                    Some("#version 300 es"),
+                    &["precision mediump float;"],
+                    false,
+                ),
+                build_glsl_source(
+                    include_str!("fragment_desktop.glsl"),
+                    Some("#version 300 es"),
+                    &[
+                        "precision mediump float;",
+                        "precision highp int;",
+                        "precision mediump usampler2D;",
+                    ],
+                    is_palette,
+                ),
+            ),
+            (
+                "gles2",
+                include_str!("vertex.glsl").to_owned(),
+                build_glsl_source(include_str!("flagment.glsl"), None, &[], is_palette),
+            ),
+        ]
     } else {
-        &[
+        vec![
             (
                 "desktop-core",
-                include_str!("vertex_desktop.glsl"),
-                include_str!("fragment_desktop.glsl"),
+                include_str!("vertex_desktop.glsl").to_owned(),
+                build_glsl_source(include_str!("fragment_desktop.glsl"), None, &[], is_palette),
             ),
             (
                 "desktop-legacy",
-                include_str!("vertex_legacy.glsl"),
-                include_str!("fragment_legacy.glsl"),
+                include_str!("vertex_legacy.glsl").to_owned(),
+                build_glsl_source(include_str!("fragment_legacy.glsl"), None, &[], is_palette),
             ),
         ]
     };
 
     let mut errors = Vec::new();
     for (name, vertex, fragment) in candidates {
-        match Shader::try_new(vertex, fragment) {
+        match Shader::try_new(vertex.as_str(), fragment.as_str()) {
             Ok(shader) => {
                 log::info!("selected {name} shader pipeline");
-                let (pipeline_mode, single_channel_format) = match *name {
-                    "desktop-core" => (ShaderPipelineMode::DesktopCore, SingleChannelFormat::Red),
+                let (pipeline_mode, single_channel_format) = match name {
+                    "desktop-core" => (
+                        ShaderPipelineMode::DesktopCore,
+                        SingleChannelFormat::RedInteger,
+                    ),
                     "desktop-legacy" => (
                         ShaderPipelineMode::DesktopLegacy,
                         SingleChannelFormat::Luminance,
                     ),
+                    "gles3" => (ShaderPipelineMode::Gles3, SingleChannelFormat::RedInteger),
                     "gles2" => (ShaderPipelineMode::Gles2, SingleChannelFormat::Luminance),
                     _ => unreachable!(),
                 };
@@ -481,6 +543,10 @@ fn compile_shader_program() -> (Shader, ShaderPipelineMode, SingleChannelFormat)
     );
 }
 
+fn is_gles_context(version: Option<&str>) -> bool {
+    version.is_some_and(|value| value.contains("OpenGL ES"))
+}
+
 fn gl_string(name: u32) -> Option<String> {
     let value = unsafe { gl::GetString(name) };
     if value.is_null() {
@@ -492,4 +558,25 @@ fn gl_string(name: u32) -> Option<String> {
             .to_string_lossy()
             .into_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_glsl_source, is_gles_context};
+
+    #[test]
+    fn detects_gles_context_strings() {
+        assert!(is_gles_context(Some("OpenGL ES 3.2 Mesa 24.1.0")));
+        assert!(!is_gles_context(Some("4.6 (Core Profile) Mesa 24.1.0")));
+        assert!(!is_gles_context(None));
+    }
+
+    #[test]
+    fn inserts_palette_define_after_version_line() {
+        let source = build_glsl_source("#version 120\nvoid main(void) {}\n", None, &[], true);
+        assert_eq!(
+            source,
+            "#version 120\n#define NERUST_FILTER_PALETTE 1\nvoid main(void) {}\n"
+        );
+    }
 }

@@ -89,8 +89,6 @@ struct FilterUniforms {
     source_height: u32,
     output_width: u32,
     output_height: u32,
-    filter_mode: u32,
-    _padding: [u32; 3],
 }
 
 impl Renderer {
@@ -146,7 +144,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::R8Unorm,
+            format: TextureFormat::R8Uint,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -154,7 +152,7 @@ impl Renderer {
             &device,
             &queue,
             "nerust_palette_texture",
-            TextureFormat::Rgba8Unorm,
+            TextureFormat::Rgba8Uint,
             Extent3d {
                 width: PALETTE_TEXTURE_WIDTH,
                 height: 1,
@@ -187,12 +185,6 @@ impl Renderer {
             source_height: source_logical_size.height as u32,
             output_width: logical_size.width as u32,
             output_height: logical_size.height as u32,
-            filter_mode: if matches!(filter_type, FilterType::None) {
-                0
-            } else {
-                1
-            },
-            _padding: [0; 3],
         };
         let uniforms_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_filter_uniforms"),
@@ -210,7 +202,7 @@ impl Renderer {
                     visibility: ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
-                        sample_type: TextureSampleType::Float { filterable: false },
+                        sample_type: TextureSampleType::Uint,
                         view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
@@ -220,7 +212,7 @@ impl Renderer {
                     visibility: ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
-                        sample_type: TextureSampleType::Float { filterable: false },
+                        sample_type: TextureSampleType::Uint,
                         view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
@@ -279,31 +271,13 @@ impl Renderer {
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("nerust_render_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: PipelineCompilationOptions::default(),
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = create_render_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            config.format,
+            fragment_entry_point(filter_type, config.format.is_srgb()),
+        );
 
         Ok(Self {
             device,
@@ -506,6 +480,53 @@ fn create_texture_from_bytes(
         size,
     );
     texture
+}
+
+fn create_render_pipeline(
+    device: &Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    surface_format: TextureFormat,
+    fragment_entry_point: &'static str,
+) -> RenderPipeline {
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some("nerust_render_pipeline"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: PipelineCompilationOptions::default(),
+        },
+        fragment: Some(FragmentState {
+            module: shader,
+            entry_point: Some(fragment_entry_point),
+            compilation_options: PipelineCompilationOptions::default(),
+            targets: &[Some(ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn fragment_entry_point(filter_type: FilterType, surface_is_srgb: bool) -> &'static str {
+    match (filter_type, surface_is_srgb) {
+        (FilterType::None, true) => "fs_palette_srgb",
+        (FilterType::None, false) => "fs_palette_linear",
+        (FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo, true) => {
+            "fs_ntsc_srgb"
+        }
+        (FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo, false) => {
+            "fs_ntsc_linear"
+        }
+    }
 }
 
 fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {

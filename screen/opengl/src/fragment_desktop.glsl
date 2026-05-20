@@ -1,44 +1,36 @@
 #version 150
 
-uniform sampler2D frame_texture;
-uniform sampler2D palette_texture;
+uniform usampler2D frame_texture;
+#ifdef NERUST_FILTER_PALETTE
+uniform usampler2D palette_texture;
+#else
 uniform usampler2D ntsc_texture;
-uniform vec2 frame_uv_size;
+#endif
 uniform int source_width;
 uniform int source_height;
 uniform int output_width;
 uniform int output_height;
-uniform int filter_mode;
 in vec2 vuv;
 out vec4 frag_color;
 
+#ifdef NERUST_FILTER_PALETTE
+vec3 palette_color(int index) {
+    return vec3(texelFetch(palette_texture, ivec2(index, 0), 0).rgb) / 255.0;
+}
+#else
 const int BLACK_INDEX = 15;
 const int NTSC_ENTRY_STRIDE = 42;
 const uint NTSC_CLAMP_MASK = 0x300c03u;
 const uint NTSC_CLAMP_ADD = 0x20280a02u;
 
-vec2 center_uv(vec2 texture_size, float x, float y) {
-    return vec2((x + 0.5) / texture_size.x, (y + 0.5) / texture_size.y);
-}
-
 int palette_index(int x, int y) {
     if (x < 0 || y < 0 || x >= source_width || y >= source_height) {
         return BLACK_INDEX;
     }
-    vec2 uv = vec2(
-        (float(x) + 0.5) / float(source_width) * frame_uv_size.x,
-        (float(y) + 0.5) / float(source_height) * frame_uv_size.y
-    );
-    return int(floor(texture(frame_texture, uv).r * 255.0 + 0.5));
+    return int(texelFetch(frame_texture, ivec2(x, y), 0).r);
 }
 
-vec3 palette_color(int index) {
-    vec2 uv = center_uv(vec2(64.0, 1.0), float(index), 0.0);
-    return texture(palette_texture, uv).rgb;
-}
-
-uint ntsc_entry(int color, int phase, int offset) {
-    int row = phase * NTSC_ENTRY_STRIDE + offset;
+uint ntsc_entry(int color, int row) {
     uvec4 packed = texelFetch(ntsc_texture, ivec2(color, row), 0);
     return (packed.r << 24u) | (packed.g << 16u) | (packed.b << 8u) | packed.a;
 }
@@ -62,31 +54,32 @@ vec3 ntsc_color(int output_x, int output_y) {
     int chunk = output_x / 7;
     int sample = output_x - chunk * 7;
     int base = chunk * 3;
-    int phase = output_y % 3;
-    ivec3 previous = ivec3(
-        palette_index(base - 2, output_y),
-        palette_index(base - 1, output_y),
-        palette_index(base, output_y)
-    );
-    ivec3 current = ivec3(
-        palette_index(base + 1, output_y),
-        palette_index(base + 2, output_y),
-        palette_index(base + 3, output_y)
-    );
-    uint sum = ntsc_entry(current.x, phase, sample)
-        + ntsc_entry(current.y, phase, (sample + 12) % 7 + 14)
-        + ntsc_entry(current.z, phase, (sample + 10) % 7 + 28)
-        + ntsc_entry(previous.x, phase, (sample + 7) % 14)
-        + ntsc_entry(previous.y, phase, (sample + 5) % 7 + 21)
-        + ntsc_entry(previous.z, phase, (sample + 3) % 7 + 35);
-    return rgb_out_impl(clamp_impl(sum));
+    int phase_row = (output_y % 3) * NTSC_ENTRY_STRIDE;
+    int curr0 = palette_index(base + 1, output_y);
+    int curr1 = palette_index(base + 2, output_y);
+    int curr2 = palette_index(base + 3, output_y);
+    int prev0 = palette_index(base - 2, output_y);
+    int prev1 = palette_index(base - 1, output_y);
+    int prev2 = palette_index(base, output_y);
+    uint entry0 = ntsc_entry(curr0, phase_row + sample);
+    uint entry1 = ntsc_entry(curr1, phase_row + ((sample + 12) % 7 + 14));
+    uint entry2 = ntsc_entry(curr2, phase_row + ((sample + 10) % 7 + 28));
+    uint entry3 = ntsc_entry(prev0, phase_row + ((sample + 7) % 14));
+    uint entry4 = ntsc_entry(prev1, phase_row + ((sample + 5) % 7 + 21));
+    uint entry5 = ntsc_entry(prev2, phase_row + ((sample + 3) % 7 + 35));
+    return rgb_out_impl(clamp_impl(entry0 + entry1 + entry2 + entry3 + entry4 + entry5));
 }
+#endif
 
-void main(void){
+void main(void) {
     int output_x = min(int(floor(vuv.x * float(output_width))), output_width - 1);
     int output_y = min(int(floor(vuv.y * float(output_height))), output_height - 1);
-    vec3 color = filter_mode == 0
-        ? palette_color(palette_index(min(output_x, source_width - 1), min(output_y, source_height - 1)))
-        : ntsc_color(output_x, output_y);
-    frag_color = vec4(color, 1.0);
+#ifdef NERUST_FILTER_PALETTE
+    int source_x = min(output_x, source_width - 1);
+    int source_y = min(output_y, source_height - 1);
+    int index = int(texelFetch(frame_texture, ivec2(source_x, source_y), 0).r);
+    frag_color = vec4(palette_color(index), 1.0);
+#else
+    frag_color = vec4(ntsc_color(output_x, output_y), 1.0);
+#endif
 }

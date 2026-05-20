@@ -1,17 +1,36 @@
 #version 120
 
 uniform sampler2D frame_texture;
+#ifdef NERUST_FILTER_PALETTE
 uniform sampler2D palette_texture;
+#else
 uniform sampler2D ntsc_primary_texture;
 uniform sampler2D ntsc_secondary_texture;
+#endif
 uniform vec2 frame_uv_size;
 uniform int source_width;
 uniform int source_height;
 uniform int output_width;
 uniform int output_height;
-uniform int filter_mode;
 varying vec2 vuv;
 
+vec2 center_uv(vec2 texture_size, float x, float y) {
+    return vec2((x + 0.5) / texture_size.x, (y + 0.5) / texture_size.y);
+}
+
+#ifdef NERUST_FILTER_PALETTE
+vec3 palette_color(int index) {
+    return texture2D(palette_texture, center_uv(vec2(64.0, 1.0), float(index), 0.0)).rgb;
+}
+
+int palette_index(int x, int y) {
+    vec2 uv = vec2(
+        (float(x) + 0.5) / float(source_width) * frame_uv_size.x,
+        (float(y) + 0.5) / float(source_height) * frame_uv_size.y
+    );
+    return int(floor(texture2D(frame_texture, uv).r * 255.0 + 0.5));
+}
+#else
 const int BLACK_INDEX = 15;
 const int NTSC_ENTRY_STRIDE = 42;
 const int NTSC_CHANNEL_BIAS = 512;
@@ -24,10 +43,6 @@ int decode_u16(float high, float low) {
     return int(high) * 256 + int(low) - 32768;
 }
 
-vec2 center_uv(vec2 texture_size, float x, float y) {
-    return vec2((x + 0.5) / texture_size.x, (y + 0.5) / texture_size.y);
-}
-
 int palette_index(int x, int y) {
     if (x < 0 || y < 0 || x >= source_width || y >= source_height) {
         return BLACK_INDEX;
@@ -37,11 +52,6 @@ int palette_index(int x, int y) {
         (float(y) + 0.5) / float(source_height) * frame_uv_size.y
     );
     return int(floor(texture2D(frame_texture, uv).r * 255.0 + 0.5));
-}
-
-vec3 palette_color(int index) {
-    vec2 uv = center_uv(vec2(64.0, 1.0), float(index), 0.0);
-    return texture2D(palette_texture, uv).rgb;
 }
 
 vec3 ntsc_color(int output_x, int output_y) {
@@ -81,12 +91,16 @@ vec3 ntsc_color(int output_x, int output_y) {
     vec3 clamped = clamp(sum - vec3(float(NTSC_CHANNEL_BIAS)), vec3(0.0), vec3(255.0));
     return clamped / 255.0;
 }
+#endif
 
-void main(void){
+void main(void) {
     int output_x = min(int(floor(vuv.x * float(output_width))), output_width - 1);
     int output_y = min(int(floor(vuv.y * float(output_height))), output_height - 1);
-    vec3 color = filter_mode == 0
-        ? palette_color(palette_index(min(output_x, source_width - 1), min(output_y, source_height - 1)))
-        : ntsc_color(output_x, output_y);
-    gl_FragColor = vec4(color, 1.0);
+#ifdef NERUST_FILTER_PALETTE
+    int source_x = min(output_x, source_width - 1);
+    int source_y = min(output_y, source_height - 1);
+    gl_FragColor = vec4(palette_color(palette_index(source_x, source_y)), 1.0);
+#else
+    gl_FragColor = vec4(ntsc_color(output_x, output_y), 1.0);
+#endif
 }
