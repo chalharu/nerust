@@ -48,7 +48,7 @@ impl Memory {
     ) -> u8 {
         let result = match address {
             0..=0x1FFF => OpenBusReadResult::new(self.wram[address & 0x07FF], 0xFF),
-            0x2000..=0x3FFF => ppu.read_register(0x2000 + (address & 7), cartridge, interrupt),
+            0x2000..=0x3FFF => ppu.read_register(address, cartridge, interrupt),
             0x4015 => apu.read_register(address, interrupt),
             0x4016 | 0x4017 => controller.read(address & 1),
             0x4000..=0x4014 | 0x4018..=0x401F => OpenBusReadResult::new(0, 0), // TODO: I/O registers
@@ -60,7 +60,9 @@ impl Memory {
             }
         };
         interrupt.write = false;
-        self.openbus.unite(result)
+        let value = self.openbus.unite(result);
+        cartridge.notify_cpu_read(address, value, interrupt);
+        value
     }
 
     pub(crate) fn peek_work_ram(&self, address: usize) -> Option<u8> {
@@ -112,7 +114,10 @@ impl Memory {
             0..=0x1FFF => self.wram[address & 0x07FF] = value,
             0x2000..=0x3FFF => ppu.write_register(address, value, cartridge, interrupt),
             0x4000..=0x4013 => apu.write_register(address, value, interrupt),
-            0x4014 => interrupt.oam_dma = Some(value),
+            0x4014 => {
+                interrupt.oam_dma = Some(value);
+                cartridge.notify_oam_dma(interrupt);
+            }
             0x4015 => apu.write_register(address, value, interrupt),
             0x4016 => controller.write(value),
             0x4017 => apu.write_register(address, value, interrupt),

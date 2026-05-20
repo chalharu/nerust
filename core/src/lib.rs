@@ -193,7 +193,13 @@ impl Core {
             }
         }
         self.cartridge.step(self.cpu.interrupt_mut());
-        self.apu.step(&mut self.cpu, mixer, mixer_sample_rate);
+        self.apu.step(
+            &mut self.cpu,
+            mixer,
+            mixer_sample_rate,
+            self.cartridge.expansion_audio_output(),
+            self.cartridge.expansion_audio_inverted(),
+        );
 
         result
     }
