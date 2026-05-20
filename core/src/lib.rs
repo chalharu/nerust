@@ -20,6 +20,7 @@ mod mapper;
 mod mapper_state;
 mod ppu;
 mod ppu_bus_event;
+mod ppu_memory_access;
 mod status;
 
 use self::apu::Core as Apu;
@@ -139,7 +140,7 @@ impl Core {
     }
 
     pub fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
-        self.ppu.peek_vram(address, self.cartridge.mirror_mode())
+        self.ppu.peek_vram(address, self.cartridge.as_ref())
     }
 
     pub fn step<S: Screen, M: MixerInput>(
@@ -192,7 +193,13 @@ impl Core {
             }
         }
         self.cartridge.step(self.cpu.interrupt_mut());
-        self.apu.step(&mut self.cpu, mixer, mixer_sample_rate);
+        self.apu.step(
+            &mut self.cpu,
+            mixer,
+            mixer_sample_rate,
+            self.cartridge.expansion_audio_output(),
+            self.cartridge.expansion_audio_inverted(),
+        );
 
         result
     }
