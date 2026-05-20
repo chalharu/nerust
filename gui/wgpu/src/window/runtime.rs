@@ -9,12 +9,12 @@ use crate::surface::SurfaceTarget;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_core::CoreOptions;
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_screen_wgpu::{RenderOutcome, Renderer};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
-use nerust_wgpuwrap::{RenderOutcome, RenderSurface, Renderer, SurfaceSize};
+use nerust_wgpuwrap::{RenderSurface, SurfaceSize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
@@ -80,7 +80,6 @@ pub(crate) struct WindowRuntime {
     console: Console,
     app_menu: AppMenu,
     physical_size: PhysicalSize,
-    logical_size: LogicalSize,
     render_frame_count: u32,
     render_fps: f32,
     render_started_at: Instant,
@@ -91,17 +90,14 @@ pub(crate) struct WindowRuntime {
 
 impl WindowRuntime {
     pub(crate) fn new() -> Self {
-        let screen_buffer = ScreenBuffer::new(
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-        );
-        let physical_size = screen_buffer.physical_size();
-        let logical_size = screen_buffer.logical_size();
+        let filter_type = FilterType::NtscComposite;
+        let source_logical_size = LogicalSize {
+            width: 256,
+            height: 240,
+        };
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new(speaker, screen_buffer);
+        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
+        let physical_size = console.video().presentation().physical_size();
 
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
@@ -125,7 +121,6 @@ impl WindowRuntime {
             console,
             app_menu,
             physical_size,
-            logical_size,
             render_frame_count: 0,
             render_fps: 0.0,
             render_started_at: Instant::now(),
@@ -228,8 +223,7 @@ impl WindowRuntime {
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             render_surface.surface_size(window_surface_size(window.inner_size())),
-            self.logical_size,
-            self.physical_size,
+            self.console.video().presentation(),
         ))
         .unwrap();
         self.window = Some(window);
@@ -326,9 +320,11 @@ impl WindowRuntime {
             return;
         };
         let surface_size = render_surface.surface_size(window_size);
-        let render_result = self.console.with_frame_buffer(|frame_buffer| {
-            renderer.render(render_surface, surface_size, frame_buffer)
-        });
+        let render_result = self
+            .console
+            .video()
+            .frame_buffer()
+            .with_bytes(|frame_buffer| renderer.render(render_surface, surface_size, frame_buffer));
 
         match render_result {
             Ok(RenderOutcome::Presented) => {

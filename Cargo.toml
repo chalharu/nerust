@@ -13,6 +13,7 @@ members = [
   "screen/buffer",
   "screen/filter",
   "screen/opengl",
+  "screen/wgpu",
   "screen/traits",
   "serialize",
   "sound/openal",
@@ -78,6 +79,7 @@ nerust_wgpuwrap = { version = "=0.1.0", path = "wgpuwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
 nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
 nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }
+nerust_screen_wgpu = { version = "=0.1.0", path = "screen/wgpu" }
 nerust_screen_traits = { version = "=0.1.0", path = "screen/traits" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
