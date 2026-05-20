@@ -206,8 +206,10 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::{FilterType, presentation::VideoPresentationPipelineKind};
-    use nerust_screen_traits::video_frame::VideoFrameFormat;
+    use nerust_screen_filter::{
+        FilterType,
+        presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
+    };
     use nerust_screen_traits::{LogicalSize, Screen};
 
     #[test]
