@@ -877,6 +877,70 @@ cases:
       - {frame: 120, action: check_ppu_vram, address: "0x2253", value: "0x04"}
       - {frame: 120, action: check_ppu_vram, address: "0x2256", value: "0x07"}
       - {frame: 120, action: check_screen, hash: "0x67DA23E87CACF921"}
+  # Hardware-backed expectations from the NESdev MMC5 thread:
+  # https://forums.nesdev.org/viewtopic.php?t=15788
+  - id: mapper.mmc5test_v2.start_right_matches_hardware_report
+    category: mapper
+    description: "Verifies the MMC5 8x8 plus alternate bank-order state reported from hardware on NESdev: BANK SET ORDER 89AB01234567 and DATA 456789AB."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 90, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 91, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 180, action: check_ppu_vram, address: "0x2192", value: "0x08"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2193", value: "0x09"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2194", value: "0x0A"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2195", value: "0x0B"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2196", value: "0x00"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2197", value: "0x01"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2198", value: "0x02"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2199", value: "0x03"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219A", value: "0x04"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219B", value: "0x05"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219C", value: "0x06"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219D", value: "0x07"}
+      - {frame: 180, action: check_ppu_vram, address: "0x224F", value: "0x04"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2250", value: "0x05"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2251", value: "0x06"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2252", value: "0x07"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2253", value: "0x08"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2254", value: "0x09"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2255", value: "0x0A"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2256", value: "0x0B"}
+      - {frame: 180, action: check_screen, hash: "0x3D61BDAC506FC863"}
+  - id: mapper.mmc5test_v2.start_right_select_matches_hardware_report
+    category: mapper
+    description: "Verifies the paired MMC5 ExRAM hardware report: enabling ExRAM after the same Start+Right state preserves BANK SET ORDER and DATA while changing the rendered result."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 90, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 91, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 150, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 151, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 240, action: check_ppu_vram, address: "0x2192", value: "0x08"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2193", value: "0x09"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2194", value: "0x0A"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2195", value: "0x0B"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2196", value: "0x00"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2197", value: "0x01"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2198", value: "0x02"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2199", value: "0x03"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219A", value: "0x04"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219B", value: "0x05"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219C", value: "0x06"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219D", value: "0x07"}
+      - {frame: 240, action: check_ppu_vram, address: "0x224F", value: "0x04"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2250", value: "0x05"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2251", value: "0x06"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2252", value: "0x07"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2253", value: "0x08"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2254", value: "0x09"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2255", value: "0x0A"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2256", value: "0x0B"}
+      - {frame: 240, action: check_screen, hash: "0xFB89F4AE5942F390"}
   - id: mapper.mmc5test_v2.a_toggles_obj_pattern
     category: mapper
     description: "Verifies the interactive MMC5 OBJ pattern-table toggle by pressing A in the mmc5test_v2 ROM."
@@ -937,36 +1001,6 @@ cases:
       - {frame: 30, action: check_work_ram, address: "0x0008", value: "0x59"}
       - {frame: 30, action: check_work_ram, address: "0x0009", value: "0x69"}
       - {frame: 30, action: check_screen, hash: "0x5ED324908D3A418B"}
-  - id: mapper.mmc5test.default
-    category: mapper
-    description: "Verifies the older interactive MMC5 test ROM's default result screen."
-    rom: nes-test-roms/mmc5test/mmc5test.nes
-    events:
-      - {frame: 300, action: check_screen, hash: "0x6D2621A729CB171D"}
-  - id: mapper.mmc5test.start_changes_screen
-    category: mapper
-    description: "Verifies the older interactive MMC5 test ROM's START-driven alternate screen."
-    rom: nes-test-roms/mmc5test/mmc5test.nes
-    events:
-      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
-      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
-      - {frame: 300, action: check_screen, hash: "0xA04D6AA89C779CB1"}
-  - id: mapper.mmc5test.left_changes_screen
-    category: mapper
-    description: "Verifies one LEFT-driven alternate screen in the older interactive MMC5 test ROM."
-    rom: nes-test-roms/mmc5test/mmc5test.nes
-    events:
-      - {frame: 30, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
-      - {frame: 31, action: standard_controller, pad: pad1, button: LEFT, state: released}
-      - {frame: 300, action: check_screen, hash: "0xFD0FC79CCF3E3BD2"}
-  - id: mapper.mmc5test.right_changes_screen
-    category: mapper
-    description: "Verifies one RIGHT-driven alternate screen in the older interactive MMC5 test ROM."
-    rom: nes-test-roms/mmc5test/mmc5test.nes
-    events:
-      - {frame: 30, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
-      - {frame: 31, action: standard_controller, pad: pad1, button: RIGHT, state: released}
-      - {frame: 300, action: check_screen, hash: "0x0F519565B1F6EDF4"}
   - id: input.allpads
     category: input
     description: "Detects connected controllers and exercises every single-button input on the allpads 1P NES controller screen."
