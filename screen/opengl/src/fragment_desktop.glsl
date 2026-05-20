@@ -56,11 +56,27 @@ vec3 ntsc_color(int output_x, int output_y) {
     int base = chunk * 3;
     int phase_row = (output_y % 3) * NTSC_ENTRY_STRIDE;
     int curr0 = palette_index(base + 1, output_y);
-    int curr1 = palette_index(base + 2, output_y);
-    int curr2 = palette_index(base + 3, output_y);
+    int curr1;
+    int curr2;
     int prev0 = palette_index(base - 2, output_y);
-    int prev1 = palette_index(base - 1, output_y);
-    int prev2 = palette_index(base, output_y);
+    int prev1;
+    int prev2;
+    if (sample < 2) {
+        curr1 = palette_index(base - 1, output_y);
+        curr2 = palette_index(base, output_y);
+        prev1 = palette_index(base - 4, output_y);
+        prev2 = palette_index(base - 3, output_y);
+    } else if (sample < 4) {
+        curr1 = palette_index(base + 2, output_y);
+        curr2 = palette_index(base, output_y);
+        prev1 = palette_index(base - 1, output_y);
+        prev2 = palette_index(base - 3, output_y);
+    } else {
+        curr1 = palette_index(base + 2, output_y);
+        curr2 = palette_index(base + 3, output_y);
+        prev1 = palette_index(base - 1, output_y);
+        prev2 = palette_index(base, output_y);
+    }
     uint entry0 = ntsc_entry(curr0, phase_row + sample);
     uint entry1 = ntsc_entry(curr1, phase_row + ((sample + 12) % 7 + 14));
     uint entry2 = ntsc_entry(curr2, phase_row + ((sample + 10) % 7 + 28));

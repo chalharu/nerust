@@ -59,12 +59,28 @@ mediump vec3 ntsc_color(int output_x, int output_y) {
     mediump int sample = output_x - chunk * 7;
     mediump int base = chunk * 3;
     mediump int phase = output_y % 3;
-    mediump int prev0 = palette_index(base - 2, output_y);
-    mediump int prev1 = palette_index(base - 1, output_y);
-    mediump int prev2 = palette_index(base, output_y);
     mediump int curr0 = palette_index(base + 1, output_y);
-    mediump int curr1 = palette_index(base + 2, output_y);
-    mediump int curr2 = palette_index(base + 3, output_y);
+    mediump int curr1;
+    mediump int curr2;
+    mediump int prev0 = palette_index(base - 2, output_y);
+    mediump int prev1;
+    mediump int prev2;
+    if (sample < 2) {
+        curr1 = palette_index(base - 1, output_y);
+        curr2 = palette_index(base, output_y);
+        prev1 = palette_index(base - 4, output_y);
+        prev2 = palette_index(base - 3, output_y);
+    } else if (sample < 4) {
+        curr1 = palette_index(base + 2, output_y);
+        curr2 = palette_index(base, output_y);
+        prev1 = palette_index(base - 1, output_y);
+        prev2 = palette_index(base - 3, output_y);
+    } else {
+        curr1 = palette_index(base + 2, output_y);
+        curr2 = palette_index(base + 3, output_y);
+        prev1 = palette_index(base - 1, output_y);
+        prev2 = palette_index(base, output_y);
+    }
     mediump float row0 = float(phase * NTSC_ENTRY_STRIDE + sample);
     mediump float row1 = float(phase * NTSC_ENTRY_STRIDE + ((sample + 12) % 7 + 14));
     mediump float row2 = float(phase * NTSC_ENTRY_STRIDE + ((sample + 10) % 7 + 28));
