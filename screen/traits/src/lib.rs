@@ -7,7 +7,6 @@
 mod logical_size;
 mod physical_size;
 mod rgb;
-pub mod video_frame;
 
 pub use logical_size::LogicalSize;
 pub use physical_size::PhysicalSize;

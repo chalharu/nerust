@@ -7,8 +7,9 @@
 mod filters;
 pub mod presentation;
 
-use crate::presentation::{VideoFilterPipeline, VideoPresentation};
-use nerust_screen_traits::video_frame::{VideoFrameFormat, VideoFrameSpec};
+use crate::presentation::{
+    VideoFilterPipeline, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+};
 use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
 use nes_ntsc::{Setup, ShaderKernelEntry};
 
@@ -240,7 +241,7 @@ impl FilterType {
 #[cfg(test)]
 mod tests {
     use super::{
-        FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
+        FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH, presentation::VideoFrameFormat,
         presentation::VideoPresentationPipelineKind,
     };
     use nerust_screen_traits::LogicalSize;
@@ -343,10 +344,7 @@ mod tests {
             height: 240,
         });
 
-        assert_eq!(
-            presentation.frame_format(),
-            super::VideoFrameFormat::Palette
-        );
+        assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::Palette
@@ -363,10 +361,7 @@ mod tests {
             height: 240,
         });
 
-        assert_eq!(
-            presentation.frame_format(),
-            super::VideoFrameFormat::Palette
-        );
+        assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::Ntsc
@@ -383,7 +378,7 @@ mod tests {
             height: 240,
         });
 
-        assert_eq!(presentation.frame_format(), super::VideoFrameFormat::Rgba);
+        assert_eq!(presentation.frame_format(), VideoFrameFormat::Rgba);
         assert_eq!(
             presentation.pipeline_kind(),
             VideoPresentationPipelineKind::DirectRgba
