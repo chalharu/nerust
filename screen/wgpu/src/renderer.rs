@@ -8,11 +8,9 @@ use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     upload::{FrameUploadLayout, pack_frame_rows},
 };
-use nerust_screen_filter::{
-    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoPresentation,
-    VideoPresentationPipelineKind,
-};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameFormat};
+use nerust_screen_filter::presentation::VideoPresentation;
+use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_wgpuwrap::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
@@ -102,7 +100,7 @@ impl Renderer {
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
     ) -> Result<Self, String> {
-        if presentation.frame_format() != VideoFrameFormat::Palette {
+        if !presentation.is_palette_frame() {
             return Err(
                 "nerust_screen_wgpu does not yet support DirectRgba video presentations"
                     .to_string(),
@@ -312,7 +310,7 @@ impl Renderer {
             &pipeline_layout,
             &shader,
             config.format,
-            fragment_entry_point(presentation.pipeline_kind(), config.format.is_srgb()),
+            fragment_entry_point(presentation.uses_ntsc_pipeline(), config.format.is_srgb()),
         );
 
         Ok(Self {
@@ -598,18 +596,12 @@ fn create_render_pipeline(
     })
 }
 
-fn fragment_entry_point(
-    pipeline_kind: VideoPresentationPipelineKind,
-    surface_is_srgb: bool,
-) -> &'static str {
-    match (pipeline_kind, surface_is_srgb) {
-        (VideoPresentationPipelineKind::Palette, true) => "fs_palette_srgb",
-        (VideoPresentationPipelineKind::Palette, false) => "fs_palette_linear",
-        (VideoPresentationPipelineKind::Ntsc, true) => "fs_ntsc_srgb",
-        (VideoPresentationPipelineKind::Ntsc, false) => "fs_ntsc_linear",
-        (VideoPresentationPipelineKind::DirectRgba, _) => {
-            unreachable!("DirectRgba presentations are rejected during renderer setup")
-        }
+fn fragment_entry_point(uses_ntsc_pipeline: bool, surface_is_srgb: bool) -> &'static str {
+    match (uses_ntsc_pipeline, surface_is_srgb) {
+        (false, true) => "fs_palette_srgb",
+        (false, false) => "fs_palette_linear",
+        (true, true) => "fs_ntsc_srgb",
+        (true, false) => "fs_ntsc_linear",
     }
 }
 
@@ -656,7 +648,7 @@ fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d
 mod tests {
     use super::{compute_viewport, encode_ntsc_texture};
     use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
-    use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoFrameFormat};
+    use nerust_screen_traits::{LogicalSize, PhysicalSize};
     use nerust_wgpuwrap::SurfaceSize;
 
     #[test]
@@ -677,13 +669,10 @@ mod tests {
 
     #[test]
     fn ntsc_texture_is_prepacked_for_r32uint_upload() {
-        let presentation = FilterType::NtscRGB.presentation(
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            VideoFrameFormat::Palette,
-        );
+        let presentation = FilterType::NtscRGB.palette_presentation(LogicalSize {
+            width: 256,
+            height: 240,
+        });
         let source = presentation
             .packed_ntsc_rgba8()
             .expect("NTSC filter should provide a packed texture");

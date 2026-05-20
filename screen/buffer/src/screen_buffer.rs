@@ -6,8 +6,9 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter, VideoPresentation};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen, VideoFrameFormat};
+use nerust_screen_filter::presentation::VideoPresentation;
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -35,7 +36,7 @@ impl ScreenBuffer {
             filter_type,
             src_size,
             PublishMode::FilteredRgba,
-            filter_type.presentation(src_size, VideoFrameFormat::Rgba),
+            filter_type.rgba_presentation(src_size),
         )
     }
 
@@ -44,7 +45,7 @@ impl ScreenBuffer {
             filter_type,
             src_size,
             PublishMode::SourcePalette,
-            filter_type.presentation(src_size, VideoFrameFormat::Palette),
+            filter_type.palette_presentation(src_size),
         )
     }
 
@@ -205,8 +206,9 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::{FilterType, VideoPresentationPipelineKind};
-    use nerust_screen_traits::{LogicalSize, Screen, VideoFrameFormat};
+    use nerust_screen_filter::{FilterType, presentation::VideoPresentationPipelineKind};
+    use nerust_screen_traits::video_frame::VideoFrameFormat;
+    use nerust_screen_traits::{LogicalSize, Screen};
 
     #[test]
     fn all_filters_publish_full_frames() {

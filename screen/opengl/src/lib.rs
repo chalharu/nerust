@@ -13,11 +13,9 @@ use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
 use gl::types::GLint;
 use nerust_glwrap::*;
-use nerust_screen_filter::{
-    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoPresentation,
-    VideoPresentationPipelineKind,
-};
-use nerust_screen_traits::{LogicalSize, VideoFrameFormat};
+use nerust_screen_filter::presentation::VideoPresentation;
+use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_traits::LogicalSize;
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;
@@ -97,7 +95,7 @@ impl GlView {
     }
 
     pub fn on_load(&mut self, presentation: &VideoPresentation) -> Result<(), String> {
-        if presentation.frame_format() != VideoFrameFormat::Palette {
+        if !presentation.is_palette_frame() {
             return Err(
                 "nerust_screen_opengl does not yet support DirectRgba video presentations"
                     .to_string(),
@@ -107,7 +105,7 @@ impl GlView {
         let source_logical_size = presentation.source_logical_size();
         let logical_size = presentation.logical_size();
         let (shader, pipeline_mode, single_channel_format) =
-            compile_shader_program(presentation.pipeline_kind());
+            compile_shader_program(presentation.is_palette_pipeline());
         self.source_logical_size = source_logical_size;
         self.pipeline_mode = pipeline_mode;
         self.single_channel_format = single_channel_format;
@@ -152,7 +150,7 @@ impl GlView {
                 })?,
             );
         }
-        if presentation.pipeline_kind() == VideoPresentationPipelineKind::Palette {
+        if presentation.is_palette_pipeline() {
             if self.pipeline_mode.uses_packed_ntsc_lut() {
                 configure_rgba8ui_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
             } else {
@@ -468,9 +466,7 @@ fn build_glsl_source(
     output
 }
 
-fn compile_shader_program(
-    pipeline_kind: VideoPresentationPipelineKind,
-) -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
+fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
     let is_gles = is_gles_context(context_version.as_deref());
@@ -481,7 +477,6 @@ fn compile_shader_program(
         shading_version
     );
 
-    let is_palette = matches!(pipeline_kind, VideoPresentationPipelineKind::Palette);
     let candidates: Vec<(&str, String, String)> = if is_gles {
         vec![
             (
