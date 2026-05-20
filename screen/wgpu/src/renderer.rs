@@ -169,7 +169,7 @@ impl Renderer {
             &device,
             &queue,
             "nerust_ntsc_texture",
-            TextureFormat::Rgba8Uint,
+            TextureFormat::R32Uint,
             ntsc_size,
             &ntsc_data,
         );
@@ -613,8 +613,25 @@ fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
         );
     };
 
+    let mut packed = Vec::with_capacity(texture.rgba8.len());
+    let mut chunks = texture.rgba8.chunks_exact(4);
+    assert!(
+        chunks.remainder().is_empty(),
+        "packed NTSC texture must be a multiple of 4 bytes"
+    );
+    for chunk in &mut chunks {
+        packed.extend_from_slice(
+            &u32::from_be_bytes(
+                chunk
+                    .try_into()
+                    .expect("NTSC texture chunk must be 4 bytes"),
+            )
+            .to_le_bytes(),
+        );
+    }
+
     (
-        texture.rgba8,
+        packed.into_boxed_slice(),
         Extent3d {
             width: NTSC_TEXTURE_WIDTH,
             height: NTSC_TEXTURE_HEIGHT,
@@ -625,7 +642,8 @@ fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_viewport;
+    use super::{compute_viewport, encode_ntsc_texture};
+    use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
     use nerust_screen_traits::PhysicalSize;
     use nerust_wgpuwrap::SurfaceSize;
 
@@ -643,5 +661,32 @@ mod tests {
         assert_eq!(viewport.height, 900.0);
         assert_eq!(viewport.x, 320.0);
         assert_eq!(viewport.y, 0.0);
+    }
+
+    #[test]
+    fn ntsc_texture_is_prepacked_for_r32uint_upload() {
+        let source = FilterType::NtscRGB
+            .encoded_packed_ntsc_texture_rgba8()
+            .expect("NTSC filter should provide a packed texture")
+            .rgba8;
+        let (packed, size) = encode_ntsc_texture(FilterType::NtscRGB);
+
+        assert_eq!(size.width, NTSC_TEXTURE_WIDTH);
+        assert_eq!(size.height, NTSC_TEXTURE_HEIGHT);
+        assert_eq!(packed.len(), source.len());
+        assert_eq!(
+            &packed[..4],
+            &u32::from_be_bytes(source[..4].try_into().expect("first texel must exist"))
+                .to_le_bytes()
+        );
+        assert_eq!(
+            &packed[packed.len() - 4..],
+            &u32::from_be_bytes(
+                source[source.len() - 4..]
+                    .try_into()
+                    .expect("last texel must exist")
+            )
+            .to_le_bytes()
+        );
     }
 }
