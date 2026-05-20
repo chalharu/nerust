@@ -71,6 +71,7 @@ pub struct Renderer {
     frame_texture: Texture,
     _palette_texture: Texture,
     _ntsc_texture: Texture,
+    _srgb_lut_texture: Texture,
     frame_upload_buffer: Buffer,
     frame_upload_layout: FrameUploadLayout,
     frame_upload_staging: Box<[u8]>,
@@ -169,6 +170,13 @@ impl Renderer {
             ntsc_size,
             &ntsc_data,
         );
+        let srgb_lut_texture = create_texture_1d_from_bytes(
+            &device,
+            &queue,
+            "nerust_srgb_lut_texture",
+            TextureFormat::R32Float,
+            include_bytes!(concat!(env!("OUT_DIR"), "/srgb_lut.bin")),
+        );
         let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_frame_upload_buffer"),
             size: frame_upload_layout.buffer_size,
@@ -180,6 +188,7 @@ impl Renderer {
         let frame_view = frame_texture.create_view(&TextureViewDescriptor::default());
         let palette_view = palette_texture.create_view(&TextureViewDescriptor::default());
         let ntsc_view = ntsc_texture.create_view(&TextureViewDescriptor::default());
+        let srgb_lut_view = srgb_lut_texture.create_view(&TextureViewDescriptor::default());
         let uniforms = FilterUniforms {
             source_width: source_logical_size.width as u32,
             source_height: source_logical_size.height as u32,
@@ -237,6 +246,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D1,
+                    },
+                    count: None,
+                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -259,12 +278,18 @@ impl Renderer {
                     binding: 3,
                     resource: uniforms_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&srgb_lut_view),
+                },
             ],
         });
 
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("nerust_wgpu_shader"),
-            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/shader.wgsl")).into(),
+            ),
         });
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("nerust_pipeline_layout"),
@@ -286,6 +311,7 @@ impl Renderer {
             frame_texture,
             _palette_texture: palette_texture,
             _ntsc_texture: ntsc_texture,
+            _srgb_lut_texture: srgb_lut_texture,
             frame_upload_buffer,
             frame_upload_layout,
             frame_upload_staging,
@@ -478,6 +504,51 @@ fn create_texture_from_bytes(
             rows_per_image: Some(size.height),
         },
         size,
+    );
+    texture
+}
+
+fn create_texture_1d_from_bytes(
+    device: &Device,
+    queue: &Queue,
+    label: &str,
+    format: TextureFormat,
+    bytes: &[u8],
+) -> Texture {
+    let width =
+        u32::try_from(bytes.len() / std::mem::size_of::<f32>()).expect("LUT width must fit u32");
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some(label),
+        size: Extent3d {
+            width,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D1,
+        format,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytes,
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: None,
+            rows_per_image: None,
+        },
+        Extent3d {
+            width,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
     );
     texture
 }
