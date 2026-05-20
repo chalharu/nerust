@@ -1,0 +1,6 @@
+archive
+*.wav
+*.flac
+*.mp3
+*.array
+*.npy
