@@ -35,6 +35,7 @@ pub struct GlView {
     ntsc_primary_texture: u32,
     ntsc_secondary_texture: u32,
     shader: Option<Shader>,
+    pipeline_mode: ShaderPipelineMode,
     use_vao: bool,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
@@ -48,6 +49,19 @@ enum SingleChannelFormat {
     Luminance,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ShaderPipelineMode {
+    DesktopCore,
+    DesktopLegacy,
+    Gles2,
+}
+
+impl ShaderPipelineMode {
+    fn uses_packed_ntsc_lut(self) -> bool {
+        matches!(self, Self::DesktopCore)
+    }
+}
+
 impl GlView {
     pub fn new() -> Self {
         Self {
@@ -56,6 +70,7 @@ impl GlView {
             ntsc_primary_texture: 0,
             ntsc_secondary_texture: 0,
             shader: None,
+            pipeline_mode: ShaderPipelineMode::DesktopLegacy,
             use_vao: false,
             vba: None,
             vbo: None,
@@ -78,8 +93,9 @@ impl GlView {
     pub fn on_load(&mut self, filter_type: FilterType, source_logical_size: LogicalSize) {
         let layout = filter_type.layout(source_logical_size);
         let logical_size = layout.logical_size;
-        let (shader, single_channel_format) = compile_shader_program();
+        let (shader, pipeline_mode, single_channel_format) = compile_shader_program();
         self.source_logical_size = source_logical_size;
+        self.pipeline_mode = pipeline_mode;
         self.single_channel_format = single_channel_format;
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
@@ -108,7 +124,20 @@ impl GlView {
             1,
             filter_type.encoded_palette_rgba8().as_ref(),
         );
-        if let Some(textures) = filter_type.encoded_ntsc_textures_rgba8() {
+        if self.pipeline_mode.uses_packed_ntsc_lut() {
+            if let Some(texture) = filter_type.encoded_packed_ntsc_texture_rgba8() {
+                configure_rgba8ui_texture(
+                    2,
+                    self.ntsc_primary_texture,
+                    NTSC_TEXTURE_WIDTH as usize,
+                    NTSC_TEXTURE_HEIGHT as usize,
+                    texture.rgba8.as_ref(),
+                );
+            } else {
+                configure_rgba8ui_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
+            }
+            configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
+        } else if let Some(textures) = filter_type.encoded_ntsc_textures_rgba8() {
             configure_rgba_texture(
                 2,
                 self.ntsc_primary_texture,
@@ -200,8 +229,12 @@ impl GlView {
         .unwrap();
         uniform_1i(shader.get_uniform("frame_texture"), 0).unwrap();
         uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
-        uniform_1i(shader.get_uniform("ntsc_primary_texture"), 2).unwrap();
-        uniform_1i(shader.get_uniform("ntsc_secondary_texture"), 3).unwrap();
+        if self.pipeline_mode.uses_packed_ntsc_lut() {
+            uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+        } else {
+            uniform_1i(shader.get_uniform("ntsc_primary_texture"), 2).unwrap();
+            uniform_1i(shader.get_uniform("ntsc_secondary_texture"), 3).unwrap();
+        }
         uniform_1i(
             shader.get_uniform("source_width"),
             source_logical_size.width as i32,
@@ -365,7 +398,28 @@ fn configure_rgba_texture(unit: u32, texture: u32, width: usize, height: usize, 
     .unwrap();
 }
 
-fn compile_shader_program() -> (Shader, SingleChannelFormat) {
+fn configure_rgba8ui_texture(unit: u32, texture: u32, width: usize, height: usize, data: &[u8]) {
+    active_texture(gl::TEXTURE0 + unit).unwrap();
+    bind_texture(gl::TEXTURE_2D, texture).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+    tex_image_2d(
+        gl::TEXTURE_2D,
+        0,
+        gl::RGBA8UI as GLint,
+        width as i32,
+        height as i32,
+        0,
+        gl::RGBA_INTEGER,
+        gl::UNSIGNED_BYTE,
+        data.as_ptr() as *const _,
+    )
+    .unwrap();
+}
+
+fn compile_shader_program() -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
     let is_gles = context_version
@@ -404,14 +458,16 @@ fn compile_shader_program() -> (Shader, SingleChannelFormat) {
         match Shader::try_new(vertex, fragment) {
             Ok(shader) => {
                 log::info!("selected {name} shader pipeline");
-                return (
-                    shader,
-                    if *name == "desktop-core" {
-                        SingleChannelFormat::Red
-                    } else {
-                        SingleChannelFormat::Luminance
-                    },
-                );
+                let (pipeline_mode, single_channel_format) = match *name {
+                    "desktop-core" => (ShaderPipelineMode::DesktopCore, SingleChannelFormat::Red),
+                    "desktop-legacy" => (
+                        ShaderPipelineMode::DesktopLegacy,
+                        SingleChannelFormat::Luminance,
+                    ),
+                    "gles2" => (ShaderPipelineMode::Gles2, SingleChannelFormat::Luminance),
+                    _ => unreachable!(),
+                };
+                return (shader, pipeline_mode, single_channel_format);
             }
             Err(err) => errors.push(format!("{name}: {err}")),
         }

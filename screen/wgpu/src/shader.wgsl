@@ -29,10 +29,7 @@ var frame_texture: texture_2d<f32>;
 var palette_texture: texture_2d<f32>;
 
 @group(0) @binding(2)
-var ntsc_primary_texture: texture_2d<f32>;
-
-@group(0) @binding(3)
-var ntsc_secondary_texture: texture_2d<f32>;
+var ntsc_texture: texture_2d<u32>;
 
 struct FilterUniforms {
     source_width: u32,
@@ -45,20 +42,13 @@ struct FilterUniforms {
     _padding2: u32,
 };
 
-@group(0) @binding(4)
+@group(0) @binding(3)
 var<uniform> uniforms: FilterUniforms;
 
 const BLACK_INDEX: i32 = 15;
 const NTSC_ENTRY_STRIDE: i32 = 42;
-const NTSC_CHANNEL_BIAS: i32 = 512;
-
-fn decode_u8(value: f32) -> u32 {
-    return u32(round(clamp(value, 0.0, 1.0) * 255.0));
-}
-
-fn decode_u16(high: u32, low: u32) -> i32 {
-    return i32((high << 8u) | low) - 32768;
-}
+const NTSC_CLAMP_MASK: u32 = 0x300c03u;
+const NTSC_CLAMP_ADD: u32 = 0x20280a02u;
 
 fn palette_index(x: i32, y: i32) -> i32 {
     if x < 0 || y < 0 || x >= i32(uniforms.source_width) || y >= i32(uniforms.source_height) {
@@ -71,15 +61,25 @@ fn palette_color(index: i32) -> vec3<f32> {
     return textureLoad(palette_texture, vec2<i32>(index, 0), 0).rgb;
 }
 
-fn ntsc_entry(color: i32, phase: i32, offset: i32) -> vec3<i32> {
+fn ntsc_entry(color: i32, phase: i32, offset: i32) -> u32 {
     let row = phase * NTSC_ENTRY_STRIDE + offset;
-    let primary = textureLoad(ntsc_primary_texture, vec2<i32>(color, row), 0);
-    let secondary = textureLoad(ntsc_secondary_texture, vec2<i32>(color, row), 0);
-    return vec3<i32>(
-        decode_u16(decode_u8(primary.r), decode_u8(primary.g)),
-        decode_u16(decode_u8(primary.b), decode_u8(primary.a)),
-        decode_u16(decode_u8(secondary.r), decode_u8(secondary.g)),
-    );
+    let packed = textureLoad(ntsc_texture, vec2<i32>(color, row), 0);
+    return (packed.r << 24u) | (packed.g << 16u) | (packed.b << 8u) | packed.a;
+}
+
+fn clamp_impl(io: u32) -> u32 {
+    let sub = (io >> 9u) & NTSC_CLAMP_MASK;
+    let clamp = NTSC_CLAMP_ADD - sub;
+    return (io | clamp) & (clamp - sub);
+}
+
+fn rgb_out_impl(raw: u32) -> vec3<f32> {
+    let rgb = ((raw >> 5u) & 0x00ff0000u) | ((raw >> 3u) & 0x0000ff00u) | ((raw >> 1u) & 0x000000ffu);
+    return vec3<f32>(
+        f32((rgb >> 16u) & 0xffu),
+        f32((rgb >> 8u) & 0xffu),
+        f32(rgb & 0xffu),
+    ) / 255.0;
 }
 
 fn ntsc_color(output_x: i32, output_y: i32) -> vec3<f32> {
@@ -103,12 +103,7 @@ fn ntsc_color(output_x: i32, output_y: i32) -> vec3<f32> {
         + ntsc_entry(previous.x, phase, (sample + 7) % 14)
         + ntsc_entry(previous.y, phase, (sample + 5) % 7 + 21)
         + ntsc_entry(previous.z, phase, (sample + 3) % 7 + 35);
-    let clamped = clamp(
-        sum - vec3<i32>(NTSC_CHANNEL_BIAS),
-        vec3<i32>(0),
-        vec3<i32>(255),
-    );
-    return vec3<f32>(clamped) / 255.0;
+    return rgb_out_impl(clamp_impl(sum));
 }
 
 fn srgb_channel_to_linear(channel: f32) -> f32 {

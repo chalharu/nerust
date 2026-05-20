@@ -70,8 +70,7 @@ pub struct Renderer {
     config: SurfaceConfiguration,
     frame_texture: Texture,
     _palette_texture: Texture,
-    _ntsc_primary_texture: Texture,
-    _ntsc_secondary_texture: Texture,
+    _ntsc_texture: Texture,
     frame_upload_buffer: Buffer,
     frame_upload_layout: FrameUploadLayout,
     frame_upload_staging: Box<[u8]>,
@@ -163,22 +162,14 @@ impl Renderer {
             },
             &filter_type.encoded_palette_rgba8(),
         );
-        let (ntsc_primary_data, ntsc_secondary_data, ntsc_size) = encode_ntsc_textures(filter_type);
-        let ntsc_primary_texture = create_texture_from_bytes(
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(filter_type);
+        let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
-            "nerust_ntsc_primary_texture",
-            TextureFormat::Rgba8Unorm,
+            "nerust_ntsc_texture",
+            TextureFormat::Rgba8Uint,
             ntsc_size,
-            &ntsc_primary_data,
-        );
-        let ntsc_secondary_texture = create_texture_from_bytes(
-            &device,
-            &queue,
-            "nerust_ntsc_secondary_texture",
-            TextureFormat::Rgba8Unorm,
-            ntsc_size,
-            &ntsc_secondary_data,
+            &ntsc_data,
         );
         let frame_upload_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("nerust_frame_upload_buffer"),
@@ -190,9 +181,7 @@ impl Renderer {
             vec![0; frame_upload_layout.buffer_size as usize].into_boxed_slice();
         let frame_view = frame_texture.create_view(&TextureViewDescriptor::default());
         let palette_view = palette_texture.create_view(&TextureViewDescriptor::default());
-        let ntsc_primary_view = ntsc_primary_texture.create_view(&TextureViewDescriptor::default());
-        let ntsc_secondary_view =
-            ntsc_secondary_texture.create_view(&TextureViewDescriptor::default());
+        let ntsc_view = ntsc_texture.create_view(&TextureViewDescriptor::default());
         let uniforms = FilterUniforms {
             source_width: source_logical_size.width as u32,
             source_height: source_logical_size.height as u32,
@@ -241,23 +230,13 @@ impl Renderer {
                     visibility: ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
-                        sample_type: TextureSampleType::Float { filterable: false },
+                        sample_type: TextureSampleType::Uint,
                         view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        sample_type: TextureSampleType::Float { filterable: false },
-                        view_dimension: TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
                     visibility: ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -282,14 +261,10 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&ntsc_primary_view),
+                    resource: wgpu::BindingResource::TextureView(&ntsc_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&ntsc_secondary_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
                     resource: uniforms_buffer.as_entire_binding(),
                 },
             ],
@@ -336,8 +311,7 @@ impl Renderer {
             config,
             frame_texture,
             _palette_texture: palette_texture,
-            _ntsc_primary_texture: ntsc_primary_texture,
-            _ntsc_secondary_texture: ntsc_secondary_texture,
+            _ntsc_texture: ntsc_texture,
             frame_upload_buffer,
             frame_upload_layout,
             frame_upload_staging,
@@ -534,10 +508,9 @@ fn create_texture_from_bytes(
     texture
 }
 
-fn encode_ntsc_textures(filter_type: FilterType) -> (Box<[u8]>, Box<[u8]>, Extent3d) {
-    let Some(textures) = filter_type.encoded_ntsc_textures_rgba8() else {
+fn encode_ntsc_texture(filter_type: FilterType) -> (Box<[u8]>, Extent3d) {
+    let Some(texture) = filter_type.encoded_packed_ntsc_texture_rgba8() else {
         return (
-            vec![0; 4].into_boxed_slice(),
             vec![0; 4].into_boxed_slice(),
             Extent3d {
                 width: 1,
@@ -548,8 +521,7 @@ fn encode_ntsc_textures(filter_type: FilterType) -> (Box<[u8]>, Box<[u8]>, Exten
     };
 
     (
-        textures.primary_rgba8,
-        textures.secondary_rgba8,
+        texture.rgba8,
         Extent3d {
             width: NTSC_TEXTURE_WIDTH,
             height: NTSC_TEXTURE_HEIGHT,
