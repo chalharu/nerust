@@ -90,7 +90,7 @@ impl GLAreaExtend for GLArea {
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            view.on_load(state.console.video().presentation()).unwrap();
+            view.on_load(state.presentation()).unwrap();
             state.view = Some(view);
         }
         self.resize(self.glarea().width(), self.glarea().height());
@@ -106,7 +106,7 @@ impl GLAreaExtend for GLArea {
             log::error!("{}", e);
             return;
         }
-        let physical_size = self.state().borrow().physical_size;
+        let physical_size = self.state().borrow().physical_size();
         let rate_x = f64::from(width) / f64::from(physical_size.width);
         let rate_y = f64::from(height) / f64::from(physical_size.height);
         let rate = f64::min(rate_x, rate_y);
@@ -149,11 +149,7 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     }
     if let Ok(state) = state.try_borrow() {
         if let Some(ref view) = state.view {
-            state
-                .console
-                .video()
-                .frame_buffer()
-                .with_bytes(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
+            state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
         }
     }
     unsafe {
