@@ -13,8 +13,9 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use nerust_core::controller::standard_controller::Buttons;
-use nerust_gui_runtime::GuiSession;
+use nerust_gui_runtime::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+};
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
@@ -110,13 +111,33 @@ fn create_window(
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
+fn physical_key_controller_input(key: PhysicalKey) -> Option<ControllerInput> {
+    Some(match key {
+        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::A,
+        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::B,
+        PhysicalKey::Code(KeyCode::KeyC) => ControllerInput::Select,
+        PhysicalKey::Code(KeyCode::KeyV) => ControllerInput::Start,
+        PhysicalKey::Code(KeyCode::ArrowUp) => ControllerInput::Up,
+        PhysicalKey::Code(KeyCode::ArrowDown) => ControllerInput::Down,
+        PhysicalKey::Code(KeyCode::ArrowLeft) => ControllerInput::Left,
+        PhysicalKey::Code(KeyCode::ArrowRight) => ControllerInput::Right,
+        _ => return None,
+    })
+}
+
+fn element_state_to_input_state(state: ElementState) -> InputState {
+    match state {
+        ElementState::Pressed => InputState::Pressed,
+        ElementState::Released => InputState::Released,
+    }
+}
+
 pub struct Window {
     view: Option<GlView>,
     gl_context: Option<PossiblyCurrentContext>,
     gl_surface: Option<Surface<WindowSurface>>,
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
-    keys: Buttons,
     session: GuiSession,
     last_title_update: Instant,
     last_presented_frame_counter: u64,
@@ -131,7 +152,6 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            keys: Buttons::empty(),
             session: GuiSession::default(),
             last_title_update: Instant::now(),
             last_presented_frame_counter: 0,
@@ -242,15 +262,8 @@ impl Window {
         }
     }
 
-    fn set_paused(&mut self, paused: bool) {
-        if self.session.paused() == paused {
-            return;
-        }
-
-        if paused {
-            self.session.pause();
-        } else {
-            self.session.resume();
+    fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
+        if outcome.needs_redraw {
             self.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
@@ -259,20 +272,15 @@ impl Window {
         self.refresh_window_title();
     }
 
-    fn request_redraw_after_resume(&mut self, was_paused: bool) {
-        if was_paused && !self.session.paused() {
-            self.needs_redraw = true;
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+    fn apply_session_command(&mut self, command: SessionCommand) {
+        let outcome = self.session.run_command(command);
+        if outcome.executed
+            && let SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot = command
+            && let Some(slot_id) = self.session.active_slot_id()
+        {
+            log::info!("selected save slot {slot_id}");
         }
-        self.refresh_window_title();
-    }
-
-    fn select_adjacent_slot(&mut self, forward: bool) {
-        if let Some(next_slot_id) = self.session.select_adjacent_slot(forward) {
-            log::info!("selected save slot {next_slot_id}");
-        }
+        self.apply_command_outcome(outcome);
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
@@ -285,51 +293,42 @@ impl Window {
         // Down   -> Down
         // Left   -> Left
         // Right  -> Right
-        let code = match input.physical_key {
-            PhysicalKey::Code(KeyCode::KeyZ) => Buttons::A,
-            PhysicalKey::Code(KeyCode::KeyX) => Buttons::B,
-            PhysicalKey::Code(KeyCode::KeyC) => Buttons::SELECT,
-            PhysicalKey::Code(KeyCode::KeyV) => Buttons::START,
-            PhysicalKey::Code(KeyCode::ArrowUp) => Buttons::UP,
-            PhysicalKey::Code(KeyCode::ArrowDown) => Buttons::DOWN,
-            PhysicalKey::Code(KeyCode::ArrowLeft) => Buttons::LEFT,
-            PhysicalKey::Code(KeyCode::ArrowRight) => Buttons::RIGHT,
+        let controller_input = match input.physical_key {
             PhysicalKey::Code(KeyCode::Space) if input.state == ElementState::Pressed => {
-                self.set_paused(!self.session.paused());
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::TogglePause);
+                None
             }
             PhysicalKey::Code(KeyCode::Escape) => {
                 if input.state == ElementState::Released {
-                    let _ = self.session.reset();
+                    self.apply_session_command(SessionCommand::Reset);
                 }
-                Buttons::empty()
+                None
             }
             PhysicalKey::Code(KeyCode::F5) if input.state == ElementState::Released => {
-                self.session.save_active_slot_or_new();
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::SaveActiveSlotOrNew);
+                None
             }
             PhysicalKey::Code(KeyCode::F6) if input.state == ElementState::Released => {
-                self.select_adjacent_slot(true);
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::SelectNextSlot);
+                None
             }
             PhysicalKey::Code(KeyCode::F7) if input.state == ElementState::Released => {
-                self.select_adjacent_slot(false);
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::SelectPreviousSlot);
+                None
             }
             PhysicalKey::Code(KeyCode::F8) if input.state == ElementState::Released => {
-                let was_paused = self.session.paused();
-                if self.session.load_active_slot() {
-                    self.request_redraw_after_resume(was_paused);
-                }
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::LoadActiveSlot);
+                None
             }
-            _ => Buttons::empty(),
+            key => physical_key_controller_input(key),
         };
-        self.keys = match input.state {
-            ElementState::Pressed => self.keys | code,
-            ElementState::Released => self.keys & !code,
-        };
-        self.session.set_pad1(self.keys);
+        if let Some(controller_input) = controller_input {
+            self.session.handle_controller_input(
+                ControllerPort::One,
+                controller_input,
+                element_state_to_input_state(input.state),
+            );
+        }
     }
 }
 
@@ -354,6 +353,7 @@ impl ApplicationHandler for Window {
                     window.request_redraw();
                 }
             }
+            WindowEvent::Focused(false) => self.session.clear_controller_input(),
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
@@ -399,5 +399,36 @@ impl Drop for Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::physical_key_controller_input;
+    use nerust_gui_runtime::ControllerInput;
+    use winit::keyboard::{KeyCode, PhysicalKey};
+
+    #[test]
+    fn physical_key_mapping_matches_controller_layout() {
+        assert_eq!(
+            physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
+            Some(ControllerInput::A)
+        );
+        assert_eq!(
+            physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
+            Some(ControllerInput::B)
+        );
+        assert_eq!(
+            physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),
+            Some(ControllerInput::Up)
+        );
+        assert_eq!(
+            physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowRight)),
+            Some(ControllerInput::Right)
+        );
+        assert_eq!(
+            physical_key_controller_input(PhysicalKey::Code(KeyCode::Enter)),
+            None
+        );
     }
 }

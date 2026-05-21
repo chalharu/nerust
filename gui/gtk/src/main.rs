@@ -6,8 +6,10 @@ use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_core::controller::standard_controller::Buttons;
-use nerust_gui_runtime::{GuiSession, StateSlotSummary, VideoPresentation};
+use nerust_gui_runtime::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+    StateSlotSummary, VideoPresentation,
+};
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::PhysicalSize;
 use nerust_sound_openal::prepare_macos_runtime;
@@ -44,21 +46,8 @@ impl State {
         self.session.physical_size()
     }
 
-    pub(crate) fn pause(&mut self) {
-        self.session.pause();
-    }
-
-    #[allow(dead_code, reason = "reserved for GTK menu state bindings")]
-    pub(crate) fn paused(&self) -> bool {
-        self.session.paused()
-    }
-
     pub(crate) fn can_pause(&self) -> bool {
         self.session.can_pause()
-    }
-
-    pub(crate) fn resume(&mut self) {
-        self.session.resume();
     }
 
     pub(crate) fn can_resume(&self) -> bool {
@@ -67,7 +56,7 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
-            self.resume();
+            let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
 
@@ -87,8 +76,21 @@ impl State {
         self.session.flush_before_exit();
     }
 
-    pub(crate) fn set_pad1(&mut self, data: Buttons) {
-        self.session.set_pad1(data)
+    pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
+        self.session.run_command(command)
+    }
+
+    pub(crate) fn handle_controller_input(
+        &mut self,
+        port: ControllerPort,
+        input: ControllerInput,
+        state: InputState,
+    ) {
+        self.session.handle_controller_input(port, input, state);
+    }
+
+    pub(crate) fn clear_controller_input(&mut self) {
+        self.session.clear_controller_input();
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {
@@ -97,30 +99,6 @@ impl State {
 
     pub(crate) fn active_slot_id(&self) -> Option<u64> {
         self.session.active_slot_id()
-    }
-
-    pub(crate) fn save_active_slot_or_new(&mut self) {
-        self.session.save_active_slot_or_new();
-    }
-
-    pub(crate) fn create_slot(&mut self) {
-        self.session.create_slot();
-    }
-
-    pub(crate) fn save_slot(&mut self, slot_id: u64, make_active: bool) {
-        self.session.save_slot(slot_id, make_active);
-    }
-
-    pub(crate) fn load_slot(&mut self, slot_id: u64) {
-        let _ = self.session.load_slot(slot_id);
-    }
-
-    pub(crate) fn delete_slot(&mut self, slot_id: u64) {
-        self.session.delete_slot(slot_id);
-    }
-
-    pub(crate) fn select_active_slot(&mut self, slot_id: u64) {
-        self.session.select_active_slot(slot_id);
     }
 }
 

@@ -37,7 +37,7 @@ version = "0.1.0"
 authors = ["chalharu"]
 license = "MPL-2.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [workspace.dependencies]
 alto = { version = "=3.0.4" }

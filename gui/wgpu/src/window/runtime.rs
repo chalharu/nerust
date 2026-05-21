@@ -7,8 +7,9 @@
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
 use crate::surface::SurfaceTarget;
 use nerust_core::CoreOptions;
-use nerust_core::controller::standard_controller::Buttons;
-use nerust_gui_runtime::GuiSession;
+use nerust_gui_runtime::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+};
 use nerust_screen_traits::PhysicalSize;
 use nerust_screen_wgpu::{RenderOutcome, Renderer};
 use nerust_wgpuwrap::{RenderSurface, SurfaceSize};
@@ -28,18 +29,26 @@ use tao::{
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-fn keycode_button(code: KeyCode) -> Buttons {
-    match code {
-        KeyCode::KeyZ => Buttons::A,
-        KeyCode::KeyX => Buttons::B,
-        KeyCode::KeyC => Buttons::SELECT,
-        KeyCode::KeyV => Buttons::START,
-        KeyCode::ArrowUp => Buttons::UP,
-        KeyCode::ArrowDown => Buttons::DOWN,
-        KeyCode::ArrowLeft => Buttons::LEFT,
-        KeyCode::ArrowRight => Buttons::RIGHT,
-        _ => Buttons::empty(),
-    }
+fn keycode_controller_input(code: KeyCode) -> Option<ControllerInput> {
+    Some(match code {
+        KeyCode::KeyZ => ControllerInput::A,
+        KeyCode::KeyX => ControllerInput::B,
+        KeyCode::KeyC => ControllerInput::Select,
+        KeyCode::KeyV => ControllerInput::Start,
+        KeyCode::ArrowUp => ControllerInput::Up,
+        KeyCode::ArrowDown => ControllerInput::Down,
+        KeyCode::ArrowLeft => ControllerInput::Left,
+        KeyCode::ArrowRight => ControllerInput::Right,
+        _ => return None,
+    })
+}
+
+fn element_state_to_input_state(state: ElementState) -> Option<InputState> {
+    Some(match state {
+        ElementState::Pressed => InputState::Pressed,
+        ElementState::Released => InputState::Released,
+        _ => return None,
+    })
 }
 
 fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
@@ -61,7 +70,6 @@ pub(crate) struct WindowRuntime {
     render_surface: Option<RenderSurface<SurfaceTarget>>,
     renderer: Option<Renderer>,
     last_render_error: Option<String>,
-    keys: Buttons,
     session: GuiSession,
     app_menu: AppMenu,
     last_title_update: Instant,
@@ -88,7 +96,6 @@ impl WindowRuntime {
             render_surface: None,
             renderer: None,
             last_render_error: None,
-            keys: Buttons::empty(),
             session: GuiSession::default(),
             app_menu,
             last_title_update: Instant::now(),
@@ -129,10 +136,8 @@ impl WindowRuntime {
                 .is_some_and(|window| window_id == window.id()) =>
             {
                 match event {
-                    WindowEvent::CloseRequested => {
-                        if self.prepare_close() {
-                            *control_flow = ControlFlow::Exit;
-                        }
+                    WindowEvent::CloseRequested if self.prepare_close() => {
+                        *control_flow = ControlFlow::Exit;
                     }
                     WindowEvent::Focused(false) => self.clear_keys(),
                     WindowEvent::Resized(_) => {
@@ -228,24 +233,6 @@ impl WindowRuntime {
         }
     }
 
-    fn set_paused(&mut self, paused: bool) {
-        if self.session.paused() == paused {
-            return;
-        }
-
-        if paused {
-            self.session.pause();
-        } else {
-            self.session.resume();
-            self.needs_redraw = true;
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
-        }
-        self.sync_menu_state();
-        self.refresh_window_title();
-    }
-
     fn sync_menu_state(&mut self) {
         self.app_menu.update(
             self.session.loaded(),
@@ -255,8 +242,8 @@ impl WindowRuntime {
         );
     }
 
-    fn request_redraw_after_resume(&mut self, was_paused: bool) {
-        if was_paused && !self.session.paused() {
+    fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
+        if outcome.needs_redraw {
             self.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
@@ -266,56 +253,19 @@ impl WindowRuntime {
         self.refresh_window_title();
     }
 
-    fn create_slot(&mut self) {
-        self.session.create_slot();
-        self.sync_menu_state();
-    }
-
-    fn save_slot(&mut self, slot_id: u64, make_active: bool) {
-        self.session.save_slot(slot_id, make_active);
-        self.sync_menu_state();
-    }
-
-    fn load_slot(&mut self, slot_id: u64) {
-        let was_paused = self.session.paused();
-        if self.session.load_slot(slot_id) {
-            self.request_redraw_after_resume(was_paused);
-        }
-    }
-
-    fn delete_slot(&mut self, slot_id: u64) {
-        self.session.delete_slot(slot_id);
-        self.sync_menu_state();
+    fn apply_session_command(&mut self, command: SessionCommand) {
+        let outcome = self.session.run_command(command);
+        self.apply_command_outcome(outcome);
     }
 
     fn on_menu_command(&mut self, control_flow: &mut ControlFlow, command: MenuCommand) {
         match command {
-            MenuCommand::Pause => self.set_paused(true),
-            MenuCommand::Resume => self.set_paused(false),
-            MenuCommand::Reset => {
-                let _ = self
-                    .session
-                    .reset()
-                    .map_err(|error| log::warn!("reset failed: {error}"));
-            }
+            MenuCommand::Session(command) => self.apply_session_command(command),
             MenuCommand::Quit => {
                 if self.prepare_close() {
                     *control_flow = ControlFlow::Exit;
                 }
             }
-            MenuCommand::CreateSlot => self.create_slot(),
-            MenuCommand::SaveActiveSlot => {
-                self.session.save_active_slot_or_new();
-                self.sync_menu_state();
-            }
-            MenuCommand::LoadActiveSlot => self.load_active_slot(),
-            MenuCommand::SelectActiveSlot(slot_id) => {
-                self.session.select_active_slot(slot_id);
-                self.sync_menu_state();
-            }
-            MenuCommand::SaveSlot(slot_id) => self.save_slot(slot_id, false),
-            MenuCommand::LoadSlot(slot_id) => self.load_slot(slot_id),
-            MenuCommand::DeleteSlot(slot_id) => self.delete_slot(slot_id),
         }
     }
 
@@ -396,43 +346,37 @@ impl WindowRuntime {
     fn on_keyboard_input(&mut self, input: KeyEvent) {
         let code = match input.physical_key {
             KeyCode::Space if input.state == ElementState::Pressed && !input.repeat => {
-                self.set_paused(!self.session.paused());
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::TogglePause);
+                None
             }
             KeyCode::Escape if input.state == ElementState::Released => {
-                let _ = self.session.reset();
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::Reset);
+                None
             }
             KeyCode::F5 if input.state == ElementState::Released && !input.repeat => {
-                self.session.save_active_slot_or_new();
-                self.sync_menu_state();
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::SaveActiveSlotOrNew);
+                None
             }
             KeyCode::F8 if input.state == ElementState::Released && !input.repeat => {
-                self.load_active_slot();
-                Buttons::empty()
+                self.apply_session_command(SessionCommand::LoadActiveSlot);
+                None
             }
-            code => keycode_button(code),
+            code => keycode_controller_input(code),
         };
 
-        self.keys = match input.state {
-            ElementState::Pressed => self.keys | code,
-            ElementState::Released => self.keys & !code,
-            _ => self.keys,
-        };
-        self.session.set_pad1(self.keys);
+        if let Some(input_state) = element_state_to_input_state(input.state)
+            && let Some(controller_input) = code
+        {
+            self.session.handle_controller_input(
+                ControllerPort::One,
+                controller_input,
+                input_state,
+            );
+        }
     }
 
     fn clear_keys(&mut self) {
-        self.keys = Buttons::empty();
-        self.session.set_pad1(self.keys);
-    }
-
-    fn load_active_slot(&mut self) {
-        let was_paused = self.session.paused();
-        if self.session.load_active_slot() {
-            self.request_redraw_after_resume(was_paused);
-        }
+        self.session.clear_controller_input();
     }
 
     fn prepare_close(&mut self) -> bool {
@@ -451,22 +395,28 @@ impl Drop for WindowRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::keycode_button;
-    use nerust_core::controller::standard_controller::Buttons;
+    use super::keycode_controller_input;
+    use nerust_gui_runtime::ControllerInput;
     use tao::keyboard::KeyCode;
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(keycode_button(KeyCode::KeyZ).bits(), Buttons::A.bits());
-        assert_eq!(keycode_button(KeyCode::KeyX).bits(), Buttons::B.bits());
-        assert_eq!(keycode_button(KeyCode::ArrowUp).bits(), Buttons::UP.bits());
         assert_eq!(
-            keycode_button(KeyCode::ArrowRight).bits(),
-            Buttons::RIGHT.bits()
+            keycode_controller_input(KeyCode::KeyZ),
+            Some(ControllerInput::A)
         );
         assert_eq!(
-            keycode_button(KeyCode::Enter).bits(),
-            Buttons::empty().bits()
+            keycode_controller_input(KeyCode::KeyX),
+            Some(ControllerInput::B)
         );
+        assert_eq!(
+            keycode_controller_input(KeyCode::ArrowUp),
+            Some(ControllerInput::Up)
+        );
+        assert_eq!(
+            keycode_controller_input(KeyCode::ArrowRight),
+            Some(ControllerInput::Right)
+        );
+        assert_eq!(keycode_controller_input(KeyCode::Enter), None);
     }
 }

@@ -4,22 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_gui_runtime::{StateSlotSummary, slot_label};
+use nerust_gui_runtime::{SessionCommand, StateSlotSummary, slot_label};
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum MenuCommand {
-    Pause,
-    Resume,
-    Reset,
+    Session(SessionCommand),
     Quit,
-    CreateSlot,
-    SaveActiveSlot,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -37,7 +28,7 @@ pub(crate) enum UserEvent {
     target_os = "windows"
 ))]
 mod imp {
-    use super::{MenuCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
+    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
     #[cfg(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -73,7 +64,7 @@ mod imp {
         save_slot_menu: Submenu,
         load_slot_menu: Submenu,
         delete_slot_menu: Submenu,
-        dynamic_commands: Arc<RwLock<Vec<(MenuId, MenuCommand)>>>,
+        dynamic_commands: Arc<RwLock<Vec<(MenuId, SessionCommand)>>>,
     }
 
     impl AppMenu {
@@ -121,7 +112,7 @@ mod imp {
             let create_slot_id = create_slot.id().clone();
             let save_active_id = save_active.id().clone();
             let load_active_id = load_active.id().clone();
-            let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, MenuCommand)>::new()));
+            let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
             let dynamic_commands_handler = dynamic_commands.clone();
 
             file_menu.append(&quit).unwrap();
@@ -142,25 +133,27 @@ mod imp {
 
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &pause_id {
-                    Some(MenuCommand::Pause)
+                    Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
-                    Some(MenuCommand::Resume)
+                    Some(MenuCommand::Session(SessionCommand::Resume))
                 } else if event.id() == &reset_id {
-                    Some(MenuCommand::Reset)
+                    Some(MenuCommand::Session(SessionCommand::Reset))
                 } else if event.id() == &quit_id {
                     Some(MenuCommand::Quit)
                 } else if event.id() == &create_slot_id {
-                    Some(MenuCommand::CreateSlot)
+                    Some(MenuCommand::Session(SessionCommand::CreateSlot))
                 } else if event.id() == &save_active_id {
-                    Some(MenuCommand::SaveActiveSlot)
+                    Some(MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew))
                 } else if event.id() == &load_active_id {
-                    Some(MenuCommand::LoadActiveSlot)
+                    Some(MenuCommand::Session(SessionCommand::LoadActiveSlot))
                 } else {
                     dynamic_commands_handler
                         .read()
                         .unwrap_or_else(|err| err.into_inner())
                         .iter()
-                        .find_map(|(id, command)| (event.id() == id).then_some(*command))
+                        .find_map(|(id, command)| {
+                            (event.id() == id).then_some(MenuCommand::Session(*command))
+                        })
                 };
                 if let Some(command) = command {
                     let _ = proxy.send_event(UserEvent::Menu(command));
@@ -240,25 +233,31 @@ mod imp {
             clear_submenu(&self.delete_slot_menu);
             let mut commands = Vec::new();
             for slot in slots {
-                let select_item = MenuItem::new(&slot_label(slot, active_slot), true, None);
+                let select_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     select_item.id().clone(),
-                    MenuCommand::SelectActiveSlot(slot.slot_id),
+                    SessionCommand::SelectActiveSlot(slot.slot_id),
                 ));
                 self.active_slot_menu.append(&select_item).unwrap();
 
-                let save_item = MenuItem::new(&slot_label(slot, active_slot), true, None);
-                commands.push((save_item.id().clone(), MenuCommand::SaveSlot(slot.slot_id)));
+                let save_item = MenuItem::new(slot_label(slot, active_slot), true, None);
+                commands.push((
+                    save_item.id().clone(),
+                    SessionCommand::SaveSlot(slot.slot_id),
+                ));
                 self.save_slot_menu.append(&save_item).unwrap();
 
-                let load_item = MenuItem::new(&slot_label(slot, active_slot), true, None);
-                commands.push((load_item.id().clone(), MenuCommand::LoadSlot(slot.slot_id)));
+                let load_item = MenuItem::new(slot_label(slot, active_slot), true, None);
+                commands.push((
+                    load_item.id().clone(),
+                    SessionCommand::LoadSlot(slot.slot_id),
+                ));
                 self.load_slot_menu.append(&load_item).unwrap();
 
-                let delete_item = MenuItem::new(&slot_label(slot, active_slot), true, None);
+                let delete_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     delete_item.id().clone(),
-                    MenuCommand::DeleteSlot(slot.slot_id),
+                    SessionCommand::DeleteSlot(slot.slot_id),
                 ));
                 self.delete_slot_menu.append(&delete_item).unwrap();
             }
