@@ -90,6 +90,34 @@ cargo run -p nerust_core --features rom-tooling --bin perf --release -- \
   --case cpu.nestest
 ```
 
+## Save/load compatibility
+
+- `nerust_core` owns `PERSISTENCE_SCHEMA_VERSION`, `MachineStatePayload`, `MapperSavePayload`, and
+  the nested `RomIdentity` / `CoreOptions` checks used during import.
+- `nerust_console` owns `CONSOLE_STATE_SCHEMA_VERSION`, `ConsoleStatePayload`,
+  `ControllerStatePayload`, and the `paused` / `frame_counter` / `source_frame` wrapper fields
+  around opaque core state bytes.
+- `nerust_persistence` owns `STATE_ARCHIVE_SCHEMA_VERSION`, `StateArchiveMetadata`, archive entry
+  names, slot filtering, and thumbnail presence/blob handling; `state.bin` remains opaque console
+  state.
+- Nested payloads without their own version are covered by the nearest owning outer schema version.
+  For example, changing controller representation bumps `CONSOLE_STATE_SCHEMA_VERSION`, while
+  changing `RomIdentity` or `CoreOptions` comparison semantics bumps the owning core/archive schema
+  and corresponding reject/filter tests.
+- Field addition, removal, type changes, or meaning changes that affect accepted bytes are schema
+  changes. Bump the owning version constant before refactoring those fields.
+- After merge to `master`, payloads produced by the shipped schema versions must not break
+  silently. Either keep them loadable with explicit compatibility tests, or intentionally reject
+  them behind a version bump with explicit reject tests.
+
+Schema change workflow:
+
+1. Identify the owning layer (`core`, `console`, or `persistence`).
+2. Decide whether the change alters accepted bytes, target comparison, or archive interpretation.
+3. Bump the owning schema version when compatibility changes.
+4. Update the representative fixtures plus compatibility/reject tests for that layer.
+5. Confirm how previously shipped `master` payloads are handled before starting the refactor.
+
 ## Supported Mappers
 
 - NRom (Mapper 0)
