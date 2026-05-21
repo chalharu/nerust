@@ -36,6 +36,7 @@ version = "0.1.0"
 authors = ["chalharu"]
 license = "MPL-2.0"
 edition = "2024"
+rust-version = "1.88"
 
 [workspace.dependencies]
 alto = { version = "=3.0.4" }
@@ -90,4 +91,4 @@ thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.21" }
 wgpu = { version = "=29.0.3" }
 winit = { version = "=0.30.13" }
-zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
