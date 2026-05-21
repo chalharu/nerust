@@ -1,5 +1,5 @@
-use nerust_console::{Console, ConsoleError, ConsoleMetrics, PreviewFrame};
-use nerust_core::{CoreOptions, controller::standard_controller::Buttons};
+use nerust_console::{Console, ConsoleError, ConsoleMetrics, ControllerInputs, PreviewFrame};
+use nerust_core::CoreOptions;
 pub use nerust_persistence::StateSlotSummary;
 use nerust_persistence::{
     SidecarPaths, ThumbnailSource, allocate_next_slot_id, delete_state_slot, format_slot_saved_at,
@@ -20,6 +20,49 @@ const DEFAULT_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
     height: 240,
 };
 
+pub use nerust_console::ControllerPort;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerInput {
+    A,
+    B,
+    Select,
+    Start,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputState {
+    Pressed,
+    Released,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionCommand {
+    Pause,
+    Resume,
+    TogglePause,
+    Reset,
+    CreateSlot,
+    SaveActiveSlotOrNew,
+    LoadActiveSlot,
+    SelectActiveSlot(u64),
+    SaveSlot(u64),
+    LoadSlot(u64),
+    DeleteSlot(u64),
+    SelectNextSlot,
+    SelectPreviousSlot,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCommandOutcome {
+    pub executed: bool,
+    pub needs_redraw: bool,
+}
+
 #[derive(Debug)]
 pub struct GuiSession {
     paused: bool,
@@ -32,6 +75,7 @@ pub struct GuiSession {
     mapper_save_recovery_written: bool,
     slots: Vec<StateSlotSummary>,
     active_slot_id: Option<u64>,
+    held_inputs: [ControllerInputs; 2],
 }
 
 impl GuiSession {
@@ -39,8 +83,9 @@ impl GuiSession {
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
         let console = Console::new_gpu(speaker, filter_type, source_logical_size);
         let physical_size = console.video().presentation().physical_size();
+        let paused = console.metrics().paused;
         Self {
-            paused: false,
+            paused,
             loaded: false,
             console,
             physical_size,
@@ -50,6 +95,7 @@ impl GuiSession {
             mapper_save_recovery_written: false,
             slots: Vec::new(),
             active_slot_id: None,
+            held_inputs: [ControllerInputs::empty(); 2],
         }
     }
 
@@ -111,8 +157,136 @@ impl GuiSession {
         self.paused = false;
     }
 
-    pub fn set_pad1(&mut self, data: Buttons) {
-        self.console.set_pad1(data);
+    pub fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
+        match command {
+            SessionCommand::Pause => {
+                if self.paused {
+                    SessionCommandOutcome::default()
+                } else {
+                    self.pause();
+                    SessionCommandOutcome {
+                        executed: true,
+                        needs_redraw: false,
+                    }
+                }
+            }
+            SessionCommand::Resume => {
+                if self.paused {
+                    self.resume();
+                    SessionCommandOutcome {
+                        executed: true,
+                        needs_redraw: self.loaded,
+                    }
+                } else {
+                    SessionCommandOutcome::default()
+                }
+            }
+            SessionCommand::TogglePause => {
+                if self.paused {
+                    self.run_command(SessionCommand::Resume)
+                } else {
+                    self.run_command(SessionCommand::Pause)
+                }
+            }
+            SessionCommand::Reset => {
+                if let Err(error) = self.reset() {
+                    log::warn!("reset failed: {error}");
+                    SessionCommandOutcome::default()
+                } else {
+                    SessionCommandOutcome {
+                        executed: true,
+                        needs_redraw: false,
+                    }
+                }
+            }
+            SessionCommand::CreateSlot => {
+                self.create_slot();
+                SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                }
+            }
+            SessionCommand::SaveActiveSlotOrNew => {
+                self.save_active_slot_or_new();
+                SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                }
+            }
+            SessionCommand::LoadActiveSlot => {
+                let was_paused = self.paused;
+                let executed = self.load_active_slot();
+                SessionCommandOutcome {
+                    executed,
+                    needs_redraw: redraw_needed_after_pause_change(
+                        executed,
+                        was_paused,
+                        self.paused,
+                    ),
+                }
+            }
+            SessionCommand::SelectActiveSlot(slot_id) => {
+                self.select_active_slot(slot_id);
+                SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                }
+            }
+            SessionCommand::SaveSlot(slot_id) => {
+                self.save_slot(slot_id, false);
+                SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                }
+            }
+            SessionCommand::LoadSlot(slot_id) => {
+                let was_paused = self.paused;
+                let executed = self.load_slot(slot_id);
+                SessionCommandOutcome {
+                    executed,
+                    needs_redraw: redraw_needed_after_pause_change(
+                        executed,
+                        was_paused,
+                        self.paused,
+                    ),
+                }
+            }
+            SessionCommand::DeleteSlot(slot_id) => {
+                self.delete_slot(slot_id);
+                SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                }
+            }
+            SessionCommand::SelectNextSlot => SessionCommandOutcome {
+                executed: self.select_adjacent_slot(true).is_some(),
+                needs_redraw: false,
+            },
+            SessionCommand::SelectPreviousSlot => SessionCommandOutcome {
+                executed: self.select_adjacent_slot(false).is_some(),
+                needs_redraw: false,
+            },
+        }
+    }
+
+    pub fn handle_controller_input(
+        &mut self,
+        port: ControllerPort,
+        input: ControllerInput,
+        state: InputState,
+    ) {
+        update_held_buttons(
+            &mut self.held_inputs[controller_port_index(port)],
+            input,
+            state,
+        );
+        self.apply_controller_state(port);
+    }
+
+    pub fn clear_controller_input(&mut self) {
+        self.held_inputs = [ControllerInputs::empty(); 2];
+        self.apply_controller_state(ControllerPort::One);
+        self.apply_controller_state(ControllerPort::Two);
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
@@ -139,6 +313,7 @@ impl GuiSession {
         self.mapper_save_flush_allowed = true;
         self.mapper_save_recovery_written = false;
         self.active_slot_id = None;
+        self.clear_controller_input();
         self.refresh_slots();
         self.active_slot_id = latest_saved_slot_id(&self.slots);
         if let Err(error) = self.load_mapper_save_if_available() {
@@ -161,6 +336,7 @@ impl GuiSession {
         self.mapper_save_recovery_written = false;
         self.active_slot_id = None;
         self.slots.clear();
+        self.clear_controller_input();
         true
     }
 
@@ -243,6 +419,8 @@ impl GuiSession {
                 } else {
                     self.active_slot_id = Some(slot_id);
                     self.sync_paused_from_console();
+                    // Preserve the controller snapshot from the save state until
+                    // new host input arrives.
                     self.refresh_slots();
                     true
                 }
@@ -281,6 +459,11 @@ impl GuiSession {
 
     fn sync_paused_from_console(&mut self) {
         self.paused = self.console.metrics().paused;
+    }
+
+    fn apply_controller_state(&self, port: ControllerPort) {
+        self.console
+            .set_port_inputs(port, self.held_inputs[controller_port_index(port)]);
     }
 
     fn refresh_slots(&mut self) {
@@ -422,6 +605,38 @@ fn adjacent_slot_id(
     )
 }
 
+fn controller_port_index(port: ControllerPort) -> usize {
+    match port {
+        ControllerPort::One => 0,
+        ControllerPort::Two => 1,
+    }
+}
+
+fn controller_input_flag(input: ControllerInput) -> ControllerInputs {
+    match input {
+        ControllerInput::A => ControllerInputs::A,
+        ControllerInput::B => ControllerInputs::B,
+        ControllerInput::Select => ControllerInputs::SELECT,
+        ControllerInput::Start => ControllerInputs::START,
+        ControllerInput::Up => ControllerInputs::UP,
+        ControllerInput::Down => ControllerInputs::DOWN,
+        ControllerInput::Left => ControllerInputs::LEFT,
+        ControllerInput::Right => ControllerInputs::RIGHT,
+    }
+}
+
+fn update_held_buttons(inputs: &mut ControllerInputs, input: ControllerInput, state: InputState) {
+    let flag = controller_input_flag(input);
+    *inputs = match state {
+        InputState::Pressed => *inputs | flag,
+        InputState::Released => *inputs & !flag,
+    };
+}
+
+fn redraw_needed_after_pause_change(executed: bool, was_paused: bool, paused: bool) -> bool {
+    executed && was_paused && !paused
+}
+
 fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
     ThumbnailSource {
         width: preview.width,
@@ -432,8 +647,12 @@ fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{adjacent_slot_id, slot_label, window_title};
-    use nerust_console::ConsoleMetrics;
+    use super::{
+        ControllerInput, ControllerPort, InputState, adjacent_slot_id, controller_input_flag,
+        controller_port_index, redraw_needed_after_pause_change, slot_label, update_held_buttons,
+        window_title,
+    };
+    use nerust_console::{ConsoleMetrics, ControllerInputs};
     use nerust_persistence::StateSlotSummary;
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
@@ -486,5 +705,65 @@ mod tests {
         assert_eq!(adjacent_slot_id(&slots, Some(1), false), Some(7));
         assert_eq!(adjacent_slot_id(&slots, None, true), Some(1));
         assert_eq!(adjacent_slot_id(&slots, None, false), Some(7));
+    }
+
+    #[test]
+    fn controller_intents_map_to_console_input_flags() {
+        assert_eq!(
+            controller_input_flag(ControllerInput::A),
+            ControllerInputs::A
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::B),
+            ControllerInputs::B
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Select),
+            ControllerInputs::SELECT
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Start),
+            ControllerInputs::START
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Up),
+            ControllerInputs::UP
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Down),
+            ControllerInputs::DOWN
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Left),
+            ControllerInputs::LEFT
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Right),
+            ControllerInputs::RIGHT
+        );
+    }
+
+    #[test]
+    fn held_controller_state_tracks_press_release_and_ports() {
+        let mut port1 = ControllerInputs::empty();
+        let mut port2 = ControllerInputs::empty();
+
+        update_held_buttons(&mut port1, ControllerInput::A, InputState::Pressed);
+        update_held_buttons(&mut port1, ControllerInput::Right, InputState::Pressed);
+        update_held_buttons(&mut port2, ControllerInput::B, InputState::Pressed);
+        update_held_buttons(&mut port1, ControllerInput::A, InputState::Released);
+
+        assert_eq!(port1, ControllerInputs::RIGHT);
+        assert_eq!(port2, ControllerInputs::B);
+        assert_eq!(controller_port_index(ControllerPort::One), 0);
+        assert_eq!(controller_port_index(ControllerPort::Two), 1);
+    }
+
+    #[test]
+    fn redraw_is_only_requested_when_a_command_resumes_emulation() {
+        assert!(redraw_needed_after_pause_change(true, true, false));
+        assert!(!redraw_needed_after_pause_change(true, false, false));
+        assert!(!redraw_needed_after_pause_change(true, true, true));
+        assert!(!redraw_needed_after_pause_change(false, true, false));
     }
 }
