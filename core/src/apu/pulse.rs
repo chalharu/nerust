@@ -7,6 +7,7 @@
 use super::envelope::*;
 use super::length_counter::*;
 use super::timer::*;
+use crate::PersistenceError;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],
@@ -184,6 +185,26 @@ impl Pulse {
         } else {
             Envelope::get_volume(self)
         }
+    }
+
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        if usize::from(self.duty_mode) >= DUTY_TABLE.len() {
+            return Err(PersistenceError::Validation(
+                "APU pulse duty mode overflow".into(),
+            ));
+        }
+        if usize::from(self.duty_value) >= DUTY_TABLE[0].len() {
+            return Err(PersistenceError::Validation(
+                "APU pulse duty value overflow".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_duty_for_test(&mut self, mode: u8, value: u8) {
+        self.duty_mode = mode;
+        self.duty_value = value;
     }
 }
 

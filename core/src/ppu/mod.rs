@@ -9,6 +9,7 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
+use crate::PersistenceError;
 use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
@@ -494,6 +495,31 @@ impl Core {
         // self.post_render_executing = false;
         // self.oam_read_buffer = 0;
         self.has_next_sprite = false;
+    }
+
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        if usize::from(self.sprite_index) >= 8 {
+            return Err(PersistenceError::Validation(
+                "PPU sprite index overflow".into(),
+            ));
+        }
+        if usize::from(self.sprite_count) > 8 {
+            return Err(PersistenceError::Validation(
+                "PPU sprite count overflow".into(),
+            ));
+        }
+        if usize::from(self.secondary_oam_address) > self.secondary_oam.len() {
+            return Err(PersistenceError::Validation(
+                "PPU secondary OAM address overflow".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_sprite_fetch_state_for_test(&mut self, sprite_index: u8, sprite_count: u8) {
+        self.sprite_index = sprite_index;
+        self.sprite_count = sprite_count;
     }
 
     pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {

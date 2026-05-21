@@ -265,8 +265,11 @@ impl Core {
         let options = payload.options;
         self.validate_persistence_target(rom_identity, options)?;
         let cpu = payload.cpu;
+        cpu.validate_runtime_state()?;
         let ppu = payload.ppu;
+        ppu.validate_runtime_state()?;
         let apu = payload.apu;
+        apu.validate_runtime_state()?;
         self.cartridge.import_runtime_state(payload.cartridge)?;
         self.cpu = cpu;
         self.ppu = ppu;
@@ -479,7 +482,6 @@ mod persistence_tests {
             .expect("machine state should export");
         let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
-        tampered.cpu.cycles = 42;
         tampered.cartridge.mapper_state.sram.push(1);
         let tampered_payload =
             persistence::encode_payload(&tampered).expect("tampered payload should encode");
@@ -520,6 +522,90 @@ mod persistence_tests {
             .import_machine_state(&tampered_payload)
             .expect_err("out-of-bounds mapper page should reject");
         assert!(error.to_string().contains("out of bounds"));
+
+        let after = target
+            .export_machine_state()
+            .expect("target state should still export");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn machine_state_rejects_invalid_cpu_opcode() {
+        let source = Core::new(nrom_test_data()).expect("source core should construct");
+        let payload = source
+            .export_machine_state()
+            .expect("machine state should export");
+        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+            .expect("machine state payload should decode");
+        tampered.cpu.set_internal_opcode_for_test(0x100);
+        let tampered_payload =
+            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+
+        let mut target = Core::new(nrom_test_data()).expect("target core should construct");
+        let before = target
+            .export_machine_state()
+            .expect("target state should export");
+
+        let error = target
+            .import_machine_state(&tampered_payload)
+            .expect_err("invalid CPU opcode should reject");
+        assert!(error.to_string().contains("CPU opcode overflow"));
+
+        let after = target
+            .export_machine_state()
+            .expect("target state should still export");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn machine_state_rejects_invalid_ppu_sprite_index() {
+        let source = Core::new(nrom_test_data()).expect("source core should construct");
+        let payload = source
+            .export_machine_state()
+            .expect("machine state should export");
+        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+            .expect("machine state payload should decode");
+        tampered.ppu.set_sprite_fetch_state_for_test(8, 0);
+        let tampered_payload =
+            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+
+        let mut target = Core::new(nrom_test_data()).expect("target core should construct");
+        let before = target
+            .export_machine_state()
+            .expect("target state should export");
+
+        let error = target
+            .import_machine_state(&tampered_payload)
+            .expect_err("invalid PPU sprite index should reject");
+        assert!(error.to_string().contains("PPU sprite index overflow"));
+
+        let after = target
+            .export_machine_state()
+            .expect("target state should still export");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn machine_state_rejects_invalid_apu_pulse_duty() {
+        let source = Core::new(nrom_test_data()).expect("source core should construct");
+        let payload = source
+            .export_machine_state()
+            .expect("machine state should export");
+        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+            .expect("machine state payload should decode");
+        tampered.apu.set_pulse_duty_for_test(4, 0);
+        let tampered_payload =
+            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+
+        let mut target = Core::new(nrom_test_data()).expect("target core should construct");
+        let before = target
+            .export_machine_state()
+            .expect("target state should export");
+
+        let error = target
+            .import_machine_state(&tampered_payload)
+            .expect_err("invalid APU pulse duty should reject");
+        assert!(error.to_string().contains("APU pulse duty mode overflow"));
 
         let after = target
             .export_machine_state()

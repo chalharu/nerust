@@ -95,6 +95,14 @@ struct Mmc5RuntimeState {
     hardware_timer_irq_pending: bool,
 }
 
+impl Mmc5RuntimeState {
+    fn validate(&self) -> Result<(), PersistenceError> {
+        self.pulse_1.validate_runtime_state()?;
+        self.pulse_2.validate_runtime_state()?;
+        Ok(())
+    }
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mmc5 {
     cartridge_data: CartridgeData,
@@ -237,6 +245,7 @@ impl Cartridge for Mmc5 {
             self.data_ref().char_rom_len(),
         )?;
         let runtime: Mmc5RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        runtime.validate()?;
         if runtime.exram.len() != self.exram.len() {
             return Err(PersistenceError::Validation(
                 "MMC5 EXRAM length mismatch".into(),
