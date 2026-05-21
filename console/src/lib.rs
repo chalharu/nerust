@@ -622,6 +622,12 @@ impl Console {
         }
     }
 
+    pub fn set_pad2(&self, data: Buttons) {
+        if self.data_sender.send(ConsoleData::Pad2Data(data)).is_err() {
+            log::warn!("Core pad2 data send failed");
+        }
+    }
+
     pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
         self.load_with_options(data, CoreOptions::default())
     }
@@ -808,6 +814,7 @@ enum ConsoleData {
     Pause,
     Reset(Sender<ConsoleRequestResult>),
     Pad1Data(Buttons),
+    Pad2Data(Buttons),
     Unload(Sender<ConsoleRequestResult>),
     ExportMapperSave(Sender<ConsoleRequestResult>),
     ImportMapperSave {
@@ -973,6 +980,9 @@ impl ConsoleRunner {
                     }
                     ConsoleData::Pad1Data(data) => {
                         self.controller.set_pad1(data);
+                    }
+                    ConsoleData::Pad2Data(data) => {
+                        self.controller.set_pad2(data);
                     }
                     ConsoleData::Unload(reply) => {
                         let result = if core.is_some() {
