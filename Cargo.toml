@@ -90,7 +90,7 @@ strum = { version = "=0.28.0" }
 strum_macros = { version = "=0.28.0" }
 tao = { version = "=0.35.2" }
 thiserror = { version = "=2.0.18" }
-typetag = { version = "=0.2.21" }
+typetag = { version = "=0.2.22" }
 wgpu = { version = "=29.0.3" }
 winit = { version = "=0.30.13" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
