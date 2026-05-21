@@ -23,7 +23,6 @@ use self::opcodes::{
 };
 use self::register::{Register, RegisterP};
 use super::*;
-use crate::persistence::{CpuStateMessage, DmcDmaStateMessage, PersistenceError};
 use std::ops::Shr;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
@@ -72,40 +71,6 @@ impl DmcDmaState {
                 phase: DmcDmaPhase::WaitForHalt,
             },
         }
-    }
-
-    fn export_state_proto(&self) -> DmcDmaStateMessage {
-        DmcDmaStateMessage {
-            delay: u32::from(self.delay),
-            halt_on_get_cycle: self.halt_on_get_cycle,
-            halted_on_get_cycle: self.halted_on_get_cycle,
-            attempted_halt: self.attempted_halt,
-            phase: match self.phase {
-                DmcDmaPhase::WaitForHalt => 0,
-                DmcDmaPhase::Dummy => 1,
-                DmcDmaPhase::Align => 2,
-                DmcDmaPhase::Read => 3,
-            },
-        }
-    }
-
-    fn import_state_proto(payload: &DmcDmaStateMessage) -> Result<Self, PersistenceError> {
-        Ok(Self {
-            delay: u8::try_from(payload.delay)
-                .map_err(|_| PersistenceError::Validation("DMC DMA delay overflow".into()))?,
-            halt_on_get_cycle: payload.halt_on_get_cycle,
-            halted_on_get_cycle: payload.halted_on_get_cycle,
-            attempted_halt: payload.attempted_halt,
-            phase: match payload.phase {
-                0 => DmcDmaPhase::WaitForHalt,
-                1 => DmcDmaPhase::Dummy,
-                2 => DmcDmaPhase::Align,
-                3 => DmcDmaPhase::Read,
-                _ => {
-                    return Err(PersistenceError::Validation("invalid DMC DMA phase".into()));
-                }
-            },
-        })
     }
 }
 
@@ -269,65 +234,6 @@ impl Core {
             cpu_stepfunc: cpu_stepfunc(CpuStatesEnum::Reset),
         }
     }
-
-    pub(crate) fn export_state_proto(&self) -> CpuStateMessage {
-        CpuStateMessage {
-            memory: Some(self.memory.export_state_proto()),
-            register: Some(self.register.export_state_proto()),
-            internal_stat: Some(self.internal_stat.export_state_proto()),
-            interrupt: Some(self.interrupt.export_state_proto()),
-            cycles: self.cycles,
-            oam_dma: self.oam_dma.as_ref().map(OamDmaState::export_state_proto),
-            dmc_dma: self.dmc_dma.as_ref().map(DmcDmaState::export_state_proto),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &CpuStateMessage,
-    ) -> Result<(), PersistenceError> {
-        self.memory.import_state_proto(
-            payload
-                .memory
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing CPU memory".into()))?,
-        )?;
-        self.register.import_state_proto(
-            payload
-                .register
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing CPU register state".into()))?,
-        )?;
-        self.internal_stat.import_state_proto(
-            payload
-                .internal_stat
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing CPU internal state".into()))?,
-        )?;
-        self.interrupt.import_state_proto(
-            payload.interrupt.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing CPU interrupt state".into())
-            })?,
-        )?;
-        self.cycles = payload.cycles;
-        self.oam_dma = payload
-            .oam_dma
-            .as_ref()
-            .map(|value| {
-                let mut state = OamDmaState::new();
-                state.import_state_proto(value)?;
-                Ok::<_, PersistenceError>(state)
-            })
-            .transpose()?;
-        self.dmc_dma = payload
-            .dmc_dma
-            .as_ref()
-            .map(DmcDmaState::import_state_proto)
-            .transpose()?;
-        self.cpu_stepfunc = cpu_stepfunc(self.internal_stat.state);
-        Ok(())
-    }
-
     pub(crate) fn reset(&mut self) {
         self.interrupt.reset();
         self.oam_dma.as_mut().unwrap().reset();
@@ -567,6 +473,23 @@ impl Core {
                         ))
             }
             _ => false,
+        }
+    }
+}
+
+impl Clone for Core {
+    fn clone(&self) -> Self {
+        Self {
+            opcode_tables: Opcodes::new(),
+            addressing_tables: AddressingModeLut::new(),
+            memory: self.memory.clone(),
+            register: self.register.clone(),
+            internal_stat: self.internal_stat.clone(),
+            interrupt: self.interrupt,
+            cycles: self.cycles,
+            oam_dma: self.oam_dma.clone(),
+            dmc_dma: self.dmc_dma,
+            cpu_stepfunc: cpu_stepfunc(self.internal_stat.state),
         }
     }
 }

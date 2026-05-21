@@ -5,7 +5,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::cpu::interrupt::{Interrupt, IrqSource};
-use crate::persistence::{FrameCounterMessage, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Eq, PartialEq)]
 pub(crate) enum FrameType {
@@ -136,36 +135,5 @@ impl FrameCounter {
         if !self.irq {
             interrupt.clear_irq(IrqSource::FRAME_COUNTER);
         }
-    }
-
-    pub(crate) fn export_state_proto(&self) -> FrameCounterMessage {
-        FrameCounterMessage {
-            period: self.period,
-            irq: self.irq,
-            write_counter: self.write_counter as u32,
-            block: self.block as u32,
-            new_value: u32::from(self.new_value),
-            clock_cycle: self.clock_cycle,
-            cycle: u32::from(self.cycle),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &FrameCounterMessage,
-    ) -> Result<(), PersistenceError> {
-        self.period = payload.period;
-        self.irq = payload.irq;
-        self.write_counter = usize::try_from(payload.write_counter).map_err(|_| {
-            PersistenceError::Validation("frame counter write_counter overflow".into())
-        })?;
-        self.block = usize::try_from(payload.block)
-            .map_err(|_| PersistenceError::Validation("frame counter block overflow".into()))?;
-        self.new_value = u8::try_from(payload.new_value)
-            .map_err(|_| PersistenceError::Validation("frame counter new value overflow".into()))?;
-        self.clock_cycle = payload.clock_cycle;
-        self.cycle = u16::try_from(payload.cycle)
-            .map_err(|_| PersistenceError::Validation("frame counter cycle overflow".into()))?;
-        Ok(())
     }
 }

@@ -5,11 +5,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::cpu::{Interrupt, Register};
-use crate::persistence::{CpuMemoryMessage, PersistenceError};
 use crate::{Apu, Cartridge, Controller, Ppu};
 use crate::{OpenBus, OpenBusReadResult};
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Memory {
     #[serde(with = "nerust_serialize::BigArray")]
     wram: [u8; 2048],
@@ -130,29 +129,5 @@ impl Memory {
             }
         }
         interrupt.write = true;
-    }
-
-    pub(crate) fn export_state_proto(&self) -> CpuMemoryMessage {
-        CpuMemoryMessage {
-            wram: self.wram.to_vec(),
-            open_bus_data: u32::from(self.openbus.data),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &CpuMemoryMessage,
-    ) -> Result<(), PersistenceError> {
-        if payload.wram.len() != self.wram.len() {
-            return Err(PersistenceError::Validation(
-                "CPU WRAM length mismatch".into(),
-            ));
-        }
-        self.wram.copy_from_slice(&payload.wram);
-        self.openbus = OpenBus {
-            data: u8::try_from(payload.open_bus_data)
-                .map_err(|_| PersistenceError::Validation("CPU open bus overflow".into()))?,
-        };
-        Ok(())
     }
 }

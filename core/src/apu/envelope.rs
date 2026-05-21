@@ -5,7 +5,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::length_counter::{HaveLengthCounter, LengthCounter};
-use crate::persistence::{EnvelopeDaoMessage, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct EnvelopeDao {
@@ -70,31 +69,6 @@ impl EnvelopeDao {
             }
             self.value = self.period;
         }
-    }
-
-    pub(crate) fn export_state_proto(&self) -> EnvelopeDaoMessage {
-        EnvelopeDaoMessage {
-            enabled: self.enabled,
-            volume: u32::from(self.volume),
-            start: self.start,
-            value: u32::from(self.value),
-            period: u32::from(self.period),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &EnvelopeDaoMessage,
-    ) -> Result<(), PersistenceError> {
-        self.enabled = payload.enabled;
-        self.volume = u8::try_from(payload.volume)
-            .map_err(|_| PersistenceError::Validation("APU envelope volume overflow".into()))?;
-        self.start = payload.start;
-        self.value = u8::try_from(payload.value)
-            .map_err(|_| PersistenceError::Validation("APU envelope value overflow".into()))?;
-        self.period = u8::try_from(payload.period)
-            .map_err(|_| PersistenceError::Validation("APU envelope period overflow".into()))?;
-        Ok(())
     }
 }
 
