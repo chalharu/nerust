@@ -9,36 +9,18 @@ use crate::MirrorMode;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{MapperStateMessage, PersistenceError, decode_message, encode_message};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
-use prost::Message;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 
-#[derive(Clone, PartialEq, Message)]
-pub(super) struct Mapper4RuntimeMessage {
-    #[prost(uint32, tag = "1")]
-    bank_select: u32,
-    #[prost(uint32, repeated, tag = "2")]
-    bank_data: Vec<u32>,
-    #[prost(uint32, tag = "3")]
-    mirroring: u32,
-    #[prost(uint32, tag = "4")]
-    program_ram_protect: u32,
-    #[prost(uint32, tag = "5")]
-    irq_variant: u32,
-    #[prost(uint32, tag = "6")]
-    irq_latch: u32,
-    #[prost(bool, tag = "7")]
-    irq_reload: bool,
-    #[prost(uint32, tag = "8")]
-    irq_counter: u32,
-    #[prost(bool, tag = "9")]
-    irq_enabled: bool,
-    #[prost(bool, tag = "10")]
-    irq_last_a12_high: bool,
-    #[prost(uint64, tag = "11")]
-    irq_last_a12_low_tick: u64,
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Mapper4RuntimeState {
+    bank_select: u8,
+    bank_data: [u8; 8],
+    mirroring: u8,
+    program_ram_protect: u8,
+    irq: IrqUnit,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -125,7 +107,7 @@ impl Mapper4Config {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 struct IrqUnit {
     variant: IrqVariant,
     latch: u8,
@@ -287,75 +269,41 @@ impl Mapper4Shared {
         }
     }
 
-    pub(super) fn export_state_proto(&self) -> MapperStateMessage {
-        self.state.export_state_proto()
-    }
-
-    pub(super) fn import_state_proto(
-        &mut self,
-        payload: &MapperStateMessage,
-    ) -> Result<(), PersistenceError> {
-        self.state.import_state_proto(
-            self.cartridge_data.prog_rom_len(),
-            self.cartridge_data.char_rom_len(),
-            payload,
-        )
-    }
-
-    pub(super) fn export_runtime_body(&self) -> Result<Vec<u8>, PersistenceError> {
-        encode_message(&Mapper4RuntimeMessage {
-            bank_select: u32::from(self.bank_select),
-            bank_data: self.bank_data.iter().copied().map(u32::from).collect(),
-            mirroring: u32::from(self.mirroring),
-            program_ram_protect: u32::from(self.program_ram_protect),
-            irq_variant: match self.irq.variant {
-                IrqVariant::Sharp => 0,
-                IrqVariant::NecOldStyle => 1,
-            },
-            irq_latch: u32::from(self.irq.latch),
-            irq_reload: self.irq.reload,
-            irq_counter: u32::from(self.irq.counter),
-            irq_enabled: self.irq.enabled,
-            irq_last_a12_high: self.irq.last_a12_high,
-            irq_last_a12_low_tick: self.irq.last_a12_low_tick,
+    pub(super) fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_MMC3.into(),
+            extra_body: crate::persistence::encode_payload(&Mapper4RuntimeState {
+                bank_select: self.bank_select,
+                bank_data: self.bank_data,
+                mirroring: self.mirroring,
+                program_ram_protect: self.program_ram_protect,
+                irq: self.irq.clone(),
+            })?,
         })
     }
 
-    pub(super) fn import_runtime_body(&mut self, bytes: &[u8]) -> Result<(), PersistenceError> {
-        let runtime = decode_message::<Mapper4RuntimeMessage>(bytes)?;
-        if runtime.bank_data.len() != self.bank_data.len() {
+    pub(super) fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_MMC3 {
             return Err(PersistenceError::Validation(
-                "MMC3 bank register length mismatch".into(),
+                "unexpected MMC3 runtime kind".into(),
             ));
         }
-        self.bank_select = u8::try_from(runtime.bank_select)
-            .map_err(|_| PersistenceError::Validation("MMC3 bank_select overflow".into()))?;
-        for (slot, value) in self.bank_data.iter_mut().zip(runtime.bank_data) {
-            *slot = u8::try_from(value)
-                .map_err(|_| PersistenceError::Validation("MMC3 bank_data overflow".into()))?;
-        }
-        self.mirroring = u8::try_from(runtime.mirroring)
-            .map_err(|_| PersistenceError::Validation("MMC3 mirroring overflow".into()))?;
-        self.program_ram_protect = u8::try_from(runtime.program_ram_protect).map_err(|_| {
-            PersistenceError::Validation("MMC3 program RAM protect overflow".into())
-        })?;
-        self.irq.variant = match runtime.irq_variant {
-            0 => IrqVariant::Sharp,
-            1 => IrqVariant::NecOldStyle,
-            _ => {
-                return Err(PersistenceError::Validation(
-                    "invalid MMC3 IRQ variant".into(),
-                ));
-            }
-        };
-        self.irq.latch = u8::try_from(runtime.irq_latch)
-            .map_err(|_| PersistenceError::Validation("MMC3 IRQ latch overflow".into()))?;
-        self.irq.reload = runtime.irq_reload;
-        self.irq.counter = u8::try_from(runtime.irq_counter)
-            .map_err(|_| PersistenceError::Validation("MMC3 IRQ counter overflow".into()))?;
-        self.irq.enabled = runtime.irq_enabled;
-        self.irq.last_a12_high = runtime.irq_last_a12_high;
-        self.irq.last_a12_low_tick = runtime.irq_last_a12_low_tick;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.cartridge_data.prog_rom_len(),
+            self.cartridge_data.char_rom_len(),
+        )?;
+        let runtime: Mapper4RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.bank_select = runtime.bank_select;
+        self.bank_data = runtime.bank_data;
+        self.mirroring = runtime.mirroring;
+        self.program_ram_protect = runtime.program_ram_protect;
+        self.irq = runtime.irq;
         Ok(())
     }
 

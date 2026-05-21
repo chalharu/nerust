@@ -10,26 +10,18 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{
-    CartridgeRuntimeMessage, MAPPER_KIND_FME7, PersistenceError, decode_message, encode_message,
-};
-use prost::Message;
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_FME7, PersistenceError};
 
 const IRQ_ENABLE: u8 = 0x01;
 const IRQ_COUNT: u8 = 0x80;
 
-#[derive(Clone, PartialEq, Message)]
-struct Fme7RuntimeMessage {
-    #[prost(uint32, tag = "1")]
-    command: u32,
-    #[prost(uint32, repeated, tag = "2")]
-    chr_banks: Vec<u32>,
-    #[prost(uint32, repeated, tag = "3")]
-    prg_banks: Vec<u32>,
-    #[prost(uint32, tag = "4")]
-    irq_control: u32,
-    #[prost(uint32, tag = "5")]
-    irq_counter: u32,
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Fme7RuntimeState {
+    command: u8,
+    chr_banks: [u8; 8],
+    prg_banks: [u8; 4],
+    irq_control: u8,
+    irq_counter: u16,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
@@ -45,61 +37,41 @@ pub(crate) struct Fme7 {
 
 #[typetag::serde]
 impl Cartridge for Fme7 {
-    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
-        Ok(CartridgeRuntimeMessage {
-            mapper_state: Some(self.state.export_state_proto()),
-            mapper_specific_kind: MAPPER_KIND_FME7.into(),
-            mapper_specific_body: encode_message(&Fme7RuntimeMessage {
-                command: u32::from(self.command),
-                chr_banks: self.chr_banks.iter().copied().map(u32::from).collect(),
-                prg_banks: self.prg_banks.iter().copied().map(u32::from).collect(),
-                irq_control: u32::from(self.irq_control),
-                irq_counter: u32::from(self.irq_counter),
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_FME7.into(),
+            extra_body: crate::persistence::encode_payload(&Fme7RuntimeState {
+                command: self.command,
+                chr_banks: self.chr_banks,
+                prg_banks: self.prg_banks,
+                irq_control: self.irq_control,
+                irq_counter: self.irq_counter,
             })?,
         })
     }
 
-    fn import_runtime_proto(
+    fn import_runtime_state(
         &mut self,
-        payload: &CartridgeRuntimeMessage,
+        state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
-        let program_rom_len = self.data_ref().prog_rom_len();
-        let character_rom_len = self.data_ref().char_rom_len();
-        self.state.import_state_proto(
-            program_rom_len,
-            character_rom_len,
-            payload
-                .mapper_state
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing FME-7 mapper state".into()))?,
-        )?;
-        if payload.mapper_specific_kind != MAPPER_KIND_FME7 {
+        if state.extra_kind != MAPPER_KIND_FME7 {
             return Err(PersistenceError::Validation(
                 "unexpected FME-7 runtime kind".into(),
             ));
         }
-        let runtime = decode_message::<Fme7RuntimeMessage>(&payload.mapper_specific_body)?;
-        if runtime.chr_banks.len() != self.chr_banks.len()
-            || runtime.prg_banks.len() != self.prg_banks.len()
-        {
-            return Err(PersistenceError::Validation(
-                "FME-7 bank register length mismatch".into(),
-            ));
-        }
-        self.command = u8::try_from(runtime.command)
-            .map_err(|_| PersistenceError::Validation("FME-7 command overflow".into()))?;
-        for (slot, value) in self.chr_banks.iter_mut().zip(runtime.chr_banks) {
-            *slot = u8::try_from(value)
-                .map_err(|_| PersistenceError::Validation("FME-7 CHR bank overflow".into()))?;
-        }
-        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks) {
-            *slot = u8::try_from(value)
-                .map_err(|_| PersistenceError::Validation("FME-7 PRG bank overflow".into()))?;
-        }
-        self.irq_control = u8::try_from(runtime.irq_control)
-            .map_err(|_| PersistenceError::Validation("FME-7 IRQ control overflow".into()))?;
-        self.irq_counter = u16::try_from(runtime.irq_counter)
-            .map_err(|_| PersistenceError::Validation("FME-7 IRQ counter overflow".into()))?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: Fme7RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.command = runtime.command;
+        self.chr_banks = runtime.chr_banks;
+        self.prg_banks = runtime.prg_banks;
+        self.irq_control = runtime.irq_control;
+        self.irq_counter = runtime.irq_counter;
         Ok(())
     }
 }

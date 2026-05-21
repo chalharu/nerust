@@ -27,7 +27,6 @@ use self::triangle::Triangle;
 use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
-use crate::persistence::{ApuStateMessage, PersistenceError};
 use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ
@@ -275,61 +274,6 @@ impl Core {
         self.triangle.set_enabled((value & 4) != 0);
         self.noise.set_enabled((value & 8) != 0);
         self.dmc.set_enabled((value & 16) != 0, interrupt);
-    }
-
-    pub(crate) fn export_state_proto(&self) -> ApuStateMessage {
-        ApuStateMessage {
-            pulse1: Some(self.pulse1.export_state_proto()),
-            pulse2: Some(self.pulse2.export_state_proto()),
-            triangle: Some(self.triangle.export_state_proto()),
-            noise: Some(self.noise.export_state_proto()),
-            dmc: Some(self.dmc.export_state_proto()),
-            sample_accumulator: self.sample_accumulator,
-            frame_counter: Some(self.frame_counter.export_state_proto()),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &ApuStateMessage,
-    ) -> Result<(), PersistenceError> {
-        self.pulse1.import_state_proto(
-            payload
-                .pulse1
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing pulse1 state".into()))?,
-        )?;
-        self.pulse2.import_state_proto(
-            payload
-                .pulse2
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing pulse2 state".into()))?,
-        )?;
-        self.triangle.import_state_proto(
-            payload
-                .triangle
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing triangle state".into()))?,
-        )?;
-        self.noise.import_state_proto(
-            payload
-                .noise
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing noise state".into()))?,
-        )?;
-        self.dmc.import_state_proto(
-            payload
-                .dmc
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing DMC state".into()))?,
-        )?;
-        self.sample_accumulator = payload.sample_accumulator;
-        self.frame_counter.import_state_proto(
-            payload.frame_counter.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing frame counter state".into())
-            })?,
-        )?;
-        Ok(())
     }
 }
 

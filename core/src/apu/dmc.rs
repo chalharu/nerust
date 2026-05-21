@@ -6,7 +6,6 @@
 
 use super::timer::*;
 use crate::cpu::interrupt::*;
-use crate::persistence::{DmcMessage, PersistenceError};
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_DMC
@@ -189,57 +188,6 @@ impl DMC {
 
     pub(crate) fn output(&self) -> u8 {
         self.value
-    }
-
-    pub(crate) fn export_state_proto(&self) -> DmcMessage {
-        DmcMessage {
-            value: u32::from(self.value),
-            sample_address: u32::from(self.sample_address),
-            sample_length: u32::from(self.sample_length),
-            length_value: u32::from(self.length_value),
-            current_address: u32::from(self.current_address),
-            shift_register: u32::from(self.shift_register),
-            bit_count: u32::from(self.bit_count),
-            read_buffer: u32::from(self.read_buffer),
-            enabled: self.enabled,
-            need_buffer: self.need_buffer,
-            is_loop: self.is_loop,
-            irq: self.irq,
-            timer: Some(self.timer.export_state_proto()),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &DmcMessage,
-    ) -> Result<(), PersistenceError> {
-        self.value = u8::try_from(payload.value)
-            .map_err(|_| PersistenceError::Validation("DMC value overflow".into()))?;
-        self.sample_address = u16::try_from(payload.sample_address)
-            .map_err(|_| PersistenceError::Validation("DMC sample address overflow".into()))?;
-        self.sample_length = u16::try_from(payload.sample_length)
-            .map_err(|_| PersistenceError::Validation("DMC sample length overflow".into()))?;
-        self.length_value = u16::try_from(payload.length_value)
-            .map_err(|_| PersistenceError::Validation("DMC length value overflow".into()))?;
-        self.current_address = u16::try_from(payload.current_address)
-            .map_err(|_| PersistenceError::Validation("DMC current address overflow".into()))?;
-        self.shift_register = u8::try_from(payload.shift_register)
-            .map_err(|_| PersistenceError::Validation("DMC shift register overflow".into()))?;
-        self.bit_count = u8::try_from(payload.bit_count)
-            .map_err(|_| PersistenceError::Validation("DMC bit count overflow".into()))?;
-        self.read_buffer = u8::try_from(payload.read_buffer)
-            .map_err(|_| PersistenceError::Validation("DMC read buffer overflow".into()))?;
-        self.enabled = payload.enabled;
-        self.need_buffer = payload.need_buffer;
-        self.is_loop = payload.is_loop;
-        self.irq = payload.irq;
-        self.timer.import_state_proto(
-            payload
-                .timer
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing DMC timer".into()))?,
-        )?;
-        Ok(())
     }
 }
 

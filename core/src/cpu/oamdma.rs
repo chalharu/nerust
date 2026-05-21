@@ -5,7 +5,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::*;
-use crate::persistence::{OamDmaStateMessage, OamDmaStateValueMessage, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
@@ -15,7 +14,7 @@ pub(crate) enum OamDmaStateEnumValue {
     None,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct OamDmaStateValue {
     offset: u8,
     count: u8,
@@ -46,6 +45,16 @@ fn make_state_pool() -> [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as
         Box::new(OamDmaStep1),
         Box::new(OamDmaStep2),
     ]
+}
+
+impl Clone for OamDmaState {
+    fn clone(&self) -> Self {
+        Self {
+            state_pool: make_state_pool(),
+            state: self.state,
+            value: self.value.clone(),
+        }
+    }
 }
 
 impl OamDmaState {
@@ -95,43 +104,6 @@ impl OamDmaState {
         } else {
             Some(self.value.count)
         }
-    }
-
-    pub(crate) fn export_state_proto(&self) -> OamDmaStateMessage {
-        OamDmaStateMessage {
-            state: self.state as u32,
-            value: Some(OamDmaStateValueMessage {
-                offset: u32::from(self.value.offset),
-                count: u32::from(self.value.count),
-                value: u32::from(self.value.value),
-            }),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &OamDmaStateMessage,
-    ) -> Result<(), PersistenceError> {
-        self.state = match payload.state {
-            0 => OamDmaStateEnumValue::Step0,
-            1 => OamDmaStateEnumValue::Step1,
-            2 => OamDmaStateEnumValue::Step2,
-            3 => OamDmaStateEnumValue::None,
-            _ => {
-                return Err(PersistenceError::Validation("invalid OAM DMA state".into()));
-            }
-        };
-        let value = payload
-            .value
-            .as_ref()
-            .ok_or_else(|| PersistenceError::Validation("missing OAM DMA value".into()))?;
-        self.value.offset = u8::try_from(value.offset)
-            .map_err(|_| PersistenceError::Validation("OAM DMA offset overflow".into()))?;
-        self.value.count = u8::try_from(value.count)
-            .map_err(|_| PersistenceError::Validation("OAM DMA count overflow".into()))?;
-        self.value.value = u8::try_from(value.value)
-            .map_err(|_| PersistenceError::Validation("OAM DMA data overflow".into()))?;
-        Ok(())
     }
 }
 

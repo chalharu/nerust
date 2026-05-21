@@ -7,7 +7,6 @@
 use fs2::FileExt;
 use nerust_core::{CoreOptions, MirrorMode, Mmc3IrqVariant, RomFormat, RomIdentity};
 use png::{BitDepth, ColorType, Encoder};
-use prost::Message;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const METADATA_ENTRY: &str = "metadata.pb";
+const METADATA_ENTRY: &str = "metadata.msgpack";
 const STATE_ENTRY: &str = "state.bin";
 const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 const THUMBNAIL_TARGET_WIDTH: u32 = 320;
@@ -35,10 +34,10 @@ pub enum PersistenceError {
     Zip(#[from] zip::result::ZipError),
     #[error("PNG encoding error: {0}")]
     Png(#[from] png::EncodingError),
-    #[error("protobuf decode failed: {0}")]
-    Decode(#[from] prost::DecodeError),
-    #[error("protobuf encode failed: {0}")]
-    Encode(#[from] prost::EncodeError),
+    #[error("msgpack decode error: {0}")]
+    Decode(#[from] rmp_serde::decode::Error),
+    #[error("msgpack encode error: {0}")]
+    Encode(#[from] rmp_serde::encode::Error),
     #[error("invalid state archive: {0}")]
     Validation(String),
 }
@@ -73,51 +72,30 @@ pub struct ThumbnailSource {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Clone, PartialEq, Message)]
-struct StateArchiveMetadataPb {
-    #[prost(uint32, tag = "1")]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct StateArchiveMetadata {
     schema_version: u32,
-    #[prost(uint64, tag = "2")]
     slot_id: u64,
-    #[prost(uint64, tag = "3")]
     saved_at_unix_ms: u64,
-    #[prost(bool, tag = "4")]
     has_thumbnail: bool,
-    #[prost(uint32, tag = "5")]
     mapper_type: u32,
-    #[prost(uint32, tag = "6")]
     sub_mapper_type: u32,
-    #[prost(uint64, tag = "7")]
     prg_rom_crc64: u64,
-    #[prost(uint64, tag = "8")]
     chr_rom_crc64: u64,
-    #[prost(uint64, tag = "9")]
     trainer_crc64: u64,
-    #[prost(uint32, tag = "10")]
     mmc3_irq_variant: u32,
-    #[prost(string, tag = "11")]
     emulator_version: String,
-    #[prost(uint32, tag = "12")]
     rom_format: u32,
-    #[prost(uint32, tag = "13")]
     mirror_mode_kind: u32,
-    #[prost(bytes = "vec", tag = "14")]
+    #[serde(with = "serde_bytes")]
     mirror_mode_custom_lut: Vec<u8>,
-    #[prost(bool, tag = "15")]
     has_battery: bool,
-    #[prost(uint64, tag = "16")]
     trainer_len: u64,
-    #[prost(uint64, tag = "17")]
     prg_rom_len: u64,
-    #[prost(uint64, tag = "18")]
     chr_rom_len: u64,
-    #[prost(uint64, tag = "19")]
     prg_ram_len: u64,
-    #[prost(uint64, tag = "20")]
     save_prg_ram_len: u64,
-    #[prost(uint64, tag = "21")]
     chr_ram_len: u64,
-    #[prost(uint64, tag = "22")]
     save_chr_ram_len: u64,
 }
 
@@ -252,7 +230,7 @@ pub fn write_state_slot(
     fs::create_dir_all(states_dir)?;
     let saved_at = SystemTime::now();
     let has_thumbnail = preview.is_some();
-    let metadata = StateArchiveMetadataPb {
+    let metadata = StateArchiveMetadata {
         schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
@@ -344,7 +322,7 @@ fn read_state_summary(
     Ok(Some(summary_from_metadata(
         path.to_path_buf(),
         system_time_from_millis(metadata.saved_at_unix_ms),
-        &StateArchiveMetadataPb {
+        &StateArchiveMetadata {
             has_thumbnail,
             ..metadata
         },
@@ -353,10 +331,10 @@ fn read_state_summary(
 
 fn read_metadata<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
-) -> Result<StateArchiveMetadataPb, PersistenceError> {
+) -> Result<StateArchiveMetadata, PersistenceError> {
     let mut metadata_file = archive.by_name(METADATA_ENTRY)?;
     let metadata_bytes = read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
-    let metadata = StateArchiveMetadataPb::decode(metadata_bytes.as_slice())?;
+    let metadata: StateArchiveMetadata = rmp_serde::from_slice(metadata_bytes.as_slice())?;
     if metadata.schema_version != STATE_ARCHIVE_SCHEMA_VERSION {
         return Err(PersistenceError::Validation(format!(
             "unsupported state archive schema version: {}",
@@ -367,7 +345,7 @@ fn read_metadata<R: Read + Seek>(
 }
 
 fn build_state_archive(
-    metadata: &StateArchiveMetadataPb,
+    metadata: &StateArchiveMetadata,
     machine_state: &[u8],
     thumbnail_png: Option<&[u8]>,
 ) -> Result<Vec<u8>, PersistenceError> {
@@ -375,7 +353,7 @@ fn build_state_archive(
     let mut writer = ZipWriter::new(cursor);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     writer.start_file(METADATA_ENTRY, options)?;
-    writer.write_all(&metadata.encode_to_vec())?;
+    writer.write_all(&rmp_serde::to_vec_named(metadata)?)?;
     writer.start_file(STATE_ENTRY, options)?;
     writer.write_all(machine_state)?;
     if let Some(thumbnail_png) = thumbnail_png {
@@ -388,7 +366,7 @@ fn build_state_archive(
 fn summary_from_metadata(
     path: PathBuf,
     saved_at: SystemTime,
-    metadata: &StateArchiveMetadataPb,
+    metadata: &StateArchiveMetadata,
 ) -> StateSlotSummary {
     StateSlotSummary {
         schema_version: metadata.schema_version,
@@ -401,7 +379,7 @@ fn summary_from_metadata(
 }
 
 fn metadata_matches_target(
-    metadata: &StateArchiveMetadataPb,
+    metadata: &StateArchiveMetadata,
     rom_identity: RomIdentity,
     options: CoreOptions,
 ) -> bool {
@@ -800,7 +778,7 @@ mod tests {
             .unwrap();
         let mut writer = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        let metadata = StateArchiveMetadataPb {
+        let metadata = StateArchiveMetadata {
             schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
             slot_id: 3,
             saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
@@ -825,7 +803,9 @@ mod tests {
             save_chr_ram_len: 0,
         };
         writer.start_file(METADATA_ENTRY, options).unwrap();
-        writer.write_all(&metadata.encode_to_vec()).unwrap();
+        writer
+            .write_all(&rmp_serde::to_vec_named(&metadata).unwrap())
+            .unwrap();
         writer.finish().unwrap();
 
         assert!(scan_state_slots(&dir).unwrap().is_empty());

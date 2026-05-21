@@ -7,7 +7,6 @@
 use super::envelope::*;
 use super::length_counter::*;
 use super::timer::*;
-use crate::persistence::{NoiseMessage, PersistenceError};
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_Noise
@@ -114,42 +113,6 @@ impl Noise {
         } else {
             Envelope::get_volume(self)
         }
-    }
-
-    pub(crate) fn export_state_proto(&self) -> NoiseMessage {
-        NoiseMessage {
-            mode: self.mode,
-            shift_register: u32::from(self.shift_register),
-            envelope: Some(self.envelope.export_state_proto()),
-            length_counter: Some(self.length_counter.export_state_proto()),
-            timer: Some(self.timer.export_state_proto()),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &NoiseMessage,
-    ) -> Result<(), PersistenceError> {
-        self.mode = payload.mode;
-        self.shift_register = u16::try_from(payload.shift_register)
-            .map_err(|_| PersistenceError::Validation("noise shift register overflow".into()))?;
-        self.envelope.import_state_proto(
-            payload
-                .envelope
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing noise envelope".into()))?,
-        )?;
-        self.length_counter
-            .import_state_proto(payload.length_counter.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing noise length counter".into())
-            })?)?;
-        self.timer.import_state_proto(
-            payload
-                .timer
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing noise timer".into()))?,
-        )?;
-        Ok(())
     }
 }
 

@@ -12,10 +12,7 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{
-    CartridgeRuntimeMessage, MAPPER_KIND_SXROM, PersistenceError, decode_message, encode_message,
-};
-use prost::Message;
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -31,38 +28,30 @@ pub(crate) struct SxRom {
     prev_cycle: u64,
 }
 
-#[derive(Clone, PartialEq, Message)]
-struct SxRomRuntimeMessage {
-    #[prost(uint32, tag = "1")]
-    control: u32,
-    #[prost(uint32, tag = "2")]
-    chr_bank_0: u32,
-    #[prost(uint32, tag = "3")]
-    chr_bank_1: u32,
-    #[prost(uint32, tag = "4")]
-    prg_bank: u32,
-    #[prost(uint32, tag = "5")]
-    shift_register: u32,
-    #[prost(bool, tag = "6")]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct SxRomRuntimeState {
+    control: u8,
+    chr_bank_0: u8,
+    chr_bank_1: u8,
+    prg_bank: u8,
+    shift_register: u8,
     last_chr_bank: bool,
-    #[prost(uint64, tag = "7")]
     cycle: u64,
-    #[prost(uint64, tag = "8")]
     prev_cycle: u64,
 }
 
 #[typetag::serde]
 impl Cartridge for SxRom {
-    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
-        Ok(CartridgeRuntimeMessage {
-            mapper_state: Some(self.state.export_state_proto()),
-            mapper_specific_kind: MAPPER_KIND_SXROM.into(),
-            mapper_specific_body: encode_message(&SxRomRuntimeMessage {
-                control: u32::from(self.control),
-                chr_bank_0: u32::from(self.chr_bank_0),
-                chr_bank_1: u32::from(self.chr_bank_1),
-                prg_bank: u32::from(self.prg_bank),
-                shift_register: u32::from(self.shift_register),
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_SXROM.into(),
+            extra_body: crate::persistence::encode_payload(&SxRomRuntimeState {
+                control: self.control,
+                chr_bank_0: self.chr_bank_0,
+                chr_bank_1: self.chr_bank_1,
+                prg_bank: self.prg_bank,
+                shift_register: self.shift_register,
                 last_chr_bank: self.last_chr_bank,
                 cycle: self.cycle,
                 prev_cycle: self.prev_cycle,
@@ -70,36 +59,27 @@ impl Cartridge for SxRom {
         })
     }
 
-    fn import_runtime_proto(
+    fn import_runtime_state(
         &mut self,
-        payload: &CartridgeRuntimeMessage,
+        state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
-        let program_rom_len = self.data_ref().prog_rom_len();
-        let character_rom_len = self.data_ref().char_rom_len();
-        self.state.import_state_proto(
-            program_rom_len,
-            character_rom_len,
-            payload
-                .mapper_state
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing SXROM mapper state".into()))?,
-        )?;
-        if payload.mapper_specific_kind != MAPPER_KIND_SXROM {
+        if state.extra_kind != MAPPER_KIND_SXROM {
             return Err(PersistenceError::Validation(
                 "unexpected SXROM runtime kind".into(),
             ));
         }
-        let runtime = decode_message::<SxRomRuntimeMessage>(&payload.mapper_specific_body)?;
-        self.control = u8::try_from(runtime.control)
-            .map_err(|_| PersistenceError::Validation("SXROM control overflow".into()))?;
-        self.chr_bank_0 = u8::try_from(runtime.chr_bank_0)
-            .map_err(|_| PersistenceError::Validation("SXROM chr_bank_0 overflow".into()))?;
-        self.chr_bank_1 = u8::try_from(runtime.chr_bank_1)
-            .map_err(|_| PersistenceError::Validation("SXROM chr_bank_1 overflow".into()))?;
-        self.prg_bank = u8::try_from(runtime.prg_bank)
-            .map_err(|_| PersistenceError::Validation("SXROM prg_bank overflow".into()))?;
-        self.shift_register = u8::try_from(runtime.shift_register)
-            .map_err(|_| PersistenceError::Validation("SXROM shift register overflow".into()))?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: SxRomRuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.control = runtime.control;
+        self.chr_bank_0 = runtime.chr_bank_0;
+        self.chr_bank_1 = runtime.chr_bank_1;
+        self.prg_bank = runtime.prg_bank;
+        self.shift_register = runtime.shift_register;
         self.last_chr_bank = runtime.last_chr_bank;
         self.cycle = runtime.cycle;
         self.prev_cycle = runtime.prev_cycle;
@@ -344,7 +324,6 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::mapper::Mapper;
     use crate::mapper_state::MapperStateDao;
-    use crate::persistence::MapperPersistentMemoryMessage;
     use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
@@ -430,21 +409,22 @@ mod tests {
         source.mapper_state_mut().sram[0] = 0xAA;
         source.mapper_state_mut().sram[0x2000] = 0xBB;
 
-        let save = Cartridge::export_mapper_save_proto(&source);
+        let save = Cartridge::export_mapper_save_state(&source).expect("mapper save should export");
         assert_eq!(
             save,
-            MapperPersistentMemoryMessage {
-                prg_ram: vec![0xAA; 1]
+            (
+                vec![0xAA; 1]
                     .into_iter()
                     .chain(std::iter::repeat_n(0, 0x1FFF))
                     .collect(),
-                chr_ram: Vec::new(),
-            }
+                Vec::new(),
+            )
         );
 
         let mut target = SxRom::new(data);
         Cartridge::initialize(&mut target);
-        Cartridge::import_mapper_save_proto(&mut target, &save).expect("mapper save should import");
+        Cartridge::import_mapper_save_state(&mut target, &save.0, &save.1)
+            .expect("mapper save should import");
         assert_eq!(target.mapper_state_ref().sram[0], 0xAA);
         assert_eq!(target.mapper_state_ref().sram[0x2000], 0x00);
     }

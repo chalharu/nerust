@@ -11,10 +11,6 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
-use crate::persistence::{
-    DecayableOpenBusMessage, PersistenceError, PpuControlMessage, PpuMaskMessage, PpuStateMessage,
-    PpuStateRegistersMessage, PpuStatusMessage, SpriteInfoMessage, TileInfoMessage,
-};
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
 use crate::{OpenBus, OpenBusReadResult};
 use nerust_screen_traits::Screen;
@@ -28,7 +24,7 @@ const PALETTE_ADDRESS: [usize; 32] = [
     0x00, 0x11, 0x12, 0x13, 0x04, 0x15, 0x16, 0x17, 0x08, 0x19, 0x1A, 0x1B, 0x0C, 0x1D, 0x1E, 0x1F,
 ];
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct DecayableOpenBus {
     data: u8,
     decay: [u8; 8],
@@ -188,34 +184,9 @@ impl DecayableOpenBus {
         }
         self.data &= result_mask;
     }
-
-    fn export_state_proto(&self) -> DecayableOpenBusMessage {
-        DecayableOpenBusMessage {
-            data: u32::from(self.data),
-            decay: self.decay.iter().copied().map(u32::from).collect(),
-        }
-    }
-
-    fn import_state_proto(
-        &mut self,
-        payload: &DecayableOpenBusMessage,
-    ) -> Result<(), PersistenceError> {
-        if payload.decay.len() != self.decay.len() {
-            return Err(PersistenceError::Validation(
-                "PPU decayable open bus length mismatch".into(),
-            ));
-        }
-        self.data = u8::try_from(payload.data)
-            .map_err(|_| PersistenceError::Validation("PPU IO open bus overflow".into()))?;
-        for (slot, value) in self.decay.iter_mut().zip(payload.decay.iter().copied()) {
-            *slot = u8::try_from(value)
-                .map_err(|_| PersistenceError::Validation("PPU decay counter overflow".into()))?;
-        }
-        Ok(())
-    }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct State {
     control: u8,
     mask: u8,
@@ -271,7 +242,7 @@ impl State {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Control {
     name_table: u8,
     increment: bool,
@@ -320,7 +291,7 @@ impl From<u8> for Control {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Mask {
     grayscale: bool,
     show_left_background: bool,
@@ -373,7 +344,7 @@ impl From<u8> for Mask {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Status {
     sprite_zero_hit: bool,
     sprite_overflow: bool,
@@ -396,7 +367,7 @@ impl Status {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Core {
     // memory
     #[serde(with = "nerust_serialize::BigArray")]
@@ -496,219 +467,6 @@ impl Core {
             // screen_buffer: [0; 256 * 240],
         }
     }
-
-    pub(crate) fn export_state_proto(&self) -> PpuStateMessage {
-        PpuStateMessage {
-            vram: self.vram.to_vec(),
-            palette: self.palette.to_vec(),
-            state: Some(PpuStateRegistersMessage {
-                control: u32::from(self.state.control),
-                mask: u32::from(self.state.mask),
-                oam_address: u32::from(self.state.oam_address),
-                vram_addr: u32::from(self.state.vram_addr),
-                temp_vram_addr: u32::from(self.state.temp_vram_addr),
-                x_scroll: u32::from(self.state.x_scroll),
-                write_toggle: self.state.write_toggle,
-                high_bit_shift: u32::from(self.state.high_bit_shift),
-                low_bit_shift: u32::from(self.state.low_bit_shift),
-            }),
-            cycle: u32::from(self.cycle),
-            scan_line: u32::from(self.scan_line),
-            frames: self.frames as u64,
-            bus_tick: self.bus_tick,
-            buffered_data: u32::from(self.buffered_data),
-            primary_oam: self.primary_oam.to_vec(),
-            secondary_oam: self.secondary_oam.to_vec(),
-            secondary_oam_address: u32::from(self.secondary_oam_address),
-            control: Some(PpuControlMessage {
-                name_table: u32::from(self.control.name_table),
-                increment: self.control.increment,
-                sprite_table: self.control.sprite_table,
-                background_table: self.control.background_table,
-                sprite_size: self.control.sprite_size,
-                master_slave: self.control.master_slave,
-                nmi_output: self.control.nmi_output,
-            }),
-            mask: Some(PpuMaskMessage {
-                grayscale: self.mask.grayscale,
-                show_left_background: self.mask.show_left_background,
-                show_left_sprites: self.mask.show_left_sprites,
-                show_background: self.mask.show_background,
-                show_sprites: self.mask.show_sprites,
-                red_tint: self.mask.red_tint,
-                green_tint: self.mask.green_tint,
-                blue_tint: self.mask.blue_tint,
-            }),
-            status: Some(PpuStatusMessage {
-                sprite_zero_hit: self.status.sprite_zero_hit,
-                sprite_overflow: self.status.sprite_overflow,
-                nmi_occurred: self.status.nmi_occurred,
-            }),
-            current_tile: Some(Self::tile_info_to_proto(self.current_tile)),
-            previous_tile: Some(Self::tile_info_to_proto(self.previous_tile)),
-            next_tile: Some(Self::tile_info_to_proto(self.next_tile)),
-            sprites: Self::sprite_infos_to_proto(self.sprites),
-            sprite_index: u32::from(self.sprite_index),
-            sprite_count: u32::from(self.sprite_count),
-            render_executing: self.render_executing,
-            post_render_executing: self.post_render_executing,
-            oam_read_buffer: u32::from(self.oam_read_buffer),
-            vram_read_delay: u32::from(self.vram_read_delay),
-            vram_addr_update_delay: u32::from(self.vram_addr_update_delay),
-            new_vram_addr: u32::from(self.new_vram_addr),
-            has_first_sprite_next: self.has_first_sprite_next,
-            has_first_sprite: self.has_first_sprite,
-            has_sprite: self.has_sprite,
-            sprite_overflow_delay: u32::from(self.sprite_overflow_delay),
-            sprite_reading: self.sprite_reading,
-            oam_address_high: u32::from(self.oam_address_high),
-            oam_address_low: u32::from(self.oam_address_low),
-            openbus_vram_data: u32::from(self.openbus_vram.data),
-            openbus_io: Some(self.openbus_io.export_state_proto()),
-            has_next_sprite: self.has_next_sprite,
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &PpuStateMessage,
-    ) -> Result<(), PersistenceError> {
-        if payload.vram.len() != self.vram.len()
-            || payload.palette.len() != self.palette.len()
-            || payload.primary_oam.len() != self.primary_oam.len()
-            || payload.secondary_oam.len() != self.secondary_oam.len()
-            || payload.sprites.len() != self.sprites.len()
-        {
-            return Err(PersistenceError::Validation(
-                "PPU state length mismatch".into(),
-            ));
-        }
-        self.vram.copy_from_slice(&payload.vram);
-        self.palette.copy_from_slice(&payload.palette);
-        let state = payload
-            .state
-            .as_ref()
-            .ok_or_else(|| PersistenceError::Validation("missing PPU register state".into()))?;
-        self.state.control = u8::try_from(state.control)
-            .map_err(|_| PersistenceError::Validation("PPU control overflow".into()))?;
-        self.state.mask = u8::try_from(state.mask)
-            .map_err(|_| PersistenceError::Validation("PPU mask overflow".into()))?;
-        self.state.oam_address = u8::try_from(state.oam_address)
-            .map_err(|_| PersistenceError::Validation("PPU OAM address overflow".into()))?;
-        self.state.vram_addr = u16::try_from(state.vram_addr)
-            .map_err(|_| PersistenceError::Validation("PPU VRAM address overflow".into()))?;
-        self.state.temp_vram_addr = u16::try_from(state.temp_vram_addr)
-            .map_err(|_| PersistenceError::Validation("PPU temp VRAM address overflow".into()))?;
-        self.state.x_scroll = u8::try_from(state.x_scroll)
-            .map_err(|_| PersistenceError::Validation("PPU x scroll overflow".into()))?;
-        self.state.write_toggle = state.write_toggle;
-        self.state.high_bit_shift = u16::try_from(state.high_bit_shift)
-            .map_err(|_| PersistenceError::Validation("PPU high shift overflow".into()))?;
-        self.state.low_bit_shift = u16::try_from(state.low_bit_shift)
-            .map_err(|_| PersistenceError::Validation("PPU low shift overflow".into()))?;
-        self.cycle = u16::try_from(payload.cycle)
-            .map_err(|_| PersistenceError::Validation("PPU cycle overflow".into()))?;
-        self.scan_line = u16::try_from(payload.scan_line)
-            .map_err(|_| PersistenceError::Validation("PPU scanline overflow".into()))?;
-        self.frames = usize::try_from(payload.frames)
-            .map_err(|_| PersistenceError::Validation("PPU frame counter overflow".into()))?;
-        self.bus_tick = payload.bus_tick;
-        self.buffered_data = u8::try_from(payload.buffered_data)
-            .map_err(|_| PersistenceError::Validation("PPU buffered data overflow".into()))?;
-        self.primary_oam.copy_from_slice(&payload.primary_oam);
-        self.secondary_oam.copy_from_slice(&payload.secondary_oam);
-        self.secondary_oam_address = u8::try_from(payload.secondary_oam_address).map_err(|_| {
-            PersistenceError::Validation("PPU secondary OAM address overflow".into())
-        })?;
-        let control = payload
-            .control
-            .as_ref()
-            .ok_or_else(|| PersistenceError::Validation("missing PPU control state".into()))?;
-        self.control.name_table = u8::try_from(control.name_table)
-            .map_err(|_| PersistenceError::Validation("PPU control name table overflow".into()))?;
-        self.control.increment = control.increment;
-        self.control.sprite_table = control.sprite_table;
-        self.control.background_table = control.background_table;
-        self.control.sprite_size = control.sprite_size;
-        self.control.master_slave = control.master_slave;
-        self.control.nmi_output = control.nmi_output;
-        let mask = payload
-            .mask
-            .as_ref()
-            .ok_or_else(|| PersistenceError::Validation("missing PPU mask state".into()))?;
-        self.mask.grayscale = mask.grayscale;
-        self.mask.show_left_background = mask.show_left_background;
-        self.mask.show_left_sprites = mask.show_left_sprites;
-        self.mask.show_background = mask.show_background;
-        self.mask.show_sprites = mask.show_sprites;
-        self.mask.red_tint = mask.red_tint;
-        self.mask.green_tint = mask.green_tint;
-        self.mask.blue_tint = mask.blue_tint;
-        let status = payload
-            .status
-            .as_ref()
-            .ok_or_else(|| PersistenceError::Validation("missing PPU status state".into()))?;
-        self.status.sprite_zero_hit = status.sprite_zero_hit;
-        self.status.sprite_overflow = status.sprite_overflow;
-        self.status.nmi_occurred = status.nmi_occurred;
-        self.current_tile = Self::tile_info_from_proto(
-            payload
-                .current_tile
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing current PPU tile".into()))?,
-        )?;
-        self.previous_tile =
-            Self::tile_info_from_proto(payload.previous_tile.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing previous PPU tile".into())
-            })?)?;
-        self.next_tile = Self::tile_info_from_proto(
-            payload
-                .next_tile
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing next PPU tile".into()))?,
-        )?;
-        for (slot, sprite) in self.sprites.iter_mut().zip(payload.sprites.iter()) {
-            *slot = Self::sprite_info_from_proto(sprite)?;
-        }
-        self.sprite_index = u8::try_from(payload.sprite_index)
-            .map_err(|_| PersistenceError::Validation("PPU sprite index overflow".into()))?;
-        self.sprite_count = u8::try_from(payload.sprite_count)
-            .map_err(|_| PersistenceError::Validation("PPU sprite count overflow".into()))?;
-        self.render_executing = payload.render_executing;
-        self.post_render_executing = payload.post_render_executing;
-        self.oam_read_buffer = u8::try_from(payload.oam_read_buffer)
-            .map_err(|_| PersistenceError::Validation("PPU OAM read buffer overflow".into()))?;
-        self.vram_read_delay = u8::try_from(payload.vram_read_delay)
-            .map_err(|_| PersistenceError::Validation("PPU VRAM delay overflow".into()))?;
-        self.vram_addr_update_delay = u8::try_from(payload.vram_addr_update_delay)
-            .map_err(|_| PersistenceError::Validation("PPU VRAM update delay overflow".into()))?;
-        self.new_vram_addr = u16::try_from(payload.new_vram_addr)
-            .map_err(|_| PersistenceError::Validation("PPU new VRAM address overflow".into()))?;
-        self.has_first_sprite_next = payload.has_first_sprite_next;
-        self.has_first_sprite = payload.has_first_sprite;
-        self.has_sprite = payload.has_sprite;
-        self.sprite_overflow_delay = u8::try_from(payload.sprite_overflow_delay).map_err(|_| {
-            PersistenceError::Validation("PPU sprite overflow delay overflow".into())
-        })?;
-        self.sprite_reading = payload.sprite_reading;
-        self.oam_address_high = u8::try_from(payload.oam_address_high)
-            .map_err(|_| PersistenceError::Validation("PPU OAM address high overflow".into()))?;
-        self.oam_address_low = u8::try_from(payload.oam_address_low)
-            .map_err(|_| PersistenceError::Validation("PPU OAM address low overflow".into()))?;
-        self.openbus_vram = OpenBus {
-            data: u8::try_from(payload.openbus_vram_data)
-                .map_err(|_| PersistenceError::Validation("PPU VRAM open bus overflow".into()))?,
-        };
-        self.openbus_io.import_state_proto(
-            payload
-                .openbus_io
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing PPU IO open bus".into()))?,
-        )?;
-        self.has_next_sprite = payload.has_next_sprite;
-        Ok(())
-    }
-
     pub(crate) fn reset(&mut self) {
         self.vram = [0; 2048];
         self.palette = [
@@ -736,69 +494,6 @@ impl Core {
         // self.post_render_executing = false;
         // self.oam_read_buffer = 0;
         self.has_next_sprite = false;
-    }
-
-    fn tile_info_to_proto(value: TileInfo) -> TileInfoMessage {
-        TileInfoMessage {
-            low_byte: u32::from(value.low_byte),
-            high_byte: u32::from(value.high_byte),
-            palette_offset: u32::from(value.palette_offset),
-            tile_addr: u32::from(value.tile_addr),
-        }
-    }
-
-    fn tile_info_from_proto(payload: &TileInfoMessage) -> Result<TileInfo, PersistenceError> {
-        Ok(TileInfo {
-            low_byte: u8::try_from(payload.low_byte)
-                .map_err(|_| PersistenceError::Validation("PPU tile low byte overflow".into()))?,
-            high_byte: u8::try_from(payload.high_byte)
-                .map_err(|_| PersistenceError::Validation("PPU tile high byte overflow".into()))?,
-            palette_offset: u8::try_from(payload.palette_offset).map_err(|_| {
-                PersistenceError::Validation("PPU tile palette offset overflow".into())
-            })?,
-            tile_addr: u16::try_from(payload.tile_addr)
-                .map_err(|_| PersistenceError::Validation("PPU tile address overflow".into()))?,
-        })
-    }
-
-    fn sprite_info_to_proto(value: SpriteInfo) -> SpriteInfoMessage {
-        SpriteInfoMessage {
-            low_byte: u32::from(value.low_byte),
-            high_byte: u32::from(value.high_byte),
-            palette_offset: u32::from(value.palette_offset),
-            tile_addr: u32::from(value.tile_addr),
-            horizontal_mirror: value.horizontal_mirror,
-            priority: value.priority,
-            position: u32::from(value.position),
-        }
-    }
-
-    fn sprite_infos_to_proto(values: [SpriteInfo; 64]) -> Vec<SpriteInfoMessage> {
-        let mut sprites = Vec::with_capacity(values.len());
-        for value in values {
-            sprites.push(Self::sprite_info_to_proto(value));
-        }
-        sprites
-    }
-
-    fn sprite_info_from_proto(payload: &SpriteInfoMessage) -> Result<SpriteInfo, PersistenceError> {
-        Ok(SpriteInfo {
-            low_byte: u8::try_from(payload.low_byte)
-                .map_err(|_| PersistenceError::Validation("PPU sprite low byte overflow".into()))?,
-            high_byte: u8::try_from(payload.high_byte).map_err(|_| {
-                PersistenceError::Validation("PPU sprite high byte overflow".into())
-            })?,
-            palette_offset: u8::try_from(payload.palette_offset).map_err(|_| {
-                PersistenceError::Validation("PPU sprite palette offset overflow".into())
-            })?,
-            tile_addr: u16::try_from(payload.tile_addr).map_err(|_| {
-                PersistenceError::Validation("PPU sprite tile address overflow".into())
-            })?,
-            horizontal_mirror: payload.horizontal_mirror,
-            priority: payload.priority,
-            position: u8::try_from(payload.position)
-                .map_err(|_| PersistenceError::Validation("PPU sprite position overflow".into()))?,
-        })
     }
 
     pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {

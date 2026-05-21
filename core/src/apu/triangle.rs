@@ -6,7 +6,6 @@
 
 use super::length_counter::*;
 use super::timer::*;
-use crate::persistence::{PersistenceError, TriangleMessage};
 
 const TRIANGLE_TABLE: [u8; 32] = [
     15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
@@ -108,46 +107,6 @@ impl Triangle {
 
     pub(crate) fn output(&self) -> u8 {
         self.output_value
-    }
-
-    pub(crate) fn export_state_proto(&self) -> TriangleMessage {
-        TriangleMessage {
-            duty_value: u32::from(self.duty_value),
-            counter_period: u32::from(self.counter_period),
-            counter_value: u32::from(self.counter_value),
-            counter_reload: self.counter_reload,
-            counter_control: self.counter_control,
-            output_value: u32::from(self.output_value),
-            length_counter: Some(self.length_counter.export_state_proto()),
-            timer: Some(self.timer.export_state_proto()),
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &TriangleMessage,
-    ) -> Result<(), PersistenceError> {
-        self.duty_value = u8::try_from(payload.duty_value)
-            .map_err(|_| PersistenceError::Validation("triangle duty overflow".into()))?;
-        self.counter_period = u8::try_from(payload.counter_period)
-            .map_err(|_| PersistenceError::Validation("triangle counter period overflow".into()))?;
-        self.counter_value = u8::try_from(payload.counter_value)
-            .map_err(|_| PersistenceError::Validation("triangle counter value overflow".into()))?;
-        self.counter_reload = payload.counter_reload;
-        self.counter_control = payload.counter_control;
-        self.output_value = u8::try_from(payload.output_value)
-            .map_err(|_| PersistenceError::Validation("triangle output overflow".into()))?;
-        self.length_counter
-            .import_state_proto(payload.length_counter.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing triangle length counter".into())
-            })?)?;
-        self.timer.import_state_proto(
-            payload
-                .timer
-                .as_ref()
-                .ok_or_else(|| PersistenceError::Validation("missing triangle timer".into()))?,
-        )?;
-        Ok(())
     }
 }
 

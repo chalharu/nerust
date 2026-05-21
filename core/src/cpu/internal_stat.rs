@@ -4,8 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::persistence::{InternalStatMessage, PersistenceError};
-
 #[derive(
     serde_derive::Serialize,
     serde_derive::Deserialize,
@@ -124,7 +122,7 @@ impl CpuStatesEnum {
     pub(crate) const COUNT: usize = CpuStatesEnum::Txs as usize + 1;
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct InternalStat {
     pub(super) opcode: usize,
     pub(super) address: usize,
@@ -213,40 +211,6 @@ impl InternalStat {
 
     pub(crate) fn get_state(&self) -> CpuStatesEnum {
         self.state
-    }
-
-    pub(crate) fn export_state_proto(&self) -> InternalStatMessage {
-        InternalStatMessage {
-            opcode: self.opcode as u32,
-            address: self.address as u32,
-            step: self.step as u32,
-            tempaddr: self.tempaddr as u32,
-            data: u32::from(self.data),
-            crossed: self.crossed,
-            interrupt: self.interrupt,
-            state: self.state as u32,
-        }
-    }
-
-    pub(crate) fn import_state_proto(
-        &mut self,
-        payload: &InternalStatMessage,
-    ) -> Result<(), PersistenceError> {
-        self.opcode = usize::try_from(payload.opcode)
-            .map_err(|_| PersistenceError::Validation("CPU opcode overflow".into()))?;
-        self.address = usize::try_from(payload.address)
-            .map_err(|_| PersistenceError::Validation("CPU address overflow".into()))?;
-        self.step = usize::try_from(payload.step)
-            .map_err(|_| PersistenceError::Validation("CPU step overflow".into()))?;
-        self.tempaddr = usize::try_from(payload.tempaddr)
-            .map_err(|_| PersistenceError::Validation("CPU tempaddr overflow".into()))?;
-        self.data = u8::try_from(payload.data)
-            .map_err(|_| PersistenceError::Validation("CPU data overflow".into()))?;
-        self.crossed = payload.crossed;
-        self.interrupt = payload.interrupt;
-        self.state = CpuStatesEnum::try_from(payload.state as usize)
-            .map_err(|_| PersistenceError::Validation("unknown CPU state".into()))?;
-        Ok(())
     }
 }
 

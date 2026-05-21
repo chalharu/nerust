@@ -17,7 +17,6 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
-use prost::Message;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, RwLock};
@@ -135,59 +134,27 @@ pub enum ConsoleError {
     Core(String),
 }
 
-#[derive(Clone, PartialEq, Message)]
-struct ControllerStateMessage {
-    #[prost(uint32, tag = "1")]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct ControllerStatePayload {
     pad1_bits: u32,
-    #[prost(uint32, tag = "2")]
     pad2_bits: u32,
-    #[prost(bool, tag = "3")]
     microphone: bool,
-    #[prost(uint64, tag = "4")]
     index1: u64,
-    #[prost(uint64, tag = "5")]
     index2: u64,
-    #[prost(bool, tag = "6")]
     strobe: bool,
 }
 
-#[derive(Clone, PartialEq, Message)]
-struct ConsoleRomIdentityMessage {
-    #[prost(uint32, tag = "1")]
-    mapper_type: u32,
-    #[prost(uint32, tag = "2")]
-    sub_mapper_type: u32,
-    #[prost(uint64, tag = "3")]
-    prg_rom_crc64: u64,
-    #[prost(uint64, tag = "4")]
-    chr_rom_crc64: u64,
-    #[prost(uint64, tag = "5")]
-    trainer_crc64: u64,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct ConsoleOptionsMessage {
-    #[prost(uint32, tag = "1")]
-    mmc3_irq_variant: u32,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct ConsoleStateMessage {
-    #[prost(uint32, tag = "1")]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct ConsoleStatePayload {
     schema_version: u32,
-    #[prost(bytes = "vec", tag = "2")]
+    #[serde(with = "serde_bytes")]
     core_state: Vec<u8>,
-    #[prost(uint64, tag = "3")]
     frame_counter: u64,
-    #[prost(bool, tag = "4")]
     paused: bool,
-    #[prost(message, optional, tag = "5")]
-    controller: Option<ControllerStateMessage>,
-    #[prost(message, optional, tag = "6")]
-    rom_identity: Option<ConsoleRomIdentityMessage>,
-    #[prost(message, optional, tag = "7")]
-    options: Option<ConsoleOptionsMessage>,
-    #[prost(bytes = "vec", tag = "8")]
+    controller: ControllerStatePayload,
+    rom_identity: RomIdentity,
+    options: CoreOptions,
+    #[serde(with = "serde_bytes")]
     source_frame: Vec<u8>,
 }
 
@@ -396,8 +363,8 @@ impl Drop for Console {
     }
 }
 
-fn controller_snapshot_to_proto(snapshot: StandardControllerSnapshot) -> ControllerStateMessage {
-    ControllerStateMessage {
+fn controller_snapshot_to_payload(snapshot: StandardControllerSnapshot) -> ControllerStatePayload {
+    ControllerStatePayload {
         pad1_bits: u32::from(snapshot.buttons[0].bits()),
         pad2_bits: u32::from(snapshot.buttons[1].bits()),
         microphone: snapshot.microphone,
@@ -407,8 +374,8 @@ fn controller_snapshot_to_proto(snapshot: StandardControllerSnapshot) -> Control
     }
 }
 
-fn controller_snapshot_from_proto(
-    payload: &ControllerStateMessage,
+fn controller_snapshot_from_payload(
+    payload: &ControllerStatePayload,
 ) -> Result<StandardControllerSnapshot, ConsoleError> {
     Ok(StandardControllerSnapshot {
         buttons: [
@@ -428,26 +395,6 @@ fn controller_snapshot_from_proto(
             .map_err(|_| ConsoleError::Core("controller index2 overflow".into()))?,
         strobe: payload.strobe,
     })
-}
-
-fn rom_identity_to_proto(identity: RomIdentity) -> ConsoleRomIdentityMessage {
-    ConsoleRomIdentityMessage {
-        mapper_type: u32::from(identity.mapper_type),
-        sub_mapper_type: u32::from(identity.sub_mapper_type),
-        prg_rom_crc64: identity.prg_rom_crc64,
-        chr_rom_crc64: identity.chr_rom_crc64,
-        trainer_crc64: identity.trainer_crc64,
-    }
-}
-
-fn options_to_proto(options: CoreOptions) -> ConsoleOptionsMessage {
-    ConsoleOptionsMessage {
-        mmc3_irq_variant: match options.mmc3_irq_variant {
-            Some(Mmc3IrqVariant::Sharp) => 1,
-            Some(Mmc3IrqVariant::Nec) => 2,
-            None => 0,
-        },
-    }
 }
 
 enum ConsoleData {
@@ -684,22 +631,22 @@ impl ConsoleRunner {
                                     } else {
                                         Vec::new()
                                     };
-                                    let state = ConsoleStateMessage {
+                                    let state = ConsoleStatePayload {
                                         schema_version: CONSOLE_STATE_SCHEMA_VERSION,
                                         core_state: machine_state,
                                         frame_counter: self.frame_counter,
                                         paused: self.paused,
-                                        controller: Some(controller_snapshot_to_proto(
+                                        controller: controller_snapshot_to_payload(
                                             self.controller.export_snapshot(),
-                                        )),
-                                        rom_identity: Some(rom_identity_to_proto(
-                                            core.rom_identity(),
-                                        )),
-                                        options: Some(options_to_proto(core.options())),
+                                        ),
+                                        rom_identity: core.rom_identity(),
+                                        options: core.options(),
                                         source_frame,
                                     };
                                     Ok(ConsoleReply::StateExport(StateExport {
-                                        machine_state: state.encode_to_vec(),
+                                        machine_state: rmp_serde::to_vec_named(&state).map_err(
+                                            |error| ConsoleError::Core(error.to_string()),
+                                        )?,
                                         preview,
                                         rom_identity: core.rom_identity(),
                                         options: core.options(),
@@ -712,26 +659,22 @@ impl ConsoleRunner {
                             core.as_mut()
                                 .ok_or_else(Self::core_not_loaded)
                                 .and_then(|core| {
-                                    let payload = ConsoleStateMessage::decode(bytes.as_slice())
-                                        .map_err(|error| {
-                                            ConsoleError::Core(format!(
-                                                "console state decode failed: {error}"
-                                            ))
-                                        })?;
+                                    let payload = rmp_serde::from_slice::<ConsoleStatePayload>(
+                                        bytes.as_slice(),
+                                    )
+                                    .map_err(|error| {
+                                        ConsoleError::Core(format!(
+                                            "console state decode failed: {error}"
+                                        ))
+                                    })?;
                                     if payload.schema_version != CONSOLE_STATE_SCHEMA_VERSION {
                                         return Err(ConsoleError::Core(format!(
                                             "unsupported console state schema version: {}",
                                             payload.schema_version
                                         )));
                                     }
-                                    let controller = controller_snapshot_from_proto(
-                                        payload.controller.as_ref().ok_or_else(|| {
-                                            ConsoleError::Core(
-                                                "missing controller state in console payload"
-                                                    .into(),
-                                            )
-                                        })?,
-                                    )?;
+                                    let controller =
+                                        controller_snapshot_from_payload(&payload.controller)?;
                                     if self.screen.publishes_palette_frame()
                                         && !payload.source_frame.is_empty()
                                         && payload.source_frame.len()

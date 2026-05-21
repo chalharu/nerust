@@ -7,7 +7,7 @@
 use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
 use crate::cart_device::Cartridge;
-use crate::persistence::{CartridgeRuntimeMessage, MAPPER_KIND_MMC3, PersistenceError};
+use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc3Nec {
@@ -24,29 +24,15 @@ impl Mmc3Nec {
 
 #[typetag::serde]
 impl Cartridge for Mmc3Nec {
-    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
-        Ok(CartridgeRuntimeMessage {
-            mapper_state: Some(self.shared.export_state_proto()),
-            mapper_specific_kind: MAPPER_KIND_MMC3.into(),
-            mapper_specific_body: self.shared.export_runtime_body()?,
-        })
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        self.shared.export_runtime_state()
     }
 
-    fn import_runtime_proto(
+    fn import_runtime_state(
         &mut self,
-        payload: &CartridgeRuntimeMessage,
+        state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
-        self.shared
-            .import_state_proto(payload.mapper_state.as_ref().ok_or_else(|| {
-                PersistenceError::Validation("missing MMC3 NEC mapper state".into())
-            })?)?;
-        if payload.mapper_specific_kind != MAPPER_KIND_MMC3 {
-            return Err(PersistenceError::Validation(
-                "unexpected MMC3 NEC runtime kind".into(),
-            ));
-        }
-        self.shared
-            .import_runtime_body(&payload.mapper_specific_body)
+        self.shared.import_runtime_state(state)
     }
 }
 
