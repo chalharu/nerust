@@ -330,7 +330,7 @@ impl Mapper4Shared {
         }
         self.bank_select = u8::try_from(runtime.bank_select)
             .map_err(|_| PersistenceError::Validation("MMC3 bank_select overflow".into()))?;
-        for (slot, value) in self.bank_data.iter_mut().zip(runtime.bank_data.into_iter()) {
+        for (slot, value) in self.bank_data.iter_mut().zip(runtime.bank_data) {
             *slot = u8::try_from(value)
                 .map_err(|_| PersistenceError::Validation("MMC3 bank_data overflow".into()))?;
         }
