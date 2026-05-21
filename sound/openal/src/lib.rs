@@ -11,7 +11,9 @@ use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_soundfilter::{Filter, NesFilter};
 #[cfg(target_os = "macos")]
-use std::ffi::{CStr, CString};
+use std::os::unix::process::CommandExt;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::Once;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -19,8 +21,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{f64, thread};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
+#[cfg(any(target_os = "macos", test))]
+const MACOS_RUNTIME_SANITIZED_ENV: &str = "NERUST_MACOS_RUNTIME_SANITIZED";
 
 #[cfg(target_os = "macos")]
 const MACOS_OPENAL_CANDIDATES: &[&str] = &[
@@ -30,87 +34,86 @@ const MACOS_OPENAL_CANDIDATES: &[&str] = &[
 ];
 
 #[cfg(target_os = "macos")]
-const MACOS_IMAGEIO_CANDIDATES: &[&str] = &[
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/ImageIO",
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/ImageIO",
-    "/System/Library/Frameworks/ImageIO.framework/ImageIO",
-    "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
-];
-
-#[cfg(target_os = "macos")]
-const MACOS_HISERVICES_CANDIDATES: &[&str] = &[
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices",
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/Versions/A/HIServices",
-];
-
-#[cfg(target_os = "macos")]
-const MACOS_PNG_PLUGIN_CANDIDATES: &[&str] = &[
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
-    "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
-    "/System/Library/Frameworks/ImageIO.framework/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
-    "/System/Library/Frameworks/ImageIO.framework/Versions/A/Resources/PNGReadPlugin.bundle/Contents/MacOS/PNGReadPlugin",
-];
-
-#[cfg(target_os = "macos")]
 static PREPARE_MACOS_RUNTIME_ONCE: Once = Once::new();
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MacosRuntimeAction {
+    Continue,
+    Reexec,
+    Abort,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_runtime_action(
+    guard_present: bool,
+    dyld_env_vars_present: &[&'static str],
+) -> MacosRuntimeAction {
+    match (guard_present, dyld_env_vars_present.is_empty()) {
+        (_, true) => MacosRuntimeAction::Continue,
+        (false, false) => MacosRuntimeAction::Reexec,
+        (true, false) => MacosRuntimeAction::Abort,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn present_dyld_env_vars(mut is_present: impl FnMut(&str) -> bool) -> Vec<&'static str> {
+    DYLD_ENV_VARS
+        .into_iter()
+        .filter(|name| is_present(name))
+        .collect()
+}
 
 pub fn prepare_macos_runtime() {
     #[cfg(target_os = "macos")]
     PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
-        sanitize_process_dyld_env();
-        preload_system_library("ImageIO", MACOS_IMAGEIO_CANDIDATES);
-        preload_system_library("HIServices", MACOS_HISERVICES_CANDIDATES);
-        preload_system_library("PNGReadPlugin", MACOS_PNG_PLUGIN_CANDIDATES);
+        let guard_present = std::env::var_os(MACOS_RUNTIME_SANITIZED_ENV).is_some();
+        let dyld_env_vars_present = present_dyld_env_vars(|name| std::env::var_os(name).is_some());
+
+        match macos_runtime_action(guard_present, &dyld_env_vars_present) {
+            MacosRuntimeAction::Continue => clear_macos_runtime_guard(),
+            MacosRuntimeAction::Reexec => reexec_process_without_dyld_env(&dyld_env_vars_present),
+            MacosRuntimeAction::Abort => {
+                log::error!(
+                    "{MACOS_RUNTIME_SANITIZED_ENV} is set but macOS DYLD environment variables are still present ({vars}); refusing to continue",
+                    vars = dyld_env_vars_present.join(", "),
+                );
+                std::process::exit(1);
+            }
+        }
     });
 }
 
 #[cfg(target_os = "macos")]
-fn sanitize_process_dyld_env() {
-    for name in DYLD_ENV_VARS {
-        if std::env::var_os(name).is_some() {
-            log::warn!(
-                "removing {name} from the process environment to avoid macOS ImageIO plugin conflicts"
-            );
-            // SAFETY: This runs during process startup on the main thread before any frontend or
-            // audio worker threads are created, so there is no concurrent environment mutation.
-            unsafe {
-                std::env::remove_var(name);
-            }
+fn clear_macos_runtime_guard() {
+    if std::env::var_os(MACOS_RUNTIME_SANITIZED_ENV).is_some() {
+        // SAFETY: This runs during process startup on the main thread before any frontend or audio
+        // worker threads are created, so there is no concurrent environment mutation.
+        unsafe {
+            std::env::remove_var(MACOS_RUNTIME_SANITIZED_ENV);
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn preload_system_library(name: &str, candidates: &[&str]) {
-    let mut last_error = None;
-    for path in candidates {
-        let path_c = CString::new(*path).expect("macOS framework path must not contain NUL");
-        // SAFETY: dlerror/dlopen are called with valid pointers, and we intentionally keep any
-        // successfully loaded handle alive for the remainder of the process to preserve plugin
-        // initialization side effects.
-        let handle = unsafe {
-            libc::dlerror();
-            libc::dlopen(path_c.as_ptr(), libc::RTLD_NOW)
-        };
-        if !handle.is_null() {
-            log::info!("preloaded {name} from {path}");
-            return;
-        }
+fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! {
+    log::warn!(
+        "re-executing process without macOS DYLD environment variables to avoid ImageIO/AppKit plugin conflicts: {}",
+        dyld_env_vars_present.join(", "),
+    );
 
-        let error = unsafe {
-            let error = libc::dlerror();
-            if error.is_null() {
-                "unknown dlopen error".to_string()
-            } else {
-                CStr::from_ptr(error).to_string_lossy().into_owned()
-            }
-        };
-        last_error = Some(format!("{path}: {error}"));
+    let mut command = Command::new(
+        std::env::current_exe().expect("failed to resolve current executable for macOS re-exec"),
+    );
+    command.args(std::env::args_os().skip(1));
+    command.env(MACOS_RUNTIME_SANITIZED_ENV, "1");
+    for name in DYLD_ENV_VARS {
+        command.env_remove(name);
     }
+    let err = command.exec();
 
-    if let Some(error) = last_error {
-        log::warn!("failed to preload {name}: {error}");
-    }
+    log::error!("failed to re-execute process without DYLD environment variables: {err}");
+    std::process::exit(1);
 }
 
 const CORE_AUDIO_OVERSAMPLE: u32 = 4;
@@ -263,30 +266,28 @@ impl OpenAlState {
     }
 
     fn load_alto() -> Result<Alto, String> {
-        OpenAl::with_sanitized_dyld_env(|| {
-            let mut errors = Vec::new();
+        let mut errors = Vec::new();
 
-            match Alto::load_default() {
+        match Alto::load_default() {
+            Ok(alto) => {
+                log::info!("loaded OpenAL with the default loader");
+                return Ok(alto);
+            }
+            Err(err) => errors.push(format!("default loader failed: {err:?}")),
+        }
+
+        #[cfg(target_os = "macos")]
+        for path in MACOS_OPENAL_CANDIDATES {
+            match Alto::load(path) {
                 Ok(alto) => {
-                    log::info!("loaded OpenAL with the default loader");
+                    log::info!("loaded OpenAL from {path}");
                     return Ok(alto);
                 }
-                Err(err) => errors.push(format!("default loader failed: {err:?}")),
+                Err(err) => errors.push(format!("{path}: {err:?}")),
             }
+        }
 
-            #[cfg(target_os = "macos")]
-            for path in MACOS_OPENAL_CANDIDATES {
-                match Alto::load(path) {
-                    Ok(alto) => {
-                        log::info!("loaded OpenAL from {path}");
-                        return Ok(alto);
-                    }
-                    Err(err) => errors.push(format!("{path}: {err:?}")),
-                }
-            }
-
-            Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
-        })
+        Err(format!("failed to load OpenAL: {}", errors.join(" | ")))
     }
 
     fn create_streaming_source(
@@ -454,52 +455,6 @@ impl OpenAl {
             ),
         }
     }
-
-    #[cfg(target_os = "macos")]
-    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        let saved = DYLD_ENV_VARS.map(|name| (name, std::env::var_os(name)));
-        for (name, value) in &saved {
-            if value.is_some() {
-                log::warn!(
-                    "temporarily clearing {name} while loading OpenAL to avoid ImageIO plugin conflicts"
-                );
-                // SAFETY: OpenAl::new initializes the audio backend on the caller thread before
-                // the dedicated audio thread is spawned, so no other thread concurrently mutates
-                // these DYLD variables during this narrow load window.
-                unsafe {
-                    std::env::remove_var(name);
-                }
-            }
-        }
-
-        let result = f();
-
-        for (name, value) in saved {
-            match value {
-                Some(value) => {
-                    // SAFETY: See the rationale above; restoration happens on the same thread
-                    // before the audio worker is started, so there is no concurrent env access.
-                    unsafe {
-                        std::env::set_var(name, value);
-                    }
-                }
-                None => {
-                    // SAFETY: See the rationale above; restoration happens before spawning the
-                    // audio thread, so there is no concurrent env access.
-                    unsafe {
-                        std::env::remove_var(name);
-                    }
-                }
-            }
-        }
-
-        result
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn with_sanitized_dyld_env<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        f()
-    }
 }
 
 impl Sound for OpenAl {
@@ -540,5 +495,49 @@ impl Drop for OpenAl {
             log::warn!("OpenAL channel (stop) send failed");
         }
         let _ = self.thread.take().map(JoinHandle::join);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DYLD_ENV_VARS, MACOS_RUNTIME_SANITIZED_ENV, MacosRuntimeAction, macos_runtime_action,
+        present_dyld_env_vars,
+    };
+
+    #[test]
+    fn present_dyld_env_vars_collects_present_variables() {
+        let dyld_env_vars_present = present_dyld_env_vars(|name| {
+            matches!(
+                name,
+                MACOS_RUNTIME_SANITIZED_ENV | "DYLD_FALLBACK_LIBRARY_PATH"
+            )
+        });
+
+        assert_eq!(dyld_env_vars_present, vec![DYLD_ENV_VARS[1]]);
+    }
+
+    #[test]
+    fn macos_runtime_reexecs_when_dyld_env_is_present_without_guard() {
+        assert_eq!(
+            macos_runtime_action(false, &[DYLD_ENV_VARS[0]]),
+            MacosRuntimeAction::Reexec
+        );
+    }
+
+    #[test]
+    fn macos_runtime_continues_once_reexec_has_cleared_dyld_env() {
+        assert_eq!(
+            macos_runtime_action(true, &[]),
+            MacosRuntimeAction::Continue
+        );
+    }
+
+    #[test]
+    fn macos_runtime_aborts_when_guard_is_set_but_dyld_env_remains() {
+        assert_eq!(
+            macos_runtime_action(true, &DYLD_ENV_VARS),
+            MacosRuntimeAction::Abort
+        );
     }
 }
