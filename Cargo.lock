@@ -2256,6 +2256,7 @@ name = "nerust_persistence"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "libc",
  "nerust_core",
  "png",
  "rmp-serde",

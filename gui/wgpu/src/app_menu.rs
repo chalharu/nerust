@@ -4,8 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_persistence::StateSlotSummary;
-use std::time::UNIX_EPOCH;
+use nerust_persistence::{StateSlotSummary, format_slot_saved_at};
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -29,17 +28,13 @@ pub(crate) enum UserEvent {
 }
 
 fn slot_label(slot: &StateSlotSummary, active_slot: Option<u64>) -> String {
-    let seconds = slot
-        .saved_at
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
+    let saved_at = format_slot_saved_at(slot.saved_at);
     let active = if active_slot == Some(slot.slot_id) {
         " (active)"
     } else {
         ""
     };
-    format!("Slot {} — {seconds}{active}", slot.slot_id)
+    format!("Slot {} — {saved_at}{active}", slot.slot_id)
 }
 
 #[cfg(any(

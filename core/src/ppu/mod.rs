@@ -498,9 +498,18 @@ impl Core {
     }
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
-        if usize::from(self.sprite_index) >= 8 {
+        if usize::from(self.sprite_index) > 8 {
             return Err(PersistenceError::Validation(
                 "PPU sprite index overflow".into(),
+            ));
+        }
+        if self.sprite_index == 8
+            && self.render_executing
+            && self.scan_line <= 240
+            && (257..316).contains(&self.cycle)
+        {
+            return Err(PersistenceError::Validation(
+                "PPU sprite index terminal state is only valid after the final sprite fetch".into(),
             ));
         }
         if usize::from(self.sprite_count) > 8 {
@@ -517,9 +526,17 @@ impl Core {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_sprite_fetch_state_for_test(&mut self, sprite_index: u8, sprite_count: u8) {
+    pub(crate) fn set_sprite_fetch_state_for_test(
+        &mut self,
+        sprite_index: u8,
+        sprite_count: u8,
+        cycle: u16,
+        render_executing: bool,
+    ) {
         self.sprite_index = sprite_index;
         self.sprite_count = sprite_count;
+        self.cycle = cycle;
+        self.render_executing = render_executing;
     }
 
     pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {
