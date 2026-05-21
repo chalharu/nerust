@@ -26,6 +26,7 @@ use self::pulse::Pulse;
 use self::triangle::Triangle;
 use crate::Cpu;
 use crate::OpenBusReadResult;
+use crate::PersistenceError;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use nerust_sound_traits::MixerInput;
 
@@ -36,7 +37,9 @@ const CLOCK_RATE: u64 = 1_789_773;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Core {
+    #[serde(skip, default = "make_pulse_table")]
     pulse_table: Vec<f32>,
+    #[serde(skip, default = "make_tnd_table")]
     tnd_table: Vec<f32>,
     // filter: ChaindFilter<ChaindFilter<PassFilter, PassFilter>, PassFilter>,
     // sample_rate: u32,
@@ -51,6 +54,18 @@ pub(crate) struct Core {
     frame_counter: FrameCounter,
 }
 
+fn make_pulse_table() -> Vec<f32> {
+    (0..31)
+        .map(|x| 95.52 / (8128.0 / x as f32 + 100.0))
+        .collect::<Vec<_>>()
+}
+
+fn make_tnd_table() -> Vec<f32> {
+    (0..203)
+        .map(|x| 163.67 / (24329.0 / x as f32 + 100.0))
+        .collect::<Vec<_>>()
+}
+
 impl Core {
     pub(crate) fn new(
         // sample_rate: u32,
@@ -60,12 +75,8 @@ impl Core {
         // let filter_sample_rate = CLOCK_RATE as f64 / f64::from(sample_rate);
         let mut result = Self {
             // https://wiki.nesdev.com/w/index.php/APU_Mixer
-            pulse_table: (0..31)
-                .map(|x| 95.52 / (8128.0 / x as f32 + 100.0))
-                .collect::<Vec<_>>(),
-            tnd_table: (0..203)
-                .map(|x| 163.67 / (24329.0 / x as f32 + 100.0))
-                .collect::<Vec<_>>(),
+            pulse_table: make_pulse_table(),
+            tnd_table: make_tnd_table(),
             // filter: PassFilter::get_highpass_filter(filter_sample_rate, 90.0)
             //     .chain(PassFilter::get_highpass_filter(filter_sample_rate, 440.0))
             //     .chain(PassFilter::get_lowpass_filter(filter_sample_rate, 14000.0)),
@@ -80,6 +91,17 @@ impl Core {
         };
         result.initialize(interrupt);
         result
+    }
+
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        self.pulse1.validate_runtime_state()?;
+        self.pulse2.validate_runtime_state()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pulse_duty_for_test(&mut self, mode: u8, value: u8) {
+        self.pulse1.set_duty_for_test(mode, value);
     }
 
     pub(crate) fn reset(&mut self, interrupt: &mut Interrupt) {

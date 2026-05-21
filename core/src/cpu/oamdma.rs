@@ -14,7 +14,7 @@ pub(crate) enum OamDmaStateEnumValue {
     None,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct OamDmaStateValue {
     offset: u8,
     count: u8,
@@ -45,6 +45,16 @@ fn make_state_pool() -> [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as
         Box::new(OamDmaStep1),
         Box::new(OamDmaStep2),
     ]
+}
+
+impl Clone for OamDmaState {
+    fn clone(&self) -> Self {
+        Self {
+            state_pool: make_state_pool(),
+            state: self.state,
+            value: self.value.clone(),
+        }
+    }
 }
 
 impl OamDmaState {

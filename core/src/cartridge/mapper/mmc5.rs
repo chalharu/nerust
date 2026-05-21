@@ -10,6 +10,7 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC5, PersistenceError};
 use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
 
@@ -33,6 +34,73 @@ struct SplitTileContext {
     coarse_y: u8,
     fine_y: u8,
     uses_attribute_tiles: bool,
+}
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Mmc5RuntimeState {
+    prg_mode: u8,
+    chr_mode: u8,
+    prg_ram_protect_1: u8,
+    prg_ram_protect_2: u8,
+    exram_mode: u8,
+    nametable_mapping: [u8; 4],
+    fill_tile: u8,
+    fill_attribute: u8,
+    prg_banks: [u8; 5],
+    sprite_chr_banks: [u16; 8],
+    background_chr_banks: [u16; 4],
+    chr_upper_bits: u8,
+    sprite_size_16: bool,
+    substitutions_enabled: bool,
+    last_chr_bank_set: ChrBankSet,
+    current_background_tile_index: usize,
+    #[serde(with = "serde_bytes")]
+    exram: Vec<u8>,
+    split_enabled: bool,
+    split_right_side: bool,
+    split_threshold: u8,
+    split_scroll: u8,
+    split_chr_bank: u8,
+    current_split_tile: Option<SplitTileContext>,
+    background_tile_fetches: u8,
+    scanline_compare: u8,
+    scanline_irq_enabled: bool,
+    scanline_irq_pending: bool,
+    in_frame: bool,
+    scanline_counter: u8,
+    matched_nametable_address: Option<usize>,
+    matched_nametable_reads: u8,
+    scanline_detect_pending: bool,
+    ppu_read_seen_this_cpu_cycle: bool,
+    idle_cpu_cycles: u8,
+    multiplier_a: u8,
+    multiplier_b: u8,
+    pulse_1: audio::Mmc5Pulse,
+    pulse_2: audio::Mmc5Pulse,
+    audio_frame_accumulator: u64,
+    pcm_read_mode: bool,
+    pcm_irq_enabled: bool,
+    pcm_irq_pending: bool,
+    pcm_output: u8,
+    mmc5a_cl3_input_mode: bool,
+    mmc5a_sl3_input_mode: bool,
+    mmc5a_cl3_read_strobe: bool,
+    mmc5a_sl3_write_strobe: bool,
+    mmc5a_cl3_strobe_low: bool,
+    mmc5a_sl3_strobe_low: bool,
+    mmc5a_cl3_output: bool,
+    mmc5a_sl3_output: bool,
+    hardware_timer_counter: u16,
+    hardware_timer_running: bool,
+    hardware_timer_irq_pending: bool,
+}
+
+impl Mmc5RuntimeState {
+    fn validate(&self) -> Result<(), PersistenceError> {
+        self.pulse_1.validate_runtime_state()?;
+        self.pulse_2.validate_runtime_state()?;
+        Ok(())
+    }
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
@@ -99,6 +167,148 @@ pub(crate) struct Mmc5 {
 
 #[typetag::serde]
 impl Cartridge for Mmc5 {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_MMC5.into(),
+            extra_body: crate::persistence::encode_payload(&Mmc5RuntimeState {
+                prg_mode: self.prg_mode,
+                chr_mode: self.chr_mode,
+                prg_ram_protect_1: self.prg_ram_protect_1,
+                prg_ram_protect_2: self.prg_ram_protect_2,
+                exram_mode: self.exram_mode,
+                nametable_mapping: self.nametable_mapping,
+                fill_tile: self.fill_tile,
+                fill_attribute: self.fill_attribute,
+                prg_banks: self.prg_banks,
+                sprite_chr_banks: self.sprite_chr_banks,
+                background_chr_banks: self.background_chr_banks,
+                chr_upper_bits: self.chr_upper_bits,
+                sprite_size_16: self.sprite_size_16,
+                substitutions_enabled: self.substitutions_enabled,
+                last_chr_bank_set: self.last_chr_bank_set,
+                current_background_tile_index: self.current_background_tile_index,
+                exram: self.exram.clone(),
+                split_enabled: self.split_enabled,
+                split_right_side: self.split_right_side,
+                split_threshold: self.split_threshold,
+                split_scroll: self.split_scroll,
+                split_chr_bank: self.split_chr_bank,
+                current_split_tile: self.current_split_tile,
+                background_tile_fetches: self.background_tile_fetches,
+                scanline_compare: self.scanline_compare,
+                scanline_irq_enabled: self.scanline_irq_enabled,
+                scanline_irq_pending: self.scanline_irq_pending,
+                in_frame: self.in_frame,
+                scanline_counter: self.scanline_counter,
+                matched_nametable_address: self.matched_nametable_address,
+                matched_nametable_reads: self.matched_nametable_reads,
+                scanline_detect_pending: self.scanline_detect_pending,
+                ppu_read_seen_this_cpu_cycle: self.ppu_read_seen_this_cpu_cycle,
+                idle_cpu_cycles: self.idle_cpu_cycles,
+                multiplier_a: self.multiplier_a,
+                multiplier_b: self.multiplier_b,
+                pulse_1: self.pulse_1,
+                pulse_2: self.pulse_2,
+                audio_frame_accumulator: self.audio_frame_accumulator,
+                pcm_read_mode: self.pcm_read_mode,
+                pcm_irq_enabled: self.pcm_irq_enabled,
+                pcm_irq_pending: self.pcm_irq_pending,
+                pcm_output: self.pcm_output,
+                mmc5a_cl3_input_mode: self.mmc5a_cl3_input_mode,
+                mmc5a_sl3_input_mode: self.mmc5a_sl3_input_mode,
+                mmc5a_cl3_read_strobe: self.mmc5a_cl3_read_strobe,
+                mmc5a_sl3_write_strobe: self.mmc5a_sl3_write_strobe,
+                mmc5a_cl3_strobe_low: self.mmc5a_cl3_strobe_low,
+                mmc5a_sl3_strobe_low: self.mmc5a_sl3_strobe_low,
+                mmc5a_cl3_output: self.mmc5a_cl3_output,
+                mmc5a_sl3_output: self.mmc5a_sl3_output,
+                hardware_timer_counter: self.hardware_timer_counter,
+                hardware_timer_running: self.hardware_timer_running,
+                hardware_timer_irq_pending: self.hardware_timer_irq_pending,
+            })?,
+        })
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_MMC5 {
+            return Err(PersistenceError::Validation(
+                "unexpected MMC5 runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: Mmc5RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        runtime.validate()?;
+        if runtime.exram.len() != self.exram.len() {
+            return Err(PersistenceError::Validation(
+                "MMC5 EXRAM length mismatch".into(),
+            ));
+        }
+        self.state = state.mapper_state;
+        self.prg_mode = runtime.prg_mode;
+        self.chr_mode = runtime.chr_mode;
+        self.prg_ram_protect_1 = runtime.prg_ram_protect_1;
+        self.prg_ram_protect_2 = runtime.prg_ram_protect_2;
+        self.exram_mode = runtime.exram_mode;
+        self.nametable_mapping = runtime.nametable_mapping;
+        self.fill_tile = runtime.fill_tile;
+        self.fill_attribute = runtime.fill_attribute;
+        self.prg_banks = runtime.prg_banks;
+        self.sprite_chr_banks = runtime.sprite_chr_banks;
+        self.background_chr_banks = runtime.background_chr_banks;
+        self.chr_upper_bits = runtime.chr_upper_bits;
+        self.sprite_size_16 = runtime.sprite_size_16;
+        self.substitutions_enabled = runtime.substitutions_enabled;
+        self.last_chr_bank_set = runtime.last_chr_bank_set;
+        self.current_background_tile_index = runtime.current_background_tile_index;
+        self.exram = runtime.exram;
+        self.split_enabled = runtime.split_enabled;
+        self.split_right_side = runtime.split_right_side;
+        self.split_threshold = runtime.split_threshold;
+        self.split_scroll = runtime.split_scroll;
+        self.split_chr_bank = runtime.split_chr_bank;
+        self.current_split_tile = runtime.current_split_tile;
+        self.background_tile_fetches = runtime.background_tile_fetches;
+        self.scanline_compare = runtime.scanline_compare;
+        self.scanline_irq_enabled = runtime.scanline_irq_enabled;
+        self.scanline_irq_pending = runtime.scanline_irq_pending;
+        self.in_frame = runtime.in_frame;
+        self.scanline_counter = runtime.scanline_counter;
+        self.matched_nametable_address = runtime.matched_nametable_address;
+        self.matched_nametable_reads = runtime.matched_nametable_reads;
+        self.scanline_detect_pending = runtime.scanline_detect_pending;
+        self.ppu_read_seen_this_cpu_cycle = runtime.ppu_read_seen_this_cpu_cycle;
+        self.idle_cpu_cycles = runtime.idle_cpu_cycles;
+        self.multiplier_a = runtime.multiplier_a;
+        self.multiplier_b = runtime.multiplier_b;
+        self.pulse_1 = runtime.pulse_1;
+        self.pulse_2 = runtime.pulse_2;
+        self.audio_frame_accumulator = runtime.audio_frame_accumulator;
+        self.pcm_read_mode = runtime.pcm_read_mode;
+        self.pcm_irq_enabled = runtime.pcm_irq_enabled;
+        self.pcm_irq_pending = runtime.pcm_irq_pending;
+        self.pcm_output = runtime.pcm_output;
+        self.mmc5a_cl3_input_mode = runtime.mmc5a_cl3_input_mode;
+        self.mmc5a_sl3_input_mode = runtime.mmc5a_sl3_input_mode;
+        self.mmc5a_cl3_read_strobe = runtime.mmc5a_cl3_read_strobe;
+        self.mmc5a_sl3_write_strobe = runtime.mmc5a_sl3_write_strobe;
+        self.mmc5a_cl3_strobe_low = runtime.mmc5a_cl3_strobe_low;
+        self.mmc5a_sl3_strobe_low = runtime.mmc5a_sl3_strobe_low;
+        self.mmc5a_cl3_output = runtime.mmc5a_cl3_output;
+        self.mmc5a_sl3_output = runtime.mmc5a_sl3_output;
+        self.hardware_timer_counter = runtime.hardware_timer_counter;
+        self.hardware_timer_running = runtime.hardware_timer_running;
+        self.hardware_timer_irq_pending = runtime.hardware_timer_irq_pending;
+        Ok(())
+    }
+
     fn read_character(&self, address: usize) -> OpenBusReadResult {
         self.read_character_with_access(address, PpuReadAccess::CpuData)
     }

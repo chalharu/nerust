@@ -8,7 +8,7 @@ use crate::cpu::{Interrupt, Register};
 use crate::{Apu, Cartridge, Controller, Ppu};
 use crate::{OpenBus, OpenBusReadResult};
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Memory {
     #[serde(with = "nerust_serialize::BigArray")]
     wram: [u8; 2048],

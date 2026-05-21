@@ -7,6 +7,7 @@
 use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
 use crate::cart_device::Cartridge;
+use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc3Nec {
@@ -22,7 +23,18 @@ impl Mmc3Nec {
 }
 
 #[typetag::serde]
-impl Cartridge for Mmc3Nec {}
+impl Cartridge for Mmc3Nec {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        self.shared.export_runtime_state()
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        self.shared.import_runtime_state(state)
+    }
+}
 
 impl Mapper4Wrapper for Mmc3Nec {
     const NAME: &'static str = "MMC3 NEC (Mapper4)";
