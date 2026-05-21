@@ -13,18 +13,10 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use nerust_console::{Console, ConsoleMetrics, PreviewFrame};
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_persistence::{
-    SidecarPaths, ThumbnailSource, allocate_next_slot_id, latest_saved_slot_id, load_mapper_save,
-    load_state_slot, resolve_sidecars, scan_state_slots_for_target, state_slot_path,
-    write_mapper_save, write_recovery_mapper_save, write_state_slot,
-};
-use nerust_screen_filter::FilterType;
+use nerust_gui_runtime::GuiSession;
 use nerust_screen_opengl::GlView;
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
-use nerust_sound_openal::OpenAl;
-use nerust_timer::CLOCK_RATE;
+use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -118,18 +110,6 @@ fn create_window(
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
-    let state = if paused { "Nes -- Paused" } else { "Nes" };
-    if console_metrics.loaded {
-        format!(
-            "{state} | FPS {:.1} | Speed x{:.2}",
-            console_metrics.emulation_fps, console_metrics.speed_multiplier
-        )
-    } else {
-        format!("{state} | No ROM")
-    }
-}
-
 pub struct Window {
     view: Option<GlView>,
     gl_context: Option<PossiblyCurrentContext>,
@@ -137,30 +117,14 @@ pub struct Window {
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
     keys: Buttons,
-    paused: bool,
-    console: Console,
-    physical_size: PhysicalSize,
+    session: GuiSession,
     last_title_update: Instant,
     last_presented_frame_counter: u64,
     needs_redraw: bool,
-    rom_path: Option<PathBuf>,
-    sidecars: Option<SidecarPaths>,
-    mapper_save_flush_allowed: bool,
-    mapper_save_recovery_written: bool,
-    active_slot_id: Option<u64>,
 }
 
 impl Window {
     pub fn new() -> Self {
-        let filter_type = FilterType::NtscComposite;
-        let source_logical_size = LogicalSize {
-            width: 256,
-            height: 240,
-        };
-        let speaker = OpenAl::new(48000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
-        let physical_size = console.video().presentation().physical_size();
-
         Self {
             event_loop: Some(EventLoop::new().unwrap()),
             view: None,
@@ -168,41 +132,19 @@ impl Window {
             gl_surface: None,
             window: None,
             keys: Buttons::empty(),
-            paused: false,
-            console,
-            physical_size,
+            session: GuiSession::default(),
             last_title_update: Instant::now(),
             last_presented_frame_counter: 0,
             needs_redraw: true,
-            rom_path: None,
-            sidecars: None,
-            mapper_save_flush_allowed: true,
-            mapper_save_recovery_written: false,
-            active_slot_id: None,
         }
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush before load failed: {error}");
-            return;
-        }
-        if self.console.load(data).is_ok() {
-            self.rom_path = rom_path;
-            self.sidecars = self.rom_path.as_deref().map(resolve_sidecars);
-            self.mapper_save_flush_allowed = true;
-            self.mapper_save_recovery_written = false;
-            self.active_slot_id = None;
-            self.select_default_active_slot();
-            if let Err(error) = self.load_mapper_save_if_available() {
-                self.mapper_save_flush_allowed = false;
-                log::warn!("mapper save auto-load failed: {error}");
-            }
-        }
+        let _ = self.session.load(rom_path, data);
     }
 
     pub fn run(&mut self) {
-        self.console.resume();
+        self.session.resume();
         let event_loop = self.event_loop.take().unwrap();
         event_loop.set_control_flow(ControlFlow::Wait);
         event_loop.run_app(self).unwrap();
@@ -213,10 +155,11 @@ impl Window {
             return;
         }
 
-        let (window, gl_context, gl_surface) = create_window(event_loop, self.physical_size);
+        let (window, gl_context, gl_surface) =
+            create_window(event_loop, self.session.physical_size());
         let mut view = GlView::new();
         view.use_vao(true);
-        view.on_load(self.console.video().presentation()).unwrap();
+        view.on_load(self.session.presentation()).unwrap();
         let initial_size = window.inner_size();
 
         self.window = Some(window);
@@ -228,18 +171,15 @@ impl Window {
     }
 
     fn on_update(&mut self) {
-        self.console
-            .video()
-            .frame_buffer()
-            .with_bytes(|frame_buffer| {
-                self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
-            });
+        self.session.with_frame_buffer(|frame_buffer| {
+            self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
+        });
         self.gl_surface
             .as_ref()
             .unwrap()
             .swap_buffers(self.gl_context.as_ref().unwrap())
             .unwrap();
-        self.last_presented_frame_counter = self.console.metrics().frame_counter;
+        self.last_presented_frame_counter = self.session.metrics().frame_counter;
         self.needs_redraw = false;
         self.maybe_refresh_window_title(Instant::now());
     }
@@ -257,8 +197,9 @@ impl Window {
             .unwrap()
             .resize(self.gl_context.as_ref().unwrap(), width, height);
 
-        let rate_x = physical_size.width as f32 / self.physical_size.width;
-        let rate_y = physical_size.height as f32 / self.physical_size.height;
+        let session_size = self.session.physical_size();
+        let rate_x = physical_size.width as f32 / session_size.width;
+        let rate_y = physical_size.height as f32 / session_size.height;
         let rate = f32::min(rate_x, rate_y);
         let scale_x = rate / rate_x;
         let scale_y = rate / rate_y;
@@ -273,9 +214,7 @@ impl Window {
     }
 
     fn on_close(&mut self) -> bool {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush before close failed: {error}");
-        }
+        self.session.flush_before_exit();
         if let Some(view) = self.view.as_mut() {
             view.on_close();
         }
@@ -287,7 +226,7 @@ impl Window {
     }
 
     fn current_window_title(&self) -> String {
-        window_title(self.paused, self.console.metrics())
+        self.session.window_title()
     }
 
     fn refresh_window_title(&mut self) {
@@ -304,15 +243,14 @@ impl Window {
     }
 
     fn set_paused(&mut self, paused: bool) {
-        if self.paused == paused {
+        if self.session.paused() == paused {
             return;
         }
 
-        self.paused = paused;
-        if self.paused {
-            self.console.pause();
+        if paused {
+            self.session.pause();
         } else {
-            self.console.resume();
+            self.session.resume();
             self.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
@@ -321,10 +259,8 @@ impl Window {
         self.refresh_window_title();
     }
 
-    fn sync_paused_from_console(&mut self) {
-        let was_paused = self.paused;
-        self.paused = self.console.metrics().paused;
-        if was_paused && !self.paused {
+    fn request_redraw_after_resume(&mut self, was_paused: bool) {
+        if was_paused && !self.session.paused() {
             self.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
@@ -334,67 +270,9 @@ impl Window {
     }
 
     fn select_adjacent_slot(&mut self, forward: bool) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        let (rom_identity, options) = match self.console.persistence_target() {
-            Ok(target) => target,
-            Err(error) => {
-                log::warn!("state slot target unavailable: {error}");
-                return;
-            }
-        };
-        let slots = match scan_state_slots_for_target(&sidecars.states_dir, rom_identity, options) {
-            Ok(slots) => slots,
-            Err(error) => {
-                log::warn!("state slot scan failed: {error}");
-                return;
-            }
-        };
-        let Some(next_slot_id) = (!slots.is_empty()).then(|| {
-            if let Some(current) = self.active_slot_id
-                && let Some(index) = slots.iter().position(|slot| slot.slot_id == current)
-            {
-                let offset = if forward {
-                    (index + 1) % slots.len()
-                } else {
-                    (index + slots.len() - 1) % slots.len()
-                };
-                slots[offset].slot_id
-            } else if forward {
-                slots[0].slot_id
-            } else {
-                slots[slots.len() - 1].slot_id
-            }
-        }) else {
-            return;
-        };
-        self.active_slot_id = Some(next_slot_id);
-        log::info!("selected save slot {next_slot_id}");
-    }
-
-    fn select_default_active_slot(&mut self) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            self.active_slot_id = None;
-            return;
-        };
-        let (rom_identity, options) = match self.console.persistence_target() {
-            Ok(target) => target,
-            Err(error) => {
-                log::warn!("state slot target unavailable: {error}");
-                self.active_slot_id = None;
-                return;
-            }
-        };
-        let slots = match scan_state_slots_for_target(&sidecars.states_dir, rom_identity, options) {
-            Ok(slots) => slots,
-            Err(error) => {
-                log::warn!("state slot scan failed: {error}");
-                self.active_slot_id = None;
-                return;
-            }
-        };
-        self.active_slot_id = latest_saved_slot_id(&slots);
+        if let Some(next_slot_id) = self.session.select_adjacent_slot(forward) {
+            log::info!("selected save slot {next_slot_id}");
+        }
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
@@ -417,17 +295,17 @@ impl Window {
             PhysicalKey::Code(KeyCode::ArrowLeft) => Buttons::LEFT,
             PhysicalKey::Code(KeyCode::ArrowRight) => Buttons::RIGHT,
             PhysicalKey::Code(KeyCode::Space) if input.state == ElementState::Pressed => {
-                self.set_paused(!self.paused);
+                self.set_paused(!self.session.paused());
                 Buttons::empty()
             }
             PhysicalKey::Code(KeyCode::Escape) => {
                 if input.state == ElementState::Released {
-                    let _ = self.console.reset();
+                    let _ = self.session.reset();
                 }
                 Buttons::empty()
             }
             PhysicalKey::Code(KeyCode::F5) if input.state == ElementState::Released => {
-                self.save_active_slot_or_new();
+                self.session.save_active_slot_or_new();
                 Buttons::empty()
             }
             PhysicalKey::Code(KeyCode::F6) if input.state == ElementState::Released => {
@@ -439,8 +317,9 @@ impl Window {
                 Buttons::empty()
             }
             PhysicalKey::Code(KeyCode::F8) if input.state == ElementState::Released => {
-                if let Some(slot_id) = self.active_slot_id {
-                    self.load_slot(slot_id);
+                let was_paused = self.session.paused();
+                if self.session.load_active_slot() {
+                    self.request_redraw_after_resume(was_paused);
                 }
                 Buttons::empty()
             }
@@ -450,118 +329,7 @@ impl Window {
             ElementState::Pressed => self.keys | code,
             ElementState::Released => self.keys & !code,
         };
-        self.console.set_pad1(self.keys);
-    }
-
-    fn load_mapper_save_if_available(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if let Some(bytes) =
-            load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
-        {
-            self.console
-                .import_mapper_save(bytes)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn flush_mapper_save(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if !self.mapper_save_flush_allowed {
-            if self.mapper_save_recovery_written {
-                return Ok(());
-            }
-            if let Some(bytes) = self
-                .console
-                .export_mapper_save()
-                .map_err(|error| error.to_string())?
-            {
-                let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
-                    .map_err(|error| error.to_string())?;
-                self.mapper_save_recovery_written = true;
-                log::warn!(
-                    "mapper save auto-load failed earlier; wrote recovery save to {}",
-                    path.display()
-                );
-            }
-            return Ok(());
-        }
-        let bytes = self
-            .console
-            .export_mapper_save()
-            .map_err(|error| error.to_string())?;
-        match bytes {
-            Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
-                .map_err(|error| error.to_string()),
-            None => Ok(()),
-        }
-    }
-
-    fn save_active_slot_or_new(&mut self) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        let slot_id = match self.active_slot_id {
-            Some(slot_id) => slot_id,
-            None => match allocate_next_slot_id(&sidecars.states_dir) {
-                Ok(slot_id) => slot_id,
-                Err(error) => {
-                    log::warn!("allocating state slot failed: {error}");
-                    return;
-                }
-            },
-        };
-        match self.console.export_state() {
-            Ok(export) => {
-                let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
-                if let Err(error) = write_state_slot(
-                    &sidecars.states_dir,
-                    slot_id,
-                    &export.machine_state,
-                    export.rom_identity,
-                    export.options,
-                    preview.as_ref(),
-                ) {
-                    log::warn!("saving state slot failed: {error}");
-                } else {
-                    self.active_slot_id = Some(slot_id);
-                }
-            }
-            Err(error) => log::warn!("state export failed: {error}"),
-        }
-    }
-
-    fn load_slot(&mut self, slot_id: u64) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
-            Ok(slot) => {
-                if let Err(error) = self.console.import_state(slot.machine_state) {
-                    log::warn!("state import failed: {error}");
-                } else {
-                    self.active_slot_id = Some(slot_id);
-                    self.sync_paused_from_console();
-                    self.needs_redraw = true;
-                    if let Some(window) = self.window.as_ref() {
-                        window.request_redraw();
-                    }
-                }
-            }
-            Err(error) => log::warn!("loading state slot failed: {error}"),
-        }
-    }
-}
-
-fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
-    ThumbnailSource {
-        width: preview.width,
-        height: preview.height,
-        rgba: preview.rgba.clone(),
+        self.session.set_pad1(self.keys);
     }
 }
 
@@ -601,7 +369,7 @@ impl ApplicationHandler for Window {
             return;
         };
 
-        let metrics = self.console.metrics();
+        let metrics = self.session.metrics();
         if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
             window.request_redraw();
         }
@@ -631,35 +399,5 @@ impl Drop for Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::window_title;
-    use nerust_console::ConsoleMetrics;
-
-    #[test]
-    fn window_title_surfaces_runtime_metrics() {
-        let title = window_title(
-            false,
-            ConsoleMetrics {
-                loaded: true,
-                emulation_fps: 59.9,
-                speed_multiplier: 1.01,
-                ..ConsoleMetrics::default()
-            },
-        );
-
-        assert!(title.contains("FPS 59.9"));
-        assert!(title.contains("Speed x1.01"));
-    }
-
-    #[test]
-    fn window_title_marks_no_rom() {
-        let title = window_title(true, ConsoleMetrics::default());
-
-        assert!(title.contains("Paused"));
-        assert!(title.contains("No ROM"));
     }
 }

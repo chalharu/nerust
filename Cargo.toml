@@ -8,6 +8,7 @@ members = [
   "rom_test",
   "gui/gtk",
   "gui/glutin",
+  "gui/runtime",
   "gui/wgpu",
   "glwrap",
   "nes_ntsc",
@@ -59,6 +60,7 @@ muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_core = { version = "=0.1.0", path = "core" }
+nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }

@@ -1,0 +1,16 @@
+[package]
+name = "nerust_gui_runtime"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_console.workspace = true
+nerust_core.workspace = true
+nerust_persistence.workspace = true
+nerust_screen_filter.workspace = true
+nerust_screen_traits.workspace = true
+nerust_sound_openal.workspace = true
+nerust_timer.workspace = true
