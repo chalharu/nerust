@@ -24,23 +24,9 @@ members = [
   "wgpuwrap",
 ]
 default-members = [
-  "cartridge/data",
-  "console",
   "core",
   "persistence",
-  "rom_test",
-  "gui/glutin",
-  "glwrap",
-  "nes_ntsc",
-  "screen/buffer",
-  "screen/filter",
-  "screen/opengl",
-  "screen/traits",
-  "serialize",
-  "sound/openal",
-  "sound/traits",
-  "soundfilter",
-  "timer",
+  "console",
 ]
 
 [profile.release]
