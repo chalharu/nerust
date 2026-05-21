@@ -147,10 +147,10 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
         log::error!("{}", e);
         return;
     }
-    if let Ok(state) = state.try_borrow() {
-        if let Some(ref view) = state.view {
-            state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
-        }
+    if let Ok(state) = state.try_borrow()
+        && let Some(ref view) = state.view
+    {
+        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
     }
     unsafe {
         epoxy::Flush();
