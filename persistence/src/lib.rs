@@ -90,6 +90,20 @@ pub fn format_slot_saved_at(saved_at: SystemTime) -> String {
         .unwrap_or_else(|| duration.as_secs().to_string())
 }
 
+pub fn latest_saved_slot_id(slots: &[StateSlotSummary]) -> Option<u64> {
+    slots
+        .iter()
+        .max_by_key(|slot| {
+            (
+                slot.saved_at
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::ZERO),
+                slot.slot_id,
+            )
+        })
+        .map(|slot| slot.slot_id)
+}
+
 /// Archive metadata owned by the persistence crate.
 ///
 /// The metadata duplicates the persistence target needed for slot filtering, while `state.bin`
@@ -789,6 +803,28 @@ mod tests {
         assert_eq!(formatted.chars().nth(10), Some(' '));
         assert_eq!(formatted.chars().nth(13), Some(':'));
         assert_eq!(formatted.chars().nth(16), Some(':'));
+    }
+
+    #[test]
+    fn latest_saved_slot_id_prefers_newest_timestamp_then_slot_id() {
+        let summary = |slot_id, saved_at_secs| StateSlotSummary {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+            slot_id,
+            path: PathBuf::from(format!("/tmp/{slot_id}.state")),
+            saved_at: UNIX_EPOCH + Duration::from_secs(saved_at_secs),
+            has_thumbnail: false,
+            emulator_version: "test".into(),
+        };
+
+        let slots = vec![
+            summary(2, 10),
+            summary(7, 20),
+            summary(9, 20),
+            summary(4, 15),
+        ];
+
+        assert_eq!(latest_saved_slot_id(&slots), Some(9));
+        assert_eq!(latest_saved_slot_id(&[]), None);
     }
 
     #[test]

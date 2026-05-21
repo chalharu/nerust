@@ -10,8 +10,9 @@ use nerust_console::{Console, ConsoleMetrics, PreviewFrame};
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_persistence::{
     SidecarPaths, StateSlotSummary, ThumbnailSource, allocate_next_slot_id, delete_state_slot,
-    load_mapper_save, load_state_slot, resolve_sidecars, scan_state_slots_for_target,
-    state_slot_path, write_mapper_save, write_recovery_mapper_save, write_state_slot,
+    latest_saved_slot_id, load_mapper_save, load_state_slot, resolve_sidecars,
+    scan_state_slots_for_target, state_slot_path, write_mapper_save, write_recovery_mapper_save,
+    write_state_slot,
 };
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
@@ -108,6 +109,7 @@ impl State {
             self.mapper_save_recovery_written = false;
             self.active_slot_id = None;
             self.refresh_slots();
+            self.active_slot_id = latest_saved_slot_id(&self.slots);
             if let Err(error) = self.load_mapper_save_if_available() {
                 self.mapper_save_flush_allowed = false;
                 log::warn!("mapper save auto-load failed: {error}");
