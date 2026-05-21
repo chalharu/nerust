@@ -2136,6 +2136,7 @@ dependencies = [
 name = "nerust_console"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.11.1",
  "crc",
  "log",
  "nerust_cartridge_data",
