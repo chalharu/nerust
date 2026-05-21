@@ -32,6 +32,7 @@ const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 /// Bump this only when the console wrapper schema or its validation rules change. The nested
 /// `core_state` bytes remain owned by `nerust_core` and must continue to be treated as opaque by
 /// the archive layer.
+const LEGACY_CONSOLE_STATE_SCHEMA_VERSION: u32 = 1;
 const CONSOLE_STATE_SCHEMA_VERSION: u32 = 2;
 const STANDARD_CONTROLLER_MAX_INDEX: usize = 8;
 
@@ -187,6 +188,16 @@ struct ControllerStatePayload {
     strobe: bool,
 }
 
+#[derive(serde_derive::Deserialize)]
+struct LegacyControllerStatePayload {
+    pad1_bits: u32,
+    pad2_bits: u32,
+    microphone: bool,
+    index1: u64,
+    index2: u64,
+    strobe: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ControllerPortRuntimeState {
     inputs: ControllerInputs,
@@ -224,6 +235,20 @@ struct ConsoleStatePayload {
     source_frame: Vec<u8>,
 }
 
+#[derive(serde_derive::Deserialize)]
+struct LegacyConsoleStatePayload {
+    schema_version: u32,
+    #[serde(with = "serde_bytes")]
+    core_state: Vec<u8>,
+    frame_counter: u64,
+    paused: bool,
+    controller: LegacyControllerStatePayload,
+    rom_identity: RomIdentity,
+    options: CoreOptions,
+    #[serde(with = "serde_bytes")]
+    source_frame: Vec<u8>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,35 +276,28 @@ mod tests {
         fn push(&mut self, _data: f32) {}
     }
 
-    fn fixture_bytes(_hex: &str) -> Vec<u8> {
-        let export = loaded_console()
-            .export_state()
-            .expect("fixture console state should export");
-        let mut payload = decode_console_state(&export.machine_state);
-        payload.frame_counter = 9;
-        payload.paused = true;
-        payload.controller = ControllerStatePayload {
-            ports: [
-                ControllerPortStatePayload {
-                    input_bits: u32::from((ControllerInputs::B | ControllerInputs::UP).bits()),
-                    index: 2,
-                },
-                ControllerPortStatePayload {
-                    input_bits: u32::from(
-                        (ControllerInputs::SELECT | ControllerInputs::RIGHT).bits(),
-                    ),
-                    index: 4,
-                },
-            ],
-            auxiliary: ControllerAuxiliaryStatePayload { microphone: true },
-            strobe: true,
-        };
-        payload.source_frame = vec![3, 5];
-        rmp_serde::to_vec_named(&payload).expect("fixture payload should encode")
+    fn fixture_bytes(hex: &str) -> Vec<u8> {
+        assert!(
+            !hex.trim().is_empty(),
+            "fixture hex must be populated before running console tests"
+        );
+        let hex = hex.trim();
+        assert_eq!(hex.len() % 2, 0, "fixture hex length must be even");
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|chunk| {
+                let text = std::str::from_utf8(chunk).expect("fixture hex should be valid utf-8");
+                u8::from_str_radix(text, 16).expect("fixture hex should decode")
+            })
+            .collect()
     }
 
     fn decode_console_state(bytes: &[u8]) -> ConsoleStatePayload {
         rmp_serde::from_slice(bytes).expect("console state should decode")
+    }
+
+    fn decode_legacy_console_state(bytes: &[u8]) -> LegacyConsoleStatePayload {
+        rmp_serde::from_slice(bytes).expect("legacy console state should decode")
     }
 
     fn test_rom_bytes() -> Vec<u8> {
@@ -325,8 +343,8 @@ mod tests {
     #[test]
     fn console_state_fixture_import_restores_wrapper_state() {
         let bytes = fixture_bytes(CONSOLE_STATE_FIXTURE_HEX);
-        let fixture = decode_console_state(&bytes);
-        assert_eq!(fixture.schema_version, CONSOLE_STATE_SCHEMA_VERSION);
+        let fixture = decode_legacy_console_state(&bytes);
+        assert_eq!(fixture.schema_version, LEGACY_CONSOLE_STATE_SCHEMA_VERSION);
         assert_eq!(fixture.frame_counter, 9);
         assert!(fixture.paused);
         assert_eq!(fixture.source_frame, vec![3, 5]);
@@ -337,28 +355,28 @@ mod tests {
             .expect("fixture console state should import");
         let exported = export_console_state(&console);
 
-        assert_eq!(exported.schema_version, fixture.schema_version);
+        assert_eq!(exported.schema_version, CONSOLE_STATE_SCHEMA_VERSION);
         assert_eq!(exported.frame_counter, fixture.frame_counter);
         assert_eq!(exported.paused, fixture.paused);
         assert_eq!(
             exported.controller.ports[0].input_bits,
-            fixture.controller.ports[0].input_bits
+            fixture.controller.pad1_bits
         );
         assert_eq!(
             exported.controller.ports[1].input_bits,
-            fixture.controller.ports[1].input_bits
+            fixture.controller.pad2_bits
         );
         assert_eq!(
             exported.controller.auxiliary.microphone,
-            fixture.controller.auxiliary.microphone
+            fixture.controller.microphone
         );
         assert_eq!(
             exported.controller.ports[0].index,
-            fixture.controller.ports[0].index
+            fixture.controller.index1
         );
         assert_eq!(
             exported.controller.ports[1].index,
-            fixture.controller.ports[1].index
+            fixture.controller.index2
         );
         assert_eq!(exported.controller.strobe, fixture.controller.strobe);
         assert_eq!(exported.source_frame, fixture.source_frame);
@@ -939,8 +957,29 @@ fn controller_snapshot_from_payload(
     controller_runtime_state_from_payload(payload).map(controller_runtime_state_to_snapshot)
 }
 
-fn validate_console_state_schema_version(version: u32) -> Result<(), ConsoleError> {
-    if version == CONSOLE_STATE_SCHEMA_VERSION {
+fn controller_runtime_state_from_legacy_payload(
+    payload: &LegacyControllerStatePayload,
+) -> Result<ControllerRuntimeState, ConsoleError> {
+    controller_runtime_state_from_payload(&ControllerStatePayload {
+        ports: [
+            ControllerPortStatePayload {
+                input_bits: payload.pad1_bits,
+                index: payload.index1,
+            },
+            ControllerPortStatePayload {
+                input_bits: payload.pad2_bits,
+                index: payload.index2,
+            },
+        ],
+        auxiliary: ControllerAuxiliaryStatePayload {
+            microphone: payload.microphone,
+        },
+        strobe: payload.strobe,
+    })
+}
+
+fn validate_console_state_schema_version(version: u32, expected: u32) -> Result<(), ConsoleError> {
+    if version == expected {
         Ok(())
     } else {
         Err(ConsoleError::Core(format!(
@@ -954,10 +993,37 @@ fn encode_console_state_payload(payload: &ConsoleStatePayload) -> Result<Vec<u8>
 }
 
 fn decode_console_state_payload(bytes: &[u8]) -> Result<ConsoleStatePayload, ConsoleError> {
-    let payload = rmp_serde::from_slice::<ConsoleStatePayload>(bytes)
-        .map_err(|error| ConsoleError::Core(format!("console state decode failed: {error}")))?;
-    validate_console_state_schema_version(payload.schema_version)?;
-    Ok(payload)
+    match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
+        Ok(payload) => {
+            validate_console_state_schema_version(
+                payload.schema_version,
+                CONSOLE_STATE_SCHEMA_VERSION,
+            )?;
+            Ok(payload)
+        }
+        Err(current_error) => {
+            let legacy =
+                rmp_serde::from_slice::<LegacyConsoleStatePayload>(bytes).map_err(|_| {
+                    ConsoleError::Core(format!("console state decode failed: {current_error}"))
+                })?;
+            validate_console_state_schema_version(
+                legacy.schema_version,
+                LEGACY_CONSOLE_STATE_SCHEMA_VERSION,
+            )?;
+            Ok(ConsoleStatePayload {
+                schema_version: CONSOLE_STATE_SCHEMA_VERSION,
+                core_state: legacy.core_state,
+                frame_counter: legacy.frame_counter,
+                paused: legacy.paused,
+                controller: controller_runtime_state_to_payload(
+                    controller_runtime_state_from_legacy_payload(&legacy.controller)?,
+                ),
+                rom_identity: legacy.rom_identity,
+                options: legacy.options,
+                source_frame: legacy.source_frame,
+            })
+        }
+    }
 }
 
 fn validate_console_state_target(
