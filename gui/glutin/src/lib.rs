@@ -16,9 +16,9 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_console::{Console, ConsoleMetrics, PreviewFrame};
 use nerust_core::controller::standard_controller::Buttons;
 use nerust_persistence::{
-    SidecarPaths, ThumbnailSource, allocate_next_slot_id, load_mapper_save, load_state_slot,
-    resolve_sidecars, scan_state_slots_for_target, state_slot_path, write_mapper_save,
-    write_recovery_mapper_save, write_state_slot,
+    SidecarPaths, ThumbnailSource, allocate_next_slot_id, latest_saved_slot_id, load_mapper_save,
+    load_state_slot, resolve_sidecars, scan_state_slots_for_target, state_slot_path,
+    write_mapper_save, write_recovery_mapper_save, write_state_slot,
 };
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
@@ -193,6 +193,7 @@ impl Window {
             self.mapper_save_flush_allowed = true;
             self.mapper_save_recovery_written = false;
             self.active_slot_id = None;
+            self.select_default_active_slot();
             if let Err(error) = self.load_mapper_save_if_available() {
                 self.mapper_save_flush_allowed = false;
                 log::warn!("mapper save auto-load failed: {error}");
@@ -370,6 +371,30 @@ impl Window {
         };
         self.active_slot_id = Some(next_slot_id);
         log::info!("selected save slot {next_slot_id}");
+    }
+
+    fn select_default_active_slot(&mut self) {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            self.active_slot_id = None;
+            return;
+        };
+        let (rom_identity, options) = match self.console.persistence_target() {
+            Ok(target) => target,
+            Err(error) => {
+                log::warn!("state slot target unavailable: {error}");
+                self.active_slot_id = None;
+                return;
+            }
+        };
+        let slots = match scan_state_slots_for_target(&sidecars.states_dir, rom_identity, options) {
+            Ok(slots) => slots,
+            Err(error) => {
+                log::warn!("state slot scan failed: {error}");
+                self.active_slot_id = None;
+                return;
+            }
+        };
+        self.active_slot_id = latest_saved_slot_id(&slots);
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
