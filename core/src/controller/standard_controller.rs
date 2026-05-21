@@ -23,6 +23,8 @@ bitflags::bitflags! {
         Debug,
         Clone,
         Copy,
+        PartialEq,
+        Eq,
     )]
     pub struct Buttons: u8 {
         const A =      0b0000_0001;
@@ -34,6 +36,15 @@ bitflags::bitflags! {
         const LEFT =   0b0100_0000;
         const RIGHT =  0b1000_0000;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StandardControllerSnapshot {
+    pub buttons: [Buttons; 2],
+    pub microphone: bool,
+    pub index1: usize,
+    pub index2: usize,
+    pub strobe: bool,
 }
 
 impl StandardController {
@@ -69,6 +80,24 @@ impl StandardController {
 
     pub fn set_microphone(&mut self, microphone: bool) {
         self.microphone = microphone;
+    }
+
+    pub fn export_snapshot(&self) -> StandardControllerSnapshot {
+        StandardControllerSnapshot {
+            buttons: self.buttons,
+            microphone: self.microphone,
+            index1: self.index1,
+            index2: self.index2,
+            strobe: self.strobe,
+        }
+    }
+
+    pub fn import_snapshot(&mut self, snapshot: StandardControllerSnapshot) {
+        self.buttons = snapshot.buttons;
+        self.microphone = snapshot.microphone;
+        self.index1 = snapshot.index1;
+        self.index2 = snapshot.index2;
+        self.strobe = snapshot.strobe;
     }
 }
 

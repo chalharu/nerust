@@ -10,7 +10,11 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{
+    CartridgeRuntimeMessage, MAPPER_KIND_MMC2, PersistenceError, decode_message, encode_message,
+};
 use crate::ppu_bus_event::PpuBusEvent;
+use prost::Message;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -37,8 +41,86 @@ pub(crate) struct Mmc2 {
     latch_1: LatchState,
 }
 
+#[derive(Clone, PartialEq, Message)]
+struct Mmc2RuntimeMessage {
+    #[prost(uint32, tag = "1")]
+    chr_bank_0_fd: u32,
+    #[prost(uint32, tag = "2")]
+    chr_bank_0_fe: u32,
+    #[prost(uint32, tag = "3")]
+    chr_bank_1_fd: u32,
+    #[prost(uint32, tag = "4")]
+    chr_bank_1_fe: u32,
+    #[prost(uint32, tag = "5")]
+    latch_0: u32,
+    #[prost(uint32, tag = "6")]
+    latch_1: u32,
+}
+
 #[typetag::serde]
-impl Cartridge for Mmc2 {}
+impl Cartridge for Mmc2 {
+    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
+        Ok(CartridgeRuntimeMessage {
+            mapper_state: Some(self.state.export_state_proto()),
+            mapper_specific_kind: MAPPER_KIND_MMC2.into(),
+            mapper_specific_body: encode_message(&Mmc2RuntimeMessage {
+                chr_bank_0_fd: u32::from(self.chr_bank_0_fd),
+                chr_bank_0_fe: u32::from(self.chr_bank_0_fe),
+                chr_bank_1_fd: u32::from(self.chr_bank_1_fd),
+                chr_bank_1_fe: u32::from(self.chr_bank_1_fe),
+                latch_0: match self.latch_0 {
+                    LatchState::Fd => 0,
+                    LatchState::Fe => 1,
+                },
+                latch_1: match self.latch_1 {
+                    LatchState::Fd => 0,
+                    LatchState::Fe => 1,
+                },
+            })?,
+        })
+    }
+
+    fn import_runtime_proto(
+        &mut self,
+        payload: &CartridgeRuntimeMessage,
+    ) -> Result<(), PersistenceError> {
+        let program_rom_len = self.data_ref().prog_rom_len();
+        let character_rom_len = self.data_ref().char_rom_len();
+        self.state.import_state_proto(
+            program_rom_len,
+            character_rom_len,
+            payload
+                .mapper_state
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing MMC2 mapper state".into()))?,
+        )?;
+        if payload.mapper_specific_kind != MAPPER_KIND_MMC2 {
+            return Err(PersistenceError::Validation(
+                "unexpected MMC2 runtime kind".into(),
+            ));
+        }
+        let runtime = decode_message::<Mmc2RuntimeMessage>(&payload.mapper_specific_body)?;
+        self.chr_bank_0_fd = u8::try_from(runtime.chr_bank_0_fd)
+            .map_err(|_| PersistenceError::Validation("MMC2 chr_bank_0_fd overflow".into()))?;
+        self.chr_bank_0_fe = u8::try_from(runtime.chr_bank_0_fe)
+            .map_err(|_| PersistenceError::Validation("MMC2 chr_bank_0_fe overflow".into()))?;
+        self.chr_bank_1_fd = u8::try_from(runtime.chr_bank_1_fd)
+            .map_err(|_| PersistenceError::Validation("MMC2 chr_bank_1_fd overflow".into()))?;
+        self.chr_bank_1_fe = u8::try_from(runtime.chr_bank_1_fe)
+            .map_err(|_| PersistenceError::Validation("MMC2 chr_bank_1_fe overflow".into()))?;
+        self.latch_0 = match runtime.latch_0 {
+            0 => LatchState::Fd,
+            1 => LatchState::Fe,
+            _ => return Err(PersistenceError::Validation("invalid MMC2 latch_0".into())),
+        };
+        self.latch_1 = match runtime.latch_1 {
+            0 => LatchState::Fd,
+            1 => LatchState::Fe,
+            _ => return Err(PersistenceError::Validation("invalid MMC2 latch_1".into())),
+        };
+        Ok(())
+    }
+}
 
 impl Mmc2 {
     pub(crate) fn new_mapper9(data: CartridgeData) -> Self {

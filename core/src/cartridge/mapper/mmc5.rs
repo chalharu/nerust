@@ -10,8 +10,12 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{
+    CartridgeRuntimeMessage, MAPPER_KIND_MMC5, PersistenceError, decode_message, encode_message,
+};
 use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
+use prost::Message;
 
 mod audio;
 mod ppu;
@@ -33,6 +37,130 @@ struct SplitTileContext {
     coarse_y: u8,
     fine_y: u8,
     uses_attribute_tiles: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct SplitTileContextMessage {
+    #[prost(uint32, tag = "1")]
+    column: u32,
+    #[prost(uint32, tag = "2")]
+    coarse_y: u32,
+    #[prost(uint32, tag = "3")]
+    fine_y: u32,
+    #[prost(bool, tag = "4")]
+    uses_attribute_tiles: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct Mmc5RuntimeMessage {
+    #[prost(uint32, tag = "1")]
+    prg_mode: u32,
+    #[prost(uint32, tag = "2")]
+    chr_mode: u32,
+    #[prost(uint32, tag = "3")]
+    prg_ram_protect_1: u32,
+    #[prost(uint32, tag = "4")]
+    prg_ram_protect_2: u32,
+    #[prost(uint32, tag = "5")]
+    exram_mode: u32,
+    #[prost(uint32, repeated, tag = "6")]
+    nametable_mapping: Vec<u32>,
+    #[prost(uint32, tag = "7")]
+    fill_tile: u32,
+    #[prost(uint32, tag = "8")]
+    fill_attribute: u32,
+    #[prost(uint32, repeated, tag = "9")]
+    prg_banks: Vec<u32>,
+    #[prost(uint32, repeated, tag = "10")]
+    sprite_chr_banks: Vec<u32>,
+    #[prost(uint32, repeated, tag = "11")]
+    background_chr_banks: Vec<u32>,
+    #[prost(uint32, tag = "12")]
+    chr_upper_bits: u32,
+    #[prost(bool, tag = "13")]
+    sprite_size_16: bool,
+    #[prost(bool, tag = "14")]
+    substitutions_enabled: bool,
+    #[prost(uint32, tag = "15")]
+    last_chr_bank_set: u32,
+    #[prost(uint32, tag = "16")]
+    current_background_tile_index: u32,
+    #[prost(bytes = "vec", tag = "17")]
+    exram: Vec<u8>,
+    #[prost(bool, tag = "18")]
+    split_enabled: bool,
+    #[prost(bool, tag = "19")]
+    split_right_side: bool,
+    #[prost(uint32, tag = "20")]
+    split_threshold: u32,
+    #[prost(uint32, tag = "21")]
+    split_scroll: u32,
+    #[prost(uint32, tag = "22")]
+    split_chr_bank: u32,
+    #[prost(message, optional, tag = "23")]
+    current_split_tile: Option<SplitTileContextMessage>,
+    #[prost(uint32, tag = "24")]
+    background_tile_fetches: u32,
+    #[prost(uint32, tag = "25")]
+    scanline_compare: u32,
+    #[prost(bool, tag = "26")]
+    scanline_irq_enabled: bool,
+    #[prost(bool, tag = "27")]
+    scanline_irq_pending: bool,
+    #[prost(bool, tag = "28")]
+    in_frame: bool,
+    #[prost(uint32, tag = "29")]
+    scanline_counter: u32,
+    #[prost(uint32, optional, tag = "30")]
+    matched_nametable_address: Option<u32>,
+    #[prost(uint32, tag = "31")]
+    matched_nametable_reads: u32,
+    #[prost(bool, tag = "32")]
+    scanline_detect_pending: bool,
+    #[prost(bool, tag = "33")]
+    ppu_read_seen_this_cpu_cycle: bool,
+    #[prost(uint32, tag = "34")]
+    idle_cpu_cycles: u32,
+    #[prost(uint32, tag = "35")]
+    multiplier_a: u32,
+    #[prost(uint32, tag = "36")]
+    multiplier_b: u32,
+    #[prost(message, optional, tag = "37")]
+    pulse_1: Option<audio::Mmc5PulseMessage>,
+    #[prost(message, optional, tag = "38")]
+    pulse_2: Option<audio::Mmc5PulseMessage>,
+    #[prost(uint64, tag = "39")]
+    audio_frame_accumulator: u64,
+    #[prost(bool, tag = "40")]
+    pcm_read_mode: bool,
+    #[prost(bool, tag = "41")]
+    pcm_irq_enabled: bool,
+    #[prost(bool, tag = "42")]
+    pcm_irq_pending: bool,
+    #[prost(uint32, tag = "43")]
+    pcm_output: u32,
+    #[prost(bool, tag = "44")]
+    mmc5a_cl3_input_mode: bool,
+    #[prost(bool, tag = "45")]
+    mmc5a_sl3_input_mode: bool,
+    #[prost(bool, tag = "46")]
+    mmc5a_cl3_read_strobe: bool,
+    #[prost(bool, tag = "47")]
+    mmc5a_sl3_write_strobe: bool,
+    #[prost(bool, tag = "48")]
+    mmc5a_cl3_strobe_low: bool,
+    #[prost(bool, tag = "49")]
+    mmc5a_sl3_strobe_low: bool,
+    #[prost(bool, tag = "50")]
+    mmc5a_cl3_output: bool,
+    #[prost(bool, tag = "51")]
+    mmc5a_sl3_output: bool,
+    #[prost(uint32, tag = "52")]
+    hardware_timer_counter: u32,
+    #[prost(bool, tag = "53")]
+    hardware_timer_running: bool,
+    #[prost(bool, tag = "54")]
+    hardware_timer_irq_pending: bool,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
@@ -99,6 +227,280 @@ pub(crate) struct Mmc5 {
 
 #[typetag::serde]
 impl Cartridge for Mmc5 {
+    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
+        Ok(CartridgeRuntimeMessage {
+            mapper_state: Some(self.state.export_state_proto()),
+            mapper_specific_kind: MAPPER_KIND_MMC5.into(),
+            mapper_specific_body: encode_message(&Mmc5RuntimeMessage {
+                prg_mode: u32::from(self.prg_mode),
+                chr_mode: u32::from(self.chr_mode),
+                prg_ram_protect_1: u32::from(self.prg_ram_protect_1),
+                prg_ram_protect_2: u32::from(self.prg_ram_protect_2),
+                exram_mode: u32::from(self.exram_mode),
+                nametable_mapping: self
+                    .nametable_mapping
+                    .iter()
+                    .copied()
+                    .map(u32::from)
+                    .collect(),
+                fill_tile: u32::from(self.fill_tile),
+                fill_attribute: u32::from(self.fill_attribute),
+                prg_banks: self.prg_banks.iter().copied().map(u32::from).collect(),
+                sprite_chr_banks: self
+                    .sprite_chr_banks
+                    .iter()
+                    .copied()
+                    .map(u32::from)
+                    .collect(),
+                background_chr_banks: self
+                    .background_chr_banks
+                    .iter()
+                    .copied()
+                    .map(u32::from)
+                    .collect(),
+                chr_upper_bits: u32::from(self.chr_upper_bits),
+                sprite_size_16: self.sprite_size_16,
+                substitutions_enabled: self.substitutions_enabled,
+                last_chr_bank_set: match self.last_chr_bank_set {
+                    ChrBankSet::Sprite => 0,
+                    ChrBankSet::Background => 1,
+                },
+                current_background_tile_index: self.current_background_tile_index as u32,
+                exram: self.exram.clone(),
+                split_enabled: self.split_enabled,
+                split_right_side: self.split_right_side,
+                split_threshold: u32::from(self.split_threshold),
+                split_scroll: u32::from(self.split_scroll),
+                split_chr_bank: u32::from(self.split_chr_bank),
+                current_split_tile: self.current_split_tile.map(|tile| SplitTileContextMessage {
+                    column: u32::from(tile.column),
+                    coarse_y: u32::from(tile.coarse_y),
+                    fine_y: u32::from(tile.fine_y),
+                    uses_attribute_tiles: tile.uses_attribute_tiles,
+                }),
+                background_tile_fetches: u32::from(self.background_tile_fetches),
+                scanline_compare: u32::from(self.scanline_compare),
+                scanline_irq_enabled: self.scanline_irq_enabled,
+                scanline_irq_pending: self.scanline_irq_pending,
+                in_frame: self.in_frame,
+                scanline_counter: u32::from(self.scanline_counter),
+                matched_nametable_address: self.matched_nametable_address.map(|value| value as u32),
+                matched_nametable_reads: u32::from(self.matched_nametable_reads),
+                scanline_detect_pending: self.scanline_detect_pending,
+                ppu_read_seen_this_cpu_cycle: self.ppu_read_seen_this_cpu_cycle,
+                idle_cpu_cycles: u32::from(self.idle_cpu_cycles),
+                multiplier_a: u32::from(self.multiplier_a),
+                multiplier_b: u32::from(self.multiplier_b),
+                pulse_1: Some(self.pulse_1.export_state_proto()),
+                pulse_2: Some(self.pulse_2.export_state_proto()),
+                audio_frame_accumulator: self.audio_frame_accumulator,
+                pcm_read_mode: self.pcm_read_mode,
+                pcm_irq_enabled: self.pcm_irq_enabled,
+                pcm_irq_pending: self.pcm_irq_pending,
+                pcm_output: u32::from(self.pcm_output),
+                mmc5a_cl3_input_mode: self.mmc5a_cl3_input_mode,
+                mmc5a_sl3_input_mode: self.mmc5a_sl3_input_mode,
+                mmc5a_cl3_read_strobe: self.mmc5a_cl3_read_strobe,
+                mmc5a_sl3_write_strobe: self.mmc5a_sl3_write_strobe,
+                mmc5a_cl3_strobe_low: self.mmc5a_cl3_strobe_low,
+                mmc5a_sl3_strobe_low: self.mmc5a_sl3_strobe_low,
+                mmc5a_cl3_output: self.mmc5a_cl3_output,
+                mmc5a_sl3_output: self.mmc5a_sl3_output,
+                hardware_timer_counter: u32::from(self.hardware_timer_counter),
+                hardware_timer_running: self.hardware_timer_running,
+                hardware_timer_irq_pending: self.hardware_timer_irq_pending,
+            })?,
+        })
+    }
+
+    fn import_runtime_proto(
+        &mut self,
+        payload: &CartridgeRuntimeMessage,
+    ) -> Result<(), PersistenceError> {
+        let program_rom_len = self.data_ref().prog_rom_len();
+        let character_rom_len = self.data_ref().char_rom_len();
+        self.state.import_state_proto(
+            program_rom_len,
+            character_rom_len,
+            payload
+                .mapper_state
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing MMC5 mapper state".into()))?,
+        )?;
+        if payload.mapper_specific_kind != MAPPER_KIND_MMC5 {
+            return Err(PersistenceError::Validation(
+                "unexpected MMC5 runtime kind".into(),
+            ));
+        }
+        let runtime = decode_message::<Mmc5RuntimeMessage>(&payload.mapper_specific_body)?;
+        if runtime.nametable_mapping.len() != self.nametable_mapping.len()
+            || runtime.prg_banks.len() != self.prg_banks.len()
+            || runtime.sprite_chr_banks.len() != self.sprite_chr_banks.len()
+            || runtime.background_chr_banks.len() != self.background_chr_banks.len()
+        {
+            return Err(PersistenceError::Validation(
+                "MMC5 register length mismatch".into(),
+            ));
+        }
+        self.prg_mode = u8::try_from(runtime.prg_mode)
+            .map_err(|_| PersistenceError::Validation("MMC5 prg_mode overflow".into()))?;
+        self.chr_mode = u8::try_from(runtime.chr_mode)
+            .map_err(|_| PersistenceError::Validation("MMC5 chr_mode overflow".into()))?;
+        self.prg_ram_protect_1 = u8::try_from(runtime.prg_ram_protect_1)
+            .map_err(|_| PersistenceError::Validation("MMC5 prg_ram_protect_1 overflow".into()))?;
+        self.prg_ram_protect_2 = u8::try_from(runtime.prg_ram_protect_2)
+            .map_err(|_| PersistenceError::Validation("MMC5 prg_ram_protect_2 overflow".into()))?;
+        self.exram_mode = u8::try_from(runtime.exram_mode)
+            .map_err(|_| PersistenceError::Validation("MMC5 exram_mode overflow".into()))?;
+        for (slot, value) in self
+            .nametable_mapping
+            .iter_mut()
+            .zip(runtime.nametable_mapping.into_iter())
+        {
+            *slot = u8::try_from(value).map_err(|_| {
+                PersistenceError::Validation("MMC5 nametable mapping overflow".into())
+            })?;
+        }
+        self.fill_tile = u8::try_from(runtime.fill_tile)
+            .map_err(|_| PersistenceError::Validation("MMC5 fill_tile overflow".into()))?;
+        self.fill_attribute = u8::try_from(runtime.fill_attribute)
+            .map_err(|_| PersistenceError::Validation("MMC5 fill_attribute overflow".into()))?;
+        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks.into_iter()) {
+            *slot = u8::try_from(value)
+                .map_err(|_| PersistenceError::Validation("MMC5 prg_banks overflow".into()))?;
+        }
+        for (slot, value) in self
+            .sprite_chr_banks
+            .iter_mut()
+            .zip(runtime.sprite_chr_banks.into_iter())
+        {
+            *slot = u16::try_from(value).map_err(|_| {
+                PersistenceError::Validation("MMC5 sprite_chr_banks overflow".into())
+            })?;
+        }
+        for (slot, value) in self
+            .background_chr_banks
+            .iter_mut()
+            .zip(runtime.background_chr_banks.into_iter())
+        {
+            *slot = u16::try_from(value).map_err(|_| {
+                PersistenceError::Validation("MMC5 background_chr_banks overflow".into())
+            })?;
+        }
+        self.chr_upper_bits = u8::try_from(runtime.chr_upper_bits)
+            .map_err(|_| PersistenceError::Validation("MMC5 chr_upper_bits overflow".into()))?;
+        self.sprite_size_16 = runtime.sprite_size_16;
+        self.substitutions_enabled = runtime.substitutions_enabled;
+        self.last_chr_bank_set = match runtime.last_chr_bank_set {
+            0 => ChrBankSet::Sprite,
+            1 => ChrBankSet::Background,
+            _ => {
+                return Err(PersistenceError::Validation(
+                    "invalid MMC5 chr bank set".into(),
+                ));
+            }
+        };
+        self.current_background_tile_index = usize::try_from(runtime.current_background_tile_index)
+            .map_err(|_| {
+                PersistenceError::Validation("MMC5 background tile index overflow".into())
+            })?;
+        if runtime.exram.len() != self.exram.len() {
+            return Err(PersistenceError::Validation(
+                "MMC5 EXRAM length mismatch".into(),
+            ));
+        }
+        self.exram.copy_from_slice(&runtime.exram);
+        self.split_enabled = runtime.split_enabled;
+        self.split_right_side = runtime.split_right_side;
+        self.split_threshold = u8::try_from(runtime.split_threshold)
+            .map_err(|_| PersistenceError::Validation("MMC5 split_threshold overflow".into()))?;
+        self.split_scroll = u8::try_from(runtime.split_scroll)
+            .map_err(|_| PersistenceError::Validation("MMC5 split_scroll overflow".into()))?;
+        self.split_chr_bank = u8::try_from(runtime.split_chr_bank)
+            .map_err(|_| PersistenceError::Validation("MMC5 split_chr_bank overflow".into()))?;
+        self.current_split_tile = runtime
+            .current_split_tile
+            .map(|tile| {
+                Ok::<_, PersistenceError>(SplitTileContext {
+                    column: u8::try_from(tile.column).map_err(|_| {
+                        PersistenceError::Validation("MMC5 split column overflow".into())
+                    })?,
+                    coarse_y: u8::try_from(tile.coarse_y).map_err(|_| {
+                        PersistenceError::Validation("MMC5 split coarse_y overflow".into())
+                    })?,
+                    fine_y: u8::try_from(tile.fine_y).map_err(|_| {
+                        PersistenceError::Validation("MMC5 split fine_y overflow".into())
+                    })?,
+                    uses_attribute_tiles: tile.uses_attribute_tiles,
+                })
+            })
+            .transpose()?;
+        self.background_tile_fetches =
+            u8::try_from(runtime.background_tile_fetches).map_err(|_| {
+                PersistenceError::Validation("MMC5 background_tile_fetches overflow".into())
+            })?;
+        self.scanline_compare = u8::try_from(runtime.scanline_compare)
+            .map_err(|_| PersistenceError::Validation("MMC5 scanline_compare overflow".into()))?;
+        self.scanline_irq_enabled = runtime.scanline_irq_enabled;
+        self.scanline_irq_pending = runtime.scanline_irq_pending;
+        self.in_frame = runtime.in_frame;
+        self.scanline_counter = u8::try_from(runtime.scanline_counter)
+            .map_err(|_| PersistenceError::Validation("MMC5 scanline_counter overflow".into()))?;
+        self.matched_nametable_address = runtime
+            .matched_nametable_address
+            .map(|value| {
+                usize::try_from(value).map_err(|_| {
+                    PersistenceError::Validation("MMC5 matched nametable address overflow".into())
+                })
+            })
+            .transpose()?;
+        self.matched_nametable_reads =
+            u8::try_from(runtime.matched_nametable_reads).map_err(|_| {
+                PersistenceError::Validation("MMC5 matched nametable reads overflow".into())
+            })?;
+        self.scanline_detect_pending = runtime.scanline_detect_pending;
+        self.ppu_read_seen_this_cpu_cycle = runtime.ppu_read_seen_this_cpu_cycle;
+        self.idle_cpu_cycles = u8::try_from(runtime.idle_cpu_cycles)
+            .map_err(|_| PersistenceError::Validation("MMC5 idle_cpu_cycles overflow".into()))?;
+        self.multiplier_a = u8::try_from(runtime.multiplier_a)
+            .map_err(|_| PersistenceError::Validation("MMC5 multiplier_a overflow".into()))?;
+        self.multiplier_b = u8::try_from(runtime.multiplier_b)
+            .map_err(|_| PersistenceError::Validation("MMC5 multiplier_b overflow".into()))?;
+        self.pulse_1.import_state_proto(
+            runtime
+                .pulse_1
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing MMC5 pulse_1".into()))?,
+        )?;
+        self.pulse_2.import_state_proto(
+            runtime
+                .pulse_2
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing MMC5 pulse_2".into()))?,
+        )?;
+        self.audio_frame_accumulator = runtime.audio_frame_accumulator;
+        self.pcm_read_mode = runtime.pcm_read_mode;
+        self.pcm_irq_enabled = runtime.pcm_irq_enabled;
+        self.pcm_irq_pending = runtime.pcm_irq_pending;
+        self.pcm_output = u8::try_from(runtime.pcm_output)
+            .map_err(|_| PersistenceError::Validation("MMC5 pcm_output overflow".into()))?;
+        self.mmc5a_cl3_input_mode = runtime.mmc5a_cl3_input_mode;
+        self.mmc5a_sl3_input_mode = runtime.mmc5a_sl3_input_mode;
+        self.mmc5a_cl3_read_strobe = runtime.mmc5a_cl3_read_strobe;
+        self.mmc5a_sl3_write_strobe = runtime.mmc5a_sl3_write_strobe;
+        self.mmc5a_cl3_strobe_low = runtime.mmc5a_cl3_strobe_low;
+        self.mmc5a_sl3_strobe_low = runtime.mmc5a_sl3_strobe_low;
+        self.mmc5a_cl3_output = runtime.mmc5a_cl3_output;
+        self.mmc5a_sl3_output = runtime.mmc5a_sl3_output;
+        self.hardware_timer_counter =
+            u16::try_from(runtime.hardware_timer_counter).map_err(|_| {
+                PersistenceError::Validation("MMC5 hardware timer counter overflow".into())
+            })?;
+        self.hardware_timer_running = runtime.hardware_timer_running;
+        self.hardware_timer_irq_pending = runtime.hardware_timer_irq_pending;
+        Ok(())
+    }
+
     fn read_character(&self, address: usize) -> OpenBusReadResult {
         self.read_character_with_access(address, PpuReadAccess::CpuData)
     }

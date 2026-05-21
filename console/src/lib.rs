@@ -8,22 +8,27 @@ mod video;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant};
+use nerust_core::controller::standard_controller::{
+    Buttons, StandardController, StandardControllerSnapshot,
+};
+use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant, RomIdentity};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
+use prost::Message;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
+use thiserror::Error;
 pub use video::ConsoleVideo;
 
 // The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+const CONSOLE_STATE_SCHEMA_VERSION: u32 = 1;
 
 struct Crc64Hasher(Digest<'static, u64>);
 
@@ -102,6 +107,98 @@ pub struct ConsoleMetrics {
     pub loaded: bool,
     pub paused: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateExport {
+    pub machine_state: Vec<u8>,
+    pub preview: Option<PreviewFrame>,
+    pub rom_identity: RomIdentity,
+    pub options: CoreOptions,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ConsoleError {
+    #[error("console worker thread is unavailable")]
+    WorkerUnavailable,
+    #[error("ROM parse failed: {0}")]
+    RomParse(String),
+    #[error("no ROM loaded")]
+    NoRomLoaded,
+    #[error("{0}")]
+    Core(String),
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ControllerStateMessage {
+    #[prost(uint32, tag = "1")]
+    pad1_bits: u32,
+    #[prost(uint32, tag = "2")]
+    pad2_bits: u32,
+    #[prost(bool, tag = "3")]
+    microphone: bool,
+    #[prost(uint64, tag = "4")]
+    index1: u64,
+    #[prost(uint64, tag = "5")]
+    index2: u64,
+    #[prost(bool, tag = "6")]
+    strobe: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ConsoleRomIdentityMessage {
+    #[prost(uint32, tag = "1")]
+    mapper_type: u32,
+    #[prost(uint32, tag = "2")]
+    sub_mapper_type: u32,
+    #[prost(uint64, tag = "3")]
+    prg_rom_crc64: u64,
+    #[prost(uint64, tag = "4")]
+    chr_rom_crc64: u64,
+    #[prost(uint64, tag = "5")]
+    trainer_crc64: u64,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ConsoleOptionsMessage {
+    #[prost(uint32, tag = "1")]
+    mmc3_irq_variant: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ConsoleStateMessage {
+    #[prost(uint32, tag = "1")]
+    schema_version: u32,
+    #[prost(bytes = "vec", tag = "2")]
+    core_state: Vec<u8>,
+    #[prost(uint64, tag = "3")]
+    frame_counter: u64,
+    #[prost(bool, tag = "4")]
+    paused: bool,
+    #[prost(message, optional, tag = "5")]
+    controller: Option<ControllerStateMessage>,
+    #[prost(message, optional, tag = "6")]
+    rom_identity: Option<ConsoleRomIdentityMessage>,
+    #[prost(message, optional, tag = "7")]
+    options: Option<ConsoleOptionsMessage>,
+    #[prost(bytes = "vec", tag = "8")]
+    source_frame: Vec<u8>,
+}
+
+enum ConsoleReply {
+    Unit,
+    MapperSave(Option<Vec<u8>>),
+    PersistenceTarget(RomIdentity, CoreOptions),
+    StateExport(StateExport),
+}
+
+type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
 
 #[derive(Debug)]
 pub struct Console {
@@ -201,24 +298,24 @@ impl Console {
         }
     }
 
-    pub fn load(&self, data: Vec<u8>) {
-        self.load_with_options(data, CoreOptions::default());
+    pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
+        self.load_with_options(data, CoreOptions::default())
     }
 
-    pub fn load_with_options(&self, data: Vec<u8>, options: CoreOptions) {
+    pub fn load_with_options(
+        &self,
+        data: Vec<u8>,
+        options: CoreOptions,
+    ) -> Result<(), ConsoleError> {
         match parse_cartridge_bytes(&data) {
             Ok(cartridge_data) => {
                 print_rom_metadata(&data, &cartridge_data, options);
-                if self
-                    .data_sender
-                    .send(ConsoleData::Load {
-                        cartridge_data,
-                        options,
-                    })
-                    .is_err()
-                {
-                    log::warn!("Core load send failed");
-                }
+                self.send_request(|reply| ConsoleData::Load {
+                    cartridge_data,
+                    options,
+                    reply,
+                })?;
+                Ok(())
             }
             Err(error) => {
                 let body_crc64 = crc64(data.get(16..).unwrap_or(&[]));
@@ -226,21 +323,67 @@ impl Console {
                     "ROM: body_crc64=0x{body_crc64:016X} parse_error={error} mmc3_irq_variant={}",
                     mmc3_irq_variant_label(options.mmc3_irq_variant),
                 );
-                self.unload();
+                Err(ConsoleError::RomParse(format!(
+                    "body_crc64=0x{body_crc64:016X}: {error}"
+                )))
             }
         }
     }
 
-    pub fn unload(&self) {
-        if self.data_sender.send(ConsoleData::Unload).is_err() {
-            log::warn!("Core unload send failed");
+    pub fn unload(&self) -> Result<(), ConsoleError> {
+        self.send_request(ConsoleData::Unload)?;
+        Ok(())
+    }
+
+    pub fn reset(&self) -> Result<(), ConsoleError> {
+        self.send_request(ConsoleData::Reset)?;
+        Ok(())
+    }
+
+    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, ConsoleError> {
+        match self.send_request(ConsoleData::ExportMapperSave)? {
+            ConsoleReply::MapperSave(bytes) => Ok(bytes),
+            _ => Err(ConsoleError::Core("unexpected mapper save reply".into())),
         }
     }
 
-    pub fn reset(&self) {
-        if self.data_sender.send(ConsoleData::Reset).is_err() {
-            log::warn!("Core reset send failed");
+    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.send_request(|reply| ConsoleData::ImportMapperSave { bytes, reply })?;
+        Ok(())
+    }
+
+    pub fn export_state(&self) -> Result<StateExport, ConsoleError> {
+        match self.send_request(ConsoleData::ExportState)? {
+            ConsoleReply::StateExport(export) => Ok(export),
+            _ => Err(ConsoleError::Core("unexpected state export reply".into())),
         }
+    }
+
+    pub fn persistence_target(&self) -> Result<(RomIdentity, CoreOptions), ConsoleError> {
+        match self.send_request(ConsoleData::PersistenceTarget)? {
+            ConsoleReply::PersistenceTarget(rom_identity, options) => Ok((rom_identity, options)),
+            _ => Err(ConsoleError::Core(
+                "unexpected persistence target reply".into(),
+            )),
+        }
+    }
+
+    pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.send_request(|reply| ConsoleData::ImportState { bytes, reply })?;
+        Ok(())
+    }
+
+    fn send_request(
+        &self,
+        build: impl FnOnce(Sender<ConsoleRequestResult>) -> ConsoleData,
+    ) -> Result<ConsoleReply, ConsoleError> {
+        let (reply_sender, reply_receiver) = channel();
+        self.data_sender
+            .send(build(reply_sender))
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        reply_receiver
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
     }
 }
 
@@ -253,16 +396,82 @@ impl Drop for Console {
     }
 }
 
+fn controller_snapshot_to_proto(snapshot: StandardControllerSnapshot) -> ControllerStateMessage {
+    ControllerStateMessage {
+        pad1_bits: u32::from(snapshot.buttons[0].bits()),
+        pad2_bits: u32::from(snapshot.buttons[1].bits()),
+        microphone: snapshot.microphone,
+        index1: snapshot.index1 as u64,
+        index2: snapshot.index2 as u64,
+        strobe: snapshot.strobe,
+    }
+}
+
+fn controller_snapshot_from_proto(
+    payload: &ControllerStateMessage,
+) -> Result<StandardControllerSnapshot, ConsoleError> {
+    Ok(StandardControllerSnapshot {
+        buttons: [
+            Buttons::from_bits_retain(
+                u8::try_from(payload.pad1_bits)
+                    .map_err(|_| ConsoleError::Core("controller pad1 overflow".into()))?,
+            ),
+            Buttons::from_bits_retain(
+                u8::try_from(payload.pad2_bits)
+                    .map_err(|_| ConsoleError::Core("controller pad2 overflow".into()))?,
+            ),
+        ],
+        microphone: payload.microphone,
+        index1: usize::try_from(payload.index1)
+            .map_err(|_| ConsoleError::Core("controller index1 overflow".into()))?,
+        index2: usize::try_from(payload.index2)
+            .map_err(|_| ConsoleError::Core("controller index2 overflow".into()))?,
+        strobe: payload.strobe,
+    })
+}
+
+fn rom_identity_to_proto(identity: RomIdentity) -> ConsoleRomIdentityMessage {
+    ConsoleRomIdentityMessage {
+        mapper_type: u32::from(identity.mapper_type),
+        sub_mapper_type: u32::from(identity.sub_mapper_type),
+        prg_rom_crc64: identity.prg_rom_crc64,
+        chr_rom_crc64: identity.chr_rom_crc64,
+        trainer_crc64: identity.trainer_crc64,
+    }
+}
+
+fn options_to_proto(options: CoreOptions) -> ConsoleOptionsMessage {
+    ConsoleOptionsMessage {
+        mmc3_irq_variant: match options.mmc3_irq_variant {
+            Some(Mmc3IrqVariant::Sharp) => 1,
+            Some(Mmc3IrqVariant::Nec) => 2,
+            None => 0,
+        },
+    }
+}
+
 enum ConsoleData {
     Load {
         cartridge_data: CartridgeData,
         options: CoreOptions,
+        reply: Sender<ConsoleRequestResult>,
     },
     Resume,
     Pause,
-    Reset,
+    Reset(Sender<ConsoleRequestResult>),
     Pad1Data(Buttons),
-    Unload,
+    Unload(Sender<ConsoleRequestResult>),
+    ExportMapperSave(Sender<ConsoleRequestResult>),
+    ImportMapperSave {
+        bytes: Vec<u8>,
+        reply: Sender<ConsoleRequestResult>,
+    },
+    PersistenceTarget(Sender<ConsoleRequestResult>),
+    ExportState(Sender<ConsoleRequestResult>),
+    ImportState {
+        bytes: Vec<u8>,
+        reply: Sender<ConsoleRequestResult>,
+    },
 }
 
 struct ConsoleRunner {
@@ -329,6 +538,34 @@ impl ConsoleRunner {
         };
     }
 
+    fn export_preview_frame(&self) -> Option<PreviewFrame> {
+        let palette = self.screen.video_presentation().palette_rgba8()?;
+        let source_size = self.screen.source_logical_size();
+        let mut indices = vec![0; self.screen.source_frame_len()];
+        self.screen.copy_source_buffer(&mut indices);
+        let mut rgba = Vec::with_capacity(indices.len() * 4);
+        for index in indices {
+            let palette_index = usize::from(index) * 4;
+            let pixel = palette.get(palette_index..palette_index + 4)?;
+            rgba.extend_from_slice(pixel);
+        }
+        Some(PreviewFrame {
+            width: source_size.width as u32,
+            height: source_size.height as u32,
+            rgba,
+        })
+    }
+
+    fn reply(reply: Sender<ConsoleRequestResult>, result: Result<ConsoleReply, ConsoleError>) {
+        if reply.send(result).is_err() {
+            log::warn!("console reply send failed");
+        }
+    }
+
+    fn core_not_loaded() -> ConsoleError {
+        ConsoleError::NoRomLoaded
+    }
+
     fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
         let mut core: Option<Core> = None;
         while self.stop_receiver.try_recv().is_err() {
@@ -346,11 +583,20 @@ impl ConsoleRunner {
                     ConsoleData::Load {
                         cartridge_data,
                         options,
+                        reply,
                     } => {
-                        self.screen.clear();
-                        self.publish_frame();
-                        self.frame_counter = 0;
-                        core = Core::new_with_options(cartridge_data, options).ok();
+                        let result = Core::new_with_options(cartridge_data, options)
+                            .map_err(|error| ConsoleError::Core(error.to_string()));
+                        match result {
+                            Ok(new_core) => {
+                                self.screen.clear();
+                                self.publish_frame();
+                                self.frame_counter = 0;
+                                core = Some(new_core);
+                                Self::reply(reply, Ok(ConsoleReply::Unit));
+                            }
+                            Err(error) => Self::reply(reply, Err(error)),
+                        }
                     }
                     ConsoleData::Resume => {
                         self.paused = false;
@@ -367,20 +613,157 @@ impl ConsoleRunner {
                             hasher.finish()
                         );
                     }
-                    ConsoleData::Reset => {
-                        core.as_mut().map(Core::reset).unwrap();
-                        self.frame_counter = 0;
+                    ConsoleData::Reset(reply) => {
+                        let result = if let Some(core) = core.as_mut() {
+                            core.reset();
+                            self.frame_counter = 0;
+                            Ok(ConsoleReply::Unit)
+                        } else {
+                            Err(Self::core_not_loaded())
+                        };
+                        Self::reply(reply, result);
                     }
                     ConsoleData::Pad1Data(data) => {
                         self.controller.set_pad1(data);
                     }
-                    ConsoleData::Unload => {
-                        self.paused = false;
-                        self.frame_counter = 0;
-                        core = None;
-                        self.screen.clear();
-                        self.publish_frame();
-                    } // _ => (),
+                    ConsoleData::Unload(reply) => {
+                        let result = if core.is_some() {
+                            self.paused = false;
+                            self.frame_counter = 0;
+                            core = None;
+                            self.screen.clear();
+                            self.publish_frame();
+                            Ok(ConsoleReply::Unit)
+                        } else {
+                            Err(Self::core_not_loaded())
+                        };
+                        Self::reply(reply, result);
+                    }
+                    ConsoleData::ExportMapperSave(reply) => {
+                        let result =
+                            core.as_ref()
+                                .ok_or_else(Self::core_not_loaded)
+                                .and_then(|core| {
+                                    core.export_mapper_save()
+                                        .map(ConsoleReply::MapperSave)
+                                        .map_err(|error| ConsoleError::Core(error.to_string()))
+                                });
+                        Self::reply(reply, result);
+                    }
+                    ConsoleData::ImportMapperSave { bytes, reply } => {
+                        let result =
+                            core.as_mut()
+                                .ok_or_else(Self::core_not_loaded)
+                                .and_then(|core| {
+                                    core.import_mapper_save(&bytes)
+                                        .map(|_| ConsoleReply::Unit)
+                                        .map_err(|error| ConsoleError::Core(error.to_string()))
+                                });
+                        Self::reply(reply, result);
+                    }
+                    ConsoleData::PersistenceTarget(reply) => {
+                        let result = core.as_ref().ok_or_else(Self::core_not_loaded).map(|core| {
+                            ConsoleReply::PersistenceTarget(core.rom_identity(), core.options())
+                        });
+                        Self::reply(reply, result);
+                    }
+                    ConsoleData::ExportState(reply) => {
+                        let preview = self.export_preview_frame();
+                        let result =
+                            core.as_ref()
+                                .ok_or_else(Self::core_not_loaded)
+                                .and_then(|core| {
+                                    let machine_state = core
+                                        .export_machine_state()
+                                        .map_err(|error| ConsoleError::Core(error.to_string()))?;
+                                    let source_frame = if self.screen.publishes_palette_frame() {
+                                        let mut source_frame =
+                                            vec![0; self.screen.source_frame_len()];
+                                        self.screen.copy_source_buffer(&mut source_frame);
+                                        source_frame
+                                    } else {
+                                        Vec::new()
+                                    };
+                                    let state = ConsoleStateMessage {
+                                        schema_version: CONSOLE_STATE_SCHEMA_VERSION,
+                                        core_state: machine_state,
+                                        frame_counter: self.frame_counter,
+                                        paused: self.paused,
+                                        controller: Some(controller_snapshot_to_proto(
+                                            self.controller.export_snapshot(),
+                                        )),
+                                        rom_identity: Some(rom_identity_to_proto(
+                                            core.rom_identity(),
+                                        )),
+                                        options: Some(options_to_proto(core.options())),
+                                        source_frame,
+                                    };
+                                    Ok(ConsoleReply::StateExport(StateExport {
+                                        machine_state: state.encode_to_vec(),
+                                        preview,
+                                        rom_identity: core.rom_identity(),
+                                        options: core.options(),
+                                    }))
+                                });
+                        Self::reply(reply, result);
+                    }
+                    ConsoleData::ImportState { bytes, reply } => {
+                        let result =
+                            core.as_mut()
+                                .ok_or_else(Self::core_not_loaded)
+                                .and_then(|core| {
+                                    let payload = ConsoleStateMessage::decode(bytes.as_slice())
+                                        .map_err(|error| {
+                                            ConsoleError::Core(format!(
+                                                "console state decode failed: {error}"
+                                            ))
+                                        })?;
+                                    if payload.schema_version != CONSOLE_STATE_SCHEMA_VERSION {
+                                        return Err(ConsoleError::Core(format!(
+                                            "unsupported console state schema version: {}",
+                                            payload.schema_version
+                                        )));
+                                    }
+                                    let controller = controller_snapshot_from_proto(
+                                        payload.controller.as_ref().ok_or_else(|| {
+                                            ConsoleError::Core(
+                                                "missing controller state in console payload"
+                                                    .into(),
+                                            )
+                                        })?,
+                                    )?;
+                                    if self.screen.publishes_palette_frame()
+                                        && !payload.source_frame.is_empty()
+                                    {
+                                        if payload.source_frame.len()
+                                            != self.screen.source_frame_len()
+                                        {
+                                            return Err(ConsoleError::Core(
+                                                "console source frame length mismatch".into(),
+                                            ));
+                                        }
+                                    }
+                                    core.import_machine_state(&payload.core_state)
+                                        .map_err(|error| ConsoleError::Core(error.to_string()))?;
+                                    if self.screen.publishes_palette_frame()
+                                        && !payload.source_frame.is_empty()
+                                    {
+                                        self.screen.restore_source_buffer(&payload.source_frame);
+                                    }
+                                    self.controller.import_snapshot(controller);
+                                    self.frame_counter = payload.frame_counter;
+                                    self.paused = payload.paused;
+                                    if self.paused {
+                                        speaker.pause();
+                                    } else {
+                                        speaker.start();
+                                    }
+                                    self.publish_frame();
+                                    Ok(ConsoleReply::Unit)
+                                });
+                        self.publish_metrics(core.is_some());
+                        Self::reply(reply, result);
+                    }
                 }
                 self.publish_metrics(core.is_some());
             }

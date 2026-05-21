@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::persistence::{PersistenceError, RegisterMessage};
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
 pub(crate) struct Register {
     pc: u16,
@@ -179,5 +181,37 @@ impl Register {
     pub(crate) fn set_nz_from_value(&mut self, value: u8) {
         self.set_z_from_value(value);
         self.set_n_from_value(value);
+    }
+
+    pub(crate) fn export_state_proto(&self) -> RegisterMessage {
+        RegisterMessage {
+            pc: u32::from(self.pc),
+            sp: u32::from(self.sp),
+            a: u32::from(self.a),
+            x: u32::from(self.x),
+            y: u32::from(self.y),
+            p: u32::from(self.get_p()),
+        }
+    }
+
+    pub(crate) fn import_state_proto(
+        &mut self,
+        payload: &RegisterMessage,
+    ) -> Result<(), PersistenceError> {
+        self.pc = u16::try_from(payload.pc)
+            .map_err(|_| PersistenceError::Validation("PC overflow".into()))?;
+        self.sp = u8::try_from(payload.sp)
+            .map_err(|_| PersistenceError::Validation("SP overflow".into()))?;
+        self.a = u8::try_from(payload.a)
+            .map_err(|_| PersistenceError::Validation("A overflow".into()))?;
+        self.x = u8::try_from(payload.x)
+            .map_err(|_| PersistenceError::Validation("X overflow".into()))?;
+        self.y = u8::try_from(payload.y)
+            .map_err(|_| PersistenceError::Validation("Y overflow".into()))?;
+        self.set_p(
+            u8::try_from(payload.p)
+                .map_err(|_| PersistenceError::Validation("P overflow".into()))?,
+        );
+        Ok(())
     }
 }

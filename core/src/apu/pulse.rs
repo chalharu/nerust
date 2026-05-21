@@ -7,6 +7,7 @@
 use super::envelope::*;
 use super::length_counter::*;
 use super::timer::*;
+use crate::persistence::{PersistenceError, PulseMessage};
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],
@@ -184,6 +185,67 @@ impl Pulse {
         } else {
             Envelope::get_volume(self)
         }
+    }
+
+    pub(crate) fn export_state_proto(&self) -> PulseMessage {
+        PulseMessage {
+            is_first_channel: self.is_first_channel,
+            duty_mode: u32::from(self.duty_mode),
+            duty_value: u32::from(self.duty_value),
+            sweep_reload: self.sweep_reload,
+            sweep_enabled: self.sweep_enabled,
+            sweep_negate: self.sweep_negate,
+            sweep_shift: u32::from(self.sweep_shift),
+            sweep_period: u32::from(self.sweep_period),
+            sweep_value: u32::from(self.sweep_value),
+            sweep_target_period: u32::from(self.sweep_target_period),
+            period: u32::from(self.period),
+            envelope: Some(self.envelope.export_state_proto()),
+            length_counter: Some(self.length_counter.export_state_proto()),
+            timer: Some(self.timer.export_state_proto()),
+        }
+    }
+
+    pub(crate) fn import_state_proto(
+        &mut self,
+        payload: &PulseMessage,
+    ) -> Result<(), PersistenceError> {
+        self.is_first_channel = payload.is_first_channel;
+        self.duty_mode = u8::try_from(payload.duty_mode)
+            .map_err(|_| PersistenceError::Validation("pulse duty mode overflow".into()))?;
+        self.duty_value = u8::try_from(payload.duty_value)
+            .map_err(|_| PersistenceError::Validation("pulse duty value overflow".into()))?;
+        self.sweep_reload = payload.sweep_reload;
+        self.sweep_enabled = payload.sweep_enabled;
+        self.sweep_negate = payload.sweep_negate;
+        self.sweep_shift = u8::try_from(payload.sweep_shift)
+            .map_err(|_| PersistenceError::Validation("pulse sweep shift overflow".into()))?;
+        self.sweep_period = u8::try_from(payload.sweep_period)
+            .map_err(|_| PersistenceError::Validation("pulse sweep period overflow".into()))?;
+        self.sweep_value = u8::try_from(payload.sweep_value)
+            .map_err(|_| PersistenceError::Validation("pulse sweep value overflow".into()))?;
+        self.sweep_target_period = u16::try_from(payload.sweep_target_period).map_err(|_| {
+            PersistenceError::Validation("pulse sweep target period overflow".into())
+        })?;
+        self.period = u16::try_from(payload.period)
+            .map_err(|_| PersistenceError::Validation("pulse period overflow".into()))?;
+        self.envelope.import_state_proto(
+            payload
+                .envelope
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing pulse envelope".into()))?,
+        )?;
+        self.length_counter
+            .import_state_proto(payload.length_counter.as_ref().ok_or_else(|| {
+                PersistenceError::Validation("missing pulse length counter".into())
+            })?)?;
+        self.timer.import_state_proto(
+            payload
+                .timer
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing pulse timer".into()))?,
+        )?;
+        Ok(())
     }
 }
 

@@ -8,6 +8,7 @@ mod runtime;
 
 use nerust_core::CoreOptions;
 use runtime::WindowRuntime;
+use std::path::PathBuf;
 
 pub struct Window {
     runtime: Box<WindowRuntime>,
@@ -24,8 +25,13 @@ impl Window {
         self.runtime.load(data);
     }
 
-    pub fn load_with_options(&mut self, data: Vec<u8>, options: CoreOptions) {
-        self.runtime.load_with_options(data, options);
+    pub fn load_with_options(
+        &mut self,
+        rom_path: Option<PathBuf>,
+        data: Vec<u8>,
+        options: CoreOptions,
+    ) {
+        self.runtime.load_with_options(rom_path, data, options);
     }
 
     pub fn run(self) {

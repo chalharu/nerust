@@ -120,8 +120,16 @@ impl CartridgeData {
         self.prog_rom[index]
     }
 
+    pub fn prog_rom(&self) -> &[u8] {
+        &self.prog_rom
+    }
+
     pub fn read_char_rom(&self, index: usize) -> u8 {
         self.char_rom[index]
+    }
+
+    pub fn char_rom(&self) -> &[u8] {
+        &self.char_rom
     }
 
     pub fn prog_rom_len(&self) -> usize {

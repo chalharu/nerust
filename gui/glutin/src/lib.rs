@@ -13,8 +13,13 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use nerust_console::{Console, ConsoleMetrics};
+use nerust_console::{Console, ConsoleMetrics, PreviewFrame};
 use nerust_core::controller::standard_controller::Buttons;
+use nerust_persistence::{
+    SidecarPaths, ThumbnailSource, allocate_next_slot_id, load_mapper_save, load_state_slot,
+    resolve_sidecars, scan_state_slots_for_target, state_slot_path, write_mapper_save,
+    write_recovery_mapper_save, write_state_slot,
+};
 use nerust_screen_filter::FilterType;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
@@ -24,6 +29,7 @@ use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize};
@@ -137,6 +143,11 @@ pub struct Window {
     last_title_update: Instant,
     last_presented_frame_counter: u64,
     needs_redraw: bool,
+    rom_path: Option<PathBuf>,
+    sidecars: Option<SidecarPaths>,
+    mapper_save_flush_allowed: bool,
+    mapper_save_recovery_written: bool,
+    active_slot_id: Option<u64>,
 }
 
 impl Window {
@@ -163,11 +174,30 @@ impl Window {
             last_title_update: Instant::now(),
             last_presented_frame_counter: 0,
             needs_redraw: true,
+            rom_path: None,
+            sidecars: None,
+            mapper_save_flush_allowed: true,
+            mapper_save_recovery_written: false,
+            active_slot_id: None,
         }
     }
 
-    pub fn load(&mut self, data: Vec<u8>) {
-        self.console.load(data);
+    pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
+        if let Err(error) = self.flush_mapper_save() {
+            log::warn!("mapper save flush before load failed: {error}");
+            return;
+        }
+        if self.console.load(data).is_ok() {
+            self.rom_path = rom_path;
+            self.sidecars = self.rom_path.as_deref().map(resolve_sidecars);
+            self.mapper_save_flush_allowed = true;
+            self.mapper_save_recovery_written = false;
+            self.active_slot_id = None;
+            if let Err(error) = self.load_mapper_save_if_available() {
+                self.mapper_save_flush_allowed = false;
+                log::warn!("mapper save auto-load failed: {error}");
+            }
+        }
     }
 
     pub fn run(&mut self) {
@@ -241,7 +271,10 @@ impl Window {
         self.needs_redraw = true;
     }
 
-    fn on_close(&mut self) {
+    fn on_close(&mut self) -> bool {
+        if let Err(error) = self.flush_mapper_save() {
+            log::warn!("mapper save flush before close failed: {error}");
+        }
         if let Some(view) = self.view.as_mut() {
             view.on_close();
         }
@@ -249,6 +282,7 @@ impl Window {
         self.gl_surface = None;
         self.gl_context = None;
         self.window = None;
+        true
     }
 
     fn current_window_title(&self) -> String {
@@ -286,6 +320,58 @@ impl Window {
         self.refresh_window_title();
     }
 
+    fn sync_paused_from_console(&mut self) {
+        let was_paused = self.paused;
+        self.paused = self.console.metrics().paused;
+        if was_paused && !self.paused {
+            self.needs_redraw = true;
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+        }
+        self.refresh_window_title();
+    }
+
+    fn select_adjacent_slot(&mut self, forward: bool) {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return;
+        };
+        let (rom_identity, options) = match self.console.persistence_target() {
+            Ok(target) => target,
+            Err(error) => {
+                log::warn!("state slot target unavailable: {error}");
+                return;
+            }
+        };
+        let slots = match scan_state_slots_for_target(&sidecars.states_dir, rom_identity, options) {
+            Ok(slots) => slots,
+            Err(error) => {
+                log::warn!("state slot scan failed: {error}");
+                return;
+            }
+        };
+        let Some(next_slot_id) = (!slots.is_empty()).then(|| {
+            if let Some(current) = self.active_slot_id
+                && let Some(index) = slots.iter().position(|slot| slot.slot_id == current)
+            {
+                let offset = if forward {
+                    (index + 1) % slots.len()
+                } else {
+                    (index + slots.len() - 1) % slots.len()
+                };
+                slots[offset].slot_id
+            } else if forward {
+                slots[0].slot_id
+            } else {
+                slots[slots.len() - 1].slot_id
+            }
+        }) else {
+            return;
+        };
+        self.active_slot_id = Some(next_slot_id);
+        log::info!("selected save slot {next_slot_id}");
+    }
+
     fn on_keyboard_input(&mut self, input: KeyEvent) {
         // とりあえず、pad1のみ次の通りとする。
         // A      -> Z
@@ -311,7 +397,25 @@ impl Window {
             }
             PhysicalKey::Code(KeyCode::Escape) => {
                 if input.state == ElementState::Released {
-                    self.console.reset();
+                    let _ = self.console.reset();
+                }
+                Buttons::empty()
+            }
+            PhysicalKey::Code(KeyCode::F5) if input.state == ElementState::Released => {
+                self.save_active_slot_or_new();
+                Buttons::empty()
+            }
+            PhysicalKey::Code(KeyCode::F6) if input.state == ElementState::Released => {
+                self.select_adjacent_slot(true);
+                Buttons::empty()
+            }
+            PhysicalKey::Code(KeyCode::F7) if input.state == ElementState::Released => {
+                self.select_adjacent_slot(false);
+                Buttons::empty()
+            }
+            PhysicalKey::Code(KeyCode::F8) if input.state == ElementState::Released => {
+                if let Some(slot_id) = self.active_slot_id {
+                    self.load_slot(slot_id);
                 }
                 Buttons::empty()
             }
@@ -322,6 +426,117 @@ impl Window {
             ElementState::Released => self.keys & !code,
         };
         self.console.set_pad1(self.keys);
+    }
+
+    fn load_mapper_save_if_available(&mut self) -> Result<(), String> {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return Ok(());
+        };
+        if let Some(bytes) =
+            load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
+        {
+            self.console
+                .import_mapper_save(bytes)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn flush_mapper_save(&mut self) -> Result<(), String> {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return Ok(());
+        };
+        if !self.mapper_save_flush_allowed {
+            if self.mapper_save_recovery_written {
+                return Ok(());
+            }
+            if let Some(bytes) = self
+                .console
+                .export_mapper_save()
+                .map_err(|error| error.to_string())?
+            {
+                let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
+                    .map_err(|error| error.to_string())?;
+                self.mapper_save_recovery_written = true;
+                log::warn!(
+                    "mapper save auto-load failed earlier; wrote recovery save to {}",
+                    path.display()
+                );
+            }
+            return Ok(());
+        }
+        let bytes = self
+            .console
+            .export_mapper_save()
+            .map_err(|error| error.to_string())?;
+        match bytes {
+            Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    fn save_active_slot_or_new(&mut self) {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return;
+        };
+        let slot_id = match self.active_slot_id {
+            Some(slot_id) => slot_id,
+            None => match allocate_next_slot_id(&sidecars.states_dir) {
+                Ok(slot_id) => slot_id,
+                Err(error) => {
+                    log::warn!("allocating state slot failed: {error}");
+                    return;
+                }
+            },
+        };
+        match self.console.export_state() {
+            Ok(export) => {
+                let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
+                if let Err(error) = write_state_slot(
+                    &sidecars.states_dir,
+                    slot_id,
+                    &export.machine_state,
+                    export.rom_identity,
+                    export.options,
+                    preview.as_ref(),
+                ) {
+                    log::warn!("saving state slot failed: {error}");
+                } else {
+                    self.active_slot_id = Some(slot_id);
+                }
+            }
+            Err(error) => log::warn!("state export failed: {error}"),
+        }
+    }
+
+    fn load_slot(&mut self, slot_id: u64) {
+        let Some(sidecars) = self.sidecars.as_ref() else {
+            return;
+        };
+        match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
+            Ok(slot) => {
+                if let Err(error) = self.console.import_state(slot.machine_state) {
+                    log::warn!("state import failed: {error}");
+                } else {
+                    self.active_slot_id = Some(slot_id);
+                    self.sync_paused_from_console();
+                    self.needs_redraw = true;
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
+                }
+            }
+            Err(error) => log::warn!("loading state slot failed: {error}"),
+        }
+    }
+}
+
+fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
+    ThumbnailSource {
+        width: preview.width,
+        height: preview.height,
+        rgba: preview.rgba.clone(),
     }
 }
 
@@ -338,8 +553,9 @@ impl ApplicationHandler for Window {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                self.on_close();
-                event_loop.exit();
+                if self.on_close() {
+                    event_loop.exit();
+                }
             }
             WindowEvent::Resized(size) => {
                 self.on_resize(size);
@@ -375,17 +591,17 @@ impl ApplicationHandler for Window {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        self.on_close();
+        let _ = self.on_close();
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        self.on_close();
+        let _ = self.on_close();
     }
 }
 
 impl Drop for Window {
     fn drop(&mut self) {
-        self.on_close();
+        let _ = self.on_close();
     }
 }
 

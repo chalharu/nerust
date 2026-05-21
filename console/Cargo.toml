@@ -15,3 +15,5 @@ nerust_screen_filter.workspace = true
 nerust_screen_traits.workspace = true
 nerust_sound_traits.workspace = true
 nerust_timer.workspace = true
+prost.workspace = true
+thiserror.workspace = true
