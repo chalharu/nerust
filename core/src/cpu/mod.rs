@@ -290,6 +290,15 @@ impl Core {
         &mut self.interrupt
     }
 
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        self.internal_stat.validate()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_internal_opcode_for_test(&mut self, value: usize) {
+        self.internal_stat.set_opcode(value);
+    }
+
     fn process_dma_cycle(
         &mut self,
         ppu: &mut Ppu,
