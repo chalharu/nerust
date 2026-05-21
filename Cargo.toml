@@ -23,11 +23,7 @@ members = [
   "timer",
   "wgpuwrap",
 ]
-default-members = [
-  "core",
-  "persistence",
-  "console",
-]
+default-members = ["core", "persistence", "console"]
 
 [profile.release]
 debug = true
