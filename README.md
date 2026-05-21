@@ -10,6 +10,55 @@
 
 An NES emulator written in Rust
 
+## Developer build/test paths
+
+- The default workspace developer path (`cargo build`, `cargo test`) now covers
+  `nerust_core`, `nerust_persistence`, and `nerust_console`.
+- Their in-workspace dependencies still build transitively, but GUI frontends,
+  backend-specific crates, and ROM tooling are now validated with explicit
+  package commands.
+
+### Save/load validation
+
+```sh
+cargo test -p nerust_core persistence_tests --lib
+cargo test -p nerust_console --lib
+cargo test -p nerust_persistence --lib
+```
+
+### Support crate validation
+
+Run support-crate unit tests explicitly when touching cartridge parsing,
+filters, buffers, or timing:
+
+```sh
+cargo test -p nerust_cartridge_data --lib
+cargo test -p nerust_screen_buffer --lib
+cargo test -p nerust_screen_filter --lib
+cargo test -p nerust_timer --lib
+```
+
+### ROM tooling validation
+
+Run ROM tooling and generated regression tests explicitly when touching manifest,
+tooling, or ROM-test behavior:
+
+```sh
+cargo test -p nerust_rom_test
+```
+
+### Frontend/backend validation
+
+Run frontend and backend validation explicitly when touching OpenGL or UI code:
+
+```sh
+cargo test -p nerust_screen_opengl --lib
+cargo test -p nerust_glutin --lib
+cargo build -p nerust_glutin --release
+cargo build -p nerust_gtk --release
+cargo build -p nerust_wgpu --release
+```
+
 ## Usage
 
 ### Glutin Frontend
