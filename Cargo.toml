@@ -23,25 +23,7 @@ members = [
   "timer",
   "wgpuwrap",
 ]
-default-members = [
-  "cartridge/data",
-  "console",
-  "core",
-  "persistence",
-  "rom_test",
-  "gui/glutin",
-  "glwrap",
-  "nes_ntsc",
-  "screen/buffer",
-  "screen/filter",
-  "screen/opengl",
-  "screen/traits",
-  "serialize",
-  "sound/openal",
-  "sound/traits",
-  "soundfilter",
-  "timer",
-]
+default-members = ["core", "persistence", "console"]
 
 [profile.release]
 debug = true
