@@ -12,10 +12,12 @@
 //! names, metadata fields, or this crate's validation/interpretation rules change.
 
 use fs2::FileExt;
+use libc::tm;
 use nerust_core::{CoreOptions, MirrorMode, Mmc3IrqVariant, RomFormat, RomIdentity};
 use png::{BitDepth, ColorType, Encoder};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -78,6 +80,14 @@ pub struct ThumbnailSource {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+pub fn format_slot_saved_at(saved_at: SystemTime) -> String {
+    let Ok(duration) = saved_at.duration_since(UNIX_EPOCH) else {
+        return "unknown".into();
+    };
+    format_local_timestamp(duration.as_secs() as i64)
+        .unwrap_or_else(|| duration.as_secs().to_string())
 }
 
 /// Archive metadata owned by the persistence crate.
@@ -416,6 +426,44 @@ fn metadata_matches_target(
         && metadata.mmc3_irq_variant == mmc3_irq_variant_to_u32(options.mmc3_irq_variant)
 }
 
+fn format_local_timestamp(epoch_seconds: i64) -> Option<String> {
+    let time = libc::time_t::try_from(epoch_seconds).ok()?;
+    let tm = localtime(time)?;
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+    ))
+}
+
+#[cfg(unix)]
+fn localtime(time: libc::time_t) -> Option<tm> {
+    let mut result = MaybeUninit::<tm>::uninit();
+    unsafe {
+        if libc::localtime_r(&time, result.as_mut_ptr()).is_null() {
+            None
+        } else {
+            Some(result.assume_init())
+        }
+    }
+}
+
+#[cfg(windows)]
+fn localtime(time: libc::time_t) -> Option<tm> {
+    let mut result = MaybeUninit::<tm>::uninit();
+    unsafe {
+        if libc::localtime_s(result.as_mut_ptr(), &time) != 0 {
+            None
+        } else {
+            Some(result.assume_init())
+        }
+    }
+}
+
 fn mmc3_irq_variant_to_u32(variant: Option<Mmc3IrqVariant>) -> u32 {
     match variant {
         Some(Mmc3IrqVariant::Sharp) => 1,
@@ -730,6 +778,17 @@ mod tests {
             .join("target")
             .join("persistence-tests")
             .join(name)
+    }
+
+    #[test]
+    fn slot_timestamp_format_is_human_readable() {
+        let formatted = format_slot_saved_at(UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+        assert_eq!(formatted.len(), 19);
+        assert_eq!(formatted.chars().nth(4), Some('-'));
+        assert_eq!(formatted.chars().nth(7), Some('-'));
+        assert_eq!(formatted.chars().nth(10), Some(' '));
+        assert_eq!(formatted.chars().nth(13), Some(':'));
+        assert_eq!(formatted.chars().nth(16), Some(':'));
     }
 
     #[test]

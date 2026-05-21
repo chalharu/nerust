@@ -767,7 +767,9 @@ mod persistence_tests {
             .expect("machine state should export");
         let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
-        tampered.ppu.set_sprite_fetch_state_for_test(8, 0);
+        tampered
+            .ppu
+            .set_sprite_fetch_state_for_test(9, 0, 316, true);
         let tampered_payload =
             persistence::encode_payload(&tampered).expect("tampered payload should encode");
 
@@ -785,6 +787,49 @@ mod persistence_tests {
             .export_machine_state()
             .expect("target state should still export");
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn machine_state_rejects_premature_terminal_ppu_sprite_index() {
+        let source = Core::new(nrom_test_data()).expect("source core should construct");
+        let payload = source
+            .export_machine_state()
+            .expect("machine state should export");
+        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+            .expect("machine state payload should decode");
+        tampered
+            .ppu
+            .set_sprite_fetch_state_for_test(8, 0, 315, true);
+        let tampered_payload =
+            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+
+        let mut target = Core::new(nrom_test_data()).expect("target core should construct");
+        let error = target
+            .import_machine_state(&tampered_payload)
+            .expect_err("premature terminal sprite index should reject");
+        assert!(error.to_string().contains(
+            "PPU sprite index terminal state is only valid after the final sprite fetch"
+        ));
+    }
+
+    #[test]
+    fn machine_state_accepts_terminal_ppu_sprite_index_after_final_fetch() {
+        let source = Core::new(nrom_test_data()).expect("source core should construct");
+        let payload = source
+            .export_machine_state()
+            .expect("machine state should export");
+        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+            .expect("machine state payload should decode");
+        tampered
+            .ppu
+            .set_sprite_fetch_state_for_test(8, 0, 316, true);
+        let tampered_payload =
+            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+
+        let mut target = Core::new(nrom_test_data()).expect("target core should construct");
+        target
+            .import_machine_state(&tampered_payload)
+            .expect("terminal sprite index should remain importable");
     }
 
     #[test]
