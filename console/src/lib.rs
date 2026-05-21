@@ -734,14 +734,12 @@ impl ConsoleRunner {
                                     )?;
                                     if self.screen.publishes_palette_frame()
                                         && !payload.source_frame.is_empty()
-                                    {
-                                        if payload.source_frame.len()
+                                        && payload.source_frame.len()
                                             != self.screen.source_frame_len()
-                                        {
-                                            return Err(ConsoleError::Core(
-                                                "console source frame length mismatch".into(),
-                                            ));
-                                        }
+                                    {
+                                        return Err(ConsoleError::Core(
+                                            "console source frame length mismatch".into(),
+                                        ));
                                     }
                                     core.import_machine_state(&payload.core_state)
                                         .map_err(|error| ConsoleError::Core(error.to_string()))?;

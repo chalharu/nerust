@@ -88,11 +88,11 @@ impl Cartridge for Fme7 {
         }
         self.command = u8::try_from(runtime.command)
             .map_err(|_| PersistenceError::Validation("FME-7 command overflow".into()))?;
-        for (slot, value) in self.chr_banks.iter_mut().zip(runtime.chr_banks.into_iter()) {
+        for (slot, value) in self.chr_banks.iter_mut().zip(runtime.chr_banks) {
             *slot = u8::try_from(value)
                 .map_err(|_| PersistenceError::Validation("FME-7 CHR bank overflow".into()))?;
         }
-        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks.into_iter()) {
+        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks) {
             *slot = u8::try_from(value)
                 .map_err(|_| PersistenceError::Validation("FME-7 PRG bank overflow".into()))?;
         }

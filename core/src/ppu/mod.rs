@@ -547,11 +547,7 @@ impl Core {
             current_tile: Some(Self::tile_info_to_proto(self.current_tile)),
             previous_tile: Some(Self::tile_info_to_proto(self.previous_tile)),
             next_tile: Some(Self::tile_info_to_proto(self.next_tile)),
-            sprites: self
-                .sprites
-                .into_iter()
-                .map(Self::sprite_info_to_proto)
-                .collect(),
+            sprites: Self::sprite_infos_to_proto(self.sprites),
             sprite_index: u32::from(self.sprite_index),
             sprite_count: u32::from(self.sprite_count),
             render_executing: self.render_executing,
@@ -775,6 +771,14 @@ impl Core {
             priority: value.priority,
             position: u32::from(value.position),
         }
+    }
+
+    fn sprite_infos_to_proto(values: [SpriteInfo; 64]) -> Vec<SpriteInfoMessage> {
+        let mut sprites = Vec::with_capacity(values.len());
+        for value in values {
+            sprites.push(Self::sprite_info_to_proto(value));
+        }
+        sprites
     }
 
     fn sprite_info_from_proto(payload: &SpriteInfoMessage) -> Result<SpriteInfo, PersistenceError> {

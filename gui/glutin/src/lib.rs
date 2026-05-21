@@ -552,10 +552,8 @@ impl ApplicationHandler for Window {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => {
-                if self.on_close() {
-                    event_loop.exit();
-                }
+            WindowEvent::CloseRequested if self.on_close() => {
+                event_loop.exit();
             }
             WindowEvent::Resized(size) => {
                 self.on_resize(size);

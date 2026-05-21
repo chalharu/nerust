@@ -355,7 +355,7 @@ impl Cartridge for Mmc5 {
         for (slot, value) in self
             .nametable_mapping
             .iter_mut()
-            .zip(runtime.nametable_mapping.into_iter())
+            .zip(runtime.nametable_mapping)
         {
             *slot = u8::try_from(value).map_err(|_| {
                 PersistenceError::Validation("MMC5 nametable mapping overflow".into())
@@ -365,14 +365,14 @@ impl Cartridge for Mmc5 {
             .map_err(|_| PersistenceError::Validation("MMC5 fill_tile overflow".into()))?;
         self.fill_attribute = u8::try_from(runtime.fill_attribute)
             .map_err(|_| PersistenceError::Validation("MMC5 fill_attribute overflow".into()))?;
-        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks.into_iter()) {
+        for (slot, value) in self.prg_banks.iter_mut().zip(runtime.prg_banks) {
             *slot = u8::try_from(value)
                 .map_err(|_| PersistenceError::Validation("MMC5 prg_banks overflow".into()))?;
         }
         for (slot, value) in self
             .sprite_chr_banks
             .iter_mut()
-            .zip(runtime.sprite_chr_banks.into_iter())
+            .zip(runtime.sprite_chr_banks)
         {
             *slot = u16::try_from(value).map_err(|_| {
                 PersistenceError::Validation("MMC5 sprite_chr_banks overflow".into())
@@ -381,7 +381,7 @@ impl Cartridge for Mmc5 {
         for (slot, value) in self
             .background_chr_banks
             .iter_mut()
-            .zip(runtime.background_chr_banks.into_iter())
+            .zip(runtime.background_chr_banks)
         {
             *slot = u16::try_from(value).map_err(|_| {
                 PersistenceError::Validation("MMC5 background_chr_banks overflow".into())
