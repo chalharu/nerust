@@ -71,6 +71,31 @@ pub(crate) enum KeyEventState {
     Release,
 }
 
+trait ActiveSlotLoader {
+    fn active_slot_id(&self) -> Option<u64>;
+    fn load_slot(&mut self, slot_id: u64);
+}
+
+impl ActiveSlotLoader for State {
+    fn active_slot_id(&self) -> Option<u64> {
+        State::active_slot_id(self)
+    }
+
+    fn load_slot(&mut self, slot_id: u64) {
+        State::load_slot(self, slot_id);
+    }
+}
+
+fn load_active_slot<T: ActiveSlotLoader>(state: &RefCell<T>) -> bool {
+    let active_slot_id = { state.borrow().active_slot_id() };
+    if let Some(slot_id) = active_slot_id {
+        state.borrow_mut().load_slot(slot_id);
+        true
+    } else {
+        false
+    }
+}
+
 impl WindowExtend for Window {
     fn state(&self) -> Rc<RefCell<State>> {
         self.borrow().state.clone()
@@ -199,8 +224,8 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = state_load_active_action.connect_activate(move |_, _| {
-                if let Some(slot_id) = result.state().borrow().active_slot_id() {
-                    result.state().borrow_mut().load_slot(slot_id);
+                let state = result.state();
+                if load_active_slot(state.as_ref()) {
                     result.update_actions();
                 }
             });
@@ -419,8 +444,8 @@ impl WindowExtend for Window {
                 Buttons::empty()
             }
             gdk::Key::F8 if matches!(event, KeyEventState::Release) => {
-                if let Some(slot_id) = self.state().borrow().active_slot_id() {
-                    self.state().borrow_mut().load_slot(slot_id);
+                let state = self.state();
+                if load_active_slot(state.as_ref()) {
                     self.update_actions();
                 }
                 Buttons::empty()
@@ -452,5 +477,46 @@ fn rebuild_slot_menu(
         let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
         item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
         menu.append_item(&item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActiveSlotLoader, load_active_slot};
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeState {
+        active_slot_id: Option<u64>,
+        loaded_slot_id: Option<u64>,
+    }
+
+    impl ActiveSlotLoader for FakeState {
+        fn active_slot_id(&self) -> Option<u64> {
+            self.active_slot_id
+        }
+
+        fn load_slot(&mut self, slot_id: u64) {
+            self.loaded_slot_id = Some(slot_id);
+        }
+    }
+
+    #[test]
+    fn load_active_slot_releases_shared_borrow_before_mutating() {
+        let state = RefCell::new(FakeState {
+            active_slot_id: Some(8),
+            loaded_slot_id: None,
+        });
+
+        assert!(load_active_slot(&state));
+        assert_eq!(state.borrow().loaded_slot_id, Some(8));
+    }
+
+    #[test]
+    fn load_active_slot_is_noop_without_selection() {
+        let state = RefCell::new(FakeState::default());
+
+        assert!(!load_active_slot(&state));
+        assert_eq!(state.borrow().loaded_slot_id, None);
     }
 }
