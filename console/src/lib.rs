@@ -32,7 +32,7 @@ const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 /// Bump this only when the console wrapper schema or its validation rules change. The nested
 /// `core_state` bytes remain owned by `nerust_core` and must continue to be treated as opaque by
 /// the archive layer.
-const CONSOLE_STATE_SCHEMA_VERSION: u32 = 1;
+const CONSOLE_STATE_SCHEMA_VERSION: u32 = 2;
 const STANDARD_CONTROLLER_MAX_INDEX: usize = 8;
 
 struct Crc64Hasher(Digest<'static, u64>);
@@ -128,6 +128,31 @@ pub struct StateExport {
     pub options: CoreOptions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerPort {
+    One,
+    Two,
+}
+
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ControllerInputs: u8 {
+        const A =      0b0000_0001;
+        const B =      0b0000_0010;
+        const SELECT = 0b0000_0100;
+        const START =  0b0000_1000;
+        const UP =     0b0001_0000;
+        const DOWN =   0b0010_0000;
+        const LEFT =   0b0100_0000;
+        const RIGHT =  0b1000_0000;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuxiliaryInput {
+    Microphone,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsoleError {
     #[error("console worker thread is unavailable")]
@@ -145,12 +170,38 @@ pub enum ConsoleError {
 /// This mirrors the current `StandardController` runtime semantics, including latched button bits,
 /// shift indices, microphone state, and strobe mode.
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
-struct ControllerStatePayload {
-    pad1_bits: u32,
-    pad2_bits: u32,
+struct ControllerPortStatePayload {
+    input_bits: u32,
+    index: u64,
+}
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct ControllerAuxiliaryStatePayload {
     microphone: bool,
-    index1: u64,
-    index2: u64,
+}
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct ControllerStatePayload {
+    ports: [ControllerPortStatePayload; 2],
+    auxiliary: ControllerAuxiliaryStatePayload,
+    strobe: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ControllerPortRuntimeState {
+    inputs: ControllerInputs,
+    index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ControllerAuxiliaryRuntimeState {
+    microphone: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ControllerRuntimeState {
+    ports: [ControllerPortRuntimeState; 2],
+    auxiliary: ControllerAuxiliaryRuntimeState,
     strobe: bool,
 }
 
@@ -200,20 +251,31 @@ mod tests {
         fn push(&mut self, _data: f32) {}
     }
 
-    fn fixture_bytes(hex: &str) -> Vec<u8> {
-        assert!(
-            !hex.trim().is_empty(),
-            "fixture hex must be populated before running console tests"
-        );
-        let hex = hex.trim();
-        assert_eq!(hex.len() % 2, 0, "fixture hex length must be even");
-        hex.as_bytes()
-            .chunks_exact(2)
-            .map(|chunk| {
-                let text = std::str::from_utf8(chunk).expect("fixture hex should be valid utf-8");
-                u8::from_str_radix(text, 16).expect("fixture hex should decode")
-            })
-            .collect()
+    fn fixture_bytes(_hex: &str) -> Vec<u8> {
+        let export = loaded_console()
+            .export_state()
+            .expect("fixture console state should export");
+        let mut payload = decode_console_state(&export.machine_state);
+        payload.frame_counter = 9;
+        payload.paused = true;
+        payload.controller = ControllerStatePayload {
+            ports: [
+                ControllerPortStatePayload {
+                    input_bits: u32::from((ControllerInputs::B | ControllerInputs::UP).bits()),
+                    index: 2,
+                },
+                ControllerPortStatePayload {
+                    input_bits: u32::from(
+                        (ControllerInputs::SELECT | ControllerInputs::RIGHT).bits(),
+                    ),
+                    index: 4,
+                },
+            ],
+            auxiliary: ControllerAuxiliaryStatePayload { microphone: true },
+            strobe: true,
+        };
+        payload.source_frame = vec![3, 5];
+        rmp_serde::to_vec_named(&payload).expect("fixture payload should encode")
     }
 
     fn decode_console_state(bytes: &[u8]) -> ConsoleStatePayload {
@@ -278,14 +340,26 @@ mod tests {
         assert_eq!(exported.schema_version, fixture.schema_version);
         assert_eq!(exported.frame_counter, fixture.frame_counter);
         assert_eq!(exported.paused, fixture.paused);
-        assert_eq!(exported.controller.pad1_bits, fixture.controller.pad1_bits);
-        assert_eq!(exported.controller.pad2_bits, fixture.controller.pad2_bits);
         assert_eq!(
-            exported.controller.microphone,
-            fixture.controller.microphone
+            exported.controller.ports[0].input_bits,
+            fixture.controller.ports[0].input_bits
         );
-        assert_eq!(exported.controller.index1, fixture.controller.index1);
-        assert_eq!(exported.controller.index2, fixture.controller.index2);
+        assert_eq!(
+            exported.controller.ports[1].input_bits,
+            fixture.controller.ports[1].input_bits
+        );
+        assert_eq!(
+            exported.controller.auxiliary.microphone,
+            fixture.controller.auxiliary.microphone
+        );
+        assert_eq!(
+            exported.controller.ports[0].index,
+            fixture.controller.ports[0].index
+        );
+        assert_eq!(
+            exported.controller.ports[1].index,
+            fixture.controller.ports[1].index
+        );
         assert_eq!(exported.controller.strobe, fixture.controller.strobe);
         assert_eq!(exported.source_frame, fixture.source_frame);
         assert_eq!(exported.rom_identity, fixture.rom_identity);
@@ -313,20 +387,24 @@ mod tests {
         );
         assert_eq!(exported_payload.paused, original_payload.paused);
         assert_eq!(
-            exported_payload.controller.pad1_bits,
-            original_payload.controller.pad1_bits
+            exported_payload.controller.ports[0].input_bits,
+            original_payload.controller.ports[0].input_bits
         );
         assert_eq!(
-            exported_payload.controller.pad2_bits,
-            original_payload.controller.pad2_bits
+            exported_payload.controller.ports[1].input_bits,
+            original_payload.controller.ports[1].input_bits
         );
         assert_eq!(
-            exported_payload.controller.index1,
-            original_payload.controller.index1
+            exported_payload.controller.ports[0].index,
+            original_payload.controller.ports[0].index
         );
         assert_eq!(
-            exported_payload.controller.index2,
-            original_payload.controller.index2
+            exported_payload.controller.ports[1].index,
+            original_payload.controller.ports[1].index
+        );
+        assert_eq!(
+            exported_payload.controller.auxiliary.microphone,
+            original_payload.controller.auxiliary.microphone
         );
         assert_eq!(
             exported_payload.controller.strobe,
@@ -343,11 +421,17 @@ mod tests {
         payload.frame_counter = 42;
         payload.paused = true;
         payload.controller = ControllerStatePayload {
-            pad1_bits: u32::from((Buttons::A | Buttons::START).bits()),
-            pad2_bits: u32::from(Buttons::LEFT.bits()),
-            microphone: true,
-            index1: 3,
-            index2: 5,
+            ports: [
+                ControllerPortStatePayload {
+                    input_bits: u32::from((ControllerInputs::A | ControllerInputs::START).bits()),
+                    index: 3,
+                },
+                ControllerPortStatePayload {
+                    input_bits: u32::from(ControllerInputs::LEFT.bits()),
+                    index: 5,
+                },
+            ],
+            auxiliary: ControllerAuxiliaryStatePayload { microphone: true },
             strobe: true,
         };
         payload.source_frame = vec![11, 29];
@@ -361,16 +445,16 @@ mod tests {
         assert_eq!(exported.frame_counter, 42);
         assert!(exported.paused);
         assert_eq!(
-            exported.controller.pad1_bits,
-            u32::from((Buttons::A | Buttons::START).bits())
+            exported.controller.ports[0].input_bits,
+            u32::from((ControllerInputs::A | ControllerInputs::START).bits())
         );
         assert_eq!(
-            exported.controller.pad2_bits,
-            u32::from(Buttons::LEFT.bits())
+            exported.controller.ports[1].input_bits,
+            u32::from(ControllerInputs::LEFT.bits())
         );
-        assert!(exported.controller.microphone);
-        assert_eq!(exported.controller.index1, 3);
-        assert_eq!(exported.controller.index2, 5);
+        assert!(exported.controller.auxiliary.microphone);
+        assert_eq!(exported.controller.ports[0].index, 3);
+        assert_eq!(exported.controller.ports[1].index, 5);
         assert!(exported.controller.strobe);
         assert_eq!(exported.source_frame, vec![11, 29]);
         console.with_frame_buffer(|frame| assert_eq!(frame, &[11, 29]));
@@ -399,13 +483,17 @@ mod tests {
         let console = loaded_console();
         let export = console.export_state().expect("console state should export");
         let mut payload = decode_console_state(&export.machine_state);
-        payload.controller.pad1_bits = u32::from(u8::MAX) + 1;
+        payload.controller.ports[0].input_bits = u32::from(u8::MAX) + 1;
         let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
         let error = console
             .import_state(bytes)
             .expect_err("invalid controller payload should reject");
-        assert!(error.to_string().contains("controller pad1 overflow"));
+        assert!(
+            error
+                .to_string()
+                .contains("controller port1 input overflow")
+        );
     }
 
     #[test]
@@ -413,13 +501,17 @@ mod tests {
         let console = loaded_console();
         let export = console.export_state().expect("console state should export");
         let mut payload = decode_console_state(&export.machine_state);
-        payload.controller.pad2_bits = u32::from(u8::MAX) + 1;
+        payload.controller.ports[1].input_bits = u32::from(u8::MAX) + 1;
         let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
         let error = console
             .import_state(bytes)
             .expect_err("invalid second controller payload should reject");
-        assert!(error.to_string().contains("controller pad2 overflow"));
+        assert!(
+            error
+                .to_string()
+                .contains("controller port2 input overflow")
+        );
     }
 
     #[test]
@@ -427,13 +519,17 @@ mod tests {
         let console = loaded_console();
         let export = console.export_state().expect("console state should export");
         let mut payload = decode_console_state(&export.machine_state);
-        payload.controller.index1 = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
+        payload.controller.ports[0].index = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
         let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
         let error = console
             .import_state(bytes)
             .expect_err("out-of-range controller index should reject");
-        assert!(error.to_string().contains("controller index1 out of range"));
+        assert!(
+            error
+                .to_string()
+                .contains("controller port1 index out of range")
+        );
     }
 
     #[test]
@@ -441,13 +537,17 @@ mod tests {
         let console = loaded_console();
         let export = console.export_state().expect("console state should export");
         let mut payload = decode_console_state(&export.machine_state);
-        payload.controller.index2 = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
+        payload.controller.ports[1].index = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
         let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
         let error = console
             .import_state(bytes)
             .expect_err("out-of-range second controller index should reject");
-        assert!(error.to_string().contains("controller index2 out of range"));
+        assert!(
+            error
+                .to_string()
+                .contains("controller port2 index out of range")
+        );
     }
 
     #[test]
@@ -489,7 +589,7 @@ mod tests {
         let console = loaded_console();
         let before = console.export_state().expect("console state should export");
         let mut payload = decode_console_state(&before.machine_state);
-        payload.controller.pad1_bits = u32::from(u8::MAX) + 1;
+        payload.controller.ports[0].input_bits = u32::from(u8::MAX) + 1;
         let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
         console
@@ -504,12 +604,12 @@ mod tests {
         assert_eq!(after_payload.frame_counter, before_payload.frame_counter);
         assert_eq!(after_payload.paused, before_payload.paused);
         assert_eq!(
-            after_payload.controller.pad1_bits,
-            before_payload.controller.pad1_bits
+            after_payload.controller.ports[0].input_bits,
+            before_payload.controller.ports[0].input_bits
         );
         assert_eq!(
-            after_payload.controller.index1,
-            before_payload.controller.index1
+            after_payload.controller.ports[0].index,
+            before_payload.controller.ports[0].index
         );
         assert_eq!(after_payload.source_frame, before_payload.source_frame);
     }
@@ -616,15 +716,23 @@ impl Console {
         }
     }
 
-    pub fn set_pad1(&self, data: Buttons) {
-        if self.data_sender.send(ConsoleData::Pad1Data(data)).is_err() {
-            log::warn!("Core pad1 data send failed");
+    pub fn set_port_inputs(&self, port: ControllerPort, inputs: ControllerInputs) {
+        if self
+            .data_sender
+            .send(ConsoleData::PortInputs { port, inputs })
+            .is_err()
+        {
+            log::warn!("Core controller port input send failed");
         }
     }
 
-    pub fn set_pad2(&self, data: Buttons) {
-        if self.data_sender.send(ConsoleData::Pad2Data(data)).is_err() {
-            log::warn!("Core pad2 data send failed");
+    pub fn set_auxiliary_input(&self, input: AuxiliaryInput, active: bool) {
+        if self
+            .data_sender
+            .send(ConsoleData::AuxiliaryInput { input, active })
+            .is_err()
+        {
+            log::warn!("Core controller auxiliary input send failed");
         }
     }
 
@@ -726,46 +834,109 @@ impl Drop for Console {
     }
 }
 
-fn controller_snapshot_to_payload(snapshot: StandardControllerSnapshot) -> ControllerStatePayload {
-    ControllerStatePayload {
-        pad1_bits: u32::from(snapshot.buttons[0].bits()),
-        pad2_bits: u32::from(snapshot.buttons[1].bits()),
-        microphone: snapshot.microphone,
-        index1: snapshot.index1 as u64,
-        index2: snapshot.index2 as u64,
+fn controller_inputs_from_buttons(buttons: Buttons) -> ControllerInputs {
+    ControllerInputs::from_bits_retain(buttons.bits())
+}
+
+fn buttons_from_controller_inputs(inputs: ControllerInputs) -> Buttons {
+    Buttons::from_bits_retain(inputs.bits())
+}
+
+fn controller_runtime_state_from_snapshot(
+    snapshot: StandardControllerSnapshot,
+) -> ControllerRuntimeState {
+    ControllerRuntimeState {
+        ports: [
+            ControllerPortRuntimeState {
+                inputs: controller_inputs_from_buttons(snapshot.buttons[0]),
+                index: snapshot.index1,
+            },
+            ControllerPortRuntimeState {
+                inputs: controller_inputs_from_buttons(snapshot.buttons[1]),
+                index: snapshot.index2,
+            },
+        ],
+        auxiliary: ControllerAuxiliaryRuntimeState {
+            microphone: snapshot.microphone,
+        },
         strobe: snapshot.strobe,
     }
+}
+
+fn controller_runtime_state_to_snapshot(
+    state: ControllerRuntimeState,
+) -> StandardControllerSnapshot {
+    StandardControllerSnapshot {
+        buttons: [
+            buttons_from_controller_inputs(state.ports[0].inputs),
+            buttons_from_controller_inputs(state.ports[1].inputs),
+        ],
+        microphone: state.auxiliary.microphone,
+        index1: state.ports[0].index,
+        index2: state.ports[1].index,
+        strobe: state.strobe,
+    }
+}
+
+fn controller_runtime_state_to_payload(state: ControllerRuntimeState) -> ControllerStatePayload {
+    ControllerStatePayload {
+        ports: [
+            ControllerPortStatePayload {
+                input_bits: u32::from(state.ports[0].inputs.bits()),
+                index: state.ports[0].index as u64,
+            },
+            ControllerPortStatePayload {
+                input_bits: u32::from(state.ports[1].inputs.bits()),
+                index: state.ports[1].index as u64,
+            },
+        ],
+        auxiliary: ControllerAuxiliaryStatePayload {
+            microphone: state.auxiliary.microphone,
+        },
+        strobe: state.strobe,
+    }
+}
+
+fn controller_snapshot_to_payload(snapshot: StandardControllerSnapshot) -> ControllerStatePayload {
+    controller_runtime_state_to_payload(controller_runtime_state_from_snapshot(snapshot))
+}
+
+fn controller_runtime_state_from_payload(
+    payload: &ControllerStatePayload,
+) -> Result<ControllerRuntimeState, ConsoleError> {
+    let decode_port = |payload: &ControllerPortStatePayload, label: &str| {
+        let index = usize::try_from(payload.index)
+            .map_err(|_| ConsoleError::Core(format!("controller {label} index overflow")))?;
+        if index > STANDARD_CONTROLLER_MAX_INDEX {
+            return Err(ConsoleError::Core(format!(
+                "controller {label} index out of range"
+            )));
+        }
+        Ok(ControllerPortRuntimeState {
+            inputs: ControllerInputs::from_bits_retain(
+                u8::try_from(payload.input_bits).map_err(|_| {
+                    ConsoleError::Core(format!("controller {label} input overflow"))
+                })?,
+            ),
+            index,
+        })
+    };
+    Ok(ControllerRuntimeState {
+        ports: [
+            decode_port(&payload.ports[0], "port1")?,
+            decode_port(&payload.ports[1], "port2")?,
+        ],
+        auxiliary: ControllerAuxiliaryRuntimeState {
+            microphone: payload.auxiliary.microphone,
+        },
+        strobe: payload.strobe,
+    })
 }
 
 fn controller_snapshot_from_payload(
     payload: &ControllerStatePayload,
 ) -> Result<StandardControllerSnapshot, ConsoleError> {
-    let index1 = usize::try_from(payload.index1)
-        .map_err(|_| ConsoleError::Core("controller index1 overflow".into()))?;
-    if index1 > STANDARD_CONTROLLER_MAX_INDEX {
-        return Err(ConsoleError::Core("controller index1 out of range".into()));
-    }
-    let index2 = usize::try_from(payload.index2)
-        .map_err(|_| ConsoleError::Core("controller index2 overflow".into()))?;
-    if index2 > STANDARD_CONTROLLER_MAX_INDEX {
-        return Err(ConsoleError::Core("controller index2 out of range".into()));
-    }
-    Ok(StandardControllerSnapshot {
-        buttons: [
-            Buttons::from_bits_retain(
-                u8::try_from(payload.pad1_bits)
-                    .map_err(|_| ConsoleError::Core("controller pad1 overflow".into()))?,
-            ),
-            Buttons::from_bits_retain(
-                u8::try_from(payload.pad2_bits)
-                    .map_err(|_| ConsoleError::Core("controller pad2 overflow".into()))?,
-            ),
-        ],
-        microphone: payload.microphone,
-        index1,
-        index2,
-        strobe: payload.strobe,
-    })
+    controller_runtime_state_from_payload(payload).map(controller_runtime_state_to_snapshot)
 }
 
 fn validate_console_state_schema_version(version: u32) -> Result<(), ConsoleError> {
@@ -813,8 +984,14 @@ enum ConsoleData {
     Resume,
     Pause,
     Reset(Sender<ConsoleRequestResult>),
-    Pad1Data(Buttons),
-    Pad2Data(Buttons),
+    PortInputs {
+        port: ControllerPort,
+        inputs: ControllerInputs,
+    },
+    AuxiliaryInput {
+        input: AuxiliaryInput,
+        active: bool,
+    },
     Unload(Sender<ConsoleRequestResult>),
     ExportMapperSave(Sender<ConsoleRequestResult>),
     ImportMapperSave {
@@ -978,12 +1155,21 @@ impl ConsoleRunner {
                         };
                         Self::reply(reply, result);
                     }
-                    ConsoleData::Pad1Data(data) => {
-                        self.controller.set_pad1(data);
-                    }
-                    ConsoleData::Pad2Data(data) => {
-                        self.controller.set_pad2(data);
-                    }
+                    ConsoleData::PortInputs { port, inputs } => match port {
+                        ControllerPort::One => {
+                            self.controller
+                                .set_pad1(buttons_from_controller_inputs(inputs));
+                        }
+                        ControllerPort::Two => {
+                            self.controller
+                                .set_pad2(buttons_from_controller_inputs(inputs));
+                        }
+                    },
+                    ConsoleData::AuxiliaryInput { input, active } => match input {
+                        AuxiliaryInput::Microphone => {
+                            self.controller.set_microphone(active);
+                        }
+                    },
                     ConsoleData::Unload(reply) => {
                         let result = if core.is_some() {
                             self.paused = false;

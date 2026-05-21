@@ -1,5 +1,5 @@
-use nerust_console::{Console, ConsoleError, ConsoleMetrics, PreviewFrame};
-use nerust_core::{CoreOptions, controller::standard_controller::Buttons};
+use nerust_console::{Console, ConsoleError, ConsoleMetrics, ControllerInputs, PreviewFrame};
+use nerust_core::CoreOptions;
 pub use nerust_persistence::StateSlotSummary;
 use nerust_persistence::{
     SidecarPaths, ThumbnailSource, allocate_next_slot_id, delete_state_slot, format_slot_saved_at,
@@ -20,11 +20,7 @@ const DEFAULT_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
     height: 240,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerPort {
-    One,
-    Two,
-}
+pub use nerust_console::ControllerPort;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerInput {
@@ -79,7 +75,7 @@ pub struct GuiSession {
     mapper_save_recovery_written: bool,
     slots: Vec<StateSlotSummary>,
     active_slot_id: Option<u64>,
-    held_buttons: [Buttons; 2],
+    held_inputs: [ControllerInputs; 2],
 }
 
 impl GuiSession {
@@ -99,7 +95,7 @@ impl GuiSession {
             mapper_save_recovery_written: false,
             slots: Vec::new(),
             active_slot_id: None,
-            held_buttons: [Buttons::empty(); 2],
+            held_inputs: [ControllerInputs::empty(); 2],
         }
     }
 
@@ -280,7 +276,7 @@ impl GuiSession {
         state: InputState,
     ) {
         update_held_buttons(
-            &mut self.held_buttons[controller_port_index(port)],
+            &mut self.held_inputs[controller_port_index(port)],
             input,
             state,
         );
@@ -288,7 +284,7 @@ impl GuiSession {
     }
 
     pub fn clear_controller_input(&mut self) {
-        self.held_buttons = [Buttons::empty(); 2];
+        self.held_inputs = [ControllerInputs::empty(); 2];
         self.apply_controller_state(ControllerPort::One);
         self.apply_controller_state(ControllerPort::Two);
     }
@@ -466,10 +462,8 @@ impl GuiSession {
     }
 
     fn apply_controller_state(&self, port: ControllerPort) {
-        match port {
-            ControllerPort::One => self.console.set_pad1(self.held_buttons[0]),
-            ControllerPort::Two => self.console.set_pad2(self.held_buttons[1]),
-        }
+        self.console
+            .set_port_inputs(port, self.held_inputs[controller_port_index(port)]);
     }
 
     fn refresh_slots(&mut self) {
@@ -618,24 +612,24 @@ fn controller_port_index(port: ControllerPort) -> usize {
     }
 }
 
-fn controller_button(input: ControllerInput) -> Buttons {
+fn controller_input_flag(input: ControllerInput) -> ControllerInputs {
     match input {
-        ControllerInput::A => Buttons::A,
-        ControllerInput::B => Buttons::B,
-        ControllerInput::Select => Buttons::SELECT,
-        ControllerInput::Start => Buttons::START,
-        ControllerInput::Up => Buttons::UP,
-        ControllerInput::Down => Buttons::DOWN,
-        ControllerInput::Left => Buttons::LEFT,
-        ControllerInput::Right => Buttons::RIGHT,
+        ControllerInput::A => ControllerInputs::A,
+        ControllerInput::B => ControllerInputs::B,
+        ControllerInput::Select => ControllerInputs::SELECT,
+        ControllerInput::Start => ControllerInputs::START,
+        ControllerInput::Up => ControllerInputs::UP,
+        ControllerInput::Down => ControllerInputs::DOWN,
+        ControllerInput::Left => ControllerInputs::LEFT,
+        ControllerInput::Right => ControllerInputs::RIGHT,
     }
 }
 
-fn update_held_buttons(buttons: &mut Buttons, input: ControllerInput, state: InputState) {
-    let button = controller_button(input);
-    *buttons = match state {
-        InputState::Pressed => *buttons | button,
-        InputState::Released => *buttons & !button,
+fn update_held_buttons(inputs: &mut ControllerInputs, input: ControllerInput, state: InputState) {
+    let flag = controller_input_flag(input);
+    *inputs = match state {
+        InputState::Pressed => *inputs | flag,
+        InputState::Released => *inputs & !flag,
     };
 }
 
@@ -654,12 +648,11 @@ fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControllerInput, ControllerPort, InputState, adjacent_slot_id, controller_button,
+        ControllerInput, ControllerPort, InputState, adjacent_slot_id, controller_input_flag,
         controller_port_index, redraw_needed_after_pause_change, slot_label, update_held_buttons,
         window_title,
     };
-    use nerust_console::ConsoleMetrics;
-    use nerust_core::controller::standard_controller::Buttons;
+    use nerust_console::{ConsoleMetrics, ControllerInputs};
     use nerust_persistence::StateSlotSummary;
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
@@ -715,29 +708,53 @@ mod tests {
     }
 
     #[test]
-    fn controller_intents_map_to_standard_pad_buttons() {
-        assert_eq!(controller_button(ControllerInput::A), Buttons::A);
-        assert_eq!(controller_button(ControllerInput::B), Buttons::B);
-        assert_eq!(controller_button(ControllerInput::Select), Buttons::SELECT);
-        assert_eq!(controller_button(ControllerInput::Start), Buttons::START);
-        assert_eq!(controller_button(ControllerInput::Up), Buttons::UP);
-        assert_eq!(controller_button(ControllerInput::Down), Buttons::DOWN);
-        assert_eq!(controller_button(ControllerInput::Left), Buttons::LEFT);
-        assert_eq!(controller_button(ControllerInput::Right), Buttons::RIGHT);
+    fn controller_intents_map_to_console_input_flags() {
+        assert_eq!(
+            controller_input_flag(ControllerInput::A),
+            ControllerInputs::A
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::B),
+            ControllerInputs::B
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Select),
+            ControllerInputs::SELECT
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Start),
+            ControllerInputs::START
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Up),
+            ControllerInputs::UP
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Down),
+            ControllerInputs::DOWN
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Left),
+            ControllerInputs::LEFT
+        );
+        assert_eq!(
+            controller_input_flag(ControllerInput::Right),
+            ControllerInputs::RIGHT
+        );
     }
 
     #[test]
     fn held_controller_state_tracks_press_release_and_ports() {
-        let mut port1 = Buttons::empty();
-        let mut port2 = Buttons::empty();
+        let mut port1 = ControllerInputs::empty();
+        let mut port2 = ControllerInputs::empty();
 
         update_held_buttons(&mut port1, ControllerInput::A, InputState::Pressed);
         update_held_buttons(&mut port1, ControllerInput::Right, InputState::Pressed);
         update_held_buttons(&mut port2, ControllerInput::B, InputState::Pressed);
         update_held_buttons(&mut port1, ControllerInput::A, InputState::Released);
 
-        assert_eq!(port1, Buttons::RIGHT);
-        assert_eq!(port2, Buttons::B);
+        assert_eq!(port1, ControllerInputs::RIGHT);
+        assert_eq!(port2, ControllerInputs::B);
         assert_eq!(controller_port_index(ControllerPort::One), 0);
         assert_eq!(controller_port_index(ControllerPort::Two), 1);
     }
