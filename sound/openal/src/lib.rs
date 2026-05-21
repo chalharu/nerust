@@ -45,45 +45,38 @@ enum MacosRuntimeAction {
 }
 
 #[cfg(any(target_os = "macos", test))]
-#[derive(Debug, PartialEq, Eq)]
-struct MacosRuntimeEnvState {
+fn macos_runtime_action(
     guard_present: bool,
-    dyld_env_vars_present: Vec<&'static str>,
+    dyld_env_vars_present: &[&'static str],
+) -> MacosRuntimeAction {
+    match (guard_present, dyld_env_vars_present.is_empty()) {
+        (_, true) => MacosRuntimeAction::Continue,
+        (false, false) => MacosRuntimeAction::Reexec,
+        (true, false) => MacosRuntimeAction::Abort,
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
-impl MacosRuntimeEnvState {
-    fn from_env(mut is_present: impl FnMut(&str) -> bool) -> Self {
-        Self {
-            guard_present: is_present(MACOS_RUNTIME_SANITIZED_ENV),
-            dyld_env_vars_present: DYLD_ENV_VARS
-                .into_iter()
-                .filter(|name| is_present(name))
-                .collect(),
-        }
-    }
-
-    fn action(&self) -> MacosRuntimeAction {
-        match (self.guard_present, self.dyld_env_vars_present.is_empty()) {
-            (_, true) => MacosRuntimeAction::Continue,
-            (false, false) => MacosRuntimeAction::Reexec,
-            (true, false) => MacosRuntimeAction::Abort,
-        }
-    }
+fn present_dyld_env_vars(mut is_present: impl FnMut(&str) -> bool) -> Vec<&'static str> {
+    DYLD_ENV_VARS
+        .into_iter()
+        .filter(|name| is_present(name))
+        .collect()
 }
 
 pub fn prepare_macos_runtime() {
     #[cfg(target_os = "macos")]
     PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
-        let env_state = MacosRuntimeEnvState::from_env(|name| std::env::var_os(name).is_some());
+        let guard_present = std::env::var_os(MACOS_RUNTIME_SANITIZED_ENV).is_some();
+        let dyld_env_vars_present = present_dyld_env_vars(|name| std::env::var_os(name).is_some());
 
-        match env_state.action() {
+        match macos_runtime_action(guard_present, &dyld_env_vars_present) {
             MacosRuntimeAction::Continue => clear_macos_runtime_guard(),
-            MacosRuntimeAction::Reexec => reexec_process_without_dyld_env(&env_state),
+            MacosRuntimeAction::Reexec => reexec_process_without_dyld_env(&dyld_env_vars_present),
             MacosRuntimeAction::Abort => {
                 log::error!(
                     "{MACOS_RUNTIME_SANITIZED_ENV} is set but macOS DYLD environment variables are still present ({vars}); refusing to continue",
-                    vars = env_state.dyld_env_vars_present.join(", "),
+                    vars = dyld_env_vars_present.join(", "),
                 );
                 std::process::exit(1);
             }
@@ -103,10 +96,10 @@ fn clear_macos_runtime_guard() {
 }
 
 #[cfg(target_os = "macos")]
-fn reexec_process_without_dyld_env(env_state: &MacosRuntimeEnvState) -> ! {
+fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! {
     log::warn!(
         "re-executing process without macOS DYLD environment variables to avoid ImageIO/AppKit plugin conflicts: {}",
-        env_state.dyld_env_vars_present.join(", "),
+        dyld_env_vars_present.join(", "),
     );
 
     let mut command = Command::new(
@@ -464,56 +457,6 @@ impl OpenAl {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        DYLD_ENV_VARS, MACOS_RUNTIME_SANITIZED_ENV, MacosRuntimeAction, MacosRuntimeEnvState,
-    };
-
-    #[test]
-    fn macos_runtime_env_state_collects_present_variables() {
-        let env_state = MacosRuntimeEnvState::from_env(|name| {
-            matches!(
-                name,
-                MACOS_RUNTIME_SANITIZED_ENV | "DYLD_FALLBACK_LIBRARY_PATH"
-            )
-        });
-
-        assert!(env_state.guard_present);
-        assert_eq!(env_state.dyld_env_vars_present, vec![DYLD_ENV_VARS[1]]);
-    }
-
-    #[test]
-    fn macos_runtime_reexecs_when_dyld_env_is_present_without_guard() {
-        let env_state = MacosRuntimeEnvState {
-            guard_present: false,
-            dyld_env_vars_present: vec![DYLD_ENV_VARS[0]],
-        };
-
-        assert_eq!(env_state.action(), MacosRuntimeAction::Reexec);
-    }
-
-    #[test]
-    fn macos_runtime_continues_once_reexec_has_cleared_dyld_env() {
-        let env_state = MacosRuntimeEnvState {
-            guard_present: true,
-            dyld_env_vars_present: Vec::new(),
-        };
-
-        assert_eq!(env_state.action(), MacosRuntimeAction::Continue);
-    }
-
-    #[test]
-    fn macos_runtime_aborts_when_guard_is_set_but_dyld_env_remains() {
-        let env_state = MacosRuntimeEnvState {
-            guard_present: true,
-            dyld_env_vars_present: vec![DYLD_ENV_VARS[0], DYLD_ENV_VARS[1]],
-        };
-
-        assert_eq!(env_state.action(), MacosRuntimeAction::Abort);
-    }
-}
-
 impl Sound for OpenAl {
     fn pause(&mut self) {
         if self.playing_sender.send(false).is_err() {
@@ -552,5 +495,49 @@ impl Drop for OpenAl {
             log::warn!("OpenAL channel (stop) send failed");
         }
         let _ = self.thread.take().map(JoinHandle::join);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DYLD_ENV_VARS, MACOS_RUNTIME_SANITIZED_ENV, MacosRuntimeAction, macos_runtime_action,
+        present_dyld_env_vars,
+    };
+
+    #[test]
+    fn present_dyld_env_vars_collects_present_variables() {
+        let dyld_env_vars_present = present_dyld_env_vars(|name| {
+            matches!(
+                name,
+                MACOS_RUNTIME_SANITIZED_ENV | "DYLD_FALLBACK_LIBRARY_PATH"
+            )
+        });
+
+        assert_eq!(dyld_env_vars_present, vec![DYLD_ENV_VARS[1]]);
+    }
+
+    #[test]
+    fn macos_runtime_reexecs_when_dyld_env_is_present_without_guard() {
+        assert_eq!(
+            macos_runtime_action(false, &[DYLD_ENV_VARS[0]]),
+            MacosRuntimeAction::Reexec
+        );
+    }
+
+    #[test]
+    fn macos_runtime_continues_once_reexec_has_cleared_dyld_env() {
+        assert_eq!(
+            macos_runtime_action(true, &[]),
+            MacosRuntimeAction::Continue
+        );
+    }
+
+    #[test]
+    fn macos_runtime_aborts_when_guard_is_set_but_dyld_env_remains() {
+        assert_eq!(
+            macos_runtime_action(true, &DYLD_ENV_VARS),
+            MacosRuntimeAction::Abort
+        );
     }
 }
