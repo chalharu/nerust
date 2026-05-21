@@ -9,6 +9,7 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
+use crate::PersistenceError;
 use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
@@ -24,7 +25,7 @@ const PALETTE_ADDRESS: [usize; 32] = [
     0x00, 0x11, 0x12, 0x13, 0x04, 0x15, 0x16, 0x17, 0x08, 0x19, 0x1A, 0x1B, 0x0C, 0x1D, 0x1E, 0x1F,
 ];
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct DecayableOpenBus {
     data: u8,
     decay: [u8; 8],
@@ -186,7 +187,7 @@ impl DecayableOpenBus {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct State {
     control: u8,
     mask: u8,
@@ -242,7 +243,7 @@ impl State {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Control {
     name_table: u8,
     increment: bool,
@@ -291,7 +292,7 @@ impl From<u8> for Control {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Mask {
     grayscale: bool,
     show_left_background: bool,
@@ -344,7 +345,7 @@ impl From<u8> for Mask {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct Status {
     sprite_zero_hit: bool,
     sprite_overflow: bool,
@@ -367,7 +368,7 @@ impl Status {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Core {
     // memory
     #[serde(with = "nerust_serialize::BigArray")]
@@ -467,7 +468,6 @@ impl Core {
             // screen_buffer: [0; 256 * 240],
         }
     }
-
     pub(crate) fn reset(&mut self) {
         self.vram = [0; 2048];
         self.palette = [
@@ -495,6 +495,48 @@ impl Core {
         // self.post_render_executing = false;
         // self.oam_read_buffer = 0;
         self.has_next_sprite = false;
+    }
+
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        if usize::from(self.sprite_index) > 8 {
+            return Err(PersistenceError::Validation(
+                "PPU sprite index overflow".into(),
+            ));
+        }
+        if self.sprite_index == 8
+            && self.render_executing
+            && self.scan_line <= 240
+            && (257..316).contains(&self.cycle)
+        {
+            return Err(PersistenceError::Validation(
+                "PPU sprite index terminal state is only valid after the final sprite fetch".into(),
+            ));
+        }
+        if usize::from(self.sprite_count) > 8 {
+            return Err(PersistenceError::Validation(
+                "PPU sprite count overflow".into(),
+            ));
+        }
+        if usize::from(self.secondary_oam_address) > self.secondary_oam.len() {
+            return Err(PersistenceError::Validation(
+                "PPU secondary OAM address overflow".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_sprite_fetch_state_for_test(
+        &mut self,
+        sprite_index: u8,
+        sprite_count: u8,
+        cycle: u16,
+        render_executing: bool,
+    ) {
+        self.sprite_index = sprite_index;
+        self.sprite_count = sprite_count;
+        self.cycle = cycle;
+        self.render_executing = render_executing;
     }
 
     pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {

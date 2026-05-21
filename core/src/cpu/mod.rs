@@ -234,7 +234,6 @@ impl Core {
             cpu_stepfunc: cpu_stepfunc(CpuStatesEnum::Reset),
         }
     }
-
     pub(crate) fn reset(&mut self) {
         self.interrupt.reset();
         self.oam_dma.as_mut().unwrap().reset();
@@ -289,6 +288,15 @@ impl Core {
 
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {
         &mut self.interrupt
+    }
+
+    pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
+        self.internal_stat.validate()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_internal_opcode_for_test(&mut self, value: usize) {
+        self.internal_stat.set_opcode(value);
     }
 
     fn process_dma_cycle(
@@ -474,6 +482,23 @@ impl Core {
                         ))
             }
             _ => false,
+        }
+    }
+}
+
+impl Clone for Core {
+    fn clone(&self) -> Self {
+        Self {
+            opcode_tables: Opcodes::new(),
+            addressing_tables: AddressingModeLut::new(),
+            memory: self.memory.clone(),
+            register: self.register.clone(),
+            internal_stat: self.internal_stat.clone(),
+            interrupt: self.interrupt,
+            cycles: self.cycles,
+            oam_dma: self.oam_dma.clone(),
+            dmc_dma: self.dmc_dma,
+            cpu_stepfunc: cpu_stepfunc(self.internal_stat.state),
         }
     }
 }

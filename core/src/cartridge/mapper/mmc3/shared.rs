@@ -9,9 +9,19 @@ use crate::MirrorMode;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Mapper4RuntimeState {
+    bank_select: u8,
+    bank_data: [u8; 8],
+    mirroring: u8,
+    program_ram_protect: u8,
+    irq: IrqUnit,
+}
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum IrqVariant {
@@ -97,7 +107,7 @@ impl Mapper4Config {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 struct IrqUnit {
     variant: IrqVariant,
     latch: u8,
@@ -257,6 +267,44 @@ impl Mapper4Shared {
         for slot in &mut self.mapper_state_mut().sram_page_table {
             *slot = None;
         }
+    }
+
+    pub(super) fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_MMC3.into(),
+            extra_body: crate::persistence::encode_payload(&Mapper4RuntimeState {
+                bank_select: self.bank_select,
+                bank_data: self.bank_data,
+                mirroring: self.mirroring,
+                program_ram_protect: self.program_ram_protect,
+                irq: self.irq.clone(),
+            })?,
+        })
+    }
+
+    pub(super) fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_MMC3 {
+            return Err(PersistenceError::Validation(
+                "unexpected MMC3 runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.cartridge_data.prog_rom_len(),
+            self.cartridge_data.char_rom_len(),
+        )?;
+        let runtime: Mapper4RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.bank_select = runtime.bank_select;
+        self.bank_data = runtime.bank_data;
+        self.mirroring = runtime.mirroring;
+        self.program_ram_protect = runtime.program_ram_protect;
+        self.irq = runtime.irq;
+        Ok(())
     }
 
     fn program_bank_count(&self) -> usize {

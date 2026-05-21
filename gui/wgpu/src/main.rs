@@ -12,6 +12,7 @@ use nerust_wgpu::Window;
 use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::path::PathBuf;
 
 fn main() {
     SimpleLogger::new()
@@ -44,15 +45,13 @@ fn main() {
         ),
     };
 
-    if let Some(mut f) = matches
-        .get_one::<String>("filename")
-        .and_then(|f| File::open(f).ok())
-        .map(BufReader::new)
+    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from)
+        && let Some(mut f) = File::open(&filename).ok().map(BufReader::new)
     {
         let mut buf = Vec::new();
         let _ = f.read_to_end(&mut buf).unwrap();
         let mut window = Window::new();
-        window.load_with_options(buf, core_options);
+        window.load_with_options(Some(filename), buf, core_options);
         window.run();
     }
 }

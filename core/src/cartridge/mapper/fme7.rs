@@ -10,9 +10,19 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_FME7, PersistenceError};
 
 const IRQ_ENABLE: u8 = 0x01;
 const IRQ_COUNT: u8 = 0x80;
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Fme7RuntimeState {
+    command: u8,
+    chr_banks: [u8; 8],
+    prg_banks: [u8; 4],
+    irq_control: u8,
+    irq_counter: u16,
+}
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Fme7 {
@@ -26,7 +36,45 @@ pub(crate) struct Fme7 {
 }
 
 #[typetag::serde]
-impl Cartridge for Fme7 {}
+impl Cartridge for Fme7 {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_FME7.into(),
+            extra_body: crate::persistence::encode_payload(&Fme7RuntimeState {
+                command: self.command,
+                chr_banks: self.chr_banks,
+                prg_banks: self.prg_banks,
+                irq_control: self.irq_control,
+                irq_counter: self.irq_counter,
+            })?,
+        })
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_FME7 {
+            return Err(PersistenceError::Validation(
+                "unexpected FME-7 runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: Fme7RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.command = runtime.command;
+        self.chr_banks = runtime.chr_banks;
+        self.prg_banks = runtime.prg_banks;
+        self.irq_control = runtime.irq_control;
+        self.irq_counter = runtime.irq_counter;
+        Ok(())
+    }
+}
 
 impl Fme7 {
     pub(crate) fn new(data: CartridgeData) -> Self {

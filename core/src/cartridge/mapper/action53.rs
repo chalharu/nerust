@@ -10,6 +10,17 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError};
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Action53RuntimeState {
+    selected_register: u8,
+    chr_bank: u8,
+    inner_bank: u8,
+    mode: u8,
+    outer_bank: u8,
+    onescreen_select: u8,
+}
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Action53 {
@@ -24,7 +35,47 @@ pub(crate) struct Action53 {
 }
 
 #[typetag::serde]
-impl Cartridge for Action53 {}
+impl Cartridge for Action53 {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_ACTION53.into(),
+            extra_body: crate::persistence::encode_payload(&Action53RuntimeState {
+                selected_register: self.selected_register,
+                chr_bank: self.chr_bank,
+                inner_bank: self.inner_bank,
+                mode: self.mode,
+                outer_bank: self.outer_bank,
+                onescreen_select: self.onescreen_select,
+            })?,
+        })
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_ACTION53 {
+            return Err(PersistenceError::Validation(
+                "unexpected Action53 runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: Action53RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.selected_register = runtime.selected_register;
+        self.chr_bank = runtime.chr_bank;
+        self.inner_bank = runtime.inner_bank;
+        self.mode = runtime.mode;
+        self.outer_bank = runtime.outer_bank;
+        self.onescreen_select = runtime.onescreen_select;
+        Ok(())
+    }
+}
 
 impl Action53 {
     pub(crate) fn new(data: CartridgeData) -> Self {

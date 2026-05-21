@@ -7,6 +7,7 @@
 use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
 use crate::cart_device::Cartridge;
+use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct TxSrom {
@@ -22,7 +23,18 @@ impl TxSrom {
 }
 
 #[typetag::serde]
-impl Cartridge for TxSrom {}
+impl Cartridge for TxSrom {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        self.shared.export_runtime_state()
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        self.shared.import_runtime_state(state)
+    }
+}
 
 impl Mapper4Wrapper for TxSrom {
     const NAME: &'static str = "TxSROM (Mapper118)";

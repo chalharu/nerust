@@ -10,6 +10,7 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC2, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +38,58 @@ pub(crate) struct Mmc2 {
     latch_1: LatchState,
 }
 
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct Mmc2RuntimeState {
+    chr_bank_0_fd: u8,
+    chr_bank_0_fe: u8,
+    chr_bank_1_fd: u8,
+    chr_bank_1_fe: u8,
+    latch_0: LatchState,
+    latch_1: LatchState,
+}
+
 #[typetag::serde]
-impl Cartridge for Mmc2 {}
+impl Cartridge for Mmc2 {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_MMC2.into(),
+            extra_body: crate::persistence::encode_payload(&Mmc2RuntimeState {
+                chr_bank_0_fd: self.chr_bank_0_fd,
+                chr_bank_0_fe: self.chr_bank_0_fe,
+                chr_bank_1_fd: self.chr_bank_1_fd,
+                chr_bank_1_fe: self.chr_bank_1_fe,
+                latch_0: self.latch_0,
+                latch_1: self.latch_1,
+            })?,
+        })
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_MMC2 {
+            return Err(PersistenceError::Validation(
+                "unexpected MMC2 runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: Mmc2RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.chr_bank_0_fd = runtime.chr_bank_0_fd;
+        self.chr_bank_0_fe = runtime.chr_bank_0_fe;
+        self.chr_bank_1_fd = runtime.chr_bank_1_fd;
+        self.chr_bank_1_fe = runtime.chr_bank_1_fe;
+        self.latch_0 = runtime.latch_0;
+        self.latch_1 = runtime.latch_1;
+        Ok(())
+    }
+}
 
 impl Mmc2 {
     pub(crate) fn new_mapper9(data: CartridgeData) -> Self {

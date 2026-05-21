@@ -12,6 +12,7 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -27,8 +28,64 @@ pub(crate) struct SxRom {
     prev_cycle: u64,
 }
 
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct SxRomRuntimeState {
+    control: u8,
+    chr_bank_0: u8,
+    chr_bank_1: u8,
+    prg_bank: u8,
+    shift_register: u8,
+    last_chr_bank: bool,
+    cycle: u64,
+    prev_cycle: u64,
+}
+
 #[typetag::serde]
-impl Cartridge for SxRom {}
+impl Cartridge for SxRom {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        Ok(CartridgeRuntimeState {
+            mapper_state: self.state.clone(),
+            extra_kind: MAPPER_KIND_SXROM.into(),
+            extra_body: crate::persistence::encode_payload(&SxRomRuntimeState {
+                control: self.control,
+                chr_bank_0: self.chr_bank_0,
+                chr_bank_1: self.chr_bank_1,
+                prg_bank: self.prg_bank,
+                shift_register: self.shift_register,
+                last_chr_bank: self.last_chr_bank,
+                cycle: self.cycle,
+                prev_cycle: self.prev_cycle,
+            })?,
+        })
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        if state.extra_kind != MAPPER_KIND_SXROM {
+            return Err(PersistenceError::Validation(
+                "unexpected SXROM runtime kind".into(),
+            ));
+        }
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
+        let runtime: SxRomRuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state = state.mapper_state;
+        self.control = runtime.control;
+        self.chr_bank_0 = runtime.chr_bank_0;
+        self.chr_bank_1 = runtime.chr_bank_1;
+        self.prg_bank = runtime.prg_bank;
+        self.shift_register = runtime.shift_register;
+        self.last_chr_bank = runtime.last_chr_bank;
+        self.cycle = runtime.cycle;
+        self.prev_cycle = runtime.prev_cycle;
+        Ok(())
+    }
+}
 
 impl SxRom {
     pub(crate) fn new(data: CartridgeData) -> Self {
@@ -266,6 +323,7 @@ mod tests {
     use super::SxRom;
     use crate::cart_device::Cartridge;
     use crate::mapper::Mapper;
+    use crate::mapper_state::MapperStateDao;
     use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
@@ -327,5 +385,83 @@ mod tests {
         write_program_ram(&mut sxrom, 0x80);
         sxrom.write_char_bank_0(0x00);
         assert_eq!(read_program_ram(&sxrom), Some(0x80));
+    }
+
+    #[test]
+    fn mapper_save_round_trips_persistent_prg_ram_only() {
+        let data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x20000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0x2000,
+            save_pram_length: 0x2000,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 1,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: true,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        let mut source = SxRom::new(data.clone());
+        Cartridge::initialize(&mut source);
+        source.mapper_state_mut().sram[0] = 0xAA;
+        source.mapper_state_mut().sram[0x2000] = 0xBB;
+
+        let save = Cartridge::export_mapper_save_state(&source).expect("mapper save should export");
+        assert_eq!(
+            save,
+            (
+                vec![0xAA; 1]
+                    .into_iter()
+                    .chain(std::iter::repeat_n(0, 0x1FFF))
+                    .collect(),
+                Vec::new(),
+            )
+        );
+
+        let mut target = SxRom::new(data);
+        Cartridge::initialize(&mut target);
+        Cartridge::import_mapper_save_state(&mut target, &save.0, &save.1)
+            .expect("mapper save should import");
+        assert_eq!(target.mapper_state_ref().sram[0], 0xAA);
+        assert_eq!(target.mapper_state_ref().sram[0x2000], 0x00);
+    }
+
+    #[test]
+    fn mapper_save_uses_legacy_ines_prg_ram_when_battery_backed() {
+        let data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x20000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0x2000,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 1,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: true,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        let mut source = SxRom::new(data.clone());
+        Cartridge::initialize(&mut source);
+        source.mapper_state_mut().sram[0] = 0xCC;
+        source.mapper_state_mut().sram[0x1FFF] = 0xDD;
+
+        let save = Cartridge::export_mapper_save_state(&source).expect("mapper save should export");
+        assert_eq!(save.0.len(), 0x2000);
+        assert_eq!(save.0[0], 0xCC);
+        assert_eq!(save.0[0x1FFF], 0xDD);
+        assert!(save.1.is_empty());
+
+        let mut target = SxRom::new(data);
+        Cartridge::initialize(&mut target);
+        Cartridge::import_mapper_save_state(&mut target, &save.0, &save.1)
+            .expect("mapper save should import");
+        assert_eq!(target.mapper_state_ref().sram[0], 0xCC);
+        assert_eq!(target.mapper_state_ref().sram[0x1FFF], 0xDD);
     }
 }
