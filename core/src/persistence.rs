@@ -4,9 +4,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+//! Core-owned persistence primitives.
+//!
+//! `PERSISTENCE_SCHEMA_VERSION` is the compatibility boundary for the core crate's
+//! serialized mapper-save and machine-state payloads. Bump it whenever either payload,
+//! their validation rules, or the meaning of any nested core-owned field changes in a way
+//! older bytes should not be accepted. Wrapper formats in other crates must treat the core
+//! payload bytes as opaque and manage their own outer schema versions separately.
+
 use crate::{MirrorMode, RomFormat};
 use thiserror::Error;
 
+/// Compatibility version for `MachineStatePayload` and `MapperSavePayload`.
 pub(crate) const PERSISTENCE_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) const MAPPER_KIND_NONE: &str = "";
@@ -29,6 +38,8 @@ pub enum PersistenceError {
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomIdentity {
+    /// Header-derived ROM/container identity that must continue to match when importing either
+    /// machine-state or mapper-save payloads.
     pub format: RomFormat,
     pub mapper_type: u16,
     pub sub_mapper_type: u8,

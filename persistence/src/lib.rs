@@ -4,6 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+//! Persistence-side archive and sidecar handling.
+//!
+//! This crate owns only the outer save-slot archive schema and file-system behavior. `state.bin`
+//! stores opaque console state bytes, and the nested core compatibility checks remain owned by the
+//! console/core crates during import. Bump `STATE_ARCHIVE_SCHEMA_VERSION` only when archive entry
+//! names, metadata fields, or this crate's validation/interpretation rules change.
+
 use fs2::FileExt;
 use nerust_core::{CoreOptions, MirrorMode, Mmc3IrqVariant, RomFormat, RomIdentity};
 use png::{BitDepth, ColorType, Encoder};
@@ -19,6 +26,7 @@ const METADATA_ENTRY: &str = "metadata.msgpack";
 const STATE_ENTRY: &str = "state.bin";
 const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 const THUMBNAIL_TARGET_WIDTH: u32 = 320;
+/// Compatibility version for the zip archive metadata/layout owned by this crate.
 const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 1;
 const NEXT_SLOT_ID_ENTRY: &str = ".next_slot_id";
 const MAX_METADATA_BYTES: usize = 64 * 1024;
@@ -72,6 +80,11 @@ pub struct ThumbnailSource {
     pub rgba: Vec<u8>,
 }
 
+/// Archive metadata owned by the persistence crate.
+///
+/// The metadata duplicates the persistence target needed for slot filtering, while `state.bin`
+/// remains an opaque console payload. Thumbnail bytes are handled as an opaque PNG blob here; this
+/// crate tracks presence and storage, but does not interpret image contents during load.
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct StateArchiveMetadata {
     schema_version: u32,
@@ -318,7 +331,7 @@ fn read_state_summary(
             "state archive is missing machine state entry".into(),
         ));
     }
-    let has_thumbnail = archive.by_name(THUMBNAIL_ENTRY).is_ok() || metadata.has_thumbnail;
+    let has_thumbnail = archive.by_name(THUMBNAIL_ENTRY).is_ok();
     Ok(Some(summary_from_metadata(
         path.to_path_buf(),
         system_time_from_millis(metadata.saved_at_unix_ms),
@@ -658,6 +671,38 @@ fn write_next_slot_id(file: &mut std::fs::File, next_slot_id: u64) -> Result<(),
 mod tests {
     use super::*;
     use std::env;
+    use std::io::Write;
+
+    const STATE_ARCHIVE_FIXTURE_HEX: &str = "504b0304140000000800000021004ce2ae73e30000006a010000100000006d657461646174612e6d73677061636b55904d4ec3400c851d7eaec09a3b80b88ee54ca664443c133c9ea8ddb1e720958802597181b245bd013beec124226abafc9e3fd94ffe819bf7686acb849d95e8822ff6b1098aaeba1e2375b642524cde6d91e311a0783dfed630d41451ebc4a527d71c7aa6b6b582ba6bedd5474c25ae02185a7944098c46ccc37d31985a4e7831a890f3d99df172643677e8e4193b12475e61b49c1ad2204bc1fdc66d35897d9b966c823065899d48563854169f9cafe0739d981435cb4dd22fe8a7ee25a95ad91dfae57a633df44bd10cdf2fd02f4527bcfd9fd28c30bf0657c924ccfe99b04efe00504b030414000000080000002100def67eb017000000150000000900000073746174652e62696e4bcbac28292d4ad5cd4d4ccec8cc4bd52d2e492c490500504b030414000000080000002100f860c12e0b000000090000000d0000007468756d626e61696c2e706e67eb0cf073e7e592e2fa0f00504b01021403140000000800000021004ce2ae73e30000006a010000100000000000000000000000a481000000006d657461646174612e6d73677061636b504b0102140314000000080000002100def67eb01700000015000000090000000000000000000000a4811101000073746174652e62696e504b0102140314000000080000002100f860c12e0b000000090000000d0000000000000000000000a4814f0100007468756d626e61696c2e706e67504b05060000000003000300b0000000850100000000";
+
+    fn fixture_bytes(hex: &str) -> Vec<u8> {
+        assert!(
+            !hex.trim().is_empty(),
+            "fixture hex must be populated before running persistence tests"
+        );
+        let hex = hex.trim();
+        assert_eq!(hex.len() % 2, 0, "fixture hex length must be even");
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|chunk| {
+                let text = std::str::from_utf8(chunk).expect("fixture hex should be valid utf-8");
+                u8::from_str_radix(text, 16).expect("fixture hex should decode")
+            })
+            .collect()
+    }
+
+    fn fixture_slot_path(name: &str) -> PathBuf {
+        let dir = test_dir(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        state_slot_path(&dir, 99)
+    }
+
+    fn write_fixture_archive(name: &str) -> PathBuf {
+        let path = fixture_slot_path(name);
+        fs::write(&path, fixture_bytes(STATE_ARCHIVE_FIXTURE_HEX)).unwrap();
+        path
+    }
 
     fn test_rom_identity() -> RomIdentity {
         RomIdentity {
@@ -813,6 +858,24 @@ mod tests {
     }
 
     #[test]
+    fn state_archive_fixture_loads_metadata_state_and_thumbnail() {
+        let path = write_fixture_archive("fixture-archive");
+
+        let loaded = load_state_slot(&path).expect("fixture archive should load");
+        assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+        assert_eq!(loaded.summary.slot_id, 5);
+        assert_eq!(loaded.machine_state, b"fixture-machine-state");
+        assert!(loaded.summary.has_thumbnail);
+        assert_eq!(
+            loaded.thumbnail_png,
+            Some(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
+        );
+
+        let summaries = scan_state_slots(path.parent().unwrap()).expect("fixture slot should scan");
+        assert_eq!(summaries, vec![loaded.summary.clone()]);
+    }
+
+    #[test]
     fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
         let dir = test_dir("state-archive-round-trip");
         let _ = fs::remove_dir_all(&dir);
@@ -901,5 +964,256 @@ mod tests {
         let slot_ids = slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>();
 
         assert_eq!(slot_ids, vec![1]);
+    }
+
+    #[test]
+    fn state_archive_rejects_schema_mismatch() {
+        let dir = test_dir("schema-mismatch");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = state_slot_path(&dir, 1);
+        let metadata = StateArchiveMetadata {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION + 1,
+            slot_id: 1,
+            saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
+            has_thumbnail: false,
+            mapper_type: 4,
+            sub_mapper_type: 0,
+            prg_rom_crc64: 1,
+            chr_rom_crc64: 2,
+            trainer_crc64: 3,
+            mmc3_irq_variant: 0,
+            emulator_version: "test".into(),
+            rom_format: 0,
+            mirror_mode_kind: 0,
+            mirror_mode_custom_lut: Vec::new(),
+            has_battery: false,
+            trainer_len: 0,
+            prg_rom_len: 0,
+            chr_rom_len: 0,
+            prg_ram_len: 0,
+            save_prg_ram_len: 0,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        };
+        let archive = build_state_archive(&metadata, b"state", None).unwrap();
+        fs::write(&path, archive).unwrap();
+
+        let error = load_state_slot(&path).expect_err("schema mismatch should reject");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported state archive schema version")
+        );
+    }
+
+    #[test]
+    fn missing_thumbnail_is_reported_consistently_even_if_metadata_claims_presence() {
+        let dir = test_dir("missing-thumbnail");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = state_slot_path(&dir, 4);
+        let metadata = StateArchiveMetadata {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+            slot_id: 4,
+            saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
+            has_thumbnail: true,
+            mapper_type: 4,
+            sub_mapper_type: 0,
+            prg_rom_crc64: 1,
+            chr_rom_crc64: 2,
+            trainer_crc64: 3,
+            mmc3_irq_variant: 0,
+            emulator_version: "test".into(),
+            rom_format: 0,
+            mirror_mode_kind: 0,
+            mirror_mode_custom_lut: Vec::new(),
+            has_battery: false,
+            trainer_len: 0,
+            prg_rom_len: 0,
+            chr_rom_len: 0,
+            prg_ram_len: 0,
+            save_prg_ram_len: 0,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        };
+        fs::write(
+            &path,
+            build_state_archive(&metadata, b"state", None).unwrap(),
+        )
+        .unwrap();
+
+        let summary = scan_state_slots(&dir).unwrap().pop().unwrap();
+        let loaded = load_state_slot(&path).unwrap();
+        assert!(!summary.has_thumbnail);
+        assert!(!loaded.summary.has_thumbnail);
+        assert_eq!(loaded.thumbnail_png, None);
+    }
+
+    #[test]
+    fn invalid_thumbnail_bytes_are_preserved_as_opaque_blob() {
+        let dir = test_dir("invalid-thumbnail");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = state_slot_path(&dir, 8);
+        let metadata = StateArchiveMetadata {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+            slot_id: 8,
+            saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
+            has_thumbnail: true,
+            mapper_type: 4,
+            sub_mapper_type: 0,
+            prg_rom_crc64: 1,
+            chr_rom_crc64: 2,
+            trainer_crc64: 3,
+            mmc3_irq_variant: 0,
+            emulator_version: "test".into(),
+            rom_format: 0,
+            mirror_mode_kind: 0,
+            mirror_mode_custom_lut: Vec::new(),
+            has_battery: false,
+            trainer_len: 0,
+            prg_rom_len: 0,
+            chr_rom_len: 0,
+            prg_ram_len: 0,
+            save_prg_ram_len: 0,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        };
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut writer = ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer.start_file(METADATA_ENTRY, options).unwrap();
+        writer
+            .write_all(&rmp_serde::to_vec_named(&metadata).unwrap())
+            .unwrap();
+        writer.start_file(STATE_ENTRY, options).unwrap();
+        writer.write_all(b"state").unwrap();
+        writer.start_file(THUMBNAIL_ENTRY, options).unwrap();
+        writer
+            .write_all(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
+            .unwrap();
+        fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
+
+        let summary = scan_state_slots(&dir).unwrap().pop().unwrap();
+        let loaded = load_state_slot(&path).unwrap();
+        assert!(summary.has_thumbnail);
+        assert!(loaded.summary.has_thumbnail);
+        assert_eq!(
+            loaded.thumbnail_png,
+            Some(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
+        );
+    }
+
+    #[test]
+    fn strict_target_filtering_requires_all_identity_and_option_fields() {
+        let dir = test_dir("strict-target-filtering");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let matching_identity = test_rom_identity();
+        write_state_slot(
+            &dir,
+            1,
+            b"matching",
+            matching_identity,
+            CoreOptions::default(),
+            None,
+        )
+        .unwrap();
+        write_state_slot(
+            &dir,
+            2,
+            b"battery-mismatch",
+            RomIdentity {
+                has_battery: false,
+                ..matching_identity
+            },
+            CoreOptions::default(),
+            None,
+        )
+        .unwrap();
+        write_state_slot(
+            &dir,
+            3,
+            b"save-ram-mismatch",
+            RomIdentity {
+                save_prg_ram_len: matching_identity.save_prg_ram_len + 1,
+                ..matching_identity
+            },
+            CoreOptions::default(),
+            None,
+        )
+        .unwrap();
+        write_state_slot(
+            &dir,
+            4,
+            b"option-mismatch",
+            matching_identity,
+            CoreOptions {
+                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+            },
+            None,
+        )
+        .unwrap();
+
+        let slots =
+            scan_state_slots_for_target(&dir, matching_identity, CoreOptions::default()).unwrap();
+        assert_eq!(
+            slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn save_slot_summary_matches_loaded_summary() {
+        let dir = test_dir("summary-consistency");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let written = write_state_slot(
+            &dir,
+            11,
+            b"state",
+            test_rom_identity(),
+            CoreOptions::default(),
+            Some(&ThumbnailSource {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 4],
+            }),
+        )
+        .unwrap();
+
+        let mut scanned_slots = scan_state_slots(&dir).unwrap();
+        let scanned = scanned_slots.pop().unwrap();
+        let loaded = load_state_slot(&written.path).unwrap();
+        assert_eq!(scanned.schema_version, written.schema_version);
+        assert_eq!(scanned.slot_id, written.slot_id);
+        assert_eq!(scanned.path, written.path);
+        assert_eq!(scanned.has_thumbnail, written.has_thumbnail);
+        assert_eq!(scanned.emulator_version, written.emulator_version);
+        assert_eq!(loaded.summary, scanned);
+    }
+
+    #[test]
+    fn mapper_save_sidecar_and_recovery_paths_preserve_bytes() {
+        let dir = test_dir("mapper-save-sidecars");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let sidecar = dir.join("game.nes.sav");
+
+        write_mapper_save(&sidecar, b"primary").unwrap();
+        assert_eq!(
+            load_mapper_save(&sidecar).unwrap(),
+            Some(b"primary".to_vec())
+        );
+
+        let recovery = write_recovery_mapper_save(&sidecar, b"recovered").unwrap();
+        assert_ne!(recovery, sidecar);
+        assert_eq!(
+            load_mapper_save(&sidecar).unwrap(),
+            Some(b"primary".to_vec())
+        );
+        assert_eq!(fs::read(recovery).unwrap(), b"recovered");
     }
 }
