@@ -12,6 +12,24 @@ use crate::ppu_memory_access::PpuReadAccess;
 use crate::{MirrorMode, OpenBusReadResult};
 use std::cmp;
 
+fn mirror_lut(mode: MirrorMode) -> [u8; 4] {
+    match mode {
+        MirrorMode::Horizontal => [0, 0, 1, 1],
+        MirrorMode::Vertical => [0, 1, 0, 1],
+        MirrorMode::Single0 => [0, 0, 0, 0],
+        MirrorMode::Single1 => [1, 1, 1, 1],
+        MirrorMode::Four => [0, 1, 2, 3],
+        MirrorMode::Custom(lut) => lut,
+    }
+}
+
+fn mirror_address(mode: MirrorMode, address: usize) -> usize {
+    let vram_address = address & 0x0FFF;
+    let table = vram_address >> 10;
+    let offset = vram_address & 0x3FF;
+    0x2000 + (usize::from(mirror_lut(mode)[table]) << 10) + offset
+}
+
 #[typetag::serde(tag = "type")]
 pub(crate) trait Cartridge: Mapper {
     fn initialize(&mut self) {
@@ -269,7 +287,7 @@ pub(crate) trait Cartridge: Mapper {
         ciram: &mut [u8],
     ) -> OpenBusReadResult {
         OpenBusReadResult::new(
-            ciram[self.mirror_mode().mirror_address(address) & 0x7FF],
+            ciram[mirror_address(self.mirror_mode(), address) & 0x7FF],
             0xFF,
         )
     }
@@ -281,11 +299,11 @@ pub(crate) trait Cartridge: Mapper {
         ciram: &mut [u8],
         _interrupt: &mut Interrupt,
     ) {
-        ciram[self.mirror_mode().mirror_address(address) & 0x7FF] = value;
+        ciram[mirror_address(self.mirror_mode(), address) & 0x7FF] = value;
     }
 
     fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
-        Some(ciram[self.mirror_mode().mirror_address(address) & 0x7FF])
+        Some(ciram[mirror_address(self.mirror_mode(), address) & 0x7FF])
     }
 }
 

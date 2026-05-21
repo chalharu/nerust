@@ -11,6 +11,7 @@ bitflags.workspace = true
 crc.workspace = true
 log.workspace = true
 nerust_cartridge_data.workspace = true
+nerust_contract.workspace = true
 nerust_core.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_screen_filter.workspace = true

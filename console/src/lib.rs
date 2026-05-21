@@ -8,6 +8,7 @@ mod video;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
+pub use nerust_contract::PersistenceTarget;
 use nerust_core::controller::standard_controller::{
     Buttons, StandardController, StandardControllerSnapshot,
 };
@@ -125,8 +126,7 @@ pub struct PreviewFrame {
 pub struct StateExport {
     pub machine_state: Vec<u8>,
     pub preview: Option<PreviewFrame>,
-    pub rom_identity: RomIdentity,
-    pub options: CoreOptions,
+    pub target: PersistenceTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -636,7 +636,7 @@ mod tests {
 enum ConsoleReply {
     Unit,
     MapperSave(Option<Vec<u8>>),
-    PersistenceTarget(RomIdentity, CoreOptions),
+    PersistenceTarget(PersistenceTarget),
     StateExport(StateExport),
 }
 
@@ -815,9 +815,9 @@ impl Console {
         }
     }
 
-    pub fn persistence_target(&self) -> Result<(RomIdentity, CoreOptions), ConsoleError> {
+    pub fn persistence_target(&self) -> Result<PersistenceTarget, ConsoleError> {
         match self.send_request(ConsoleData::PersistenceTarget)? {
-            ConsoleReply::PersistenceTarget(rom_identity, options) => Ok((rom_identity, options)),
+            ConsoleReply::PersistenceTarget(target) => Ok(target),
             _ => Err(ConsoleError::Core(
                 "unexpected persistence target reply".into(),
             )),
@@ -1273,7 +1273,10 @@ impl ConsoleRunner {
                     }
                     ConsoleData::PersistenceTarget(reply) => {
                         let result = core.as_ref().ok_or_else(Self::core_not_loaded).map(|core| {
-                            ConsoleReply::PersistenceTarget(core.rom_identity(), core.options())
+                            ConsoleReply::PersistenceTarget(PersistenceTarget {
+                                rom_identity: core.rom_identity(),
+                                options: core.options(),
+                            })
                         });
                         Self::reply(reply, result);
                     }
@@ -1294,6 +1297,10 @@ impl ConsoleRunner {
                                     } else {
                                         Vec::new()
                                     };
+                                    let target = PersistenceTarget {
+                                        rom_identity: core.rom_identity(),
+                                        options: core.options(),
+                                    };
                                     let state = ConsoleStatePayload {
                                         schema_version: CONSOLE_STATE_SCHEMA_VERSION,
                                         core_state: machine_state,
@@ -1302,15 +1309,14 @@ impl ConsoleRunner {
                                         controller: controller_snapshot_to_payload(
                                             self.controller.export_snapshot(),
                                         ),
-                                        rom_identity: core.rom_identity(),
-                                        options: core.options(),
+                                        rom_identity: target.rom_identity,
+                                        options: target.options,
                                         source_frame,
                                     };
                                     Ok(ConsoleReply::StateExport(StateExport {
                                         machine_state: encode_console_state_payload(&state)?,
                                         preview,
-                                        rom_identity: core.rom_identity(),
-                                        options: core.options(),
+                                        target,
                                     }))
                                 });
                         Self::reply(reply, result);

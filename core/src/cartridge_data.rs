@@ -6,21 +6,7 @@
 
 use crate::MirrorMode;
 use crate::cartridge_error::CartridgeError;
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RomFormat {
-    INes,
-    Nes20,
-}
-
-impl RomFormat {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::INes => "iNES",
-            Self::Nes20 => "NES 2.0",
-        }
-    }
-}
+use nerust_contract::RomFormat;
 
 #[derive(Debug, Clone)]
 pub struct CartridgeDataParts {

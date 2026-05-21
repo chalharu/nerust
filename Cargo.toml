@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "cartridge/data",
   "console",
+  "contract",
   "core",
   "persistence",
   "rom_test",
@@ -59,6 +60,7 @@ log = { version = "=0.4.29", default-features = false }
 muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
+nerust_contract = { version = "=0.1.0", path = "contract" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }

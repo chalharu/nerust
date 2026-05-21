@@ -12,8 +12,9 @@
 //! older bytes should not be accepted. Wrapper formats in other crates must treat the core
 //! payload bytes as opaque and manage their own outer schema versions separately.
 
-use crate::{MirrorMode, RomFormat};
 use thiserror::Error;
+
+pub use nerust_contract::RomIdentity;
 
 /// Compatibility version for `MachineStatePayload` and `MapperSavePayload`.
 pub(crate) const PERSISTENCE_SCHEMA_VERSION: u32 = 2;
@@ -34,27 +35,6 @@ pub enum PersistenceError {
     Encode(#[from] rmp_serde::encode::Error),
     #[error("invalid persistence payload: {0}")]
     Validation(String),
-}
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RomIdentity {
-    /// Header-derived ROM/container identity that must continue to match when importing either
-    /// machine-state or mapper-save payloads.
-    pub format: RomFormat,
-    pub mapper_type: u16,
-    pub sub_mapper_type: u8,
-    pub mirror_mode: MirrorMode,
-    pub has_battery: bool,
-    pub trainer_len: usize,
-    pub prg_rom_len: usize,
-    pub chr_rom_len: usize,
-    pub prg_ram_len: usize,
-    pub save_prg_ram_len: usize,
-    pub chr_ram_len: usize,
-    pub save_chr_ram_len: usize,
-    pub prg_rom_crc64: u64,
-    pub chr_rom_crc64: u64,
-    pub trainer_crc64: u64,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]

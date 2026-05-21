@@ -13,7 +13,7 @@
 
 use fs2::FileExt;
 use libc::tm;
-use nerust_core::{CoreOptions, MirrorMode, Mmc3IrqVariant, RomFormat, RomIdentity};
+use nerust_contract::{MirrorMode, Mmc3IrqVariant, PersistenceTarget, RomFormat};
 use png::{BitDepth, ColorType, Encoder};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -206,15 +206,14 @@ pub fn scan_state_slots(states_dir: &Path) -> Result<Vec<StateSlotSummary>, Pers
 
 pub fn scan_state_slots_for_target(
     states_dir: &Path,
-    rom_identity: RomIdentity,
-    options: CoreOptions,
+    target: PersistenceTarget,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-    scan_state_slots_matching(states_dir, Some((rom_identity, options)))
+    scan_state_slots_matching(states_dir, Some(target))
 }
 
 fn scan_state_slots_matching(
     states_dir: &Path,
-    target: Option<(RomIdentity, CoreOptions)>,
+    target: Option<PersistenceTarget>,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
     if !states_dir.exists() {
         return Ok(Vec::new());
@@ -260,37 +259,13 @@ pub fn write_state_slot(
     states_dir: &Path,
     slot_id: u64,
     machine_state: &[u8],
-    rom_identity: RomIdentity,
-    options: CoreOptions,
+    target: PersistenceTarget,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
     fs::create_dir_all(states_dir)?;
     let saved_at = SystemTime::now();
     let has_thumbnail = preview.is_some();
-    let metadata = StateArchiveMetadata {
-        schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
-        slot_id,
-        saved_at_unix_ms: unix_millis(saved_at)?,
-        has_thumbnail,
-        mapper_type: u32::from(rom_identity.mapper_type),
-        sub_mapper_type: u32::from(rom_identity.sub_mapper_type),
-        prg_rom_crc64: rom_identity.prg_rom_crc64,
-        chr_rom_crc64: rom_identity.chr_rom_crc64,
-        trainer_crc64: rom_identity.trainer_crc64,
-        mmc3_irq_variant: mmc3_irq_variant_to_u32(options.mmc3_irq_variant),
-        emulator_version: env!("CARGO_PKG_VERSION").to_string(),
-        rom_format: rom_format_to_u32(rom_identity.format),
-        mirror_mode_kind: mirror_mode_kind_to_u32(rom_identity.mirror_mode),
-        mirror_mode_custom_lut: mirror_mode_custom_lut(rom_identity.mirror_mode),
-        has_battery: rom_identity.has_battery,
-        trainer_len: rom_identity.trainer_len as u64,
-        prg_rom_len: rom_identity.prg_rom_len as u64,
-        chr_rom_len: rom_identity.chr_rom_len as u64,
-        prg_ram_len: rom_identity.prg_ram_len as u64,
-        save_prg_ram_len: rom_identity.save_prg_ram_len as u64,
-        chr_ram_len: rom_identity.chr_ram_len as u64,
-        save_chr_ram_len: rom_identity.save_chr_ram_len as u64,
-    };
+    let metadata = encode_slot_metadata(slot_id, saved_at, target, has_thumbnail)?;
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let archive_bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
     let path = state_slot_path(states_dir, slot_id);
@@ -340,13 +315,13 @@ pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {
 
 fn read_state_summary(
     path: &Path,
-    target: Option<(RomIdentity, CoreOptions)>,
+    target: Option<PersistenceTarget>,
 ) -> Result<Option<StateSlotSummary>, PersistenceError> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file)?;
     let metadata = read_metadata(&mut archive)?;
-    if let Some((rom_identity, options)) = target
-        && !metadata_matches_target(&metadata, rom_identity, options)
+    if let Some(target) = target
+        && !slot_matches_target(&metadata, target)
     {
         return Ok(None);
     }
@@ -415,11 +390,41 @@ fn summary_from_metadata(
     }
 }
 
-fn metadata_matches_target(
-    metadata: &StateArchiveMetadata,
-    rom_identity: RomIdentity,
-    options: CoreOptions,
-) -> bool {
+fn encode_slot_metadata(
+    slot_id: u64,
+    saved_at: SystemTime,
+    target: PersistenceTarget,
+    has_thumbnail: bool,
+) -> Result<StateArchiveMetadata, PersistenceError> {
+    let rom_identity = target.rom_identity;
+    Ok(StateArchiveMetadata {
+        schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+        slot_id,
+        saved_at_unix_ms: unix_millis(saved_at)?,
+        has_thumbnail,
+        mapper_type: u32::from(rom_identity.mapper_type),
+        sub_mapper_type: u32::from(rom_identity.sub_mapper_type),
+        prg_rom_crc64: rom_identity.prg_rom_crc64,
+        chr_rom_crc64: rom_identity.chr_rom_crc64,
+        trainer_crc64: rom_identity.trainer_crc64,
+        mmc3_irq_variant: mmc3_irq_variant_to_u32(target.options.mmc3_irq_variant),
+        emulator_version: env!("CARGO_PKG_VERSION").to_string(),
+        rom_format: rom_format_to_u32(rom_identity.format),
+        mirror_mode_kind: mirror_mode_kind_to_u32(rom_identity.mirror_mode),
+        mirror_mode_custom_lut: mirror_mode_custom_lut(rom_identity.mirror_mode),
+        has_battery: rom_identity.has_battery,
+        trainer_len: rom_identity.trainer_len as u64,
+        prg_rom_len: rom_identity.prg_rom_len as u64,
+        chr_rom_len: rom_identity.chr_rom_len as u64,
+        prg_ram_len: rom_identity.prg_ram_len as u64,
+        save_prg_ram_len: rom_identity.save_prg_ram_len as u64,
+        chr_ram_len: rom_identity.chr_ram_len as u64,
+        save_chr_ram_len: rom_identity.save_chr_ram_len as u64,
+    })
+}
+
+fn slot_matches_target(metadata: &StateArchiveMetadata, target: PersistenceTarget) -> bool {
+    let rom_identity = target.rom_identity;
     let mirror_mode_lut = mirror_mode_custom_lut(rom_identity.mirror_mode);
     metadata.mapper_type == u32::from(rom_identity.mapper_type)
         && metadata.sub_mapper_type == u32::from(rom_identity.sub_mapper_type)
@@ -437,7 +442,7 @@ fn metadata_matches_target(
         && metadata.save_prg_ram_len == rom_identity.save_prg_ram_len as u64
         && metadata.chr_ram_len == rom_identity.chr_ram_len as u64
         && metadata.save_chr_ram_len == rom_identity.save_chr_ram_len as u64
-        && metadata.mmc3_irq_variant == mmc3_irq_variant_to_u32(options.mmc3_irq_variant)
+        && metadata.mmc3_irq_variant == mmc3_irq_variant_to_u32(target.options.mmc3_irq_variant)
 }
 
 fn format_local_timestamp(epoch_seconds: i64) -> Option<String> {
@@ -732,6 +737,7 @@ fn write_next_slot_id(file: &mut std::fs::File, next_slot_id: u64) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_contract::{CoreOptions, RomIdentity};
     use std::env;
     use std::io::Write;
 
@@ -766,12 +772,19 @@ mod tests {
         path
     }
 
+    fn test_target() -> PersistenceTarget {
+        PersistenceTarget {
+            rom_identity: test_rom_identity(),
+            options: CoreOptions::default(),
+        }
+    }
+
     fn test_rom_identity() -> RomIdentity {
         RomIdentity {
-            format: nerust_core::RomFormat::INes,
+            format: nerust_contract::RomFormat::INes,
             mapper_type: 4,
             sub_mapper_type: 0,
-            mirror_mode: nerust_core::MirrorMode::Horizontal,
+            mirror_mode: nerust_contract::MirrorMode::Horizontal,
             has_battery: true,
             trainer_len: 0,
             prg_rom_len: 0x8000,
@@ -847,24 +860,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
-        write_state_slot(
-            &dir,
-            1,
-            b"a",
-            test_rom_identity(),
-            CoreOptions::default(),
-            None,
-        )
-        .unwrap();
-        write_state_slot(
-            &dir,
-            2,
-            b"b",
-            test_rom_identity(),
-            CoreOptions::default(),
-            None,
-        )
-        .unwrap();
+        write_state_slot(&dir, 1, b"a", test_target(), None).unwrap();
+        write_state_slot(&dir, 2, b"b", test_target(), None).unwrap();
         delete_state_slot(&state_slot_path(&dir, 1)).unwrap();
 
         assert_eq!(allocate_next_slot_id(&dir).unwrap(), 3);
@@ -886,15 +883,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        write_state_slot(
-            &dir,
-            1,
-            b"ok",
-            test_rom_identity(),
-            CoreOptions::default(),
-            None,
-        )
-        .unwrap();
+        write_state_slot(&dir, 1, b"ok", test_target(), None).unwrap();
         fs::write(state_slot_path(&dir, 2), b"not-a-zip-archive").unwrap();
 
         let slots = scan_state_slots(&dir).unwrap();
@@ -980,9 +969,11 @@ mod tests {
             &dir,
             7,
             b"machine-state",
-            test_rom_identity(),
-            CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+            PersistenceTarget {
+                rom_identity: test_rom_identity(),
+                options: CoreOptions {
+                    mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+                },
             },
             Some(&ThumbnailSource {
                 width: 2,
@@ -1019,8 +1010,10 @@ mod tests {
             &dir,
             1,
             b"matching",
-            matching_identity,
-            CoreOptions::default(),
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions::default(),
+            },
             None,
         )
         .unwrap();
@@ -1028,8 +1021,10 @@ mod tests {
             &dir,
             2,
             b"mismatched-rom",
-            mismatched_identity,
-            CoreOptions::default(),
+            PersistenceTarget {
+                rom_identity: mismatched_identity,
+                options: CoreOptions::default(),
+            },
             None,
         )
         .unwrap();
@@ -1037,9 +1032,11 @@ mod tests {
             &dir,
             3,
             b"mismatched-options",
-            matching_identity,
-            CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions {
+                    mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+                },
             },
             None,
         )
@@ -1048,14 +1045,22 @@ mod tests {
             &dir,
             4,
             b"header-corrected",
-            header_corrected_identity,
-            CoreOptions::default(),
+            PersistenceTarget {
+                rom_identity: header_corrected_identity,
+                options: CoreOptions::default(),
+            },
             None,
         )
         .unwrap();
 
-        let slots =
-            scan_state_slots_for_target(&dir, matching_identity, CoreOptions::default()).unwrap();
+        let slots = scan_state_slots_for_target(
+            &dir,
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions::default(),
+            },
+        )
+        .unwrap();
         let slot_ids = slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>();
 
         assert_eq!(slot_ids, vec![1]);
@@ -1211,8 +1216,10 @@ mod tests {
             &dir,
             1,
             b"matching",
-            matching_identity,
-            CoreOptions::default(),
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions::default(),
+            },
             None,
         )
         .unwrap();
@@ -1220,11 +1227,13 @@ mod tests {
             &dir,
             2,
             b"battery-mismatch",
-            RomIdentity {
-                has_battery: false,
-                ..matching_identity
+            PersistenceTarget {
+                rom_identity: RomIdentity {
+                    has_battery: false,
+                    ..matching_identity
+                },
+                options: CoreOptions::default(),
             },
-            CoreOptions::default(),
             None,
         )
         .unwrap();
@@ -1232,11 +1241,13 @@ mod tests {
             &dir,
             3,
             b"save-ram-mismatch",
-            RomIdentity {
-                save_prg_ram_len: matching_identity.save_prg_ram_len + 1,
-                ..matching_identity
+            PersistenceTarget {
+                rom_identity: RomIdentity {
+                    save_prg_ram_len: matching_identity.save_prg_ram_len + 1,
+                    ..matching_identity
+                },
+                options: CoreOptions::default(),
             },
-            CoreOptions::default(),
             None,
         )
         .unwrap();
@@ -1244,16 +1255,24 @@ mod tests {
             &dir,
             4,
             b"option-mismatch",
-            matching_identity,
-            CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions {
+                    mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+                },
             },
             None,
         )
         .unwrap();
 
-        let slots =
-            scan_state_slots_for_target(&dir, matching_identity, CoreOptions::default()).unwrap();
+        let slots = scan_state_slots_for_target(
+            &dir,
+            PersistenceTarget {
+                rom_identity: matching_identity,
+                options: CoreOptions::default(),
+            },
+        )
+        .unwrap();
         assert_eq!(
             slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>(),
             vec![1]
@@ -1269,8 +1288,7 @@ mod tests {
             &dir,
             11,
             b"state",
-            test_rom_identity(),
-            CoreOptions::default(),
+            test_target(),
             Some(&ThumbnailSource {
                 width: 1,
                 height: 1,

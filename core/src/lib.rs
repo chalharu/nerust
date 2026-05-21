@@ -49,29 +49,13 @@ fn crc64(bytes: &[u8]) -> u64 {
     hasher.0.finalize()
 }
 
-pub use self::cartridge_data::{CartridgeData, CartridgeDataParts, RomFormat};
+pub use self::cartridge_data::{CartridgeData, CartridgeDataParts};
 pub use self::cartridge_error::CartridgeError;
-pub use self::persistence::{PersistenceError, RomIdentity};
+pub use self::persistence::PersistenceError;
 pub use self::status::mirror_mode::MirrorMode;
+pub use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget, RomFormat, RomIdentity};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-#[derive(
-    serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Mmc3IrqVariant {
-    #[default]
-    Sharp,
-    Nec,
-}
-
-#[derive(
-    serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq,
-)]
-pub struct CoreOptions {
-    pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomInfo {
