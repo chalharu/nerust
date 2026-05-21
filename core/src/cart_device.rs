@@ -162,8 +162,13 @@ pub(crate) trait Cartridge: Mapper {
             data.save_pram_length()
                 .min(self.mapper_state_ref().sram.len())
         } else if self.mapper_state_ref().has_battery {
-            self.save_len_default()
-                .min(self.mapper_state_ref().sram.len())
+            let legacy_ines_prg_ram_len = data.pram_length();
+            if legacy_ines_prg_ram_len > 0 {
+                legacy_ines_prg_ram_len.min(self.mapper_state_ref().sram.len())
+            } else {
+                self.save_len_default()
+                    .min(self.mapper_state_ref().sram.len())
+            }
         } else {
             0
         };

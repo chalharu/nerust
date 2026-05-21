@@ -428,4 +428,40 @@ mod tests {
         assert_eq!(target.mapper_state_ref().sram[0], 0xAA);
         assert_eq!(target.mapper_state_ref().sram[0x2000], 0x00);
     }
+
+    #[test]
+    fn mapper_save_uses_legacy_ines_prg_ram_when_battery_backed() {
+        let data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x20000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0x2000,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 1,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: true,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        let mut source = SxRom::new(data.clone());
+        Cartridge::initialize(&mut source);
+        source.mapper_state_mut().sram[0] = 0xCC;
+        source.mapper_state_mut().sram[0x1FFF] = 0xDD;
+
+        let save = Cartridge::export_mapper_save_state(&source).expect("mapper save should export");
+        assert_eq!(save.0.len(), 0x2000);
+        assert_eq!(save.0[0], 0xCC);
+        assert_eq!(save.0[0x1FFF], 0xDD);
+        assert!(save.1.is_empty());
+
+        let mut target = SxRom::new(data);
+        Cartridge::initialize(&mut target);
+        Cartridge::import_mapper_save_state(&mut target, &save.0, &save.1)
+            .expect("mapper save should import");
+        assert_eq!(target.mapper_state_ref().sram[0], 0xCC);
+        assert_eq!(target.mapper_state_ref().sram[0x1FFF], 0xDD);
+    }
 }

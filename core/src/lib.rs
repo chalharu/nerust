@@ -177,6 +177,18 @@ impl Core {
         cartridge_data: &CartridgeData,
         raw_file_len: usize,
     ) -> Result<RomInfo, Error> {
+        let mapper = cartridge::try_from(cartridge_data.clone())?;
+        let save_prg_ram_len = if cartridge_data.save_pram_length() > 0 {
+            cartridge_data.save_pram_length()
+        } else if cartridge_data.has_battery() {
+            if cartridge_data.pram_length() > 0 {
+                cartridge_data.pram_length()
+            } else {
+                mapper.save_len_default()
+            }
+        } else {
+            0
+        };
         Ok(RomInfo {
             format: cartridge_data.format(),
             mapper_type: cartridge_data.mapper_type(),
@@ -187,7 +199,7 @@ impl Core {
             prg_rom_len: cartridge_data.prog_rom_len(),
             chr_rom_len: cartridge_data.char_rom_len(),
             prg_ram_len: cartridge_data.pram_length(),
-            save_prg_ram_len: cartridge_data.save_pram_length(),
+            save_prg_ram_len,
             chr_ram_len: cartridge_data.vram_length(),
             save_chr_ram_len: cartridge_data.save_vram_length(),
             raw_file_len,
@@ -888,5 +900,36 @@ mod persistence_tests {
         let decoded = persistence::decode_payload::<MapperSavePayload>(&payload)
             .expect("mapper save payload should decode");
         assert_eq!(decoded.prg_ram.len(), 0x2000);
+    }
+
+    #[test]
+    fn mapper_save_uses_legacy_ines_prg_ram_length_when_explicit_save_len_is_zero() {
+        let core = Core::new(
+            CartridgeData::new(CartridgeDataParts {
+                format: RomFormat::INes,
+                prog_rom: vec![0; 0x20000],
+                char_rom: vec![0; 0x2000],
+                pram_length: 0x2000,
+                save_pram_length: 0,
+                vram_length: 0,
+                save_vram_length: 0,
+                mapper_type: 1,
+                mirror_mode: MirrorMode::Horizontal,
+                has_battery: true,
+                sub_mapper_type: 0,
+                trainer: Vec::new(),
+            })
+            .expect("test cartridge data should be valid"),
+        )
+        .expect("core should construct");
+
+        let payload = core
+            .export_mapper_save()
+            .expect("mapper save should export")
+            .expect("battery-backed iNES PRG RAM should expose persistent save");
+        let decoded = persistence::decode_payload::<MapperSavePayload>(&payload)
+            .expect("mapper save payload should decode");
+        assert_eq!(decoded.prg_ram.len(), 0x2000);
+        assert!(decoded.chr_ram.is_empty());
     }
 }
