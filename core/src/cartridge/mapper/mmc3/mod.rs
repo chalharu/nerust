@@ -70,6 +70,7 @@ mod tests {
     use super::*;
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::{Interrupt, IrqSource};
+    use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
@@ -92,6 +93,68 @@ mod tests {
 
     fn new_mmc3(sub_mapper_type: u8) -> Mmc3 {
         let mut mapper = Mmc3::new(test_data(sub_mapper_type), sub_mapper_type == 2);
+        Cartridge::initialize(&mut mapper);
+        mapper
+    }
+
+    fn test_data_with_chr_banks(sub_mapper_type: u8) -> CartridgeData {
+        let mut char_rom = Vec::with_capacity(0x2000);
+        for bank in 0u8..8 {
+            char_rom.extend(std::iter::repeat_n(bank, 0x0400));
+        }
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom: vec![0; 0x8000],
+            char_rom,
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 4,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid")
+    }
+
+    fn test_data_with_prg_banks(sub_mapper_type: u8) -> CartridgeData {
+        let mut prog_rom = Vec::with_capacity(0x8000);
+        for bank in 0u8..4 {
+            prog_rom.extend(std::iter::repeat_n(bank, 0x2000));
+        }
+        CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::Nes20,
+            prog_rom,
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 4,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid")
+    }
+
+    fn new_mmc3_with_chr_banks(sub_mapper_type: u8) -> Mmc3 {
+        let mut mapper = Mmc3::new(
+            test_data_with_chr_banks(sub_mapper_type),
+            sub_mapper_type == 2,
+        );
+        Cartridge::initialize(&mut mapper);
+        mapper
+    }
+
+    fn new_mmc3_with_prg_banks(sub_mapper_type: u8) -> Mmc3 {
+        let mut mapper = Mmc3::new(
+            test_data_with_prg_banks(sub_mapper_type),
+            sub_mapper_type == 2,
+        );
         Cartridge::initialize(&mut mapper);
         mapper
     }
@@ -396,5 +459,113 @@ mod tests {
 
         assert_eq!(mapper.shared.irq_counter(), 0);
         assert!(interrupt.get_irq(IrqSource::EXTERNAL));
+    }
+
+    #[test]
+    fn chr_bank_change_applies_on_next_pattern_low_fetch() {
+        let mut mapper = new_mmc3_with_chr_banks(0);
+        let mut interrupt = Interrupt::new();
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x1000,
+                PpuReadAccess::CpuData,
+                &mut interrupt
+            )
+            .data,
+            0
+        );
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x03, &mut interrupt);
+
+        assert!(mapper.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x1008,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            0
+        );
+        assert!(mapper.shared.pending_chr_update());
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x1000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            3
+        );
+        assert!(!mapper.shared.pending_chr_update());
+    }
+
+    #[test]
+    fn chr_layout_flip_applies_on_next_pattern_low_fetch() {
+        let mut mapper = new_mmc3_with_chr_banks(0);
+        let mut interrupt = Interrupt::new();
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x06, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x01, &mut interrupt);
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            6
+        );
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x82, &mut interrupt);
+
+        assert!(mapper.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0008,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            6
+        );
+        assert!(mapper.shared.pending_chr_update());
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            1
+        );
+        assert!(!mapper.shared.pending_chr_update());
+    }
+
+    #[test]
+    fn prg_bank_change_stays_immediate() {
+        let mut mapper = new_mmc3_with_prg_banks(0);
+        let mut interrupt = Interrupt::new();
+
+        assert_eq!(Cartridge::read(&mapper, 0x8000).data, 0);
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x06, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x01, &mut interrupt);
+
+        assert_eq!(Cartridge::read(&mapper, 0x8000).data, 1);
+        assert!(!mapper.shared.pending_chr_update());
     }
 }

@@ -6,11 +6,13 @@
 
 use super::CartridgeData;
 use crate::MirrorMode;
+use crate::OpenBusReadResult;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::mapper_state::{MapperState, MapperStateDao, MappingMode};
 use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
+use crate::ppu_memory_access::PpuReadAccess;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 
@@ -209,7 +211,19 @@ pub(super) struct LegacyMapper4State {
     pub(super) prg_ram_model: PrgRamModel,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Deserialize)]
+struct Mapper4SharedDeserialized {
+    cartridge_data: CartridgeData,
+    state: MapperState,
+    bank_select: u8,
+    bank_data: [u8; 8],
+    mirroring: u8,
+    program_ram_protect: u8,
+    irq: IrqUnit,
+    config: Mapper4Config,
+}
+
+#[derive(serde_derive::Serialize)]
 pub(super) struct Mapper4Shared {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -219,6 +233,30 @@ pub(super) struct Mapper4Shared {
     program_ram_protect: u8,
     irq: IrqUnit,
     config: Mapper4Config,
+    #[serde(skip)]
+    pending_chr_update: bool,
+}
+
+impl<'de> serde::Deserialize<'de> for Mapper4Shared {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let deserialized = Mapper4SharedDeserialized::deserialize(deserializer)?;
+        let mut shared = Self {
+            cartridge_data: deserialized.cartridge_data,
+            state: deserialized.state,
+            bank_select: deserialized.bank_select,
+            bank_data: deserialized.bank_data,
+            mirroring: deserialized.mirroring,
+            program_ram_protect: deserialized.program_ram_protect,
+            irq: deserialized.irq,
+            config: deserialized.config,
+            pending_chr_update: false,
+        };
+        shared.pending_chr_update = !shared.character_mapping_matches_registers();
+        Ok(shared)
+    }
 }
 
 impl Mapper4Shared {
@@ -232,6 +270,7 @@ impl Mapper4Shared {
             program_ram_protect: 0x80,
             irq: IrqUnit::new(config.irq_variant),
             config,
+            pending_chr_update: false,
         }
     }
 
@@ -239,7 +278,7 @@ impl Mapper4Shared {
         cartridge_data: CartridgeData,
         legacy: LegacyMapper4State,
     ) -> Self {
-        Self {
+        let mut shared = Self {
             config: Mapper4Config::from_parts(
                 legacy.irq.variant,
                 legacy.prg_ram_model,
@@ -260,7 +299,10 @@ impl Mapper4Shared {
             bank_data: legacy.bank_data,
             mirroring: legacy.mirroring,
             program_ram_protect: legacy.program_ram_protect,
-        }
+            pending_chr_update: false,
+        };
+        shared.pending_chr_update = !shared.character_mapping_matches_registers();
+        shared
     }
 
     fn clear_ram_mapping(&mut self) {
@@ -304,6 +346,7 @@ impl Mapper4Shared {
         self.mirroring = runtime.mirroring;
         self.program_ram_protect = runtime.program_ram_protect;
         self.irq = runtime.irq;
+        self.pending_chr_update = !self.character_mapping_matches_registers();
         Ok(())
     }
 
@@ -328,6 +371,33 @@ impl Mapper4Shared {
     fn map_character_bank(&mut self, slot: usize, bank: usize) {
         if self.character_bank_count() > 0 {
             self.change_character_page(slot, bank % self.character_bank_count());
+        }
+    }
+
+    fn read_character(&self, address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(
+            self.character_address(address).map_or_else(
+                || {
+                    self.character_openbus_default()
+                        .unwrap_or((address & 0xFF) as u8)
+                },
+                |mapped| {
+                    if self.mapper_state_ref().character_mapping_mode == MappingMode::Rom {
+                        self.data_ref().read_char_rom(mapped)
+                    } else {
+                        self.mapper_state_ref().vram[mapped]
+                    }
+                },
+            ),
+            0xFF,
+        )
+    }
+
+    fn write_character(&mut self, address: usize, value: u8) {
+        if self.mapper_state_ref().character_mapping_mode == MappingMode::Ram
+            && let Some(mapped) = self.character_address(address)
+        {
+            self.mapper_state_mut().vram[mapped] = value;
         }
     }
 
@@ -378,22 +448,36 @@ impl Mapper4Shared {
     }
 
     fn write_bank_select(&mut self, value: u8) {
+        let previous_bank_select = self.bank_select;
         self.bank_select = value;
         if self.config.prg_ram_model == PrgRamModel::Mmc6 && !self.mmc6_chip_enabled() {
             self.program_ram_protect = 0;
         }
-        self.update_offsets();
+        if (previous_bank_select ^ self.bank_select) & 0x40 != 0
+            || self.config.prg_ram_model == PrgRamModel::Mmc6
+        {
+            self.update_program_offsets();
+        }
+        if (previous_bank_select ^ self.bank_select) & 0x80 != 0 {
+            self.pending_chr_update = true;
+        }
     }
 
     fn write_bank_data(&mut self, value: u8) {
         let selecter = (self.bank_select & 0x07) as usize;
         self.bank_data[selecter] = if selecter <= 1 { value & !0x01 } else { value };
-        self.update_offsets();
+        if selecter <= 5 {
+            self.pending_chr_update = true;
+        } else {
+            self.update_program_offsets();
+        }
     }
 
     fn write_mirroring(&mut self, value: u8) {
         self.mirroring = value;
-        self.update_mirroring_mode();
+        if self.config.mirroring_model == MirroringModel::Standard {
+            self.update_mirroring_mode();
+        }
     }
 
     fn update_mirroring_mode(&mut self) {
@@ -431,14 +515,17 @@ impl Mapper4Shared {
                 self.program_ram_protect = value;
             }
         }
-        self.update_offsets();
+        self.update_program_offsets();
     }
 
     fn write_control(&mut self, _value: u8) {
-        self.update_offsets();
+        self.update_program_offsets();
+        self.update_character_offsets();
+        self.update_mirroring_mode();
+        self.pending_chr_update = false;
     }
 
-    fn update_offsets(&mut self) {
+    fn update_program_offsets(&mut self) {
         let prg_bank_count = self.program_bank_count();
         let last_bank = prg_bank_count.saturating_sub(1);
         let second_last_bank = prg_bank_count.saturating_sub(2);
@@ -455,6 +542,19 @@ impl Mapper4Shared {
             self.map_program_bank(3, last_bank);
         }
 
+        match self.config.prg_ram_model {
+            PrgRamModel::Mmc6 => self.clear_ram_mapping(),
+            PrgRamModel::Standard => {
+                if self.program_ram_enabled() {
+                    self.change_ram_page(0, 0);
+                } else {
+                    self.clear_ram_mapping();
+                }
+            }
+        }
+    }
+
+    fn update_character_offsets(&mut self) {
         if (self.bank_select & 0x80) == 0 {
             self.map_character_bank(0, usize::from(self.bank_data[0] & !0x01));
             self.map_character_bank(1, usize::from(self.bank_data[0] | 0x01));
@@ -474,19 +574,93 @@ impl Mapper4Shared {
             self.map_character_bank(6, usize::from(self.bank_data[1] & !0x01));
             self.map_character_bank(7, usize::from(self.bank_data[1] | 0x01));
         }
+    }
 
-        match self.config.prg_ram_model {
-            PrgRamModel::Mmc6 => self.clear_ram_mapping(),
-            PrgRamModel::Standard => {
-                if self.program_ram_enabled() {
-                    self.change_ram_page(0, 0);
-                } else {
-                    self.clear_ram_mapping();
-                }
+    fn apply_pending_chr_update(&mut self) {
+        if self.pending_chr_update {
+            self.update_character_offsets();
+            if self.config.mirroring_model == MirroringModel::TxSrom {
+                self.update_mirroring_mode();
             }
+            self.pending_chr_update = false;
+        }
+    }
+
+    fn maybe_apply_pending_chr_update_for_pattern_access(
+        &mut self,
+        address: usize,
+        access: PpuReadAccess,
+    ) {
+        if !self.pending_chr_update {
+            return;
         }
 
-        self.update_mirroring_mode();
+        match access {
+            PpuReadAccess::CpuData => self.apply_pending_chr_update(),
+            PpuReadAccess::BackgroundPattern | PpuReadAccess::SpritePattern
+                if (address & 0x0008) == 0 =>
+            {
+                self.apply_pending_chr_update();
+            }
+            _ => {}
+        }
+    }
+
+    fn character_mapping_matches_registers(&self) -> bool {
+        let character_bank_count = self.character_bank_count();
+        if character_bank_count == 0 {
+            return true;
+        }
+
+        let expected = if (self.bank_select & 0x80) == 0 {
+            [
+                usize::from(self.bank_data[0] & !0x01),
+                usize::from(self.bank_data[0] | 0x01),
+                usize::from(self.bank_data[1] & !0x01),
+                usize::from(self.bank_data[1] | 0x01),
+                usize::from(self.bank_data[2]),
+                usize::from(self.bank_data[3]),
+                usize::from(self.bank_data[4]),
+                usize::from(self.bank_data[5]),
+            ]
+        } else {
+            [
+                usize::from(self.bank_data[2]),
+                usize::from(self.bank_data[3]),
+                usize::from(self.bank_data[4]),
+                usize::from(self.bank_data[5]),
+                usize::from(self.bank_data[0] & !0x01),
+                usize::from(self.bank_data[0] | 0x01),
+                usize::from(self.bank_data[1] & !0x01),
+                usize::from(self.bank_data[1] | 0x01),
+            ]
+        };
+
+        expected.into_iter().enumerate().all(|(slot, bank)| {
+            self.character_address(slot * 0x0400)
+                .map(|address| address / 0x0400)
+                == Some(bank % character_bank_count)
+        })
+    }
+
+    pub(super) fn read_ppu_pattern(
+        &mut self,
+        address: usize,
+        access: PpuReadAccess,
+        _interrupt: &mut Interrupt,
+    ) -> OpenBusReadResult {
+        self.maybe_apply_pending_chr_update_for_pattern_access(address, access);
+        self.read_character(address)
+    }
+
+    pub(super) fn write_ppu_pattern(
+        &mut self,
+        address: usize,
+        value: u8,
+        _interrupt: &mut Interrupt,
+    ) {
+        self.apply_pending_chr_update();
+        self.write_character(address, value);
     }
 
     #[cfg(test)]
@@ -527,6 +701,11 @@ impl Mapper4Shared {
     #[cfg(test)]
     pub(super) fn clock_irq(&mut self, interrupt: &mut Interrupt) {
         self.irq.clock(interrupt);
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_chr_update(&self) -> bool {
+        self.pending_chr_update
     }
 }
 

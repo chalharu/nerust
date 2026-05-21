@@ -6,8 +6,11 @@
 
 use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
+use crate::OpenBusReadResult;
 use crate::cart_device::Cartridge;
+use crate::cpu::interrupt::Interrupt;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
+use crate::ppu_memory_access::PpuReadAccess;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc6 {
@@ -33,6 +36,19 @@ impl Cartridge for Mmc6 {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         self.shared.import_runtime_state(state)
+    }
+
+    fn read_ppu_pattern(
+        &mut self,
+        address: usize,
+        access: PpuReadAccess,
+        interrupt: &mut Interrupt,
+    ) -> OpenBusReadResult {
+        self.shared.read_ppu_pattern(address, access, interrupt)
+    }
+
+    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.shared.write_ppu_pattern(address, value, interrupt);
     }
 }
 

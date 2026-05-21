@@ -6,8 +6,11 @@
 
 use super::CartridgeData;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
+use crate::OpenBusReadResult;
 use crate::cart_device::Cartridge;
+use crate::cpu::interrupt::Interrupt;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
+use crate::ppu_memory_access::PpuReadAccess;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct TxSrom {
@@ -34,6 +37,19 @@ impl Cartridge for TxSrom {
     ) -> Result<(), PersistenceError> {
         self.shared.import_runtime_state(state)
     }
+
+    fn read_ppu_pattern(
+        &mut self,
+        address: usize,
+        access: PpuReadAccess,
+        interrupt: &mut Interrupt,
+    ) -> OpenBusReadResult {
+        self.shared.read_ppu_pattern(address, access, interrupt)
+    }
+
+    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.shared.write_ppu_pattern(address, value, interrupt);
+    }
 }
 
 impl Mapper4Wrapper for TxSrom {
@@ -55,6 +71,7 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, RomFormat};
 
     fn test_data() -> CartridgeData {
@@ -81,6 +98,10 @@ mod tests {
         mapper
     }
 
+    fn flush_chr_update(mapper: &mut TxSrom, interrupt: &mut Interrupt) {
+        Cartridge::read_ppu_pattern(mapper, 0x0000, PpuReadAccess::BackgroundPattern, interrupt);
+    }
+
     #[test]
     fn bank_registers_0_and_1_control_two_kib_nametable_pairs_in_normal_chr_mode() {
         let mut mapper = new_txsrom();
@@ -88,6 +109,7 @@ mod tests {
 
         Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
+        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
@@ -104,6 +126,7 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8000, 0x84, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
+        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
@@ -119,10 +142,52 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8000, 0x82, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
         Mapper::write_register(&mut mapper, 0xA000, 0x01, &mut interrupt);
+        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
             MirrorMode::Custom([1, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn chr_register_write_delays_txsrom_mirroring_until_pattern_low_fetch() {
+        let mut mapper = new_txsrom();
+        let mut interrupt = Interrupt::new();
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([0, 0, 0, 0])
+        );
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([0, 0, 0, 0])
+        );
+
+        Cartridge::read_ppu_pattern(
+            &mut mapper,
+            0x0008,
+            PpuReadAccess::BackgroundPattern,
+            &mut interrupt,
+        );
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([0, 0, 0, 0])
+        );
+
+        Cartridge::read_ppu_pattern(
+            &mut mapper,
+            0x0000,
+            PpuReadAccess::BackgroundPattern,
+            &mut interrupt,
+        );
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([1, 1, 0, 0])
         );
     }
 }
