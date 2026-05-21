@@ -2206,14 +2206,11 @@ dependencies = [
  "glutin",
  "glutin-winit",
  "log",
- "nerust_console",
  "nerust_core",
- "nerust_persistence",
- "nerust_screen_filter",
+ "nerust_gui_runtime",
  "nerust_screen_opengl",
  "nerust_screen_traits",
  "nerust_sound_openal",
- "nerust_timer",
  "raw-window-handle",
  "simple_logger",
  "winit",
@@ -2239,16 +2236,27 @@ dependencies = [
  "gtk4",
  "libc",
  "log",
+ "nerust_core",
+ "nerust_gui_runtime",
+ "nerust_screen_opengl",
+ "nerust_screen_traits",
+ "nerust_sound_openal",
+ "shared_library",
+ "simple_logger",
+]
+
+[[package]]
+name = "nerust_gui_runtime"
+version = "0.1.0"
+dependencies = [
+ "log",
  "nerust_console",
  "nerust_core",
  "nerust_persistence",
  "nerust_screen_filter",
- "nerust_screen_opengl",
  "nerust_screen_traits",
  "nerust_sound_openal",
  "nerust_timer",
- "shared_library",
- "simple_logger",
 ]
 
 [[package]]
@@ -2372,14 +2380,11 @@ dependencies = [
  "gtk",
  "log",
  "muda",
- "nerust_console",
  "nerust_core",
- "nerust_persistence",
- "nerust_screen_filter",
+ "nerust_gui_runtime",
  "nerust_screen_traits",
  "nerust_screen_wgpu",
  "nerust_sound_openal",
- "nerust_timer",
  "nerust_wgpuwrap",
  "pollster",
  "raw-window-handle",

@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_persistence::{StateSlotSummary, format_slot_saved_at};
+use nerust_gui_runtime::{StateSlotSummary, slot_label};
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -25,16 +25,6 @@ pub(crate) enum MenuCommand {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
-}
-
-fn slot_label(slot: &StateSlotSummary, active_slot: Option<u64>) -> String {
-    let saved_at = format_slot_saved_at(slot.saved_at);
-    let active = if active_slot == Some(slot.slot_id) {
-        " (active)"
-    } else {
-        ""
-    };
-    format!("Slot {} — {saved_at}{active}", slot.slot_id)
 }
 
 #[cfg(any(

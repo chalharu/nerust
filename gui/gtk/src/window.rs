@@ -5,7 +5,7 @@ use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
 use nerust_core::controller::standard_controller::Buttons;
-use nerust_persistence::{StateSlotSummary, format_slot_saved_at};
+use nerust_gui_runtime::{StateSlotSummary, slot_label};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -199,8 +199,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = state_load_active_action.connect_activate(move |_, _| {
-                let active_slot_id = result.state().borrow().active_slot_id();
-                if let Some(slot_id) = active_slot_id {
+                if let Some(slot_id) = result.state().borrow().active_slot_id() {
                     result.state().borrow_mut().load_slot(slot_id);
                     result.update_actions();
                 }
@@ -420,8 +419,7 @@ impl WindowExtend for Window {
                 Buttons::empty()
             }
             gdk::Key::F8 if matches!(event, KeyEventState::Release) => {
-                let active_slot_id = self.state().borrow().active_slot_id();
-                if let Some(slot_id) = active_slot_id {
+                if let Some(slot_id) = self.state().borrow().active_slot_id() {
                     self.state().borrow_mut().load_slot(slot_id);
                     self.update_actions();
                 }
@@ -441,16 +439,6 @@ impl WindowExtend for Window {
         self.state().borrow_mut().set_pad1(self.borrow().keys);
         false
     }
-}
-
-fn slot_label(slot: &StateSlotSummary, active_slot: Option<u64>) -> String {
-    let saved_at = format_slot_saved_at(slot.saved_at);
-    let active = if active_slot == Some(slot.slot_id) {
-        " (active)"
-    } else {
-        ""
-    };
-    format!("Slot {} — {saved_at}{active}", slot.slot_id)
 }
 
 fn rebuild_slot_menu(

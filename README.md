@@ -53,6 +53,7 @@ Run frontend and backend validation explicitly when touching OpenGL or UI code:
 
 ```sh
 cargo test -p nerust_screen_opengl --lib
+cargo test -p nerust_gui_runtime --lib
 cargo test -p nerust_glutin --lib
 cargo build -p nerust_glutin --release
 cargo build -p nerust_gtk --release
