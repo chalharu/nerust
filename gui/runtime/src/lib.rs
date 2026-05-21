@@ -385,8 +385,7 @@ impl GuiSession {
                     &sidecars.states_dir,
                     slot_id,
                     &export.machine_state,
-                    export.rom_identity,
-                    export.options,
+                    export.target,
                     preview.as_ref(),
                 ) {
                     Ok(_) => {
@@ -469,15 +468,13 @@ impl GuiSession {
     fn refresh_slots(&mut self) {
         self.slots = if let Some(sidecars) = self.sidecars.as_ref() {
             match self.console.persistence_target() {
-                Ok((rom_identity, options)) => {
-                    match scan_state_slots_for_target(&sidecars.states_dir, rom_identity, options) {
-                        Ok(slots) => slots,
-                        Err(error) => {
-                            log::warn!("slot scan failed: {error}");
-                            Vec::new()
-                        }
+                Ok(target) => match scan_state_slots_for_target(&sidecars.states_dir, target) {
+                    Ok(slots) => slots,
+                    Err(error) => {
+                        log::warn!("slot scan failed: {error}");
+                        Vec::new()
                     }
-                }
+                },
                 Err(error) => {
                     log::warn!("state slot target unavailable: {error}");
                     Vec::new()

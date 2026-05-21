@@ -2140,6 +2140,7 @@ dependencies = [
  "crc",
  "log",
  "nerust_cartridge_data",
+ "nerust_contract",
  "nerust_core",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -2154,6 +2155,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "nerust_core"
 version = "0.1.0"
 dependencies = [
@@ -2161,6 +2170,7 @@ dependencies = [
  "crc",
  "hound",
  "log",
+ "nerust_contract",
  "nerust_screen_traits",
  "nerust_serialize",
  "nerust_sound_traits",
@@ -2241,7 +2251,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "libc",
- "nerust_core",
+ "nerust_contract",
  "png",
  "rmp-serde",
  "serde",
