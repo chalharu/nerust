@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::persistence::{PersistenceError, TimerDaoMessage};
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct TimerDao {
     value: u16,
@@ -43,6 +45,24 @@ impl TimerDao {
 
     pub(crate) fn get_period(&mut self) -> u16 {
         self.period
+    }
+
+    pub(crate) fn export_state_proto(&self) -> TimerDaoMessage {
+        TimerDaoMessage {
+            value: u32::from(self.value),
+            period: u32::from(self.period),
+        }
+    }
+
+    pub(crate) fn import_state_proto(
+        &mut self,
+        payload: &TimerDaoMessage,
+    ) -> Result<(), PersistenceError> {
+        self.value = u16::try_from(payload.value)
+            .map_err(|_| PersistenceError::Validation("APU timer value overflow".into()))?;
+        self.period = u16::try_from(payload.period)
+            .map_err(|_| PersistenceError::Validation("APU timer period overflow".into()))?;
+        Ok(())
     }
 }
 

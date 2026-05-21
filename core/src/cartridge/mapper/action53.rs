@@ -10,6 +10,26 @@ use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence::{
+    CartridgeRuntimeMessage, MAPPER_KIND_ACTION53, PersistenceError, decode_message, encode_message,
+};
+use prost::Message;
+
+#[derive(Clone, PartialEq, Message)]
+struct Action53RuntimeMessage {
+    #[prost(uint32, tag = "1")]
+    selected_register: u32,
+    #[prost(uint32, tag = "2")]
+    chr_bank: u32,
+    #[prost(uint32, tag = "3")]
+    inner_bank: u32,
+    #[prost(uint32, tag = "4")]
+    mode: u32,
+    #[prost(uint32, tag = "5")]
+    outer_bank: u32,
+    #[prost(uint32, tag = "6")]
+    onescreen_select: u32,
+}
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Action53 {
@@ -24,7 +44,58 @@ pub(crate) struct Action53 {
 }
 
 #[typetag::serde]
-impl Cartridge for Action53 {}
+impl Cartridge for Action53 {
+    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
+        Ok(CartridgeRuntimeMessage {
+            mapper_state: Some(self.state.export_state_proto()),
+            mapper_specific_kind: MAPPER_KIND_ACTION53.into(),
+            mapper_specific_body: encode_message(&Action53RuntimeMessage {
+                selected_register: u32::from(self.selected_register),
+                chr_bank: u32::from(self.chr_bank),
+                inner_bank: u32::from(self.inner_bank),
+                mode: u32::from(self.mode),
+                outer_bank: u32::from(self.outer_bank),
+                onescreen_select: u32::from(self.onescreen_select),
+            })?,
+        })
+    }
+
+    fn import_runtime_proto(
+        &mut self,
+        payload: &CartridgeRuntimeMessage,
+    ) -> Result<(), PersistenceError> {
+        let program_rom_len = self.data_ref().prog_rom_len();
+        let character_rom_len = self.data_ref().char_rom_len();
+        self.state.import_state_proto(
+            program_rom_len,
+            character_rom_len,
+            payload.mapper_state.as_ref().ok_or_else(|| {
+                PersistenceError::Validation("missing Action53 mapper state".into())
+            })?,
+        )?;
+        if payload.mapper_specific_kind != MAPPER_KIND_ACTION53 {
+            return Err(PersistenceError::Validation(
+                "unexpected Action53 runtime kind".into(),
+            ));
+        }
+        let runtime = decode_message::<Action53RuntimeMessage>(&payload.mapper_specific_body)?;
+        self.selected_register = u8::try_from(runtime.selected_register).map_err(|_| {
+            PersistenceError::Validation("Action53 selected register overflow".into())
+        })?;
+        self.chr_bank = u8::try_from(runtime.chr_bank)
+            .map_err(|_| PersistenceError::Validation("Action53 CHR bank overflow".into()))?;
+        self.inner_bank = u8::try_from(runtime.inner_bank)
+            .map_err(|_| PersistenceError::Validation("Action53 inner bank overflow".into()))?;
+        self.mode = u8::try_from(runtime.mode)
+            .map_err(|_| PersistenceError::Validation("Action53 mode overflow".into()))?;
+        self.outer_bank = u8::try_from(runtime.outer_bank)
+            .map_err(|_| PersistenceError::Validation("Action53 outer bank overflow".into()))?;
+        self.onescreen_select = u8::try_from(runtime.onescreen_select).map_err(|_| {
+            PersistenceError::Validation("Action53 one-screen select overflow".into())
+        })?;
+        Ok(())
+    }
+}
 
 impl Action53 {
     pub(crate) fn new(data: CartridgeData) -> Self {

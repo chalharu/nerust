@@ -9,6 +9,7 @@ use nerust_glutin::Window;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::path::PathBuf;
 
 fn main() {
     // log initialize
@@ -25,15 +26,13 @@ fn main() {
     let matches = app.get_matches();
 
     // paが指定されていれば値を表示
-    if let Some(mut f) = matches
-        .get_one::<String>("filename")
-        .and_then(|f| File::open(f).ok())
-        .map(BufReader::new)
+    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from)
+        && let Some(mut f) = File::open(&filename).ok().map(BufReader::new)
     {
         let mut buf = Vec::new();
         let _ = f.read_to_end(&mut buf).unwrap();
         let mut window = Window::new();
-        window.load(buf);
+        window.load(Some(filename), buf);
         window.run();
     }
 }

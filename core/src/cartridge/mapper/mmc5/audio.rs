@@ -5,6 +5,8 @@ use crate::apu::length_counter::{
 };
 use crate::apu::timer::{HaveTimerDao, TimerDao};
 use crate::cpu::interrupt::Interrupt;
+use crate::persistence::PersistenceError;
+use prost::Message;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],
@@ -14,6 +16,22 @@ const DUTY_TABLE: [[bool; 8]; 4] = [
 ];
 
 const AUDIO_CLOCK_RATE: u64 = 1_789_773;
+
+#[derive(Clone, PartialEq, Message)]
+pub(super) struct Mmc5PulseMessage {
+    #[prost(uint32, tag = "1")]
+    pub(super) duty_mode: u32,
+    #[prost(uint32, tag = "2")]
+    pub(super) duty_value: u32,
+    #[prost(uint32, tag = "3")]
+    pub(super) period: u32,
+    #[prost(message, optional, tag = "4")]
+    pub(super) envelope: Option<crate::persistence::EnvelopeDaoMessage>,
+    #[prost(message, optional, tag = "5")]
+    pub(super) length_counter: Option<crate::persistence::LengthCounterDaoMessage>,
+    #[prost(message, optional, tag = "6")]
+    pub(super) timer: Option<crate::persistence::TimerDaoMessage>,
+}
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
 pub(super) struct Mmc5Pulse {
@@ -127,6 +145,45 @@ impl Mmc5Pulse {
     fn set_period(&mut self, period: u16) {
         self.period = period;
         self.timer.set_period((period << 1) + 1);
+    }
+
+    pub(super) fn export_state_proto(&self) -> Mmc5PulseMessage {
+        Mmc5PulseMessage {
+            duty_mode: u32::from(self.duty_mode),
+            duty_value: u32::from(self.duty_value),
+            period: u32::from(self.period),
+            envelope: Some(self.envelope.export_state_proto()),
+            length_counter: Some(self.length_counter.export_state_proto()),
+            timer: Some(self.timer.export_state_proto()),
+        }
+    }
+
+    pub(super) fn import_state_proto(
+        &mut self,
+        payload: &Mmc5PulseMessage,
+    ) -> Result<(), PersistenceError> {
+        self.duty_mode = u8::try_from(payload.duty_mode)
+            .map_err(|_| PersistenceError::Validation("MMC5 pulse duty_mode overflow".into()))?;
+        self.duty_value = u8::try_from(payload.duty_value)
+            .map_err(|_| PersistenceError::Validation("MMC5 pulse duty_value overflow".into()))?;
+        self.period = u16::try_from(payload.period)
+            .map_err(|_| PersistenceError::Validation("MMC5 pulse period overflow".into()))?;
+        self.envelope.import_state_proto(
+            payload.envelope.as_ref().ok_or_else(|| {
+                PersistenceError::Validation("missing MMC5 pulse envelope".into())
+            })?,
+        )?;
+        self.length_counter
+            .import_state_proto(payload.length_counter.as_ref().ok_or_else(|| {
+                PersistenceError::Validation("missing MMC5 pulse length counter".into())
+            })?)?;
+        self.timer.import_state_proto(
+            payload
+                .timer
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing MMC5 pulse timer".into()))?,
+        )?;
+        Ok(())
     }
 }
 

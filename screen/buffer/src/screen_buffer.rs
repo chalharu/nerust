@@ -160,6 +160,21 @@ impl ScreenBuffer {
         self.src_buffer_next.fill(BLACK_PALETTE_INDEX);
         self.src_pos = 0;
     }
+
+    pub fn restore_source_buffer(&mut self, source: &[u8]) {
+        assert!(
+            self.publishes_palette_frame(),
+            "source buffer restore is only supported for palette-published screen buffers"
+        );
+        assert_eq!(
+            source.len(),
+            self.src_buffer.len(),
+            "source buffer size mismatch during restore"
+        );
+        self.src_buffer.copy_from_slice(source);
+        self.src_buffer_next.copy_from_slice(source);
+        self.src_pos = 0;
+    }
 }
 
 impl Screen for ScreenBuffer {

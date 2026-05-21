@@ -7,6 +7,9 @@
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
+use crate::persistence::{
+    CartridgeRuntimeMessage, MapperPersistentMemoryMessage, PersistenceError,
+};
 use crate::ppu_memory_access::PpuReadAccess;
 use crate::{MirrorMode, OpenBusReadResult};
 use std::cmp;
@@ -153,6 +156,80 @@ pub(crate) trait Cartridge: Mapper {
 
     fn expansion_audio_inverted(&self) -> bool {
         false
+    }
+
+    fn persistent_mapper_save_lengths(&self) -> (usize, usize) {
+        let data = self.data_ref();
+        let prg_ram_len = if data.save_pram_length() > 0 {
+            data.save_pram_length()
+                .min(self.mapper_state_ref().sram.len())
+        } else if self.mapper_state_ref().has_battery {
+            self.save_len_default()
+                .min(self.mapper_state_ref().sram.len())
+        } else {
+            0
+        };
+        let chr_ram_len = data
+            .save_vram_length()
+            .min(self.mapper_state_ref().vram.len());
+        (prg_ram_len, chr_ram_len)
+    }
+
+    fn has_persistent_mapper_save(&self) -> bool {
+        let (prg_ram_len, chr_ram_len) = self.persistent_mapper_save_lengths();
+        prg_ram_len > 0 || chr_ram_len > 0
+    }
+
+    fn export_mapper_save_proto(&self) -> MapperPersistentMemoryMessage {
+        let (prg_ram_len, chr_ram_len) = self.persistent_mapper_save_lengths();
+        MapperPersistentMemoryMessage {
+            prg_ram: self.mapper_state_ref().sram[..prg_ram_len].to_vec(),
+            chr_ram: self.mapper_state_ref().vram[..chr_ram_len].to_vec(),
+        }
+    }
+
+    fn import_mapper_save_proto(
+        &mut self,
+        payload: &MapperPersistentMemoryMessage,
+    ) -> Result<(), PersistenceError> {
+        let (prg_ram_len, chr_ram_len) = self.persistent_mapper_save_lengths();
+        if prg_ram_len == 0 && chr_ram_len == 0 {
+            return Err(PersistenceError::Validation(
+                "cartridge does not expose persistent mapper save memory".into(),
+            ));
+        }
+        if payload.prg_ram.len() != prg_ram_len || payload.chr_ram.len() != chr_ram_len {
+            return Err(PersistenceError::Validation(
+                "persistent mapper memory length mismatch".into(),
+            ));
+        }
+        self.mapper_state_mut().sram[..prg_ram_len].copy_from_slice(&payload.prg_ram);
+        self.mapper_state_mut().vram[..chr_ram_len].copy_from_slice(&payload.chr_ram);
+        Ok(())
+    }
+
+    fn export_runtime_proto(&self) -> Result<CartridgeRuntimeMessage, PersistenceError> {
+        Ok(CartridgeRuntimeMessage {
+            mapper_state: Some(self.mapper_state_ref().export_state_proto()),
+            mapper_specific_kind: String::new(),
+            mapper_specific_body: Vec::new(),
+        })
+    }
+
+    fn import_runtime_proto(
+        &mut self,
+        payload: &CartridgeRuntimeMessage,
+    ) -> Result<(), PersistenceError> {
+        let program_rom_len = self.data_ref().prog_rom_len();
+        let character_rom_len = self.data_ref().char_rom_len();
+        self.mapper_state_mut().import_state_proto(
+            program_rom_len,
+            character_rom_len,
+            payload
+                .mapper_state
+                .as_ref()
+                .ok_or_else(|| PersistenceError::Validation("missing mapper state".into()))?,
+        )
     }
 
     fn notify_ppu_ctrl(&mut self, _value: u8) {}

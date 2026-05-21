@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::persistence::{LengthCounterDaoMessage, PersistenceError};
+
 const LENGTH_TABLE: [u8; 32] = [
     0x0A, 0xFE, 0x14, 0x02, 0x28, 0x04, 0x50, 0x06, 0xA0, 0x08, 0x3C, 0x0A, 0x0E, 0x0C, 0x1A, 0x0E,
     0x0C, 0x10, 0x18, 0x12, 0x30, 0x14, 0x60, 0x16, 0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E,
@@ -89,6 +91,36 @@ impl LengthCounterDao {
 
     pub(crate) fn get_status(self) -> bool {
         self.value > 0
+    }
+
+    pub(crate) fn export_state_proto(&self) -> LengthCounterDaoMessage {
+        LengthCounterDaoMessage {
+            next_halt: self.next_halt,
+            halt: self.halt,
+            enabled: self.enabled,
+            next_value: u32::from(self.next_value),
+            value: u32::from(self.value),
+            prev_value: u32::from(self.prev_value),
+        }
+    }
+
+    pub(crate) fn import_state_proto(
+        &mut self,
+        payload: &LengthCounterDaoMessage,
+    ) -> Result<(), PersistenceError> {
+        self.next_halt = payload.next_halt;
+        self.halt = payload.halt;
+        self.enabled = payload.enabled;
+        self.next_value = u8::try_from(payload.next_value).map_err(|_| {
+            PersistenceError::Validation("APU length counter next value overflow".into())
+        })?;
+        self.value = u8::try_from(payload.value).map_err(|_| {
+            PersistenceError::Validation("APU length counter value overflow".into())
+        })?;
+        self.prev_value = u8::try_from(payload.prev_value).map_err(|_| {
+            PersistenceError::Validation("APU length counter previous value overflow".into())
+        })?;
+        Ok(())
     }
 }
 

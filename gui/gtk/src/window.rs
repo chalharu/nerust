@@ -2,13 +2,23 @@ use super::glarea::{GLArea, GLAreaExtend};
 use super::{State, TITLE_UPDATE_INTERVAL};
 use gtk::gio;
 use gtk::glib;
+use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
 use nerust_core::controller::standard_controller::Buttons;
+use nerust_persistence::StateSlotSummary;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::rc::Rc;
+use std::time::UNIX_EPOCH;
+
+pub(crate) struct StateMenus {
+    pub(crate) select_active_slot_menu: gio::Menu,
+    pub(crate) save_slot_menu: gio::Menu,
+    pub(crate) load_slot_menu: gio::Menu,
+    pub(crate) delete_slot_menu: gio::Menu,
+}
 
 pub(crate) struct WindowCore {
     application: gtk::Application,
@@ -19,6 +29,17 @@ pub(crate) struct WindowCore {
     close_action: gio::SimpleAction,
     pause_action: gio::SimpleAction,
     resume_action: gio::SimpleAction,
+    state_create_action: gio::SimpleAction,
+    state_save_active_action: gio::SimpleAction,
+    state_load_active_action: gio::SimpleAction,
+    state_select_slot_action: gio::SimpleAction,
+    state_save_slot_action: gio::SimpleAction,
+    state_load_slot_action: gio::SimpleAction,
+    state_delete_slot_action: gio::SimpleAction,
+    select_active_slot_menu: gio::Menu,
+    save_slot_menu: gio::Menu,
+    load_slot_menu: gio::Menu,
+    delete_slot_menu: gio::Menu,
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -29,6 +50,7 @@ pub(crate) trait WindowExtend {
         window: gtk::ApplicationWindow,
         glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
+        state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
@@ -60,10 +82,22 @@ impl WindowExtend for Window {
         window: gtk::ApplicationWindow,
         glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
+        state_menus: StateMenus,
     ) -> Window {
         let close_action = gio::SimpleAction::new("close", None);
         let pause_action = gio::SimpleAction::new("pause", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        let state_create_action = gio::SimpleAction::new("state-create", None);
+        let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
+        let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
+        let state_select_slot_action =
+            gio::SimpleAction::new("state-select-slot", Some(&u64::static_variant_type()));
+        let state_save_slot_action =
+            gio::SimpleAction::new("state-save-slot", Some(&u64::static_variant_type()));
+        let state_load_slot_action =
+            gio::SimpleAction::new("state-load-slot", Some(&u64::static_variant_type()));
+        let state_delete_slot_action =
+            gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
@@ -73,6 +107,17 @@ impl WindowExtend for Window {
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
             resume_action: resume_action.clone(),
+            state_create_action: state_create_action.clone(),
+            state_save_active_action: state_save_active_action.clone(),
+            state_load_active_action: state_load_active_action.clone(),
+            state_select_slot_action: state_select_slot_action.clone(),
+            state_save_slot_action: state_save_slot_action.clone(),
+            state_load_slot_action: state_load_slot_action.clone(),
+            state_delete_slot_action: state_delete_slot_action.clone(),
+            select_active_slot_menu: state_menus.select_active_slot_menu,
+            save_slot_menu: state_menus.save_slot_menu,
+            load_slot_menu: state_menus.load_slot_menu,
+            delete_slot_menu: state_menus.delete_slot_menu,
         }));
         let _ = GLArea::bind(glarea.clone(), result.state());
         {
@@ -136,6 +181,79 @@ impl WindowExtend for Window {
 
         {
             let result = result.clone();
+            let _ = state_create_action.connect_activate(move |_, _| {
+                result.state().borrow_mut().create_slot();
+                result.update_actions();
+            });
+        }
+        window.add_action(&state_create_action);
+
+        {
+            let result = result.clone();
+            let _ = state_save_active_action.connect_activate(move |_, _| {
+                result.state().borrow_mut().save_active_slot_or_new();
+                result.update_actions();
+            });
+        }
+        window.add_action(&state_save_active_action);
+
+        {
+            let result = result.clone();
+            let _ = state_load_active_action.connect_activate(move |_, _| {
+                if let Some(slot_id) = result.state().borrow().active_slot_id() {
+                    result.state().borrow_mut().load_slot(slot_id);
+                    result.update_actions();
+                }
+            });
+        }
+        window.add_action(&state_load_active_action);
+
+        {
+            let result = result.clone();
+            let _ = state_select_slot_action.connect_activate(move |_, parameter| {
+                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
+                    result.state().borrow_mut().select_active_slot(slot_id);
+                    result.update_actions();
+                }
+            });
+        }
+        window.add_action(&state_select_slot_action);
+
+        {
+            let result = result.clone();
+            let _ = state_save_slot_action.connect_activate(move |_, parameter| {
+                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
+                    result.state().borrow_mut().save_slot(slot_id, false);
+                    result.update_actions();
+                }
+            });
+        }
+        window.add_action(&state_save_slot_action);
+
+        {
+            let result = result.clone();
+            let _ = state_load_slot_action.connect_activate(move |_, parameter| {
+                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
+                    result.state().borrow_mut().load_slot(slot_id);
+                    result.update_actions();
+                }
+            });
+        }
+        window.add_action(&state_load_slot_action);
+
+        {
+            let result = result.clone();
+            let _ = state_delete_slot_action.connect_activate(move |_, parameter| {
+                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
+                    result.state().borrow_mut().delete_slot(slot_id);
+                    result.update_actions();
+                }
+            });
+        }
+        window.add_action(&state_delete_slot_action);
+
+        {
+            let result = result.clone();
             let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
                 result.refresh_title();
                 glib::ControlFlow::Continue
@@ -183,13 +301,15 @@ impl WindowExtend for Window {
         if let Some(mut f) = File::open(path).ok().map(BufReader::new) {
             let mut buf = Vec::new();
             let _ = f.read_to_end(&mut buf).unwrap();
-            self.state().borrow_mut().load(buf);
+            self.state()
+                .borrow_mut()
+                .load_from_path(Some(path.to_path_buf()), buf);
             self.update_actions();
         }
     }
 
     fn close(&self) {
-        self.state().borrow_mut().unload();
+        let _ = self.state().borrow_mut().unload();
         self.update_actions();
     }
 
@@ -206,6 +326,7 @@ impl WindowExtend for Window {
     fn realize(&self) {}
 
     fn close_request(&self) -> bool {
+        self.state().borrow_mut().flush_before_exit();
         self.application().quit();
         false
     }
@@ -219,15 +340,57 @@ impl WindowExtend for Window {
     }
 
     fn update_actions(&self) {
+        let state = self.state();
+        let state = state.borrow();
+        self.borrow().close_action.set_enabled(state.loaded());
+        self.borrow().pause_action.set_enabled(state.can_pause());
+        self.borrow().resume_action.set_enabled(state.can_resume());
         self.borrow()
-            .close_action
-            .set_enabled(self.state().borrow().loaded());
+            .state_create_action
+            .set_enabled(state.loaded());
         self.borrow()
-            .pause_action
-            .set_enabled(self.state().borrow().can_pause());
+            .state_save_active_action
+            .set_enabled(state.loaded());
         self.borrow()
-            .resume_action
-            .set_enabled(self.state().borrow().can_resume());
+            .state_load_active_action
+            .set_enabled(state.active_slot_id().is_some());
+        self.borrow()
+            .state_select_slot_action
+            .set_enabled(state.loaded() && !state.slots().is_empty());
+        self.borrow()
+            .state_save_slot_action
+            .set_enabled(state.loaded() && !state.slots().is_empty());
+        self.borrow()
+            .state_load_slot_action
+            .set_enabled(state.loaded() && !state.slots().is_empty());
+        self.borrow()
+            .state_delete_slot_action
+            .set_enabled(state.loaded() && !state.slots().is_empty());
+        rebuild_slot_menu(
+            &self.borrow().select_active_slot_menu,
+            state.slots(),
+            state.active_slot_id(),
+            "win.state-select-slot",
+        );
+        rebuild_slot_menu(
+            &self.borrow().save_slot_menu,
+            state.slots(),
+            state.active_slot_id(),
+            "win.state-save-slot",
+        );
+        rebuild_slot_menu(
+            &self.borrow().load_slot_menu,
+            state.slots(),
+            state.active_slot_id(),
+            "win.state-load-slot",
+        );
+        rebuild_slot_menu(
+            &self.borrow().delete_slot_menu,
+            state.slots(),
+            state.active_slot_id(),
+            "win.state-delete-slot",
+        );
+        drop(state);
         self.refresh_title();
     }
 
@@ -251,6 +414,18 @@ impl WindowExtend for Window {
             gdk::Key::x => Buttons::B,
             gdk::Key::c => Buttons::SELECT,
             gdk::Key::v => Buttons::START,
+            gdk::Key::F5 if matches!(event, KeyEventState::Release) => {
+                self.state().borrow_mut().save_active_slot_or_new();
+                self.update_actions();
+                Buttons::empty()
+            }
+            gdk::Key::F8 if matches!(event, KeyEventState::Release) => {
+                if let Some(slot_id) = self.state().borrow().active_slot_id() {
+                    self.state().borrow_mut().load_slot(slot_id);
+                    self.update_actions();
+                }
+                Buttons::empty()
+            }
             gdk::Key::Up => Buttons::UP,
             gdk::Key::Down => Buttons::DOWN,
             gdk::Key::Left => Buttons::LEFT,
@@ -264,5 +439,33 @@ impl WindowExtend for Window {
         };
         self.state().borrow_mut().set_pad1(self.borrow().keys);
         false
+    }
+}
+
+fn slot_label(slot: &StateSlotSummary, active_slot: Option<u64>) -> String {
+    let seconds = slot
+        .saved_at
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let active = if active_slot == Some(slot.slot_id) {
+        " (active)"
+    } else {
+        ""
+    };
+    format!("Slot {} — {seconds}{active}", slot.slot_id)
+}
+
+fn rebuild_slot_menu(
+    menu: &gio::Menu,
+    slots: &[StateSlotSummary],
+    active_slot: Option<u64>,
+    action: &str,
+) {
+    menu.remove_all();
+    for slot in slots {
+        let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
+        item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
+        menu.append_item(&item);
     }
 }
