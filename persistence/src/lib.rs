@@ -446,8 +446,7 @@ fn slot_matches_target(metadata: &StateArchiveMetadata, target: PersistenceTarge
 }
 
 fn format_local_timestamp(epoch_seconds: i64) -> Option<String> {
-    let time = libc::time_t::try_from(epoch_seconds).ok()?;
-    let tm = localtime(time)?;
+    let tm = localtime(epoch_seconds)?;
     Some(format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         tm.tm_year + 1900,
@@ -460,7 +459,8 @@ fn format_local_timestamp(epoch_seconds: i64) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn localtime(time: libc::time_t) -> Option<tm> {
+fn localtime(epoch_seconds: i64) -> Option<tm> {
+    let time = epoch_seconds;
     let mut result = MaybeUninit::<tm>::uninit();
     unsafe {
         if libc::localtime_r(&time, result.as_mut_ptr()).is_null() {
@@ -472,7 +472,8 @@ fn localtime(time: libc::time_t) -> Option<tm> {
 }
 
 #[cfg(windows)]
-fn localtime(time: libc::time_t) -> Option<tm> {
+fn localtime(epoch_seconds: i64) -> Option<tm> {
+    let time = epoch_seconds;
     let mut result = MaybeUninit::<tm>::uninit();
     unsafe {
         if libc::localtime_s(result.as_mut_ptr(), &time) != 0 {
