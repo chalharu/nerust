@@ -6,7 +6,7 @@
 
 mod runtime;
 
-use nerust_core::CoreOptions;
+use nerust_contract::CoreOptions;
 use runtime::WindowRuntime;
 use std::path::PathBuf;
 

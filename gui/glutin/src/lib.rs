@@ -14,10 +14,11 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_shell::{
-    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
-    NativeShellState, NesConsoleDescriptor, NesInputAdapter, SessionCommand, SessionCommandOutcome,
+use nerust_gui_runtime::{
+    ConsoleSessionFactory, GuiSession, SessionCommand, SessionCommandOutcome,
 };
+use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
+use nerust_gui_shell::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
@@ -411,7 +412,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_shell::ControllerInput;
+    use nerust_gui_session::ControllerInput;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]

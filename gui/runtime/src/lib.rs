@@ -1,5 +1,5 @@
 use nerust_console::{ControllerInputs, PreviewFrame};
-use nerust_core::CoreOptions;
+use nerust_contract::CoreOptions;
 pub use nerust_gui_session::{
     ConsoleError, ControllerInput, ControllerPort, InputState, SessionCommand,
     SessionCommandOutcome, SessionCore, window_title,

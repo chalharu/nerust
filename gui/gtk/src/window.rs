@@ -4,10 +4,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_gui_shell::{
-    ControllerInput, ControllerPort, InputState, SessionCommand, SessionCommandOutcome,
-    StateSlotSummary, slot_label,
-};
+use nerust_gui_runtime::{SessionCommand, SessionCommandOutcome, StateSlotSummary, slot_label};
+use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -524,7 +522,8 @@ fn rebuild_slot_menu(
 #[cfg(test)]
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
-    use nerust_gui_shell::{ControllerInput, SessionCommand, SessionCommandOutcome};
+    use nerust_gui_runtime::{SessionCommand, SessionCommandOutcome};
+    use nerust_gui_session::ControllerInput;
     use std::cell::RefCell;
 
     #[derive(Default)]
