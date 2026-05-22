@@ -7,11 +7,12 @@
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
-use nerust_core::CoreOptions;
-use nerust_gui_shell::{
-    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
-    NativeShellState, NesConsoleDescriptor, NesInputAdapter, SessionCommand, SessionCommandOutcome,
+use nerust_contract::CoreOptions;
+use nerust_gui_runtime::{
+    ConsoleSessionFactory, GuiSession, SessionCommand, SessionCommandOutcome,
 };
+use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
+use nerust_gui_shell::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use nerust_screen_traits::PhysicalSize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -357,7 +358,7 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_shell::ControllerInput;
+    use nerust_gui_session::ControllerInput;
     use tao::keyboard::KeyCode;
 
     #[test]

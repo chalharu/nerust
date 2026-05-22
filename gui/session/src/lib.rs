@@ -1,5 +1,5 @@
 use nerust_console::{Console, ControllerInputs};
-use nerust_core::CoreOptions;
+use nerust_contract::CoreOptions;
 use nerust_screen_traits::PhysicalSize;
 
 pub use nerust_console::ControllerPort;
@@ -39,6 +39,34 @@ pub enum SessionCommand {
     DeleteSlot(u64),
     SelectNextSlot,
     SelectPreviousSlot,
+}
+
+/// A host-facing descriptor of a single controller button.
+///
+/// Button names use the console's canonical naming (e.g. "A", "B" for NES)
+/// rather than generic names, so that UI labels match what users see on the
+/// physical hardware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ButtonDescriptor {
+    /// The canonical button name shown to users (e.g. `"A"`, `"Start"`).
+    pub name: &'static str,
+    /// Short human-readable description of the button's function.
+    pub description: &'static str,
+}
+
+/// A host-facing descriptor of a console's controller configuration.
+///
+/// This type lives in the shared session layer so that any shell or UI layer
+/// can inspect the controller layout without depending on NES-specific
+/// implementation details. NES-specific values are provided by
+/// `NesConsoleDescriptor::controller_descriptor` in the `nerust_gui_shell`
+/// crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerDescriptor {
+    /// Number of supported controller ports.
+    pub port_count: usize,
+    /// Ordered list of buttons present on each controller.
+    pub buttons: Vec<ButtonDescriptor>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +209,7 @@ pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionCore, window_title};
+    use super::{ButtonDescriptor, ControllerDescriptor, SessionCore, window_title};
     use nerust_console::{Console, ConsoleMetrics};
     use nerust_screen_filter::FilterType;
     use nerust_screen_traits::LogicalSize;
@@ -209,6 +237,37 @@ mod tests {
                 height: 240,
             },
         ))
+    }
+
+    #[test]
+    fn button_descriptor_has_expected_fields() {
+        let btn = ButtonDescriptor {
+            name: "A",
+            description: "Face button A",
+        };
+
+        assert_eq!(btn.name, "A");
+        assert_eq!(btn.description, "Face button A");
+    }
+
+    #[test]
+    fn controller_descriptor_holds_button_list() {
+        let desc = ControllerDescriptor {
+            port_count: 2,
+            buttons: vec![
+                ButtonDescriptor {
+                    name: "A",
+                    description: "A",
+                },
+                ButtonDescriptor {
+                    name: "B",
+                    description: "B",
+                },
+            ],
+        };
+
+        assert_eq!(desc.port_count, 2);
+        assert_eq!(desc.buttons.len(), 2);
     }
 
     #[test]

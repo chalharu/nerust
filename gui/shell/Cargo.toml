@@ -9,7 +9,6 @@ rust-version.workspace = true
 [dependencies]
 log.workspace = true
 nerust_console.workspace = true
-nerust_core.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
 nerust_screen_filter.workspace = true

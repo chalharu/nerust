@@ -1,5 +1,36 @@
+//! Shell-facing adapter layer for NES console sessions.
+//!
+//! This crate provides the NES-specific adapter types that connect a generic
+//! [`nerust_gui_runtime::GuiSession`] to a concrete shell binary:
+//!
+//! - [`NesConsoleDescriptor`] — builds a NES [`nerust_gui_runtime::GuiSession`]
+//!   and describes its controller layout.
+//! - [`NesInputAdapter`] — translates host key/button events to NES controller
+//!   inputs and flushes them to the session.
+//! - [`NativeShellState`] — tracks frame-presentation and redraw timing for
+//!   native window shells.
+//!
+//! # Shell × Backend Composition Policy
+//!
+//! Backend selection is fixed at **build-time / binary level**. Each shell
+//! binary links against exactly one backend crate (`nerust_backend_opengl` or
+//! `nerust_backend_wgpu`) and there is **no runtime mechanism for switching
+//! backends** while the application is running.
+//!
+//! To add a new rendering backend, create a new binary target crate that
+//! composes `nerust_gui_shell` with the new backend. Do not add runtime
+//! dispatch or feature-flag backend selection to this crate.
+//!
+//! Current shipped combinations:
+//! - `nerust_gtk`    → `nerust_backend_opengl` (GTK 3 + OpenGL 3.3)
+//! - `nerust_glutin` → `nerust_backend_opengl` (winit + glutin + OpenGL 3.3)
+//! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
+
 use nerust_console::{Console, ControllerInputs};
-use nerust_gui_runtime::SessionCore;
+use nerust_gui_runtime::{ConsoleSessionFactory, GuiSession, SessionCore};
+use nerust_gui_session::{
+    ButtonDescriptor, ControllerDescriptor, ControllerInput, ControllerPort, InputState,
+};
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::LogicalSize;
 use nerust_sound_openal::OpenAl;
@@ -70,6 +101,51 @@ impl NesConsoleDescriptor {
     pub fn build_console(self) -> Console {
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
         Console::new_gpu(speaker, self.filter_type, self.source_logical_size)
+    }
+
+    /// Returns the controller descriptor for the NES.
+    ///
+    /// Button names use the canonical NES names: **A** and **B** (not
+    /// "Primary"/"Secondary"), matching the physical labels and the key
+    /// mappings in [`NesInputAdapter`].
+    pub fn controller_descriptor(&self) -> ControllerDescriptor {
+        ControllerDescriptor {
+            port_count: 2,
+            buttons: vec![
+                ButtonDescriptor {
+                    name: "A",
+                    description: "Face button A",
+                },
+                ButtonDescriptor {
+                    name: "B",
+                    description: "Face button B",
+                },
+                ButtonDescriptor {
+                    name: "Select",
+                    description: "Select button",
+                },
+                ButtonDescriptor {
+                    name: "Start",
+                    description: "Start button",
+                },
+                ButtonDescriptor {
+                    name: "Up",
+                    description: "D-pad Up",
+                },
+                ButtonDescriptor {
+                    name: "Down",
+                    description: "D-pad Down",
+                },
+                ButtonDescriptor {
+                    name: "Left",
+                    description: "D-pad Left",
+                },
+                ButtonDescriptor {
+                    name: "Right",
+                    description: "D-pad Right",
+                },
+            ],
+        }
     }
 }
 
@@ -152,16 +228,9 @@ impl NesInputAdapter {
     }
 }
 
-pub use nerust_gui_runtime::{
-    ConsoleSessionFactory, GuiSession, SessionCommand, SessionCommandOutcome, StateSlotSummary,
-    VideoPresentation, slot_label, window_title,
-};
-pub use nerust_gui_session::{ConsoleMetrics, ControllerInput, ControllerPort, InputState};
-pub use nerust_screen_filter::ConsoleVideoAssets;
-
 #[cfg(test)]
 mod tests {
-    use super::{NativeShellState, NesInputAdapter};
+    use super::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
     use nerust_console::ControllerInputs;
     use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
     use std::time::Instant;
@@ -193,6 +262,25 @@ mod tests {
             InputState::Released,
         );
         assert_eq!(adapter.held[0], ControllerInputs::RIGHT);
+    }
+
+    #[test]
+    fn nes_descriptor_has_canonical_ab_button_names() {
+        let descriptor = NesConsoleDescriptor::default().controller_descriptor();
+        let names: Vec<&str> = descriptor.buttons.iter().map(|b| b.name).collect();
+
+        assert!(names.contains(&"A"), "expected A button in NES descriptor");
+        assert!(names.contains(&"B"), "expected B button in NES descriptor");
+        assert!(
+            !names.contains(&"Primary"),
+            "Primary is not a NES button name"
+        );
+        assert!(
+            !names.contains(&"Secondary"),
+            "Secondary is not a NES button name"
+        );
+        assert_eq!(descriptor.port_count, 2);
+        assert_eq!(descriptor.buttons.len(), 8);
     }
 
     #[test]
