@@ -5,10 +5,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use nerust_rom_test::{
-    CaseOutcome, ValidationOptions, default_output_root, load_default_manifest, load_manifest,
-    validate_case, write_html_report,
-};
+use nerust_rom_test::manifest::{RomManifest, load_default_manifest, load_manifest};
+use nerust_rom_test::report::{default_output_root, write_html_report};
+use nerust_rom_test::results::{CaseOutcome, ValidationOptions};
+use nerust_rom_test::runner::validate_case;
 use std::path::PathBuf;
 
 pub fn main() {
@@ -103,7 +103,7 @@ fn run() -> Result<(), String> {
 }
 
 fn run_command(
-    manifest: &nerust_rom_test::RomManifest,
+    manifest: &RomManifest,
     case_ids: &[String],
     perf_only: bool,
     options: ValidationOptions,

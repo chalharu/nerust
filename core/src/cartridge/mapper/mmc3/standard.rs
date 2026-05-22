@@ -4,12 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
 use super::shared::{
     IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
     PrgRamModel,
 };
-use crate::cart_device::Cartridge;
+use super::{Cartridge, CartridgeData};
 use crate::mapper_state::MapperState;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
