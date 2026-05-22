@@ -1,8 +1,9 @@
+pub use nerust_console::ConsoleMetrics;
 use nerust_console::{ControllerInputs, PreviewFrame};
 use nerust_contract::CoreOptions;
 pub use nerust_gui_session::{
-    ConsoleError, ControllerInput, ControllerPort, InputState, SessionCommand,
-    SessionCommandOutcome, SessionCore, window_title,
+    ButtonDescriptor, ConsoleError, ControllerDescriptor, ControllerInput, ControllerPort,
+    InputState, SessionCommand, SessionCommandOutcome, SessionCore, window_title,
 };
 pub use nerust_persistence::StateSlotSummary;
 use nerust_persistence::{
@@ -12,7 +13,7 @@ use nerust_persistence::{
     write_state_slot,
 };
 pub use nerust_screen_filter::ConsoleVideoAssets;
-pub use nerust_screen_traits::VideoPresentation;
+pub use nerust_screen_traits::{PhysicalSize, VideoPresentation};
 use std::path::PathBuf;
 
 pub trait ConsoleSessionFactory {
@@ -55,11 +56,11 @@ impl GuiSession {
         self.core.with_frame_buffer(f)
     }
 
-    pub fn physical_size(&self) -> nerust_screen_traits::PhysicalSize {
+    pub fn physical_size(&self) -> PhysicalSize {
         self.core.physical_size()
     }
 
-    pub fn metrics(&self) -> nerust_gui_session::ConsoleMetrics {
+    pub fn metrics(&self) -> ConsoleMetrics {
         self.core.metrics()
     }
 
