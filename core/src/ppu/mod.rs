@@ -68,6 +68,25 @@ mod tests {
         cartridge::try_from(cartridge_data).expect("cartridge should construct")
     }
 
+    fn nrom_cartridge_with_chr_rom(char_rom: Vec<u8>) -> Box<dyn Cartridge> {
+        let cartridge_data = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x8000],
+            char_rom,
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 0,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .expect("test cartridge data should be valid");
+        cartridge::try_from(cartridge_data).expect("cartridge should construct")
+    }
+
     fn mmc2_cartridge() -> Box<dyn Cartridge> {
         let character_rom = (0u8..32)
             .flat_map(|bank| std::iter::repeat_n(bank, 0x1000))
@@ -147,6 +166,50 @@ mod tests {
         let _ = ppu.read_data(cartridge.as_mut(), &mut interrupt);
 
         assert_eq!(cartridge.read(0x0000).data, 0x03);
+    }
+
+    #[test]
+    fn first_empty_sprite_slot_reads_sprite_63_y_then_ff_bytes() {
+        let mut ppu = Core::new();
+        ppu.render_executing = true;
+        ppu.scan_line = 42;
+        ppu.sprite_count = 0;
+        ppu.primary_oam[252] = 0x24;
+
+        ppu.cycle = 257;
+        assert_eq!(ppu.read_oam(), 0x24);
+        for cycle in 258..=264 {
+            ppu.cycle = cycle;
+            assert_eq!(ppu.read_oam(), 0xFF);
+        }
+        for cycle in 265..=272 {
+            ppu.cycle = cycle;
+            assert_eq!(ppu.read_oam(), 0xFF);
+        }
+    }
+
+    #[test]
+    fn first_empty_sprite_slot_uses_sprite_63_y_for_pattern_fetch() {
+        let mut ppu = Core::new();
+        let mut character_rom = vec![0; 0x2000];
+        character_rom[0x1FF7] = 0x12;
+        character_rom[0x1FFF] = 0x34;
+        let mut cartridge = nrom_cartridge_with_chr_rom(character_rom);
+        let mut interrupt = Interrupt::new();
+
+        ppu.control.sprite_size = true;
+        ppu.scan_line = 1;
+        ppu.sprite_count = 0;
+        ppu.primary_oam[252] = 0;
+
+        ppu.fetch_sprite_low_tile_byte(cartridge.as_mut(), &mut interrupt);
+        assert_eq!(ppu.sprite_index, 1);
+        assert_eq!(ppu.sprites[0].tile_addr, 0x1FF7);
+        assert_eq!(ppu.sprites[0].low_byte, 0x12);
+
+        ppu.fetch_sprite_high_tile_byte(cartridge.as_mut(), &mut interrupt);
+        assert_eq!(ppu.sprite_index, 1);
+        assert_eq!(ppu.sprites[0].high_byte, 0x34);
     }
 }
 
@@ -595,9 +658,10 @@ impl Core {
     fn read_oam(&mut self) -> u8 {
         if self.scan_line <= 240 && self.render_executing {
             if self.cycle >= 257 && self.cycle <= 320 {
-                self.secondary_oam_address = (((self.cycle - 257) >> 1) as u8 & 0xFC)
-                    + cmp::min((self.cycle - 257) as u8 & 7, 3);
-                self.oam_read_buffer = self.secondary_oam[usize::from(self.secondary_oam_address)];
+                let sprite_slot = ((self.cycle - 257) >> 3) as u8;
+                let byte_index = cmp::min((self.cycle - 257) as u8 & 7, 3);
+                self.secondary_oam_address = (sprite_slot << 2) + byte_index;
+                self.oam_read_buffer = self.sprite_fetch_byte(sprite_slot, byte_index);
             }
             self.oam_read_buffer
         } else {
@@ -994,20 +1058,46 @@ impl Core {
     }
 
     #[inline]
-    fn fetch_sprite_pattern(&mut self, cartridge: &mut dyn Cartridge, interrupt: &mut Interrupt) {
-        let position_y = u16::from(self.secondary_oam[usize::from(self.sprite_index) << 2]);
-        let tile = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 1];
-        let attribute = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 2];
-        let position_x = self.secondary_oam[(usize::from(self.sprite_index) << 2) + 3];
+    fn sprite_fetch_byte(&self, slot: u8, byte_index: u8) -> u8 {
+        if slot < self.sprite_count {
+            self.secondary_oam[(usize::from(slot) << 2) + usize::from(byte_index)]
+        } else if slot == self.sprite_count && slot < 8 {
+            if byte_index == 0 {
+                self.primary_oam[252]
+            } else {
+                0xFF
+            }
+        } else {
+            0xFF
+        }
+    }
 
-        let tile_address = if self.sprite_index < self.sprite_count
-            && self.scan_line > position_y
-            && self.scan_line <= position_y + (if self.control.sprite_size { 16 } else { 8 })
+    #[inline]
+    fn sprite_fetch_values(&self, slot: u8) -> (u8, u8, u8, u8) {
+        (
+            self.sprite_fetch_byte(slot, 0),
+            self.sprite_fetch_byte(slot, 1),
+            self.sprite_fetch_byte(slot, 2),
+            self.sprite_fetch_byte(slot, 3),
+        )
+    }
+
+    #[inline]
+    fn sprite_pattern_fetch_setup(&self, slot: u8) -> (u8, u8, usize, usize) {
+        let (position_y, tile, attribute, position_x) = self.sprite_fetch_values(slot);
+        let sprite_height = if self.control.sprite_size {
+            16_u16
+        } else {
+            8_u16
+        };
+        let position_y_u16 = u16::from(position_y);
+        let tile_address = if self.scan_line > position_y_u16
+            && self.scan_line <= position_y_u16 + sprite_height
         {
             let line_offset = if attribute & 0x80 != 0 {
-                (if self.control.sprite_size { 16 } else { 8 }) - (self.scan_line - position_y)
+                sprite_height - (self.scan_line - position_y_u16)
             } else {
-                self.scan_line - position_y - 1
+                self.scan_line - position_y_u16 - 1
             };
             self.tile_address(tile, line_offset)
         } else {
@@ -1020,34 +1110,53 @@ impl Core {
             self.tile_address(0xFF, 0)
         };
 
+        (attribute, position_x, tile_address, read_address)
+    }
+
+    #[inline]
+    fn fetch_sprite_low_tile_byte(
+        &mut self,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+    ) {
+        let slot = self.sprite_index;
+        let (attribute, position_x, tile_address, read_address) =
+            self.sprite_pattern_fetch_setup(slot);
         let low_byte = self.read_vram(
             read_address,
             cartridge,
             interrupt,
             PpuReadAccess::SpritePattern,
         );
+        let info = &mut self.sprites[usize::from(slot)];
+        info.priority = attribute & 0x20 != 0;
+        info.horizontal_mirror = attribute & 0x40 != 0;
+        info.palette_offset = ((attribute & 0x03) << 2) | 0x10;
+        info.low_byte = low_byte;
+        info.tile_addr = tile_address as u16;
+        info.position = position_x;
+
+        self.sprite_index += 1;
+    }
+
+    #[inline]
+    fn fetch_sprite_high_tile_byte(
+        &mut self,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+    ) {
+        let slot = self.sprite_index.saturating_sub(1);
         let high_byte = self.read_vram(
-            read_address + 8,
+            usize::from(self.sprites[usize::from(slot)].tile_addr) + 8,
             cartridge,
             interrupt,
             PpuReadAccess::SpritePattern,
         );
+        self.sprites[usize::from(slot)].high_byte = high_byte;
 
-        if (self.sprite_index < self.sprite_count) && position_y < 240 {
-            let info = &mut self.sprites[usize::from(self.sprite_index)];
-            info.priority = attribute & 0x20 != 0;
-            info.horizontal_mirror = attribute & 0x40 != 0;
-            info.palette_offset = ((attribute & 0x03) << 2) | 0x10;
-            info.low_byte = low_byte;
-            info.high_byte = high_byte;
-            info.tile_addr = tile_address as u16;
-            info.position = position_x;
-            if self.scan_line > 0 {
-                self.has_next_sprite = true;
-            }
+        if slot < self.sprite_count && self.scan_line > 0 {
+            self.has_next_sprite = true;
         }
-
-        self.sprite_index += 1;
     }
 
     #[inline]
@@ -1339,7 +1448,8 @@ impl Core {
                                         PpuReadAccess::BackgroundAttribute,
                                     );
                                 }
-                                4 => self.fetch_sprite_pattern(cartridge, interrupt),
+                                4 => self.fetch_sprite_low_tile_byte(cartridge, interrupt),
+                                6 => self.fetch_sprite_high_tile_byte(cartridge, interrupt),
                                 _ => (),
                             }
                             if self.scan_line == 0 && self.cycle >= 280 && self.cycle <= 304 {
