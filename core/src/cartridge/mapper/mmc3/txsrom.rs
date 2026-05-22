@@ -71,6 +71,7 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::persistence::{decode_payload, encode_payload};
     use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, RomFormat};
 
@@ -98,10 +99,6 @@ mod tests {
         mapper
     }
 
-    fn flush_chr_update(mapper: &mut TxSrom, interrupt: &mut Interrupt) {
-        Cartridge::read_ppu_pattern(mapper, 0x0000, PpuReadAccess::BackgroundPattern, interrupt);
-    }
-
     #[test]
     fn bank_registers_0_and_1_control_two_kib_nametable_pairs_in_normal_chr_mode() {
         let mut mapper = new_txsrom();
@@ -109,7 +106,6 @@ mod tests {
 
         Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
-        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
@@ -126,7 +122,6 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8000, 0x84, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
-        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
@@ -142,7 +137,6 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8000, 0x82, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
         Mapper::write_register(&mut mapper, 0xA000, 0x01, &mut interrupt);
-        flush_chr_update(&mut mapper, &mut interrupt);
 
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
@@ -151,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn chr_register_write_delays_txsrom_mirroring_until_pattern_low_fetch() {
+    fn chr_register_write_updates_txsrom_mirroring_immediately() {
         let mut mapper = new_txsrom();
         let mut interrupt = Interrupt::new();
 
@@ -161,11 +155,13 @@ mod tests {
         );
 
         Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
-        Mapper::write_register(&mut mapper, 0x8001, 0x80, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x82, &mut interrupt);
 
+        assert!(mapper.shared.pending_chr_update());
+        assert!(!mapper.shared.chr_mapping_in_sync());
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
-            MirrorMode::Custom([0, 0, 0, 0])
+            MirrorMode::Custom([1, 1, 0, 0])
         );
 
         Cartridge::read_ppu_pattern(
@@ -176,8 +172,9 @@ mod tests {
         );
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
-            MirrorMode::Custom([0, 0, 0, 0])
+            MirrorMode::Custom([1, 1, 0, 0])
         );
+        assert!(mapper.shared.pending_chr_update());
 
         Cartridge::read_ppu_pattern(
             &mut mapper,
@@ -189,5 +186,26 @@ mod tests {
             Mapper::get_mirror_mode(&mapper),
             MirrorMode::Custom([1, 1, 0, 0])
         );
+        assert!(!mapper.shared.pending_chr_update());
+        assert!(mapper.shared.chr_mapping_in_sync());
+    }
+
+    #[test]
+    fn current_payload_deserialization_preserves_txsrom_mirroring() {
+        let mut mapper = new_txsrom();
+        let mut interrupt = Interrupt::new();
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x82, &mut interrupt);
+
+        let encoded = encode_payload(&mapper).expect("mapper payload should encode");
+        let decoded: TxSrom = decode_payload(&encoded).expect("mapper payload should decode");
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&decoded),
+            MirrorMode::Custom([1, 1, 0, 0])
+        );
+        assert!(decoded.shared.pending_chr_update());
+        assert!(!decoded.shared.chr_mapping_in_sync());
     }
 }

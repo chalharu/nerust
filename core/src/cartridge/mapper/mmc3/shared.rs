@@ -255,6 +255,9 @@ impl<'de> serde::Deserialize<'de> for Mapper4Shared {
             pending_chr_update: false,
         };
         shared.pending_chr_update = !shared.character_mapping_matches_registers();
+        if shared.config.mirroring_model == MirroringModel::TxSrom {
+            shared.update_mirroring_mode();
+        }
         Ok(shared)
     }
 }
@@ -302,6 +305,9 @@ impl Mapper4Shared {
             pending_chr_update: false,
         };
         shared.pending_chr_update = !shared.character_mapping_matches_registers();
+        if shared.config.mirroring_model == MirroringModel::TxSrom {
+            shared.update_mirroring_mode();
+        }
         shared
     }
 
@@ -347,6 +353,9 @@ impl Mapper4Shared {
         self.program_ram_protect = runtime.program_ram_protect;
         self.irq = runtime.irq;
         self.pending_chr_update = !self.character_mapping_matches_registers();
+        if self.config.mirroring_model == MirroringModel::TxSrom {
+            self.update_mirroring_mode();
+        }
         Ok(())
     }
 
@@ -460,6 +469,10 @@ impl Mapper4Shared {
         }
         if (previous_bank_select ^ self.bank_select) & 0x80 != 0 {
             self.pending_chr_update = true;
+            if self.config.mirroring_model == MirroringModel::TxSrom {
+                // TxSROM nametable banking follows the active CHR register set immediately.
+                self.update_mirroring_mode();
+            }
         }
     }
 
@@ -468,6 +481,9 @@ impl Mapper4Shared {
         self.bank_data[selecter] = if selecter <= 1 { value & !0x01 } else { value };
         if selecter <= 5 {
             self.pending_chr_update = true;
+            if self.txsrom_write_affects_nametable(selecter) {
+                self.update_mirroring_mode();
+            }
         } else {
             self.update_program_offsets();
         }
@@ -492,11 +508,7 @@ impl Mapper4Shared {
                 }
             }
             MirroringModel::TxSrom => {
-                let nametable_registers = if (self.bank_select & 0x80) == 0 {
-                    [0, 0, 1, 1]
-                } else {
-                    [2, 3, 4, 5]
-                };
+                let nametable_registers = self.txsrom_nametable_registers();
                 self.set_mirror_mode(MirrorMode::Custom(
                     nametable_registers.map(|register| (self.bank_data[register] >> 7) & 0x01),
                 ));
@@ -576,12 +588,22 @@ impl Mapper4Shared {
         }
     }
 
+    fn txsrom_nametable_registers(&self) -> [usize; 4] {
+        if (self.bank_select & 0x80) == 0 {
+            [0, 0, 1, 1]
+        } else {
+            [2, 3, 4, 5]
+        }
+    }
+
+    fn txsrom_write_affects_nametable(&self, selecter: usize) -> bool {
+        self.config.mirroring_model == MirroringModel::TxSrom
+            && self.txsrom_nametable_registers().contains(&selecter)
+    }
+
     fn apply_pending_chr_update(&mut self) {
         if self.pending_chr_update {
             self.update_character_offsets();
-            if self.config.mirroring_model == MirroringModel::TxSrom {
-                self.update_mirroring_mode();
-            }
             self.pending_chr_update = false;
         }
     }
@@ -706,6 +728,11 @@ impl Mapper4Shared {
     #[cfg(test)]
     pub(super) fn pending_chr_update(&self) -> bool {
         self.pending_chr_update
+    }
+
+    #[cfg(test)]
+    pub(super) fn chr_mapping_in_sync(&self) -> bool {
+        self.character_mapping_matches_registers()
     }
 }
 
