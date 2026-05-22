@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use nerust_backend_wgpu::{RenderSurfaceTarget, SurfaceSize};
 use nerust_screen_traits::PhysicalSize;
-use nerust_wgpuwrap::SurfaceSize;
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(
     target_os = "linux",
@@ -91,9 +91,10 @@ impl SurfaceTarget {
     }
 }
 
-// Safety: `SurfaceTarget` owns the platform objects backing the raw handles it returns,
-// and those objects remain alive for the lifetime of the corresponding `RenderSurface`.
-unsafe impl nerust_wgpuwrap::SurfaceTargetSource for SurfaceTarget {
+// Safety: `SurfaceTarget` owns the platform objects backing the raw handles it
+// returns, and those objects remain alive for the lifetime of the corresponding
+// render surface built by the backend.
+unsafe impl RenderSurfaceTarget for SurfaceTarget {
     fn prepare(&self) {
         #[cfg(any(
             target_os = "linux",

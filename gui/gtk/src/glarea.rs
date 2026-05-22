@@ -1,7 +1,7 @@
 use super::State;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_screen_opengl::GlView;
+use nerust_backend_opengl::GlBackend;
 use shared_library::dynamic_library::DynamicLibrary;
 use std::cell::RefCell;
 use std::ptr;
@@ -70,7 +70,7 @@ impl GLAreaExtend for GLArea {
     }
 
     fn realize(&self) {
-        let mut view = GlView::new();
+        let mut view = GlBackend::new();
         view.use_vao(true);
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
@@ -86,7 +86,7 @@ impl GLAreaExtend for GLArea {
                 }
             }
         });
-        GlView::load_with(epoxy::get_proc_addr);
+        GlBackend::load_with(epoxy::get_proc_addr);
         {
             let state = self.state();
             let mut state = state.borrow_mut();
@@ -151,7 +151,7 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     if let Ok(state) = state.try_borrow()
         && let Some(ref view) = state.view
     {
-        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
+        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer));
     }
     unsafe {
         epoxy::Flush();

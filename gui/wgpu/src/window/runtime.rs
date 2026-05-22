@@ -6,13 +6,12 @@
 
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
 use crate::surface::SurfaceTarget;
+use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
 use nerust_core::CoreOptions;
 use nerust_gui_runtime::{
     ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
 };
 use nerust_screen_traits::PhysicalSize;
-use nerust_screen_wgpu::{RenderOutcome, Renderer};
-use nerust_wgpuwrap::{RenderSurface, SurfaceSize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,9 +66,7 @@ fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     window: Option<Arc<TaoWindow>>,
-    render_surface: Option<RenderSurface<SurfaceTarget>>,
-    renderer: Option<Renderer>,
-    last_render_error: Option<String>,
+    backend: Option<WgpuBackend<SurfaceTarget>>,
     session: GuiSession,
     app_menu: AppMenu,
     last_title_update: Instant,
@@ -93,9 +90,7 @@ impl WindowRuntime {
         Self {
             event_loop: Some(event_loop),
             window: None,
-            render_surface: None,
-            renderer: None,
-            last_render_error: None,
+            backend: None,
             session: GuiSession::default(),
             app_menu,
             last_title_update: Instant::now(),
@@ -202,17 +197,16 @@ impl WindowRuntime {
         let surface_target = SurfaceTarget::new(window.clone(), self.session.physical_size());
         self.app_menu.init_for_window(&window);
         self.sync_menu_state();
-        let render_surface = RenderSurface::new(surface_target).unwrap();
-        let renderer = pollster::block_on(Renderer::new(
-            &render_surface,
-            render_surface.surface_size(window_surface_size(window.inner_size())),
+        let initial_size = window_surface_size(window.inner_size());
+        let backend = WgpuBackend::new(
+            surface_target,
+            initial_size,
             self.session.presentation(),
             self.session.required_nes_video_assets(),
-        ))
+        )
         .unwrap();
         self.window = Some(window);
-        self.render_surface = Some(render_surface);
-        self.renderer = Some(renderer);
+        self.backend = Some(backend);
         self.needs_redraw = true;
         self.refresh_window_title();
     }
@@ -278,12 +272,9 @@ impl WindowRuntime {
         else {
             return;
         };
-        let (Some(renderer), Some(render_surface)) =
-            (self.renderer.as_mut(), self.render_surface.as_mut())
-        else {
-            return;
-        };
-        renderer.reconfigure_surface(render_surface, render_surface.surface_size(window_size));
+        if let Some(backend) = self.backend.as_mut() {
+            backend.reconfigure(window_size);
+        }
     }
 
     fn on_update(&mut self) {
@@ -294,52 +285,23 @@ impl WindowRuntime {
         else {
             return;
         };
-        let (Some(renderer), Some(render_surface)) =
-            (self.renderer.as_mut(), self.render_surface.as_mut())
-        else {
+        let Some(backend) = self.backend.as_mut() else {
             return;
         };
-        let surface_size = render_surface.surface_size(window_size);
-        let render_result = self.session.with_frame_buffer(|frame_buffer| {
-            renderer.render(render_surface, surface_size, frame_buffer)
-        });
-
-        match render_result {
-            Ok(RenderOutcome::Presented) => {
-                self.last_render_error = None;
+        let result = self
+            .session
+            .with_frame_buffer(|frame_buffer| backend.render(frame_buffer, window_size));
+        match result {
+            RenderResult::Presented => {
                 self.last_presented_frame_counter = self.session.metrics().frame_counter;
                 self.needs_redraw = false;
                 self.maybe_refresh_window_title(Instant::now());
             }
-            Ok(RenderOutcome::Skipped) => {
+            RenderResult::Skipped => {
                 self.needs_redraw = true;
             }
-            Ok(RenderOutcome::RecreateSurface) => {
+            RenderResult::Error => {
                 self.needs_redraw = true;
-                match render_surface.recreate_surface() {
-                    Ok(()) => {
-                        self.last_render_error = None;
-                        renderer.reconfigure_surface(
-                            render_surface,
-                            render_surface.surface_size(window_size),
-                        );
-                    }
-                    Err(err) => {
-                        let should_log = self.last_render_error.as_deref() != Some(err.as_str());
-                        self.last_render_error = Some(err.clone());
-                        if should_log {
-                            log::error!("{err}");
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                let should_log = self.last_render_error.as_deref() != Some(err.as_str());
-                self.last_render_error = Some(err.clone());
-                self.needs_redraw = true;
-                if should_log {
-                    log::error!("{err}");
-                }
             }
         }
     }
@@ -388,8 +350,7 @@ impl WindowRuntime {
 
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
-        self.renderer = None;
-        self.render_surface = None;
+        self.backend = None;
         self.window = None;
     }
 }
