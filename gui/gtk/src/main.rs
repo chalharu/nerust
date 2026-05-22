@@ -33,7 +33,7 @@ impl State {
     pub(crate) fn new() -> Self {
         Self {
             view: None,
-            session: NesConsoleDescriptor::default().build_session(),
+            session: NesConsoleDescriptor.build_session(),
             input: NesInputAdapter::new(),
         }
     }

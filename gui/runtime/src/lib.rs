@@ -523,8 +523,7 @@ mod tests {
     };
     use nerust_console::{Console, ConsoleMetrics};
     use nerust_persistence::StateSlotSummary;
-    use nerust_screen_filter::FilterType;
-    use nerust_screen_traits::LogicalSize;
+    use nerust_screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
@@ -543,13 +542,9 @@ mod tests {
     }
 
     fn test_session() -> GuiSession {
-        GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
+        GuiSession::from_session_core(SessionCore::from_console(Console::new(
             TestSpeaker,
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
+            ScreenBuffer::new_nes_gpu_default(),
         )))
     }
 
