@@ -110,7 +110,7 @@ pub(crate) trait Cartridge: Mapper {
 
     fn write_ram(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         if self.register_addr(address) {
-            self.write_register(
+            self.schedule_register_write(
                 address,
                 if self.bus_conflicts() {
                     Mapper::read_ram(self, address - 0x6000).unwrap_or(0) & value
@@ -126,7 +126,7 @@ pub(crate) trait Cartridge: Mapper {
 
     fn write_program(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         if self.register_addr(address) {
-            self.write_register(
+            self.schedule_register_write(
                 address,
                 if self.bus_conflicts() {
                     self.read_program(address - 0x8000).data & value

@@ -76,10 +76,14 @@ mod tests {
     use crate::{CartridgeDataParts, RomFormat};
 
     fn test_data() -> CartridgeData {
+        let mut char_rom = Vec::with_capacity(0x2000);
+        for bank in 0u8..8 {
+            char_rom.extend(std::iter::repeat_n(bank, 0x0400));
+        }
         CartridgeData::new(CartridgeDataParts {
             format: RomFormat::Nes20,
             prog_rom: vec![0; 0x8000],
-            char_rom: vec![0; 0x2000],
+            char_rom,
             pram_length: 0,
             save_pram_length: 0,
             vram_length: 0,
@@ -145,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn chr_register_write_updates_txsrom_mirroring_immediately_while_delaying_chr_bank_swap() {
+    fn chr_register_write_updates_txsrom_mirroring_and_chr_bank_immediately() {
         let mut mapper = new_txsrom();
         let mut interrupt = Interrupt::new();
 
@@ -157,63 +161,48 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x82, &mut interrupt);
 
-        assert!(mapper.shared.pending_chr_update());
-        assert!(!mapper.shared.chr_mapping_in_sync());
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
             MirrorMode::Custom([1, 1, 0, 0])
         );
-
-        Cartridge::read_ppu_pattern(
-            &mut mapper,
-            0x0000,
-            PpuReadAccess::BackgroundPattern,
-            &mut interrupt,
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            2
         );
         assert_eq!(
-            Mapper::get_mirror_mode(&mapper),
-            MirrorMode::Custom([1, 1, 0, 0])
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0400,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            3
         );
-        assert!(mapper.shared.pending_chr_update());
-
-        Cartridge::read_ppu_pattern(
-            &mut mapper,
-            0x0008,
-            PpuReadAccess::BackgroundPattern,
-            &mut interrupt,
-        );
-        assert_eq!(
-            Mapper::get_mirror_mode(&mapper),
-            MirrorMode::Custom([1, 1, 0, 0])
-        );
-        assert!(mapper.shared.pending_chr_update());
-
-        Cartridge::read_ppu_pattern(
-            &mut mapper,
-            0x0000,
-            PpuReadAccess::BackgroundPattern,
-            &mut interrupt,
-        );
-        assert_eq!(
-            Mapper::get_mirror_mode(&mapper),
-            MirrorMode::Custom([1, 1, 0, 0])
-        );
-        assert!(!mapper.shared.pending_chr_update());
-        assert!(mapper.shared.chr_mapping_in_sync());
     }
 
     #[test]
-    fn current_payload_deserialization_preserves_txsrom_mirroring_and_chr_delay_phase() {
+    fn current_payload_deserialization_preserves_txsrom_mirroring_and_immediate_chr_mapping() {
         let mut mapper = new_txsrom();
         let mut interrupt = Interrupt::new();
 
         Mapper::write_register(&mut mapper, 0x8000, 0x00, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x82, &mut interrupt);
-        Cartridge::read_ppu_pattern(
-            &mut mapper,
-            0x0000,
-            PpuReadAccess::BackgroundPattern,
-            &mut interrupt,
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0400,
+                PpuReadAccess::CpuData,
+                &mut interrupt
+            )
+            .data,
+            3
         );
 
         let encoded = encode_payload(&mapper).expect("mapper payload should encode");
@@ -223,16 +212,15 @@ mod tests {
             Mapper::get_mirror_mode(&decoded),
             MirrorMode::Custom([1, 1, 0, 0])
         );
-        assert!(decoded.shared.pending_chr_update());
-        assert!(!decoded.shared.chr_mapping_in_sync());
-
-        Cartridge::read_ppu_pattern(
-            &mut decoded,
-            0x0000,
-            PpuReadAccess::BackgroundPattern,
-            &mut interrupt,
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut decoded,
+                0x0400,
+                PpuReadAccess::CpuData,
+                &mut interrupt
+            )
+            .data,
+            3
         );
-        assert!(!decoded.shared.pending_chr_update());
-        assert!(decoded.shared.chr_mapping_in_sync());
     }
 }

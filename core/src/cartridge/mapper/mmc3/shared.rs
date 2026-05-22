@@ -25,7 +25,7 @@ struct Mapper4RuntimeState {
     program_ram_protect: u8,
     irq: IrqUnit,
     #[serde(default)]
-    pending_chr_updates: Option<VecDeque<PendingChrUpdate>>,
+    pending_register_writes: Option<VecDeque<PendingRegisterWrite>>,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -50,30 +50,9 @@ pub(super) enum MirroringModel {
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-struct PendingChrUpdate {
-    bank_select: u8,
-    bank_data: [u8; 8],
-    low_fetches_until_apply: u8,
-}
-
-impl PendingChrUpdate {
-    const LOW_FETCH_DELAY: u8 = 2;
-
-    fn new(bank_select: u8, bank_data: [u8; 8]) -> Self {
-        Self {
-            bank_select,
-            bank_data,
-            low_fetches_until_apply: Self::LOW_FETCH_DELAY,
-        }
-    }
-
-    fn advance(&mut self) {
-        self.low_fetches_until_apply = self.low_fetches_until_apply.saturating_sub(1);
-    }
-
-    fn is_ready(self) -> bool {
-        self.low_fetches_until_apply == 0
-    }
+struct PendingRegisterWrite {
+    address: usize,
+    value: u8,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -252,7 +231,7 @@ struct Mapper4SharedDeserialized {
     irq: IrqUnit,
     config: Mapper4Config,
     #[serde(default)]
-    pending_chr_updates: Option<VecDeque<PendingChrUpdate>>,
+    pending_register_writes: Option<VecDeque<PendingRegisterWrite>>,
 }
 
 #[derive(serde_derive::Serialize)]
@@ -265,7 +244,7 @@ pub(super) struct Mapper4Shared {
     program_ram_protect: u8,
     irq: IrqUnit,
     config: Mapper4Config,
-    pending_chr_updates: VecDeque<PendingChrUpdate>,
+    pending_register_writes: VecDeque<PendingRegisterWrite>,
 }
 
 impl<'de> serde::Deserialize<'de> for Mapper4Shared {
@@ -283,14 +262,9 @@ impl<'de> serde::Deserialize<'de> for Mapper4Shared {
             program_ram_protect: deserialized.program_ram_protect,
             irq: deserialized.irq,
             config: deserialized.config,
-            pending_chr_updates: VecDeque::new(),
+            pending_register_writes: deserialized.pending_register_writes.unwrap_or_default(),
         };
-        shared.pending_chr_updates = deserialized
-            .pending_chr_updates
-            .unwrap_or_else(|| shared.default_pending_chr_updates());
-        if shared.config.mirroring_model == MirroringModel::TxSrom {
-            shared.update_mirroring_mode();
-        }
+        shared.update_offsets();
         Ok(shared)
     }
 }
@@ -306,7 +280,7 @@ impl Mapper4Shared {
             program_ram_protect: 0x80,
             irq: IrqUnit::new(config.irq_variant),
             config,
-            pending_chr_updates: VecDeque::new(),
+            pending_register_writes: VecDeque::new(),
         }
     }
 
@@ -335,12 +309,9 @@ impl Mapper4Shared {
             bank_data: legacy.bank_data,
             mirroring: legacy.mirroring,
             program_ram_protect: legacy.program_ram_protect,
-            pending_chr_updates: VecDeque::new(),
+            pending_register_writes: VecDeque::new(),
         };
-        shared.pending_chr_updates = shared.default_pending_chr_updates();
-        if shared.config.mirroring_model == MirroringModel::TxSrom {
-            shared.update_mirroring_mode();
-        }
+        shared.update_offsets();
         shared
     }
 
@@ -360,7 +331,7 @@ impl Mapper4Shared {
                 mirroring: self.mirroring,
                 program_ram_protect: self.program_ram_protect,
                 irq: self.irq.clone(),
-                pending_chr_updates: Some(self.pending_chr_updates.clone()),
+                pending_register_writes: Some(self.pending_register_writes.clone()),
             })?,
         })
     }
@@ -386,12 +357,8 @@ impl Mapper4Shared {
         self.mirroring = runtime.mirroring;
         self.program_ram_protect = runtime.program_ram_protect;
         self.irq = runtime.irq;
-        self.pending_chr_updates = runtime
-            .pending_chr_updates
-            .unwrap_or_else(|| self.default_pending_chr_updates());
-        if self.config.mirroring_model == MirroringModel::TxSrom {
-            self.update_mirroring_mode();
-        }
+        self.pending_register_writes = runtime.pending_register_writes.unwrap_or_default();
+        self.update_offsets();
         Ok(())
     }
 
@@ -493,43 +460,51 @@ impl Mapper4Shared {
     }
 
     fn write_bank_select(&mut self, value: u8) {
-        let previous_bank_select = self.bank_select;
         self.bank_select = value;
         if self.config.prg_ram_model == PrgRamModel::Mmc6 && !self.mmc6_chip_enabled() {
             self.program_ram_protect = 0;
         }
-        if (previous_bank_select ^ self.bank_select) & 0x40 != 0
-            || self.config.prg_ram_model == PrgRamModel::Mmc6
-        {
-            self.update_program_offsets();
-        }
-        if (previous_bank_select ^ self.bank_select) & 0x80 != 0 {
-            self.queue_chr_update();
-            if self.config.mirroring_model == MirroringModel::TxSrom {
-                // TxSROM nametable banking follows the active CHR register set immediately.
-                self.update_mirroring_mode();
-            }
-        }
+        self.update_offsets();
     }
 
     fn write_bank_data(&mut self, value: u8) {
         let selecter = (self.bank_select & 0x07) as usize;
         self.bank_data[selecter] = if selecter <= 1 { value & !0x01 } else { value };
-        if selecter <= 5 {
-            self.queue_chr_update();
-            if self.txsrom_write_affects_nametable(selecter) {
-                self.update_mirroring_mode();
-            }
-        } else {
-            self.update_program_offsets();
-        }
+        self.update_offsets();
     }
 
     fn write_mirroring(&mut self, value: u8) {
         self.mirroring = value;
-        if self.config.mirroring_model == MirroringModel::Standard {
-            self.update_mirroring_mode();
+        self.update_offsets();
+    }
+
+    fn apply_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        match address & 0x6001 {
+            0x0000 => self.write_bank_select(value),
+            0x0001 => self.write_bank_data(value),
+            0x2000 => self.write_mirroring(value),
+            0x2001 => self.write_program_ram_protect(value),
+            0x4000 => self.irq.write_latch(value),
+            0x4001 => self.irq.write_reload(),
+            0x6000 => self.irq.write_disable(interrupt),
+            0x6001 => self.irq.write_enable(),
+            _ => {}
         }
+    }
+
+    fn queue_register_write(&mut self, address: usize, value: u8) {
+        self.pending_register_writes
+            .push_back(PendingRegisterWrite { address, value });
+    }
+
+    fn flush_pending_register_writes(&mut self, interrupt: &mut Interrupt) {
+        while let Some(write) = self.pending_register_writes.pop_front() {
+            self.apply_register_write(write.address, write.value, interrupt);
+        }
+    }
+
+    fn register_write_requires_ppu_phase_delay(address: usize) -> bool {
+        matches!(address & 0x6001, 0x0000 | 0x0001 | 0x2000)
     }
 
     fn update_mirroring_mode(&mut self) {
@@ -563,17 +538,14 @@ impl Mapper4Shared {
                 self.program_ram_protect = value;
             }
         }
-        self.update_program_offsets();
+        self.update_offsets();
     }
 
     fn write_control(&mut self, _value: u8) {
-        self.update_program_offsets();
-        self.update_character_offsets();
-        self.update_mirroring_mode();
-        self.pending_chr_updates.clear();
+        self.update_offsets();
     }
 
-    fn update_program_offsets(&mut self) {
+    fn update_offsets(&mut self) {
         let prg_bank_count = self.program_bank_count();
         let last_bank = prg_bank_count.saturating_sub(1);
         let second_last_bank = prg_bank_count.saturating_sub(2);
@@ -600,32 +572,28 @@ impl Mapper4Shared {
                 }
             }
         }
-    }
 
-    fn update_character_offsets(&mut self) {
-        self.update_character_offsets_from(self.bank_select, self.bank_data);
-    }
-
-    fn update_character_offsets_from(&mut self, bank_select: u8, bank_data: [u8; 8]) {
-        if (bank_select & 0x80) == 0 {
-            self.map_character_bank(0, usize::from(bank_data[0] & !0x01));
-            self.map_character_bank(1, usize::from(bank_data[0] | 0x01));
-            self.map_character_bank(2, usize::from(bank_data[1] & !0x01));
-            self.map_character_bank(3, usize::from(bank_data[1] | 0x01));
-            self.map_character_bank(4, usize::from(bank_data[2]));
-            self.map_character_bank(5, usize::from(bank_data[3]));
-            self.map_character_bank(6, usize::from(bank_data[4]));
-            self.map_character_bank(7, usize::from(bank_data[5]));
+        if (self.bank_select & 0x80) == 0 {
+            self.map_character_bank(0, usize::from(self.bank_data[0] & !0x01));
+            self.map_character_bank(1, usize::from(self.bank_data[0] | 0x01));
+            self.map_character_bank(2, usize::from(self.bank_data[1] & !0x01));
+            self.map_character_bank(3, usize::from(self.bank_data[1] | 0x01));
+            self.map_character_bank(4, usize::from(self.bank_data[2]));
+            self.map_character_bank(5, usize::from(self.bank_data[3]));
+            self.map_character_bank(6, usize::from(self.bank_data[4]));
+            self.map_character_bank(7, usize::from(self.bank_data[5]));
         } else {
-            self.map_character_bank(0, usize::from(bank_data[2]));
-            self.map_character_bank(1, usize::from(bank_data[3]));
-            self.map_character_bank(2, usize::from(bank_data[4]));
-            self.map_character_bank(3, usize::from(bank_data[5]));
-            self.map_character_bank(4, usize::from(bank_data[0] & !0x01));
-            self.map_character_bank(5, usize::from(bank_data[0] | 0x01));
-            self.map_character_bank(6, usize::from(bank_data[1] & !0x01));
-            self.map_character_bank(7, usize::from(bank_data[1] | 0x01));
+            self.map_character_bank(0, usize::from(self.bank_data[2]));
+            self.map_character_bank(1, usize::from(self.bank_data[3]));
+            self.map_character_bank(2, usize::from(self.bank_data[4]));
+            self.map_character_bank(3, usize::from(self.bank_data[5]));
+            self.map_character_bank(4, usize::from(self.bank_data[0] & !0x01));
+            self.map_character_bank(5, usize::from(self.bank_data[0] | 0x01));
+            self.map_character_bank(6, usize::from(self.bank_data[1] & !0x01));
+            self.map_character_bank(7, usize::from(self.bank_data[1] | 0x01));
         }
+
+        self.update_mirroring_mode();
     }
 
     fn txsrom_nametable_registers(&self) -> [usize; 4] {
@@ -636,134 +604,12 @@ impl Mapper4Shared {
         }
     }
 
-    fn txsrom_write_affects_nametable(&self, selecter: usize) -> bool {
-        self.config.mirroring_model == MirroringModel::TxSrom
-            && self.txsrom_nametable_registers().contains(&selecter)
-    }
-
-    fn current_pending_chr_update(&self) -> PendingChrUpdate {
-        PendingChrUpdate::new(self.bank_select, self.bank_data)
-    }
-
-    fn default_pending_chr_updates(&self) -> VecDeque<PendingChrUpdate> {
-        let mut pending_chr_updates = VecDeque::new();
-        if !self.character_mapping_matches_registers() {
-            pending_chr_updates.push_back(self.current_pending_chr_update());
-        }
-        pending_chr_updates
-    }
-
-    fn queue_chr_update(&mut self) {
-        let pending_chr_update = self.current_pending_chr_update();
-        let mapping_matches_current_registers = self.character_mapping_matches(
-            pending_chr_update.bank_select,
-            pending_chr_update.bank_data,
-        );
-
-        if self.pending_chr_updates.is_empty() && mapping_matches_current_registers {
-            return;
-        }
-
-        if self.pending_chr_updates.back().is_some_and(|update| {
-            update.bank_select == pending_chr_update.bank_select
-                && update.bank_data[..6] == pending_chr_update.bank_data[..6]
-        }) {
-            return;
-        }
-
-        self.pending_chr_updates.push_back(pending_chr_update);
-    }
-
-    fn apply_pending_chr_update(&mut self) {
-        if !self.pending_chr_updates.is_empty() {
-            self.update_character_offsets();
-            self.pending_chr_updates.clear();
-        }
-    }
-
-    fn maybe_apply_pending_chr_update_for_pattern_access(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-    ) {
-        if self.pending_chr_updates.is_empty() {
-            return;
-        }
-
-        match access {
-            PpuReadAccess::CpuData => self.apply_pending_chr_update(),
-            PpuReadAccess::BackgroundPattern | PpuReadAccess::SpritePattern
-                if (address & 0x0008) == 0 =>
-            {
-                for pending_chr_update in &mut self.pending_chr_updates {
-                    pending_chr_update.advance();
-                }
-
-                while self
-                    .pending_chr_updates
-                    .front()
-                    .is_some_and(|pending_chr_update| pending_chr_update.is_ready())
-                {
-                    if let Some(pending_chr_update) = self.pending_chr_updates.pop_front() {
-                        self.update_character_offsets_from(
-                            pending_chr_update.bank_select,
-                            pending_chr_update.bank_data,
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn character_mapping_matches(&self, bank_select: u8, bank_data: [u8; 8]) -> bool {
-        let character_bank_count = self.character_bank_count();
-        if character_bank_count == 0 {
-            return true;
-        }
-
-        let expected = if (bank_select & 0x80) == 0 {
-            [
-                usize::from(bank_data[0] & !0x01),
-                usize::from(bank_data[0] | 0x01),
-                usize::from(bank_data[1] & !0x01),
-                usize::from(bank_data[1] | 0x01),
-                usize::from(bank_data[2]),
-                usize::from(bank_data[3]),
-                usize::from(bank_data[4]),
-                usize::from(bank_data[5]),
-            ]
-        } else {
-            [
-                usize::from(bank_data[2]),
-                usize::from(bank_data[3]),
-                usize::from(bank_data[4]),
-                usize::from(bank_data[5]),
-                usize::from(bank_data[0] & !0x01),
-                usize::from(bank_data[0] | 0x01),
-                usize::from(bank_data[1] & !0x01),
-                usize::from(bank_data[1] | 0x01),
-            ]
-        };
-
-        expected.into_iter().enumerate().all(|(slot, bank)| {
-            self.character_address(slot * 0x0400)
-                .map(|address| address / 0x0400)
-                == Some(bank % character_bank_count)
-        })
-    }
-
-    fn character_mapping_matches_registers(&self) -> bool {
-        self.character_mapping_matches(self.bank_select, self.bank_data)
-    }
-
     pub(super) fn read_ppu_pattern(
         &mut self,
         address: usize,
-        access: PpuReadAccess,
+        _access: PpuReadAccess,
         _interrupt: &mut Interrupt,
     ) -> OpenBusReadResult {
-        self.maybe_apply_pending_chr_update_for_pattern_access(address, access);
         self.read_character(address)
     }
 
@@ -773,7 +619,6 @@ impl Mapper4Shared {
         value: u8,
         _interrupt: &mut Interrupt,
     ) {
-        self.apply_pending_chr_update();
         self.write_character(address, value);
     }
 
@@ -815,16 +660,6 @@ impl Mapper4Shared {
     #[cfg(test)]
     pub(super) fn clock_irq(&mut self, interrupt: &mut Interrupt) {
         self.irq.clock(interrupt);
-    }
-
-    #[cfg(test)]
-    pub(super) fn pending_chr_update(&self) -> bool {
-        !self.pending_chr_updates.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(super) fn chr_mapping_in_sync(&self) -> bool {
-        self.character_mapping_matches_registers()
     }
 }
 
@@ -951,17 +786,19 @@ impl Mapper for Mapper4Shared {
     }
 
     fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        match address & 0x6001 {
-            0x0000 => self.write_bank_select(value),
-            0x0001 => self.write_bank_data(value),
-            0x2000 => self.write_mirroring(value),
-            0x2001 => self.write_program_ram_protect(value),
-            0x4000 => self.irq.write_latch(value),
-            0x4001 => self.irq.write_reload(),
-            0x6000 => self.irq.write_disable(interrupt),
-            0x6001 => self.irq.write_enable(),
-            _ => {}
+        self.apply_register_write(address, value, interrupt);
+    }
+
+    fn schedule_register_write(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {
+        if Self::register_write_requires_ppu_phase_delay(address) {
+            self.queue_register_write(address, value);
+        } else {
+            self.apply_register_write(address, value, _interrupt);
         }
+    }
+
+    fn flush_deferred_register_writes(&mut self, interrupt: &mut Interrupt) {
+        self.flush_pending_register_writes(interrupt);
     }
 
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
@@ -1055,6 +892,15 @@ where
 
     fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         self.shared_mut().write_register(address, value, interrupt);
+    }
+
+    fn schedule_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.shared_mut()
+            .schedule_register_write(address, value, interrupt);
+    }
+
+    fn flush_deferred_register_writes(&mut self, interrupt: &mut Interrupt) {
+        self.shared_mut().flush_deferred_register_writes(interrupt);
     }
 
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {

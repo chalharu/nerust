@@ -341,7 +341,15 @@ impl Core {
             controller,
             &mut self.apu,
         );
-        for _ in 0..3 {
+        if self
+            .ppu
+            .step(screen, self.cartridge.as_mut(), self.cpu.interrupt_mut())
+        {
+            result = true;
+        }
+        self.cartridge
+            .flush_deferred_register_writes(self.cpu.interrupt_mut());
+        for _ in 0..2 {
             if self
                 .ppu
                 .step(screen, self.cartridge.as_mut(), self.cpu.interrupt_mut())
