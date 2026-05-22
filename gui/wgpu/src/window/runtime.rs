@@ -8,13 +8,14 @@ use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
 use nerust_core::CoreOptions;
-use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+use nerust_gui_shell::{
+    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
+    NativeShellState, NesConsoleDescriptor, NesInputAdapter, SessionCommand, SessionCommandOutcome,
 };
 use nerust_screen_traits::PhysicalSize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -25,13 +26,10 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
 fn keycode_controller_input(code: KeyCode) -> Option<ControllerInput> {
     Some(match code {
-        KeyCode::KeyZ => ControllerInput::A,
-        KeyCode::KeyX => ControllerInput::B,
+        KeyCode::KeyZ => ControllerInput::Primary,
+        KeyCode::KeyX => ControllerInput::Secondary,
         KeyCode::KeyC => ControllerInput::Select,
         KeyCode::KeyV => ControllerInput::Start,
         KeyCode::ArrowUp => ControllerInput::Up,
@@ -69,9 +67,8 @@ pub(crate) struct WindowRuntime {
     backend: Option<WgpuBackend<SurfaceTarget>>,
     session: GuiSession,
     app_menu: AppMenu,
-    last_title_update: Instant,
-    last_presented_frame_counter: u64,
-    needs_redraw: bool,
+    shell: NativeShellState,
+    input: NesInputAdapter,
 }
 
 impl WindowRuntime {
@@ -91,11 +88,10 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             window: None,
             backend: None,
-            session: GuiSession::default(),
+            session: NesConsoleDescriptor::default().build_session(),
             app_menu,
-            last_title_update: Instant::now(),
-            last_presented_frame_counter: 0,
-            needs_redraw: true,
+            shell: NativeShellState::new(),
+            input: NesInputAdapter::new(),
         }
     }
 
@@ -110,6 +106,7 @@ impl WindowRuntime {
         options: CoreOptions,
     ) {
         if self.session.load_with_options(rom_path, data, options) {
+            self.input.clear(&mut self.session);
             self.sync_menu_state();
         }
     }
@@ -137,7 +134,7 @@ impl WindowRuntime {
                     WindowEvent::Focused(false) => self.clear_keys(),
                     WindowEvent::Resized(_) => {
                         self.reconfigure_surface();
-                        self.needs_redraw = true;
+                        self.shell.needs_redraw = true;
                         if let Some(window) = self.window.as_ref() {
                             window.request_redraw();
                         }
@@ -164,12 +161,13 @@ impl WindowRuntime {
                 };
 
                 let metrics = self.session.metrics();
-                if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
+                if self.shell.wants_redraw(metrics.frame_counter) {
                     window.request_redraw();
                 }
 
-                if self.needs_redraw || (metrics.loaded && !metrics.paused) {
-                    *control_flow = ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL);
+                if self.shell.wants_poll(metrics.loaded, metrics.paused) {
+                    *control_flow =
+                        ControlFlow::WaitUntil(now + NativeShellState::FRAME_POLL_INTERVAL);
                 } else {
                     *control_flow = ControlFlow::Wait;
                 }
@@ -202,12 +200,14 @@ impl WindowRuntime {
             surface_target,
             initial_size,
             self.session.presentation(),
-            self.session.required_nes_video_assets(),
+            self.session
+                .nes_video_assets()
+                .expect("NES session always has video assets"),
         )
         .unwrap();
         self.window = Some(window);
         self.backend = Some(backend);
-        self.needs_redraw = true;
+        self.shell.needs_redraw = true;
         self.refresh_window_title();
     }
 
@@ -222,8 +222,7 @@ impl WindowRuntime {
     }
 
     fn maybe_refresh_window_title(&mut self, now: Instant) {
-        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
-            self.last_title_update = now;
+        if self.shell.should_refresh_title(now) {
             self.refresh_window_title();
         }
     }
@@ -239,7 +238,7 @@ impl WindowRuntime {
 
     fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
         if outcome.needs_redraw {
-            self.needs_redraw = true;
+            self.shell.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
@@ -293,15 +292,17 @@ impl WindowRuntime {
             .with_frame_buffer(|frame_buffer| backend.render(frame_buffer, window_size));
         match result {
             RenderResult::Presented => {
-                self.last_presented_frame_counter = self.session.metrics().frame_counter;
-                self.needs_redraw = false;
+                self.shell
+                    .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
             }
             RenderResult::Skipped => {
-                self.needs_redraw = true;
+                self.shell.needs_redraw = true;
             }
             RenderResult::Error => {
-                self.needs_redraw = true;
+                // Error already logged by the backend. Keep one redraw pending so
+                // paused/idle sessions can recover when the surface becomes ready.
+                self.shell.needs_redraw = true;
             }
         }
     }
@@ -330,16 +331,14 @@ impl WindowRuntime {
         if let Some(input_state) = element_state_to_input_state(input.state)
             && let Some(controller_input) = code
         {
-            self.session.handle_controller_input(
-                ControllerPort::One,
-                controller_input,
-                input_state,
-            );
+            self.input
+                .handle_input(ControllerPort::One, controller_input, input_state);
+            self.input.flush_to_session(&mut self.session);
         }
     }
 
     fn clear_keys(&mut self) {
-        self.session.clear_controller_input();
+        self.input.clear(&mut self.session);
     }
 
     fn prepare_close(&mut self) -> bool {
@@ -358,18 +357,18 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_runtime::ControllerInput;
+    use nerust_gui_shell::ControllerInput;
     use tao::keyboard::KeyCode;
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
         assert_eq!(
             keycode_controller_input(KeyCode::KeyZ),
-            Some(ControllerInput::A)
+            Some(ControllerInput::Primary)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::KeyX),
-            Some(ControllerInput::B)
+            Some(ControllerInput::Secondary)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),

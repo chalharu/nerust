@@ -14,8 +14,9 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+use nerust_gui_shell::{
+    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
+    NativeShellState, NesConsoleDescriptor, NesInputAdapter, SessionCommand, SessionCommandOutcome,
 };
 use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
@@ -23,7 +24,7 @@ use std::f64;
 use std::ffi::CString;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -108,13 +109,10 @@ fn create_window(
     (window, gl_context, gl_surface)
 }
 
-const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
 fn physical_key_controller_input(key: PhysicalKey) -> Option<ControllerInput> {
     Some(match key {
-        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::A,
-        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::B,
+        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::Primary,
+        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::Secondary,
         PhysicalKey::Code(KeyCode::KeyC) => ControllerInput::Select,
         PhysicalKey::Code(KeyCode::KeyV) => ControllerInput::Start,
         PhysicalKey::Code(KeyCode::ArrowUp) => ControllerInput::Up,
@@ -139,9 +137,8 @@ pub struct Window {
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
     session: GuiSession,
-    last_title_update: Instant,
-    last_presented_frame_counter: u64,
-    needs_redraw: bool,
+    shell: NativeShellState,
+    input: NesInputAdapter,
 }
 
 impl Window {
@@ -152,15 +149,16 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            session: GuiSession::default(),
-            last_title_update: Instant::now(),
-            last_presented_frame_counter: 0,
-            needs_redraw: true,
+            session: NesConsoleDescriptor::default().build_session(),
+            shell: NativeShellState::new(),
+            input: NesInputAdapter::new(),
         }
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        let _ = self.session.load(rom_path, data);
+        if self.session.load(rom_path, data) {
+            self.input.clear(&mut self.session);
+        }
     }
 
     pub fn run(&mut self) {
@@ -181,7 +179,9 @@ impl Window {
         view.use_vao(true);
         view.on_load(
             self.session.presentation(),
-            self.session.required_nes_video_assets(),
+            self.session
+                .nes_video_assets()
+                .expect("NES session always has video assets"),
         )
         .unwrap();
         let initial_size = window.inner_size();
@@ -203,8 +203,8 @@ impl Window {
             .unwrap()
             .swap_buffers(self.gl_context.as_ref().unwrap())
             .unwrap();
-        self.last_presented_frame_counter = self.session.metrics().frame_counter;
-        self.needs_redraw = false;
+        self.shell
+            .on_frame_presented(self.session.metrics().frame_counter);
         self.maybe_refresh_window_title(Instant::now());
     }
 
@@ -234,7 +234,7 @@ impl Window {
             physical_size.width as i32,
             physical_size.height as i32,
         );
-        self.needs_redraw = true;
+        self.shell.needs_redraw = true;
     }
 
     fn on_close(&mut self) -> bool {
@@ -260,15 +260,14 @@ impl Window {
     }
 
     fn maybe_refresh_window_title(&mut self, now: Instant) {
-        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
-            self.last_title_update = now;
+        if self.shell.should_refresh_title(now) {
             self.refresh_window_title();
         }
     }
 
     fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
         if outcome.needs_redraw {
-            self.needs_redraw = true;
+            self.shell.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
@@ -327,11 +326,12 @@ impl Window {
             key => physical_key_controller_input(key),
         };
         if let Some(controller_input) = controller_input {
-            self.session.handle_controller_input(
+            self.input.handle_input(
                 ControllerPort::One,
                 controller_input,
                 element_state_to_input_state(input.state),
             );
+            self.input.flush_to_session(&mut self.session);
         }
     }
 }
@@ -357,7 +357,7 @@ impl ApplicationHandler for Window {
                     window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => self.session.clear_controller_input(),
+            WindowEvent::Focused(false) => self.input.clear(&mut self.session),
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
@@ -374,12 +374,14 @@ impl ApplicationHandler for Window {
         };
 
         let metrics = self.session.metrics();
-        if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
+        if self.shell.wants_redraw(metrics.frame_counter) {
             window.request_redraw();
         }
 
-        if self.needs_redraw || (metrics.loaded && !metrics.paused) {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL));
+        if self.shell.wants_poll(metrics.loaded, metrics.paused) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                now + NativeShellState::FRAME_POLL_INTERVAL,
+            ));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
         }
@@ -409,18 +411,18 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_runtime::ControllerInput;
+    use nerust_gui_shell::ControllerInput;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
     fn physical_key_mapping_matches_controller_layout() {
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(ControllerInput::A)
+            Some(ControllerInput::Primary)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
-            Some(ControllerInput::B)
+            Some(ControllerInput::Secondary)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),

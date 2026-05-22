@@ -4,7 +4,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_gui_runtime::{
+use nerust_gui_shell::{
     ControllerInput, ControllerPort, InputState, SessionCommand, SessionCommandOutcome,
     StateSlotSummary, slot_label,
 };
@@ -72,8 +72,8 @@ pub(crate) enum KeyEventState {
 
 fn gdk_key_controller_input(key: gdk::Key) -> Option<ControllerInput> {
     Some(match key {
-        gdk::Key::z => ControllerInput::A,
-        gdk::Key::x => ControllerInput::B,
+        gdk::Key::z => ControllerInput::Primary,
+        gdk::Key::x => ControllerInput::Secondary,
         gdk::Key::c => ControllerInput::Select,
         gdk::Key::v => ControllerInput::Start,
         gdk::Key::Up => ControllerInput::Up,
@@ -524,7 +524,7 @@ fn rebuild_slot_menu(
 #[cfg(test)]
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
-    use nerust_gui_runtime::{ControllerInput, SessionCommand, SessionCommandOutcome};
+    use nerust_gui_shell::{ControllerInput, SessionCommand, SessionCommandOutcome};
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -574,11 +574,11 @@ mod tests {
     fn gdk_key_mapping_matches_controller_layout() {
         assert_eq!(
             gdk_key_controller_input(gdk::Key::z),
-            Some(ControllerInput::A)
+            Some(ControllerInput::Primary)
         );
         assert_eq!(
             gdk_key_controller_input(gdk::Key::x),
-            Some(ControllerInput::B)
+            Some(ControllerInput::Secondary)
         );
         assert_eq!(
             gdk_key_controller_input(gdk::Key::Up),
