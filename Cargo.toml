@@ -56,7 +56,7 @@ hound = { version = "=3.5.1" }
 lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.29", default-features = false }
-muda = { version = "=0.19.1", default-features = false, features = ["gtk"] }
+muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_core = { version = "=0.1.0", path = "core" }
