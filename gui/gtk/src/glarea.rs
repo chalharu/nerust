@@ -90,7 +90,8 @@ impl GLAreaExtend for GLArea {
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            view.on_load(state.presentation()).unwrap();
+            view.on_load(state.presentation(), state.required_nes_video_assets())
+                .unwrap();
             state.view = Some(view);
         }
         self.resize(self.glarea().width(), self.glarea().height());

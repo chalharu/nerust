@@ -8,9 +8,10 @@ use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     upload::{FrameUploadLayout, pack_frame_rows},
 };
-use nerust_screen_filter::presentation::VideoPresentation;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
+use nerust_screen_filter::{
+    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, NesVideoAssets, PALETTE_TEXTURE_WIDTH,
+};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoPresentation};
 use nerust_wgpuwrap::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
@@ -99,10 +100,11 @@ impl Renderer {
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
+        assets: &NesVideoAssets,
     ) -> Result<Self, String> {
         if !presentation.is_palette_frame() {
             return Err(
-                "nerust_screen_wgpu does not yet support DirectRgba video presentations"
+                "nerust_screen_wgpu does not yet support non-palette video presentations"
                     .to_string(),
             );
         }
@@ -168,11 +170,9 @@ impl Renderer {
                 height: 1,
                 depth_or_array_layers: 1,
             },
-            presentation.palette_rgba8().ok_or_else(|| {
-                "palette presentation data is missing palette texture bytes".to_string()
-            })?,
+            assets.palette_rgba8(),
         );
-        let (ntsc_data, ntsc_size) = encode_ntsc_texture(presentation.packed_ntsc_rgba8());
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(assets.packed_ntsc_rgba8());
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -310,7 +310,7 @@ impl Renderer {
             &pipeline_layout,
             &shader,
             config.format,
-            fragment_entry_point(presentation.uses_ntsc_pipeline(), config.format.is_srgb()),
+            fragment_entry_point(assets.uses_ntsc_pipeline(), config.format.is_srgb()),
         );
 
         Ok(Self {
@@ -648,7 +648,7 @@ fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d
 mod tests {
     use super::{compute_viewport, encode_ntsc_texture};
     use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
-    use nerust_screen_traits::{LogicalSize, PhysicalSize};
+    use nerust_screen_traits::PhysicalSize;
     use nerust_wgpuwrap::SurfaceSize;
 
     #[test]
@@ -669,11 +669,8 @@ mod tests {
 
     #[test]
     fn ntsc_texture_is_prepacked_for_r32uint_upload() {
-        let presentation = FilterType::NtscRGB.palette_presentation(LogicalSize {
-            width: 256,
-            height: 240,
-        });
-        let source = presentation
+        let assets = FilterType::NtscRGB.palette_nes_video_assets();
+        let source = assets
             .packed_ntsc_rgba8()
             .expect("NTSC filter should provide a packed texture");
         let (packed, size) = encode_ntsc_texture(Some(source));

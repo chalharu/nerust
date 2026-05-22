@@ -7,8 +7,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
-    StateSlotSummary, VideoPresentation,
+    ControllerInput, ControllerPort, GuiSession, InputState, NesVideoAssets, SessionCommand,
+    SessionCommandOutcome, StateSlotSummary, VideoPresentation,
 };
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::PhysicalSize;
@@ -36,6 +36,10 @@ impl State {
 
     pub(crate) fn presentation(&self) -> &VideoPresentation {
         self.session.presentation()
+    }
+
+    pub(crate) fn required_nes_video_assets(&self) -> &NesVideoAssets {
+        self.session.required_nes_video_assets()
     }
 
     pub(crate) fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {

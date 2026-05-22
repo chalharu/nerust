@@ -1,4 +1,5 @@
-use nerust_screen_filter::presentation::VideoPresentation;
+use nerust_screen_filter::NesVideoAssets;
+use nerust_screen_traits::VideoPresentation;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
@@ -18,16 +19,19 @@ impl VideoFrameBuffer {
 #[derive(Debug, Clone)]
 pub struct ConsoleVideo {
     presentation: VideoPresentation,
+    nes_video_assets: Option<NesVideoAssets>,
     frame_buffer: VideoFrameBuffer,
 }
 
 impl ConsoleVideo {
     pub(crate) fn new(
         presentation: VideoPresentation,
+        nes_video_assets: Option<NesVideoAssets>,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
     ) -> Self {
         Self {
             presentation,
+            nes_video_assets,
             frame_buffer: VideoFrameBuffer::from_shared(frame_buffer),
         }
     }
@@ -38,6 +42,16 @@ impl ConsoleVideo {
 
     pub fn frame_buffer(&self) -> &VideoFrameBuffer {
         &self.frame_buffer
+    }
+
+    pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
+        self.nes_video_assets.as_ref()
+    }
+
+    pub fn required_nes_video_assets(&self) -> &NesVideoAssets {
+        self.nes_video_assets
+            .as_ref()
+            .expect("palette console video should expose NES video assets")
     }
 }
 

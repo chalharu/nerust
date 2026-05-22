@@ -179,7 +179,11 @@ impl Window {
             create_window(event_loop, self.session.physical_size());
         let mut view = GlView::new();
         view.use_vao(true);
-        view.on_load(self.session.presentation()).unwrap();
+        view.on_load(
+            self.session.presentation(),
+            self.session.required_nes_video_assets(),
+        )
+        .unwrap();
         let initial_size = window.inner_size();
 
         self.window = Some(window);
