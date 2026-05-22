@@ -47,12 +47,6 @@ impl ConsoleVideo {
     pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
         self.nes_video_assets.as_ref()
     }
-
-    pub fn required_nes_video_assets(&self) -> &NesVideoAssets {
-        self.nes_video_assets
-            .as_ref()
-            .expect("palette console video should expose NES video assets")
-    }
 }
 
 #[cfg(test)]

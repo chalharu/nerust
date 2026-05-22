@@ -7,9 +7,10 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, NesVideoAssets, SessionCommand,
-    SessionCommandOutcome, StateSlotSummary, VideoPresentation,
+use nerust_gui_shell::{
+    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
+    NesConsoleDescriptor, NesInputAdapter, NesVideoAssets, SessionCommand, SessionCommandOutcome,
+    StateSlotSummary, VideoPresentation,
 };
 use nerust_screen_traits::PhysicalSize;
 use nerust_sound_openal::prepare_macos_runtime;
@@ -24,13 +25,15 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 pub(crate) struct State {
     view: Option<GlBackend>,
     session: GuiSession,
+    input: NesInputAdapter,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
             view: None,
-            session: GuiSession::default(),
+            session: NesConsoleDescriptor::default().build_session(),
+            input: NesInputAdapter::new(),
         }
     }
 
@@ -39,7 +42,9 @@ impl State {
     }
 
     pub(crate) fn required_nes_video_assets(&self) -> &NesVideoAssets {
-        self.session.required_nes_video_assets()
+        self.session
+            .nes_video_assets()
+            .expect("NES session always has video assets")
     }
 
     pub(crate) fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
@@ -60,6 +65,7 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
+            self.input.clear(&mut self.session);
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -73,7 +79,11 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload()
+        let unloaded = self.session.unload();
+        if unloaded {
+            self.input.clear(&mut self.session);
+        }
+        unloaded
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -90,11 +100,12 @@ impl State {
         input: ControllerInput,
         state: InputState,
     ) {
-        self.session.handle_controller_input(port, input, state);
+        self.input.handle_input(port, input, state);
+        self.input.flush_to_session(&mut self.session);
     }
 
     pub(crate) fn clear_controller_input(&mut self) {
-        self.session.clear_controller_input();
+        self.input.clear(&mut self.session);
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {

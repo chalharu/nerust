@@ -108,8 +108,9 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
     ///
     /// `window_size` is the current inner size of the OS window, used as a
     /// fallback if the surface target cannot determine its own size. Surface
-    /// recreation on loss is handled internally; the shell only observes a
-    /// [`RenderResult::Skipped`] outcome for that frame.
+    /// recreation on loss is handled internally; shells see
+    /// [`RenderResult::Skipped`] for successful recovery and
+    /// [`RenderResult::Error`] when recreation itself fails.
     pub fn render(&mut self, frame_buffer: &[u8], window_size: SurfaceSize) -> RenderResult {
         let surface_size = self.render_surface.surface_size(window_size);
         let outcome = self
@@ -121,25 +122,23 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
                 RenderResult::Presented
             }
             Ok(RenderOutcome::Skipped) => RenderResult::Skipped,
-            Ok(RenderOutcome::RecreateSurface) => {
-                match self.render_surface.recreate_surface() {
-                    Ok(()) => {
-                        self.last_render_error = None;
-                        let new_size = self.render_surface.surface_size(window_size);
-                        self.renderer
-                            .reconfigure_surface(&self.render_surface, new_size);
-                    }
-                    Err(err) => {
-                        let should_log = self.last_render_error.as_deref() != Some(err.as_str());
-                        self.last_render_error = Some(err.clone());
-                        if should_log {
-                            log::error!("wgpu surface recreation failed: {err}");
-                        }
-                    }
+            Ok(RenderOutcome::RecreateSurface) => match self.render_surface.recreate_surface() {
+                Ok(()) => {
+                    self.last_render_error = None;
+                    let new_size = self.render_surface.surface_size(window_size);
+                    self.renderer
+                        .reconfigure_surface(&self.render_surface, new_size);
+                    RenderResult::Skipped
                 }
-                // The current frame was lost; signal the shell to redraw.
-                RenderResult::Skipped
-            }
+                Err(err) => {
+                    let should_log = self.last_render_error.as_deref() != Some(err.as_str());
+                    self.last_render_error = Some(err.clone());
+                    if should_log {
+                        log::error!("wgpu surface recreation failed: {err}");
+                    }
+                    RenderResult::Error
+                }
+            },
             Err(err) => {
                 let should_log = self.last_render_error.as_deref() != Some(err.as_str());
                 self.last_render_error = Some(err.clone());

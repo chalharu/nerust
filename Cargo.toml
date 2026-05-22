@@ -12,6 +12,8 @@ members = [
   "gui/gtk",
   "gui/glutin",
   "gui/runtime",
+  "gui/shell",
+  "gui/session",
   "gui/wgpu",
   "glwrap",
   "nes_ntsc",
@@ -65,6 +67,8 @@ nerust_console = { version = "=0.1.0", path = "console" }
 nerust_contract = { version = "=0.1.0", path = "contract" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
+nerust_gui_shell = { version = "=0.1.0", path = "gui/shell" }
+nerust_gui_session = { version = "=0.1.0", path = "gui/session" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }

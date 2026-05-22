@@ -1,5 +1,9 @@
-use nerust_console::{Console, ConsoleError, ConsoleMetrics, ControllerInputs, PreviewFrame};
+use nerust_console::{ControllerInputs, PreviewFrame};
 use nerust_core::CoreOptions;
+pub use nerust_gui_session::{
+    ConsoleError, ControllerInput, ControllerPort, InputState, SessionCommand,
+    SessionCommandOutcome, SessionCore, window_title,
+};
 pub use nerust_persistence::StateSlotSummary;
 use nerust_persistence::{
     SidecarPaths, ThumbnailSource, allocate_next_slot_id, delete_state_slot, format_slot_saved_at,
@@ -7,137 +11,76 @@ use nerust_persistence::{
     scan_state_slots_for_target, state_slot_path, write_mapper_save, write_recovery_mapper_save,
     write_state_slot,
 };
-use nerust_screen_filter::FilterType;
 pub use nerust_screen_filter::NesVideoAssets;
 pub use nerust_screen_traits::VideoPresentation;
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
-use nerust_sound_openal::OpenAl;
-use nerust_timer::CLOCK_RATE;
 use std::path::PathBuf;
 
-const DEFAULT_FILTER_TYPE: FilterType = FilterType::NtscComposite;
-const DEFAULT_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
-    width: 256,
-    height: 240,
-};
-
-pub use nerust_console::ControllerPort;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerInput {
-    A,
-    B,
-    Select,
-    Start,
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputState {
-    Pressed,
-    Released,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionCommand {
-    Pause,
-    Resume,
-    TogglePause,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
-    SelectNextSlot,
-    SelectPreviousSlot,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct SessionCommandOutcome {
-    pub executed: bool,
-    pub needs_redraw: bool,
+pub trait ConsoleSessionFactory {
+    fn build_session(&self) -> GuiSession;
 }
 
 #[derive(Debug)]
 pub struct GuiSession {
-    paused: bool,
-    loaded: bool,
-    console: Console,
-    physical_size: PhysicalSize,
+    core: SessionCore,
     rom_path: Option<PathBuf>,
     sidecars: Option<SidecarPaths>,
     mapper_save_flush_allowed: bool,
     mapper_save_recovery_written: bool,
     slots: Vec<StateSlotSummary>,
     active_slot_id: Option<u64>,
-    held_inputs: [ControllerInputs; 2],
 }
 
 impl GuiSession {
-    pub fn new(filter_type: FilterType, source_logical_size: LogicalSize) -> Self {
-        let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
-        let console = Console::new_gpu(speaker, filter_type, source_logical_size);
-        let physical_size = console.video().presentation().physical_size();
-        let paused = console.metrics().paused;
+    pub fn from_session_core(core: SessionCore) -> Self {
         Self {
-            paused,
-            loaded: false,
-            console,
-            physical_size,
+            core,
             rom_path: None,
             sidecars: None,
             mapper_save_flush_allowed: true,
             mapper_save_recovery_written: false,
             slots: Vec::new(),
             active_slot_id: None,
-            held_inputs: [ControllerInputs::empty(); 2],
         }
     }
 
     pub fn presentation(&self) -> &VideoPresentation {
-        self.console.video().presentation()
+        self.core.presentation()
     }
 
-    pub fn required_nes_video_assets(&self) -> &NesVideoAssets {
-        self.console.video().required_nes_video_assets()
+    pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
+        self.core.video().nes_video_assets()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.console.video().frame_buffer().with_bytes(f)
+        self.core.with_frame_buffer(f)
     }
 
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.physical_size
+    pub fn physical_size(&self) -> nerust_screen_traits::PhysicalSize {
+        self.core.physical_size()
     }
 
-    pub fn metrics(&self) -> ConsoleMetrics {
-        self.console.metrics()
+    pub fn metrics(&self) -> nerust_gui_session::ConsoleMetrics {
+        self.core.metrics()
     }
 
     pub fn window_title(&self) -> String {
-        window_title(self.paused, self.console.metrics())
+        window_title(self.paused(), self.metrics())
     }
 
     pub fn paused(&self) -> bool {
-        self.paused
+        self.core.paused()
     }
 
     pub fn loaded(&self) -> bool {
-        self.loaded
+        self.core.loaded()
     }
 
     pub fn can_pause(&self) -> bool {
-        self.loaded && !self.paused
+        self.core.can_pause()
     }
 
     pub fn can_resume(&self) -> bool {
-        self.loaded && self.paused
+        self.core.can_resume()
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
@@ -149,23 +92,21 @@ impl GuiSession {
     }
 
     pub fn reset(&self) -> Result<(), ConsoleError> {
-        self.console.reset()
+        self.core.reset()
     }
 
     pub fn pause(&mut self) {
-        self.console.pause();
-        self.paused = true;
+        self.core.pause();
     }
 
     pub fn resume(&mut self) {
-        self.console.resume();
-        self.paused = false;
+        self.core.resume();
     }
 
     pub fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
         match command {
             SessionCommand::Pause => {
-                if self.paused {
+                if self.paused() {
                     SessionCommandOutcome::default()
                 } else {
                     self.pause();
@@ -176,18 +117,18 @@ impl GuiSession {
                 }
             }
             SessionCommand::Resume => {
-                if self.paused {
+                if self.paused() {
                     self.resume();
                     SessionCommandOutcome {
                         executed: true,
-                        needs_redraw: self.loaded,
+                        needs_redraw: self.loaded(),
                     }
                 } else {
                     SessionCommandOutcome::default()
                 }
             }
             SessionCommand::TogglePause => {
-                if self.paused {
+                if self.paused() {
                     self.run_command(SessionCommand::Resume)
                 } else {
                     self.run_command(SessionCommand::Pause)
@@ -219,14 +160,14 @@ impl GuiSession {
                 }
             }
             SessionCommand::LoadActiveSlot => {
-                let was_paused = self.paused;
+                let was_paused = self.paused();
                 let executed = self.load_active_slot();
                 SessionCommandOutcome {
                     executed,
                     needs_redraw: redraw_needed_after_pause_change(
                         executed,
                         was_paused,
-                        self.paused,
+                        self.paused(),
                     ),
                 }
             }
@@ -245,14 +186,14 @@ impl GuiSession {
                 }
             }
             SessionCommand::LoadSlot(slot_id) => {
-                let was_paused = self.paused;
+                let was_paused = self.paused();
                 let executed = self.load_slot(slot_id);
                 SessionCommandOutcome {
                     executed,
                     needs_redraw: redraw_needed_after_pause_change(
                         executed,
                         was_paused,
-                        self.paused,
+                        self.paused(),
                     ),
                 }
             }
@@ -274,24 +215,12 @@ impl GuiSession {
         }
     }
 
-    pub fn handle_controller_input(
-        &mut self,
-        port: ControllerPort,
-        input: ControllerInput,
-        state: InputState,
-    ) {
-        update_held_buttons(
-            &mut self.held_inputs[controller_port_index(port)],
-            input,
-            state,
-        );
-        self.apply_controller_state(port);
+    pub fn set_port_inputs(&mut self, port: ControllerPort, inputs: ControllerInputs) {
+        self.core.set_port_inputs(port, inputs);
     }
 
-    pub fn clear_controller_input(&mut self) {
-        self.held_inputs = [ControllerInputs::empty(); 2];
-        self.apply_controller_state(ControllerPort::One);
-        self.apply_controller_state(ControllerPort::Two);
+    pub fn clear_all_inputs(&mut self) {
+        self.core.clear_all_inputs();
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
@@ -308,17 +237,15 @@ impl GuiSession {
             log::warn!("mapper save flush before load failed: {error}");
             return false;
         }
-        if let Err(error) = self.console.load_with_options(data, options) {
+        if let Err(error) = self.core.load_rom(data, options) {
             log::warn!("ROM load failed: {error}");
             return false;
         }
-        self.loaded = true;
         self.rom_path = rom_path;
         self.sidecars = self.rom_path.as_deref().map(resolve_sidecars);
         self.mapper_save_flush_allowed = true;
         self.mapper_save_recovery_written = false;
         self.active_slot_id = None;
-        self.clear_controller_input();
         self.refresh_slots();
         self.active_slot_id = latest_saved_slot_id(&self.slots);
         if let Err(error) = self.load_mapper_save_if_available() {
@@ -333,15 +260,13 @@ impl GuiSession {
             log::warn!("mapper save flush before unload failed: {error}");
             return false;
         }
-        let _ = self.console.unload();
-        self.loaded = false;
+        let _ = self.core.unload_rom();
         self.rom_path = None;
         self.sidecars = None;
         self.mapper_save_flush_allowed = true;
         self.mapper_save_recovery_written = false;
         self.active_slot_id = None;
         self.slots.clear();
-        self.clear_controller_input();
         true
     }
 
@@ -383,7 +308,7 @@ impl GuiSession {
         let Some(sidecars) = self.sidecars.as_ref() else {
             return;
         };
-        match self.console.export_state() {
+        match self.core.export_state() {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
                 match write_state_slot(
@@ -417,14 +342,12 @@ impl GuiSession {
         };
         match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
             Ok(slot) => {
-                if let Err(error) = self.console.import_state(slot.machine_state) {
+                if let Err(error) = self.core.import_state(slot.machine_state) {
                     log::warn!("state import failed: {error}");
                     false
                 } else {
                     self.active_slot_id = Some(slot_id);
-                    self.sync_paused_from_console();
-                    // Preserve the controller snapshot from the save state until
-                    // new host input arrives.
+                    self.core.sync_paused_from_console();
                     self.refresh_slots();
                     true
                 }
@@ -461,18 +384,9 @@ impl GuiSession {
         Some(next_slot_id)
     }
 
-    fn sync_paused_from_console(&mut self) {
-        self.paused = self.console.metrics().paused;
-    }
-
-    fn apply_controller_state(&self, port: ControllerPort) {
-        self.console
-            .set_port_inputs(port, self.held_inputs[controller_port_index(port)]);
-    }
-
     fn refresh_slots(&mut self) {
         self.slots = if let Some(sidecars) = self.sidecars.as_ref() {
-            match self.console.persistence_target() {
+            match self.core.persistence_target() {
                 Ok(target) => match scan_state_slots_for_target(&sidecars.states_dir, target) {
                     Ok(slots) => slots,
                     Err(error) => {
@@ -503,7 +417,7 @@ impl GuiSession {
         if let Some(bytes) =
             load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
         {
-            self.console
+            self.core
                 .import_mapper_save(bytes)
                 .map_err(|error| error.to_string())?;
         }
@@ -519,7 +433,7 @@ impl GuiSession {
                 return Ok(());
             }
             if let Some(bytes) = self
-                .console
+                .core
                 .export_mapper_save()
                 .map_err(|error| error.to_string())?
             {
@@ -533,21 +447,15 @@ impl GuiSession {
             }
             return Ok(());
         }
-        let bytes = self
-            .console
+        match self
+            .core
             .export_mapper_save()
-            .map_err(|error| error.to_string())?;
-        match bytes {
+            .map_err(|error| error.to_string())?
+        {
             Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
                 .map_err(|error| error.to_string()),
             None => Ok(()),
         }
-    }
-}
-
-impl Default for GuiSession {
-    fn default() -> Self {
-        Self::new(DEFAULT_FILTER_TYPE, DEFAULT_SOURCE_LOGICAL_SIZE)
     }
 }
 
@@ -556,18 +464,6 @@ impl Drop for GuiSession {
         if let Err(error) = self.flush_mapper_save() {
             log::warn!("mapper save flush during shutdown failed: {error}");
         }
-    }
-}
-
-pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
-    let state = if paused { "Nes -- Paused" } else { "Nes" };
-    if console_metrics.loaded {
-        format!(
-            "{state} | FPS {:.1} | Speed x{:.2}",
-            console_metrics.emulation_fps, console_metrics.speed_multiplier
-        )
-    } else {
-        format!("{state} | No ROM")
     }
 }
 
@@ -607,34 +503,6 @@ fn adjacent_slot_id(
     )
 }
 
-fn controller_port_index(port: ControllerPort) -> usize {
-    match port {
-        ControllerPort::One => 0,
-        ControllerPort::Two => 1,
-    }
-}
-
-fn controller_input_flag(input: ControllerInput) -> ControllerInputs {
-    match input {
-        ControllerInput::A => ControllerInputs::A,
-        ControllerInput::B => ControllerInputs::B,
-        ControllerInput::Select => ControllerInputs::SELECT,
-        ControllerInput::Start => ControllerInputs::START,
-        ControllerInput::Up => ControllerInputs::UP,
-        ControllerInput::Down => ControllerInputs::DOWN,
-        ControllerInput::Left => ControllerInputs::LEFT,
-        ControllerInput::Right => ControllerInputs::RIGHT,
-    }
-}
-
-fn update_held_buttons(inputs: &mut ControllerInputs, input: ControllerInput, state: InputState) {
-    let flag = controller_input_flag(input);
-    *inputs = match state {
-        InputState::Pressed => *inputs | flag,
-        InputState::Released => *inputs & !flag,
-    };
-}
-
 fn redraw_needed_after_pause_change(executed: bool, was_paused: bool, paused: bool) -> bool {
     executed && was_paused && !paused
 }
@@ -650,14 +518,40 @@ fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControllerInput, ControllerPort, InputState, adjacent_slot_id, controller_input_flag,
-        controller_port_index, redraw_needed_after_pause_change, slot_label, update_held_buttons,
+        GuiSession, SessionCore, adjacent_slot_id, redraw_needed_after_pause_change, slot_label,
         window_title,
     };
-    use nerust_console::{ConsoleMetrics, ControllerInputs};
+    use nerust_console::{Console, ConsoleMetrics};
     use nerust_persistence::StateSlotSummary;
+    use nerust_screen_filter::FilterType;
+    use nerust_screen_traits::LogicalSize;
+    use nerust_sound_traits::{MixerInput, Sound};
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
+
+    #[derive(Default)]
+    struct TestSpeaker;
+
+    impl Sound for TestSpeaker {
+        fn start(&mut self) {}
+
+        fn pause(&mut self) {}
+    }
+
+    impl MixerInput for TestSpeaker {
+        fn push(&mut self, _: f32) {}
+    }
+
+    fn test_session() -> GuiSession {
+        GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
+            TestSpeaker,
+            FilterType::NtscComposite,
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        )))
+    }
 
     fn slot(slot_id: u64) -> StateSlotSummary {
         StateSlotSummary {
@@ -710,62 +604,19 @@ mod tests {
     }
 
     #[test]
-    fn controller_intents_map_to_console_input_flags() {
-        assert_eq!(
-            controller_input_flag(ControllerInput::A),
-            ControllerInputs::A
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::B),
-            ControllerInputs::B
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Select),
-            ControllerInputs::SELECT
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Start),
-            ControllerInputs::START
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Up),
-            ControllerInputs::UP
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Down),
-            ControllerInputs::DOWN
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Left),
-            ControllerInputs::LEFT
-        );
-        assert_eq!(
-            controller_input_flag(ControllerInput::Right),
-            ControllerInputs::RIGHT
-        );
-    }
-
-    #[test]
-    fn held_controller_state_tracks_press_release_and_ports() {
-        let mut port1 = ControllerInputs::empty();
-        let mut port2 = ControllerInputs::empty();
-
-        update_held_buttons(&mut port1, ControllerInput::A, InputState::Pressed);
-        update_held_buttons(&mut port1, ControllerInput::Right, InputState::Pressed);
-        update_held_buttons(&mut port2, ControllerInput::B, InputState::Pressed);
-        update_held_buttons(&mut port1, ControllerInput::A, InputState::Released);
-
-        assert_eq!(port1, ControllerInputs::RIGHT);
-        assert_eq!(port2, ControllerInputs::B);
-        assert_eq!(controller_port_index(ControllerPort::One), 0);
-        assert_eq!(controller_port_index(ControllerPort::Two), 1);
-    }
-
-    #[test]
     fn redraw_is_only_requested_when_a_command_resumes_emulation() {
         assert!(redraw_needed_after_pause_change(true, true, false));
         assert!(!redraw_needed_after_pause_change(true, false, false));
         assert!(!redraw_needed_after_pause_change(true, true, true));
         assert!(!redraw_needed_after_pause_change(false, true, false));
+    }
+
+    #[test]
+    fn test_session_builds_gui_session() {
+        let session = test_session();
+
+        assert!(!session.loaded());
+        assert!(session.paused());
+        assert!(session.physical_size().width > 0.0);
     }
 }
