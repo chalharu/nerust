@@ -11,6 +11,7 @@ use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
+use std::collections::VecDeque;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 
@@ -21,6 +22,8 @@ struct Mapper4RuntimeState {
     mirroring: u8,
     program_ram_protect: u8,
     irq: IrqUnit,
+    #[serde(default)]
+    pending_register_writes: Option<VecDeque<PendingRegisterWrite>>,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -42,6 +45,12 @@ pub(super) enum MirroringModel {
     #[default]
     Standard,
     TxSrom,
+}
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+struct PendingRegisterWrite {
+    address: usize,
+    value: u8,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -209,7 +218,21 @@ pub(super) struct LegacyMapper4State {
     pub(super) prg_ram_model: PrgRamModel,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Deserialize)]
+struct Mapper4SharedDeserialized {
+    cartridge_data: CartridgeData,
+    state: MapperState,
+    bank_select: u8,
+    bank_data: [u8; 8],
+    mirroring: u8,
+    program_ram_protect: u8,
+    irq: IrqUnit,
+    config: Mapper4Config,
+    #[serde(default)]
+    pending_register_writes: Option<VecDeque<PendingRegisterWrite>>,
+}
+
+#[derive(serde_derive::Serialize)]
 pub(super) struct Mapper4Shared {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -219,6 +242,29 @@ pub(super) struct Mapper4Shared {
     program_ram_protect: u8,
     irq: IrqUnit,
     config: Mapper4Config,
+    pending_register_writes: VecDeque<PendingRegisterWrite>,
+}
+
+impl<'de> serde::Deserialize<'de> for Mapper4Shared {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let deserialized = Mapper4SharedDeserialized::deserialize(deserializer)?;
+        let mut shared = Self {
+            cartridge_data: deserialized.cartridge_data,
+            state: deserialized.state,
+            bank_select: deserialized.bank_select,
+            bank_data: deserialized.bank_data,
+            mirroring: deserialized.mirroring,
+            program_ram_protect: deserialized.program_ram_protect,
+            irq: deserialized.irq,
+            config: deserialized.config,
+            pending_register_writes: deserialized.pending_register_writes.unwrap_or_default(),
+        };
+        shared.update_offsets();
+        Ok(shared)
+    }
 }
 
 impl Mapper4Shared {
@@ -232,6 +278,7 @@ impl Mapper4Shared {
             program_ram_protect: 0x80,
             irq: IrqUnit::new(config.irq_variant),
             config,
+            pending_register_writes: VecDeque::new(),
         }
     }
 
@@ -239,7 +286,7 @@ impl Mapper4Shared {
         cartridge_data: CartridgeData,
         legacy: LegacyMapper4State,
     ) -> Self {
-        Self {
+        let mut shared = Self {
             config: Mapper4Config::from_parts(
                 legacy.irq.variant,
                 legacy.prg_ram_model,
@@ -260,7 +307,10 @@ impl Mapper4Shared {
             bank_data: legacy.bank_data,
             mirroring: legacy.mirroring,
             program_ram_protect: legacy.program_ram_protect,
-        }
+            pending_register_writes: VecDeque::new(),
+        };
+        shared.update_offsets();
+        shared
     }
 
     fn clear_ram_mapping(&mut self) {
@@ -279,6 +329,7 @@ impl Mapper4Shared {
                 mirroring: self.mirroring,
                 program_ram_protect: self.program_ram_protect,
                 irq: self.irq.clone(),
+                pending_register_writes: Some(self.pending_register_writes.clone()),
             })?,
         })
     }
@@ -304,6 +355,8 @@ impl Mapper4Shared {
         self.mirroring = runtime.mirroring;
         self.program_ram_protect = runtime.program_ram_protect;
         self.irq = runtime.irq;
+        self.pending_register_writes = runtime.pending_register_writes.unwrap_or_default();
+        self.update_offsets();
         Ok(())
     }
 
@@ -393,7 +446,36 @@ impl Mapper4Shared {
 
     fn write_mirroring(&mut self, value: u8) {
         self.mirroring = value;
-        self.update_mirroring_mode();
+        self.update_offsets();
+    }
+
+    fn apply_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        match address & 0x6001 {
+            0x0000 => self.write_bank_select(value),
+            0x0001 => self.write_bank_data(value),
+            0x2000 => self.write_mirroring(value),
+            0x2001 => self.write_program_ram_protect(value),
+            0x4000 => self.irq.write_latch(value),
+            0x4001 => self.irq.write_reload(),
+            0x6000 => self.irq.write_disable(interrupt),
+            0x6001 => self.irq.write_enable(),
+            _ => {}
+        }
+    }
+
+    fn queue_register_write(&mut self, address: usize, value: u8) {
+        self.pending_register_writes
+            .push_back(PendingRegisterWrite { address, value });
+    }
+
+    fn flush_pending_register_writes(&mut self, interrupt: &mut Interrupt) {
+        while let Some(write) = self.pending_register_writes.pop_front() {
+            self.apply_register_write(write.address, write.value, interrupt);
+        }
+    }
+
+    fn register_write_requires_ppu_phase_delay(address: usize) -> bool {
+        matches!(address & 0x6001, 0x0000 | 0x0001 | 0x2000)
     }
 
     fn update_mirroring_mode(&mut self) {
@@ -653,17 +735,19 @@ impl Mapper for Mapper4Shared {
     }
 
     fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        match address & 0x6001 {
-            0x0000 => self.write_bank_select(value),
-            0x0001 => self.write_bank_data(value),
-            0x2000 => self.write_mirroring(value),
-            0x2001 => self.write_program_ram_protect(value),
-            0x4000 => self.irq.write_latch(value),
-            0x4001 => self.irq.write_reload(),
-            0x6000 => self.irq.write_disable(interrupt),
-            0x6001 => self.irq.write_enable(),
-            _ => {}
+        self.apply_register_write(address, value, interrupt);
+    }
+
+    fn schedule_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        if Self::register_write_requires_ppu_phase_delay(address) {
+            self.queue_register_write(address, value);
+        } else {
+            self.apply_register_write(address, value, interrupt);
         }
+    }
+
+    fn flush_deferred_register_writes(&mut self, interrupt: &mut Interrupt) {
+        self.flush_pending_register_writes(interrupt);
     }
 
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
@@ -757,6 +841,15 @@ where
 
     fn write_register(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
         self.shared_mut().write_register(address, value, interrupt);
+    }
+
+    fn schedule_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.shared_mut()
+            .schedule_register_write(address, value, interrupt);
+    }
+
+    fn flush_deferred_register_writes(&mut self, interrupt: &mut Interrupt) {
+        self.shared_mut().flush_deferred_register_writes(interrupt);
     }
 
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {

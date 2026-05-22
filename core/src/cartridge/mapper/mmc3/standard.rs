@@ -154,14 +154,22 @@ impl Mapper4Wrapper for Mmc3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cart_device::Cartridge;
+    use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::mapper_state::MapperStateDao;
+    use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
+        let mut char_rom = Vec::with_capacity(0x2000);
+        for bank in 0u8..8 {
+            char_rom.extend(std::iter::repeat_n(bank, 0x0400));
+        }
         CartridgeData::new(CartridgeDataParts {
             format: RomFormat::Nes20,
             prog_rom: vec![0; 0x8000],
-            char_rom: vec![0; 0x2000],
+            char_rom,
             pram_length: 0,
             save_pram_length: 0,
             vram_length: 0,
@@ -173,6 +181,12 @@ mod tests {
             trainer: Vec::new(),
         })
         .expect("test cartridge data should be valid")
+    }
+
+    fn stale_mapper_state() -> MapperState {
+        let mut mapper = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut mapper);
+        MapperStateDao::mapper_state_ref(&mapper.shared).clone()
     }
 
     #[test]
@@ -199,5 +213,81 @@ mod tests {
         assert_eq!(mapper.shared.prg_ram_model(), PrgRamModel::Mmc6);
         assert_eq!(mapper.shared.irq_variant(), IrqVariant::NecOldStyle);
         assert!(!Mapper::bus_conflicts(&mapper.shared));
+    }
+
+    #[test]
+    fn runtime_state_round_trips_pending_chr_writes() {
+        let mut mapper = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut mapper);
+        let mut interrupt = Interrupt::new();
+
+        Mapper::schedule_register_write(&mut mapper, 0x8000, 0x02, &mut interrupt);
+        Mapper::schedule_register_write(&mut mapper, 0x8001, 0x03, &mut interrupt);
+
+        let runtime = mapper
+            .export_runtime_state()
+            .expect("runtime state should export");
+
+        let mut restored = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut restored);
+        restored
+            .import_runtime_state(runtime)
+            .expect("runtime state should import");
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut restored,
+                0x1000,
+                PpuReadAccess::CpuData,
+                &mut interrupt,
+            )
+            .data,
+            0
+        );
+
+        Mapper::flush_deferred_register_writes(&mut restored, &mut interrupt);
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut restored,
+                0x1000,
+                PpuReadAccess::CpuData,
+                &mut interrupt,
+            )
+            .data,
+            3
+        );
+    }
+
+    #[test]
+    fn runtime_state_import_recomputes_chr_mapping_from_registers() {
+        let mut mapper = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut mapper);
+        let mut interrupt = Interrupt::new();
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x03, &mut interrupt);
+
+        let mut runtime = mapper
+            .export_runtime_state()
+            .expect("runtime state should export");
+        runtime.mapper_state = stale_mapper_state();
+
+        let mut restored = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut restored);
+        restored
+            .import_runtime_state(runtime)
+            .expect("runtime state should import");
+
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut restored,
+                0x1000,
+                PpuReadAccess::CpuData,
+                &mut interrupt,
+            )
+            .data,
+            3
+        );
     }
 }

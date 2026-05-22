@@ -55,13 +55,18 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, RomFormat};
 
     fn test_data() -> CartridgeData {
+        let mut char_rom = Vec::with_capacity(0x2000);
+        for bank in 0u8..8 {
+            char_rom.extend(std::iter::repeat_n(bank, 0x0400));
+        }
         CartridgeData::new(CartridgeDataParts {
             format: RomFormat::Nes20,
             prog_rom: vec![0; 0x8000],
-            char_rom: vec![0; 0x2000],
+            char_rom,
             pram_length: 0,
             save_pram_length: 0,
             vram_length: 0,
@@ -123,6 +128,52 @@ mod tests {
         assert_eq!(
             Mapper::get_mirror_mode(&mapper),
             MirrorMode::Custom([1, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn deferred_chr_writes_update_txsrom_nametable_mapping_when_flushed() {
+        let mut mapper = new_txsrom();
+        let mut interrupt = Interrupt::new();
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([0, 0, 0, 0])
+        );
+
+        Mapper::schedule_register_write(&mut mapper, 0x8000, 0x00, &mut interrupt);
+        Mapper::schedule_register_write(&mut mapper, 0x8001, 0x82, &mut interrupt);
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([0, 0, 0, 0])
+        );
+
+        Mapper::flush_deferred_register_writes(&mut mapper, &mut interrupt);
+
+        assert_eq!(
+            Mapper::get_mirror_mode(&mapper),
+            MirrorMode::Custom([1, 1, 0, 0])
+        );
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0000,
+                PpuReadAccess::CpuData,
+                &mut interrupt,
+            )
+            .data,
+            2
+        );
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0400,
+                PpuReadAccess::CpuData,
+                &mut interrupt,
+            )
+            .data,
+            3
         );
     }
 }

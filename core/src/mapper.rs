@@ -29,6 +29,17 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn write_register(&mut self, _address: usize, _value: u8, _interrupt: &mut Interrupt) {}
 
+    /// Schedule a mapper register write for the current CPU cycle.
+    ///
+    /// Most mappers apply the write immediately. Mappers with CPU/PPU phase-sensitive behavior may
+    /// defer the write until `flush_deferred_register_writes` is called.
+    fn schedule_register_write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        self.write_register(address, value, interrupt);
+    }
+
+    /// Apply any writes previously deferred by `schedule_register_write`.
+    fn flush_deferred_register_writes(&mut self, _interrupt: &mut Interrupt) {}
+
     fn read_expansion(&self, _address: usize) -> OpenBusReadResult {
         OpenBusReadResult::new(0, 0)
     }
