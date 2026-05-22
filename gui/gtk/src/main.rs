@@ -8,10 +8,9 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_runtime::{
-    ConsoleSessionFactory, ConsoleVideoAssets, GuiSession, SessionCommand, SessionCommandOutcome,
-    StateSlotSummary, VideoPresentation,
+    ConsoleSessionFactory, ConsoleVideoAssets, ControllerInput, ControllerPort, GuiSession,
+    InputState, SessionCommand, SessionCommandOutcome, StateSlotSummary, VideoPresentation,
 };
-use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
 use nerust_gui_shell::{NesConsoleDescriptor, NesInputAdapter};
 use nerust_screen_traits::PhysicalSize;
 use nerust_sound_openal::prepare_macos_runtime;

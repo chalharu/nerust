@@ -27,9 +27,9 @@
 //! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
 
 use nerust_console::{Console, ControllerInputs};
-use nerust_gui_runtime::{ConsoleSessionFactory, GuiSession, SessionCore};
-use nerust_gui_session::{
-    ButtonDescriptor, ControllerDescriptor, ControllerInput, ControllerPort, InputState,
+use nerust_gui_runtime::{
+    ButtonDescriptor, ConsoleSessionFactory, ControllerDescriptor, ControllerInput, ControllerPort,
+    GuiSession, InputState, SessionCore,
 };
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_sound_openal::OpenAl;
@@ -213,7 +213,7 @@ impl NesInputAdapter {
 mod tests {
     use super::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
     use nerust_console::ControllerInputs;
-    use nerust_gui_session::{ControllerInput, ControllerPort, InputState};
+    use nerust_gui_runtime::{ControllerInput, ControllerPort, InputState};
     use std::time::Instant;
 
     #[test]
