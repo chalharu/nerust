@@ -13,9 +13,10 @@ use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
 use gl::types::GLint;
 use nerust_glwrap::*;
-use nerust_screen_filter::presentation::VideoPresentation;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_traits::LogicalSize;
+use nerust_screen_filter::{
+    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, NesVideoAssets, PALETTE_TEXTURE_WIDTH,
+};
+use nerust_screen_traits::{LogicalSize, VideoPresentation};
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;
@@ -94,10 +95,14 @@ impl GlView {
         gl::load_with(get_proc_address);
     }
 
-    pub fn on_load(&mut self, presentation: &VideoPresentation) -> Result<(), String> {
+    pub fn on_load(
+        &mut self,
+        presentation: &VideoPresentation,
+        assets: &NesVideoAssets,
+    ) -> Result<(), String> {
         if !presentation.is_palette_frame() {
             return Err(
-                "nerust_screen_opengl does not yet support DirectRgba video presentations"
+                "nerust_screen_opengl does not yet support non-palette video presentations"
                     .to_string(),
             );
         }
@@ -105,7 +110,7 @@ impl GlView {
         let source_logical_size = presentation.source_logical_size();
         let logical_size = presentation.logical_size();
         let (shader, pipeline_mode, single_channel_format) =
-            compile_shader_program(presentation.is_palette_pipeline());
+            compile_shader_program(assets.is_palette_pipeline());
         self.source_logical_size = source_logical_size;
         self.pipeline_mode = pipeline_mode;
         self.single_channel_format = single_channel_format;
@@ -135,9 +140,7 @@ impl GlView {
                 self.palette_texture,
                 PALETTE_TEXTURE_WIDTH as usize,
                 1,
-                presentation.palette_rgba8().ok_or_else(|| {
-                    "palette presentation data is missing palette texture bytes".to_string()
-                })?,
+                assets.palette_rgba8(),
             );
         } else {
             configure_rgba_texture(
@@ -145,12 +148,10 @@ impl GlView {
                 self.palette_texture,
                 PALETTE_TEXTURE_WIDTH as usize,
                 1,
-                presentation.palette_rgba8().ok_or_else(|| {
-                    "palette presentation data is missing palette texture bytes".to_string()
-                })?,
+                assets.palette_rgba8(),
             );
         }
-        if presentation.is_palette_pipeline() {
+        if assets.is_palette_pipeline() {
             if self.pipeline_mode.uses_packed_ntsc_lut() {
                 configure_rgba8ui_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
             } else {
@@ -158,7 +159,7 @@ impl GlView {
                 configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
             }
         } else if self.pipeline_mode.uses_packed_ntsc_lut() {
-            let texture = presentation.packed_ntsc_rgba8().ok_or_else(|| {
+            let texture = assets.packed_ntsc_rgba8().ok_or_else(|| {
                 "NTSC presentation data is missing packed texture bytes".to_string()
             })?;
             configure_rgba8ui_texture(
@@ -169,7 +170,7 @@ impl GlView {
                 texture,
             );
             configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
-        } else if let Some(textures) = presentation.split_ntsc_textures() {
+        } else if let Some(textures) = assets.split_ntsc_textures() {
             configure_rgba_texture(
                 2,
                 self.ntsc_primary_texture,

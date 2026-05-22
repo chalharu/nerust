@@ -8,7 +8,8 @@ use nerust_persistence::{
     write_state_slot,
 };
 use nerust_screen_filter::FilterType;
-pub use nerust_screen_filter::presentation::VideoPresentation;
+pub use nerust_screen_filter::NesVideoAssets;
+pub use nerust_screen_traits::VideoPresentation;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
@@ -101,6 +102,10 @@ impl GuiSession {
 
     pub fn presentation(&self) -> &VideoPresentation {
         self.console.video().presentation()
+    }
+
+    pub fn required_nes_video_assets(&self) -> &NesVideoAssets {
+        self.console.video().required_nes_video_assets()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {

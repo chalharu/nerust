@@ -207,6 +207,7 @@ impl WindowRuntime {
             &render_surface,
             render_surface.surface_size(window_surface_size(window.inner_size())),
             self.session.presentation(),
+            self.session.required_nes_video_assets(),
         ))
         .unwrap();
         self.window = Some(window);

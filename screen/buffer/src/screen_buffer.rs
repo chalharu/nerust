@@ -6,9 +6,8 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::presentation::VideoPresentation;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen};
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter, NesVideoAssets};
+use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen, VideoPresentation};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -21,6 +20,7 @@ enum PublishMode {
 pub struct ScreenBuffer {
     filter_type: FilterType,
     video_presentation: VideoPresentation,
+    nes_video_assets: Option<NesVideoAssets>,
     publish_mode: PublishMode,
     filter: Option<Box<dyn NesFilter>>,
     dest: Option<ScreenBufferUnit>,
@@ -37,15 +37,18 @@ impl ScreenBuffer {
             src_size,
             PublishMode::FilteredRgba,
             filter_type.rgba_presentation(src_size),
+            None,
         )
     }
 
     pub fn new_gpu(filter_type: FilterType, src_size: LogicalSize) -> Self {
+        let video_presentation = filter_type.palette_presentation(src_size);
         Self::with_publish_mode(
             filter_type,
             src_size,
             PublishMode::SourcePalette,
-            filter_type.palette_presentation(src_size),
+            video_presentation,
+            Some(filter_type.palette_nes_video_assets()),
         )
     }
 
@@ -54,6 +57,7 @@ impl ScreenBuffer {
         src_size: LogicalSize,
         publish_mode: PublishMode,
         video_presentation: VideoPresentation,
+        nes_video_assets: Option<NesVideoAssets>,
     ) -> Self {
         let src_buffer_size = src_size.height * src_size.width;
         let src_buffer = allocate(src_buffer_size);
@@ -74,6 +78,7 @@ impl ScreenBuffer {
         let mut result = Self {
             filter_type,
             video_presentation,
+            nes_video_assets,
             publish_mode,
             filter,
             src_buffer,
@@ -149,6 +154,10 @@ impl ScreenBuffer {
         &self.video_presentation
     }
 
+    pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
+        self.nes_video_assets.as_ref()
+    }
+
     pub fn clear(&mut self) {
         if let Some(dest) = self.dest.as_mut() {
             dest.clear();
@@ -221,11 +230,8 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::{
-        FilterType,
-        presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
-    };
-    use nerust_screen_traits::{LogicalSize, Screen};
+    use nerust_screen_filter::FilterType;
+    use nerust_screen_traits::{LogicalSize, Screen, VideoFrameFormat};
 
     #[test]
     fn all_filters_publish_full_frames() {
@@ -267,8 +273,10 @@ mod tests {
             VideoFrameFormat::Palette
         );
         assert_eq!(
-            screen.video_presentation().pipeline_kind(),
-            VideoPresentationPipelineKind::Ntsc
+            screen
+                .nes_video_assets()
+                .map(|assets| assets.pipeline_kind()),
+            Some(nerust_screen_filter::presentation::VideoPresentationPipelineKind::Ntsc)
         );
     }
 }
