@@ -17,7 +17,7 @@ use self::txsrom::TxSrom;
 use super::CartridgeData;
 use crate::CartridgeError;
 use crate::Mmc3IrqVariant;
-use crate::cart_device::Cartridge;
+pub(super) use crate::cart_device::Cartridge;
 #[cfg(test)]
 use crate::mapper::Mapper;
 #[cfg(test)]
@@ -68,7 +68,6 @@ pub(crate) fn try_from_txsrom(data: CartridgeData) -> Result<Box<dyn Cartridge>,
 mod tests {
     use super::shared::{IrqVariant, PrgRamModel};
     use super::*;
-    use crate::cart_device::Cartridge;
     use crate::cpu::interrupt::{Interrupt, IrqSource};
     use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
