@@ -7,7 +7,7 @@
 mod filters;
 pub mod presentation;
 
-pub use crate::presentation::NesVideoAssets;
+pub use crate::presentation::{ConsoleVideoAssets, NesVideoAssets};
 use crate::presentation::{
     VideoFilterPipeline, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
 };
@@ -149,14 +149,8 @@ impl FilterType {
         self.presentation(source_logical_size, VideoFrameFormat::Palette)
     }
 
-    pub fn nes_video_assets(self, frame_format: VideoFrameFormat) -> Option<NesVideoAssets> {
-        match frame_format {
-            VideoFrameFormat::Rgba => None,
-            VideoFrameFormat::Palette => Some(self.palette_nes_video_assets()),
-        }
-    }
-
-    pub fn palette_nes_video_assets(self) -> NesVideoAssets {
+    /// Build the NES-specific GPU assets for a palette pipeline.
+    pub(crate) fn palette_nes_video_assets(self) -> NesVideoAssets {
         let pipeline = match self {
             FilterType::None => VideoFilterPipeline::Palette {
                 palette_rgba8: self.encoded_palette_rgba8(),
@@ -175,6 +169,11 @@ impl FilterType {
         };
 
         NesVideoAssets::new(pipeline)
+    }
+
+    /// Build the console-family GPU assets for a palette pipeline (NES variant).
+    pub fn palette_console_video_assets(self) -> ConsoleVideoAssets {
+        ConsoleVideoAssets::Nes(self.palette_nes_video_assets())
     }
 
     pub fn palette(self) -> [RGB; 64] {
@@ -250,7 +249,8 @@ impl FilterType {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
+        BLACK_PALETTE_INDEX, ConsoleVideoAssets, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT,
+        PALETTE_TEXTURE_WIDTH,
         presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
     };
     use nerust_screen_traits::{LogicalSize, RGB};
@@ -492,15 +492,28 @@ mod tests {
     }
 
     #[test]
+    fn palette_console_video_assets_wrap_nes_pipeline() {
+        let assets = FilterType::NtscComposite.palette_console_video_assets();
+
+        match assets {
+            ConsoleVideoAssets::Nes(nes_assets) => {
+                assert_eq!(
+                    nes_assets.pipeline_kind(),
+                    VideoPresentationPipelineKind::Ntsc
+                );
+                assert!(nes_assets.uses_ntsc_pipeline());
+            }
+        }
+    }
+
+    #[test]
     fn rgba_presentation_uses_direct_pipeline() {
         let presentation = FilterType::NtscComposite.rgba_presentation(LogicalSize {
             width: 256,
             height: 240,
         });
-        let assets = FilterType::NtscComposite.nes_video_assets(VideoFrameFormat::Rgba);
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Rgba);
-        assert!(assets.is_none());
     }
 
     #[test]

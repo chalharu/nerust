@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_filter::NesVideoAssets;
+use nerust_screen_filter::ConsoleVideoAssets;
 use nerust_screen_opengl::GlView;
 use nerust_screen_traits::VideoPresentation;
 use std::os::raw::c_void;
@@ -46,13 +46,16 @@ impl GlBackend {
         self.view.use_vao(value);
     }
 
-    /// Allocate GPU resources for the given presentation and assets.
+    /// Allocate GPU resources for the given presentation and console-family assets.
+    ///
+    /// Branches on the console variant; currently only NES is supported.
     pub fn on_load(
         &mut self,
         presentation: &VideoPresentation,
-        assets: &NesVideoAssets,
+        assets: &ConsoleVideoAssets,
     ) -> Result<(), String> {
-        self.view.on_load(presentation, assets)?;
+        let ConsoleVideoAssets::Nes(nes_assets) = assets;
+        self.view.on_load(presentation, nes_assets)?;
         let source_logical_size = presentation.source_logical_size();
         self.expected_frame_len = source_logical_size.width * source_logical_size.height;
         Ok(())

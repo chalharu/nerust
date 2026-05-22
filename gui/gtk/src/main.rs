@@ -8,8 +8,8 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_shell::{
-    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState,
-    NesConsoleDescriptor, NesInputAdapter, NesVideoAssets, SessionCommand, SessionCommandOutcome,
+    ConsoleSessionFactory, ConsoleVideoAssets, ControllerInput, ControllerPort, GuiSession,
+    InputState, NesConsoleDescriptor, NesInputAdapter, SessionCommand, SessionCommandOutcome,
     StateSlotSummary, VideoPresentation,
 };
 use nerust_screen_traits::PhysicalSize;
@@ -41,9 +41,9 @@ impl State {
         self.session.presentation()
     }
 
-    pub(crate) fn required_nes_video_assets(&self) -> &NesVideoAssets {
+    pub(crate) fn required_console_video_assets(&self) -> &ConsoleVideoAssets {
         self.session
-            .nes_video_assets()
+            .console_video_assets()
             .expect("NES session always has video assets")
     }
 

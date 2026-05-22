@@ -90,7 +90,7 @@ impl GLAreaExtend for GLArea {
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            view.on_load(state.presentation(), state.required_nes_video_assets())
+            view.on_load(state.presentation(), state.required_console_video_assets())
                 .unwrap();
             state.view = Some(view);
         }

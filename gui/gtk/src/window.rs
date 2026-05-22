@@ -72,8 +72,8 @@ pub(crate) enum KeyEventState {
 
 fn gdk_key_controller_input(key: gdk::Key) -> Option<ControllerInput> {
     Some(match key {
-        gdk::Key::z => ControllerInput::Primary,
-        gdk::Key::x => ControllerInput::Secondary,
+        gdk::Key::z => ControllerInput::A,
+        gdk::Key::x => ControllerInput::B,
         gdk::Key::c => ControllerInput::Select,
         gdk::Key::v => ControllerInput::Start,
         gdk::Key::Up => ControllerInput::Up,
@@ -574,11 +574,11 @@ mod tests {
     fn gdk_key_mapping_matches_controller_layout() {
         assert_eq!(
             gdk_key_controller_input(gdk::Key::z),
-            Some(ControllerInput::Primary)
+            Some(ControllerInput::A)
         );
         assert_eq!(
             gdk_key_controller_input(gdk::Key::x),
-            Some(ControllerInput::Secondary)
+            Some(ControllerInput::B)
         );
         assert_eq!(
             gdk_key_controller_input(gdk::Key::Up),

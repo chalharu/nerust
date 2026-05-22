@@ -688,7 +688,7 @@ impl Console {
             thread: None,
             video: ConsoleVideo::new(
                 screen.video_presentation().clone(),
-                screen.nes_video_assets().cloned(),
+                screen.console_video_assets().cloned(),
                 frame_buffer.clone(),
             ),
             metrics: metrics.clone(),
@@ -1143,7 +1143,7 @@ impl ConsoleRunner {
     fn export_preview_frame(&self) -> Option<PreviewFrame> {
         let palette = self
             .screen
-            .nes_video_assets()
+            .console_video_assets()
             .map(|assets| assets.palette_rgba8())?;
         let source_size = self.screen.source_logical_size();
         let mut indices = vec![0; self.screen.source_frame_len()];

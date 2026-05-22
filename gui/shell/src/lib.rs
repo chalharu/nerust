@@ -133,8 +133,8 @@ impl NesInputAdapter {
 
     fn nes_flag(input: ControllerInput) -> ControllerInputs {
         match input {
-            ControllerInput::Primary => ControllerInputs::A,
-            ControllerInput::Secondary => ControllerInputs::B,
+            ControllerInput::A => ControllerInputs::A,
+            ControllerInput::B => ControllerInputs::B,
             ControllerInput::Select => ControllerInputs::SELECT,
             ControllerInput::Start => ControllerInputs::START,
             ControllerInput::Up => ControllerInputs::UP,
@@ -157,7 +157,7 @@ pub use nerust_gui_runtime::{
     VideoPresentation, slot_label, window_title,
 };
 pub use nerust_gui_session::{ConsoleMetrics, ControllerInput, ControllerPort, InputState};
-pub use nerust_screen_filter::NesVideoAssets;
+pub use nerust_screen_filter::ConsoleVideoAssets;
 
 #[cfg(test)]
 mod tests {
@@ -167,13 +167,13 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn nes_input_adapter_maps_primary_to_a_and_secondary_to_b() {
+    fn nes_input_adapter_maps_a_to_controller_a_and_b_to_controller_b() {
         assert_eq!(
-            NesInputAdapter::nes_flag(ControllerInput::Primary),
+            NesInputAdapter::nes_flag(ControllerInput::A),
             ControllerInputs::A
         );
         assert_eq!(
-            NesInputAdapter::nes_flag(ControllerInput::Secondary),
+            NesInputAdapter::nes_flag(ControllerInput::B),
             ControllerInputs::B
         );
     }
@@ -181,11 +181,7 @@ mod tests {
     #[test]
     fn nes_input_adapter_tracks_pressed_and_released() {
         let mut adapter = NesInputAdapter::new();
-        adapter.handle_input(
-            ControllerPort::One,
-            ControllerInput::Primary,
-            InputState::Pressed,
-        );
+        adapter.handle_input(ControllerPort::One, ControllerInput::A, InputState::Pressed);
         adapter.handle_input(
             ControllerPort::One,
             ControllerInput::Right,
@@ -193,7 +189,7 @@ mod tests {
         );
         adapter.handle_input(
             ControllerPort::One,
-            ControllerInput::Primary,
+            ControllerInput::A,
             InputState::Released,
         );
         assert_eq!(adapter.held[0], ControllerInputs::RIGHT);

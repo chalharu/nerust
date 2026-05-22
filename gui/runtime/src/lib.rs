@@ -11,7 +11,7 @@ use nerust_persistence::{
     scan_state_slots_for_target, state_slot_path, write_mapper_save, write_recovery_mapper_save,
     write_state_slot,
 };
-pub use nerust_screen_filter::NesVideoAssets;
+pub use nerust_screen_filter::ConsoleVideoAssets;
 pub use nerust_screen_traits::VideoPresentation;
 use std::path::PathBuf;
 
@@ -47,8 +47,8 @@ impl GuiSession {
         self.core.presentation()
     }
 
-    pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
-        self.core.video().nes_video_assets()
+    pub fn console_video_assets(&self) -> Option<&ConsoleVideoAssets> {
+        self.core.video().console_video_assets()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {

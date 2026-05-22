@@ -6,7 +6,7 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter, NesVideoAssets};
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, ConsoleVideoAssets, FilterType, NesFilter};
 use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen, VideoPresentation};
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -20,7 +20,7 @@ enum PublishMode {
 pub struct ScreenBuffer {
     filter_type: FilterType,
     video_presentation: VideoPresentation,
-    nes_video_assets: Option<NesVideoAssets>,
+    console_video_assets: Option<ConsoleVideoAssets>,
     publish_mode: PublishMode,
     filter: Option<Box<dyn NesFilter>>,
     dest: Option<ScreenBufferUnit>,
@@ -48,7 +48,7 @@ impl ScreenBuffer {
             src_size,
             PublishMode::SourcePalette,
             video_presentation,
-            Some(filter_type.palette_nes_video_assets()),
+            Some(filter_type.palette_console_video_assets()),
         )
     }
 
@@ -57,7 +57,7 @@ impl ScreenBuffer {
         src_size: LogicalSize,
         publish_mode: PublishMode,
         video_presentation: VideoPresentation,
-        nes_video_assets: Option<NesVideoAssets>,
+        console_video_assets: Option<ConsoleVideoAssets>,
     ) -> Self {
         let src_buffer_size = src_size.height * src_size.width;
         let src_buffer = allocate(src_buffer_size);
@@ -78,7 +78,7 @@ impl ScreenBuffer {
         let mut result = Self {
             filter_type,
             video_presentation,
-            nes_video_assets,
+            console_video_assets,
             publish_mode,
             filter,
             src_buffer,
@@ -154,8 +154,8 @@ impl ScreenBuffer {
         &self.video_presentation
     }
 
-    pub fn nes_video_assets(&self) -> Option<&NesVideoAssets> {
-        self.nes_video_assets.as_ref()
+    pub fn console_video_assets(&self) -> Option<&ConsoleVideoAssets> {
+        self.console_video_assets.as_ref()
     }
 
     pub fn clear(&mut self) {
@@ -274,8 +274,8 @@ mod tests {
         );
         assert_eq!(
             screen
-                .nes_video_assets()
-                .map(|assets| assets.pipeline_kind()),
+                .console_video_assets()
+                .map(|assets| assets.as_nes().unwrap().pipeline_kind()),
             Some(nerust_screen_filter::presentation::VideoPresentationPipelineKind::Ntsc)
         );
     }
