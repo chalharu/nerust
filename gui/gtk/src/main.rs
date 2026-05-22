@@ -6,11 +6,11 @@ use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use nerust_backend_opengl::GlBackend;
 use nerust_gui_runtime::{
     ControllerInput, ControllerPort, GuiSession, InputState, NesVideoAssets, SessionCommand,
     SessionCommandOutcome, StateSlotSummary, VideoPresentation,
 };
-use nerust_screen_opengl::GlView;
 use nerust_screen_traits::PhysicalSize;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
@@ -22,7 +22,7 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) struct State {
-    view: Option<GlView>,
+    view: Option<GlBackend>,
     session: GuiSession,
 }
 

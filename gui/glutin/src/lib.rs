@@ -13,10 +13,10 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
+use nerust_backend_opengl::GlBackend;
 use nerust_gui_runtime::{
     ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
 };
-use nerust_screen_opengl::GlView;
 use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
@@ -97,7 +97,7 @@ fn create_window(
         .expect("failed to make GL context current");
 
     let gl_display = gl_config.display();
-    GlView::load_with(|symbol| {
+    GlBackend::load_with(|symbol| {
         let symbol = CString::new(symbol).unwrap();
         gl_display.get_proc_address(symbol.as_c_str()).cast()
     });
@@ -133,7 +133,7 @@ fn element_state_to_input_state(state: ElementState) -> InputState {
 }
 
 pub struct Window {
-    view: Option<GlView>,
+    view: Option<GlBackend>,
     gl_context: Option<PossiblyCurrentContext>,
     gl_surface: Option<Surface<WindowSurface>>,
     window: Option<WinitWindow>,
@@ -177,7 +177,7 @@ impl Window {
 
         let (window, gl_context, gl_surface) =
             create_window(event_loop, self.session.physical_size());
-        let mut view = GlView::new();
+        let mut view = GlBackend::new();
         view.use_vao(true);
         view.on_load(
             self.session.presentation(),
@@ -196,7 +196,7 @@ impl Window {
 
     fn on_update(&mut self) {
         self.session.with_frame_buffer(|frame_buffer| {
-            self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
+            self.view.as_ref().unwrap().on_update(frame_buffer);
         });
         self.gl_surface
             .as_ref()

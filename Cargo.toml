@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+  "backend/opengl",
+  "backend/wgpu",
   "cartridge/data",
   "console",
   "contract",
@@ -65,6 +67,8 @@ nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
+nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }
+nerust_backend_wgpu = { version = "=0.1.0", path = "backend/wgpu" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
 nerust_wgpuwrap = { version = "=0.1.0", path = "wgpuwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
