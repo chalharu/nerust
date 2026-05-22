@@ -111,8 +111,8 @@ fn create_window(
 
 fn physical_key_controller_input(key: PhysicalKey) -> Option<ControllerInput> {
     Some(match key {
-        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::Primary,
-        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::Secondary,
+        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::A,
+        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::B,
         PhysicalKey::Code(KeyCode::KeyC) => ControllerInput::Select,
         PhysicalKey::Code(KeyCode::KeyV) => ControllerInput::Start,
         PhysicalKey::Code(KeyCode::ArrowUp) => ControllerInput::Up,
@@ -180,7 +180,7 @@ impl Window {
         view.on_load(
             self.session.presentation(),
             self.session
-                .nes_video_assets()
+                .console_video_assets()
                 .expect("NES session always has video assets"),
         )
         .unwrap();
@@ -418,11 +418,11 @@ mod tests {
     fn physical_key_mapping_matches_controller_layout() {
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(ControllerInput::Primary)
+            Some(ControllerInput::A)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
-            Some(ControllerInput::Secondary)
+            Some(ControllerInput::B)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),

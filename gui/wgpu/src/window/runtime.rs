@@ -28,8 +28,8 @@ use tao::{
 
 fn keycode_controller_input(code: KeyCode) -> Option<ControllerInput> {
     Some(match code {
-        KeyCode::KeyZ => ControllerInput::Primary,
-        KeyCode::KeyX => ControllerInput::Secondary,
+        KeyCode::KeyZ => ControllerInput::A,
+        KeyCode::KeyX => ControllerInput::B,
         KeyCode::KeyC => ControllerInput::Select,
         KeyCode::KeyV => ControllerInput::Start,
         KeyCode::ArrowUp => ControllerInput::Up,
@@ -201,7 +201,7 @@ impl WindowRuntime {
             initial_size,
             self.session.presentation(),
             self.session
-                .nes_video_assets()
+                .console_video_assets()
                 .expect("NES session always has video assets"),
         )
         .unwrap();
@@ -364,11 +364,11 @@ mod tests {
     fn keycode_mapping_matches_controller_layout() {
         assert_eq!(
             keycode_controller_input(KeyCode::KeyZ),
-            Some(ControllerInput::Primary)
+            Some(ControllerInput::A)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::KeyX),
-            Some(ControllerInput::Secondary)
+            Some(ControllerInput::B)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),

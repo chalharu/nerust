@@ -60,6 +60,34 @@ pub struct NesVideoAssets {
     pipeline: VideoFilterPipeline,
 }
 
+/// Console-family video asset contract.
+///
+/// Each variant carries the GPU upload data for one console family.
+/// The current implementation only covers the NES; a future SNES variant
+/// would be added here without touching the shared rendering layers.
+#[derive(Debug, Clone)]
+pub enum ConsoleVideoAssets {
+    /// NES palette / NTSC shader textures.
+    Nes(NesVideoAssets),
+    // Future: Snes(SnesVideoAssets),
+}
+
+impl ConsoleVideoAssets {
+    /// Return the inner [`NesVideoAssets`] if this is the NES variant.
+    pub fn as_nes(&self) -> Option<&NesVideoAssets> {
+        match self {
+            Self::Nes(assets) => Some(assets),
+        }
+    }
+
+    /// Convenience delegate: palette RGBA8 data regardless of console family.
+    pub fn palette_rgba8(&self) -> &[u8] {
+        match self {
+            Self::Nes(assets) => assets.palette_rgba8(),
+        }
+    }
+}
+
 impl NesVideoAssets {
     pub(crate) fn new(pipeline: VideoFilterPipeline) -> Self {
         Self { pipeline }

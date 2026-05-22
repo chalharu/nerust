@@ -8,8 +8,8 @@ pub use nerust_screen_traits::VideoPresentation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerInput {
-    Primary,
-    Secondary,
+    A,
+    B,
     Select,
     Start,
     Up,

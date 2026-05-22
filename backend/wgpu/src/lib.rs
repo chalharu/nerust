@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_filter::NesVideoAssets;
+use nerust_screen_filter::ConsoleVideoAssets;
 use nerust_screen_traits::VideoPresentation;
 use nerust_screen_wgpu::{RenderOutcome, Renderer};
 use nerust_wgpuwrap::RenderSurface;
@@ -83,19 +83,22 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
     /// `initial_size` is used as a fallback when the surface target cannot
     /// determine its own size (e.g. before the first layout pass). The backend
     /// calls [`Renderer::new`] synchronously via `pollster::block_on`.
+    ///
+    /// Branches on the console variant; currently only NES is supported.
     pub fn new(
         target: T,
         initial_size: SurfaceSize,
         presentation: &VideoPresentation,
-        assets: &NesVideoAssets,
+        assets: &ConsoleVideoAssets,
     ) -> Result<Self, String> {
+        let ConsoleVideoAssets::Nes(nes_assets) = assets;
         let render_surface = RenderSurface::new(ShellSurfaceTarget(target))?;
         let surface_size = render_surface.surface_size(initial_size);
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             surface_size,
             presentation,
-            assets,
+            nes_assets,
         ))?;
         Ok(Self {
             renderer,

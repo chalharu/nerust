@@ -669,7 +669,10 @@ mod tests {
 
     #[test]
     fn ntsc_texture_is_prepacked_for_r32uint_upload() {
-        let assets = FilterType::NtscRGB.palette_nes_video_assets();
+        let assets = FilterType::NtscRGB.palette_console_video_assets();
+        let assets = assets
+            .as_nes()
+            .expect("NTSC filter should provide NES assets today");
         let source = assets
             .packed_ntsc_rgba8()
             .expect("NTSC filter should provide a packed texture");
