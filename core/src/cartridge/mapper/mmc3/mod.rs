@@ -462,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn chr_bank_change_applies_on_next_pattern_low_fetch() {
+    fn chr_bank_change_applies_after_one_full_tile_delay() {
         let mut mapper = new_mmc3_with_chr_banks(0);
         let mut interrupt = Interrupt::new();
 
@@ -481,6 +481,18 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8001, 0x03, &mut interrupt);
 
         assert!(mapper.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x1000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            0
+        );
+        assert!(mapper.shared.pending_chr_update());
+
         assert_eq!(
             Cartridge::read_ppu_pattern(
                 &mut mapper,
@@ -507,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn chr_layout_flip_applies_on_next_pattern_low_fetch() {
+    fn chr_layout_flip_applies_after_one_full_tile_delay() {
         let mut mapper = new_mmc3_with_chr_banks(0);
         let mut interrupt = Interrupt::new();
 
@@ -515,6 +527,7 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8001, 0x06, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x01, &mut interrupt);
+        Cartridge::read_ppu_pattern(&mut mapper, 0x0000, PpuReadAccess::CpuData, &mut interrupt);
 
         assert_eq!(
             Cartridge::read_ppu_pattern(
@@ -530,6 +543,18 @@ mod tests {
         Mapper::write_register(&mut mapper, 0x8000, 0x82, &mut interrupt);
 
         assert!(mapper.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut mapper,
+                0x0000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            6
+        );
+        assert!(mapper.shared.pending_chr_update());
+
         assert_eq!(
             Cartridge::read_ppu_pattern(
                 &mut mapper,

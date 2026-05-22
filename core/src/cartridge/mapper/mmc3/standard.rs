@@ -170,8 +170,10 @@ impl Mapper4Wrapper for Mmc3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
     use crate::persistence::{decode_payload, encode_payload};
+    use crate::ppu_memory_access::PpuReadAccess;
     use crate::{CartridgeDataParts, MirrorMode, RomFormat};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
@@ -219,18 +221,74 @@ mod tests {
     }
 
     #[test]
-    fn current_payload_deserialization_recomputes_pending_chr_update() {
+    fn current_payload_deserialization_preserves_chr_delay_phase() {
         let mut mapper = Mmc3::new(test_data(0), false);
         Cartridge::initialize(&mut mapper);
         let mut interrupt = Interrupt::new();
 
         Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
         Mapper::write_register(&mut mapper, 0x8001, 0x03, &mut interrupt);
+        Cartridge::read_ppu_pattern(
+            &mut mapper,
+            0x1000,
+            PpuReadAccess::BackgroundPattern,
+            &mut interrupt,
+        );
         assert!(mapper.shared.pending_chr_update());
 
         let encoded = encode_payload(&mapper).expect("mapper payload should encode");
-        let decoded: Mmc3 = decode_payload(&encoded).expect("mapper payload should decode");
+        let mut decoded: Mmc3 = decode_payload(&encoded).expect("mapper payload should decode");
 
         assert!(decoded.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut decoded,
+                0x1000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            0
+        );
+        assert!(!decoded.shared.pending_chr_update());
+    }
+
+    #[test]
+    fn runtime_state_import_preserves_chr_delay_phase() {
+        let mut mapper = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut mapper);
+        let mut interrupt = Interrupt::new();
+
+        Mapper::write_register(&mut mapper, 0x8000, 0x02, &mut interrupt);
+        Mapper::write_register(&mut mapper, 0x8001, 0x03, &mut interrupt);
+        Cartridge::read_ppu_pattern(
+            &mut mapper,
+            0x1000,
+            PpuReadAccess::BackgroundPattern,
+            &mut interrupt,
+        );
+
+        let runtime = mapper
+            .export_runtime_state()
+            .expect("runtime state should export");
+
+        let mut restored = Mmc3::new(test_data(0), false);
+        Cartridge::initialize(&mut restored);
+        restored
+            .import_runtime_state(runtime)
+            .expect("runtime state should import");
+
+        assert!(restored.shared.pending_chr_update());
+        assert_eq!(
+            Cartridge::read_ppu_pattern(
+                &mut restored,
+                0x1000,
+                PpuReadAccess::BackgroundPattern,
+                &mut interrupt,
+            )
+            .data,
+            0
+        );
+        assert!(!restored.shared.pending_chr_update());
     }
 }
