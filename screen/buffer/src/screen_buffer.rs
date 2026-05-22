@@ -11,6 +11,12 @@ use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen, VideoPresentation}
 use std::hash::{Hash, Hasher};
 use std::mem;
 
+const DEFAULT_NES_FILTER_TYPE: FilterType = FilterType::NtscComposite;
+const DEFAULT_NES_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
+    width: 256,
+    height: 240,
+};
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PublishMode {
     FilteredRgba,
@@ -50,6 +56,10 @@ impl ScreenBuffer {
             video_presentation,
             Some(filter_type.palette_console_video_assets()),
         )
+    }
+
+    pub fn new_nes_gpu_default() -> Self {
+        Self::new_gpu(DEFAULT_NES_FILTER_TYPE, DEFAULT_NES_SOURCE_LOGICAL_SIZE)
     }
 
     fn with_publish_mode(
@@ -278,5 +288,15 @@ mod tests {
                 .map(|assets| assets.as_nes().unwrap().pipeline_kind()),
             Some(nerust_screen_filter::presentation::VideoPresentationPipelineKind::Ntsc)
         );
+    }
+
+    #[test]
+    fn default_nes_gpu_screen_buffer_uses_standard_source_size() {
+        let screen = ScreenBuffer::new_nes_gpu_default();
+
+        assert!(screen.publishes_palette_frame());
+        assert!(matches!(screen.filter_type(), FilterType::NtscComposite));
+        assert_eq!(screen.source_logical_size().width, 256);
+        assert_eq!(screen.source_logical_size().height, 240);
     }
 }

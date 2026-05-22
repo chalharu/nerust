@@ -150,7 +150,7 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            session: NesConsoleDescriptor::default().build_session(),
+            session: NesConsoleDescriptor.build_session(),
             shell: NativeShellState::new(),
             input: NesInputAdapter::new(),
         }

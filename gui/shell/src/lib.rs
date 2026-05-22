@@ -31,17 +31,10 @@ use nerust_gui_runtime::{ConsoleSessionFactory, GuiSession, SessionCore};
 use nerust_gui_session::{
     ButtonDescriptor, ControllerDescriptor, ControllerInput, ControllerPort, InputState,
 };
-use nerust_screen_filter::FilterType;
-use nerust_screen_traits::LogicalSize;
+use nerust_screen_buffer::ScreenBuffer;
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
 use std::time::{Duration, Instant};
-
-const DEFAULT_FILTER_TYPE: FilterType = FilterType::NtscComposite;
-const DEFAULT_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
-    width: 256,
-    height: 240,
-};
 
 #[derive(Debug)]
 pub struct NativeShellState {
@@ -91,16 +84,13 @@ impl Default for NativeShellState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct NesConsoleDescriptor {
-    pub filter_type: FilterType,
-    pub source_logical_size: LogicalSize,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NesConsoleDescriptor;
 
 impl NesConsoleDescriptor {
     pub fn build_console(self) -> Console {
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
-        Console::new_gpu(speaker, self.filter_type, self.source_logical_size)
+        Console::new(speaker, ScreenBuffer::new_nes_gpu_default())
     }
 
     /// Returns the controller descriptor for the NES.
@@ -145,15 +135,6 @@ impl NesConsoleDescriptor {
                     description: "D-pad Right",
                 },
             ],
-        }
-    }
-}
-
-impl Default for NesConsoleDescriptor {
-    fn default() -> Self {
-        Self {
-            filter_type: DEFAULT_FILTER_TYPE,
-            source_logical_size: DEFAULT_SOURCE_LOGICAL_SIZE,
         }
     }
 }
@@ -266,7 +247,7 @@ mod tests {
 
     #[test]
     fn nes_descriptor_has_canonical_ab_button_names() {
-        let descriptor = NesConsoleDescriptor::default().controller_descriptor();
+        let descriptor = NesConsoleDescriptor.controller_descriptor();
         let names: Vec<&str> = descriptor.buttons.iter().map(|b| b.name).collect();
 
         assert!(names.contains(&"A"), "expected A button in NES descriptor");

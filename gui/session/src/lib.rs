@@ -211,8 +211,7 @@ pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
 mod tests {
     use super::{ButtonDescriptor, ControllerDescriptor, SessionCore, window_title};
     use nerust_console::{Console, ConsoleMetrics};
-    use nerust_screen_filter::FilterType;
-    use nerust_screen_traits::LogicalSize;
+    use nerust_screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
 
     #[derive(Default)]
@@ -229,13 +228,9 @@ mod tests {
     }
 
     fn test_core() -> SessionCore {
-        SessionCore::from_console(Console::new_gpu(
+        SessionCore::from_console(Console::new(
             TestSpeaker,
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
+            ScreenBuffer::new_nes_gpu_default(),
         ))
     }
 

@@ -89,7 +89,7 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             window: None,
             backend: None,
-            session: NesConsoleDescriptor::default().build_session(),
+            session: NesConsoleDescriptor.build_session(),
             app_menu,
             shell: NativeShellState::new(),
             input: NesInputAdapter::new(),
