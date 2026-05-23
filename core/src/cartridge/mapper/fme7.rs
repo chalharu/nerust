@@ -9,7 +9,7 @@ use super::mapper_save_api::{
     CartridgeRuntimeState, MAPPER_KIND_FME7, PersistenceError, decode_payload, encode_payload,
 };
 use crate::CartridgeData;
-use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 use crate::status::mirror_mode::MirrorMode;
@@ -62,11 +62,13 @@ impl Cartridge for Fme7 {
                 "unexpected FME-7 runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         let runtime: Fme7RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.command = runtime.command;
@@ -280,7 +282,7 @@ mod tests {
     use crate::CartridgeData;
     use crate::CartridgeDataParts;
     use crate::RomFormat;
-    use crate::cpu::interrupt::{Interrupt, IrqSource};
+    use crate::interrupt::{Interrupt, IrqSource};
     use crate::mapper::Mapper;
     use crate::status::mirror_mode::MirrorMode;
 

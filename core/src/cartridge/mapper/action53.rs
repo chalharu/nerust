@@ -9,7 +9,7 @@ use super::mapper_save_api::{
     CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError, decode_payload, encode_payload,
 };
 use crate::CartridgeData;
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 use crate::status::mirror_mode::MirrorMode;
@@ -62,11 +62,13 @@ impl Cartridge for Action53 {
                 "unexpected Action53 runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         let runtime: Action53RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.selected_register = runtime.selected_register;
@@ -227,7 +229,7 @@ mod tests {
     use crate::CartridgeData;
     use crate::CartridgeDataParts;
     use crate::RomFormat;
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
     use crate::status::mirror_mode::MirrorMode;
 

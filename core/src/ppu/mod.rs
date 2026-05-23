@@ -10,8 +10,7 @@ mod tileinfo;
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge as MapperCartridge;
-use crate::cpu::interrupt::Interrupt;
-use crate::mapper::Mapper;
+use crate::interrupt::Interrupt;
 use crate::persistence::PersistenceError;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
 use crate::screen_api::Screen;
@@ -19,213 +18,7 @@ use crate::{OpenBus, OpenBusReadResult};
 use std::cmp;
 use std::mem;
 
-pub(crate) trait PpuCartridgeBus {
-    fn read_ppu_pattern(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        interrupt: &mut Interrupt,
-    ) -> OpenBusReadResult;
-    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt);
-    fn read_ppu_nametable(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        ciram: &mut [u8],
-    ) -> OpenBusReadResult;
-    fn write_ppu_nametable(
-        &mut self,
-        address: usize,
-        value: u8,
-        ciram: &mut [u8],
-        interrupt: &mut Interrupt,
-    );
-    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8>;
-    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt);
-    fn notify_ppu_ctrl(&mut self, value: u8);
-    fn notify_ppu_mask(&mut self, value: u8);
-    fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt);
-}
-
-impl<T: MapperCartridge + ?Sized> PpuCartridgeBus for T {
-    fn read_ppu_pattern(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        interrupt: &mut Interrupt,
-    ) -> OpenBusReadResult {
-        MapperCartridge::read_ppu_pattern(self, address, access, interrupt)
-    }
-
-    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::write_ppu_pattern(self, address, value, interrupt);
-    }
-
-    fn read_ppu_nametable(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        ciram: &mut [u8],
-    ) -> OpenBusReadResult {
-        MapperCartridge::read_ppu_nametable(self, address, access, ciram)
-    }
-
-    fn write_ppu_nametable(
-        &mut self,
-        address: usize,
-        value: u8,
-        ciram: &mut [u8],
-        interrupt: &mut Interrupt,
-    ) {
-        MapperCartridge::write_ppu_nametable(self, address, value, ciram, interrupt);
-    }
-
-    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
-        MapperCartridge::peek_ppu_nametable(self, address, ciram)
-    }
-
-    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_ppu_status_read(self, value, interrupt);
-    }
-
-    fn notify_ppu_ctrl(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_ctrl(self, value);
-    }
-
-    fn notify_ppu_mask(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_mask(self, value);
-    }
-
-    fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
-        Mapper::notify_ppu_bus_event(self, event, interrupt);
-    }
-}
-
-use self::PpuCartridgeBus as Cartridge;
-
-pub(crate) struct MapperPpuCartridgeBus<'a>(&'a mut dyn MapperCartridge);
-
-impl PpuCartridgeBus for MapperPpuCartridgeBus<'_> {
-    fn read_ppu_pattern(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        interrupt: &mut Interrupt,
-    ) -> OpenBusReadResult {
-        MapperCartridge::read_ppu_pattern(self.0, address, access, interrupt)
-    }
-
-    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::write_ppu_pattern(self.0, address, value, interrupt);
-    }
-
-    fn read_ppu_nametable(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        ciram: &mut [u8],
-    ) -> OpenBusReadResult {
-        MapperCartridge::read_ppu_nametable(self.0, address, access, ciram)
-    }
-
-    fn write_ppu_nametable(
-        &mut self,
-        address: usize,
-        value: u8,
-        ciram: &mut [u8],
-        interrupt: &mut Interrupt,
-    ) {
-        MapperCartridge::write_ppu_nametable(self.0, address, value, ciram, interrupt);
-    }
-
-    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
-        MapperCartridge::peek_ppu_nametable(self.0, address, ciram)
-    }
-
-    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_ppu_status_read(self.0, value, interrupt);
-    }
-
-    fn notify_ppu_ctrl(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_ctrl(self.0, value);
-    }
-
-    fn notify_ppu_mask(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_mask(self.0, value);
-    }
-
-    fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
-        Mapper::notify_ppu_bus_event(self.0, event, interrupt);
-    }
-}
-
-pub(crate) fn mapper_cartridge_bus(
-    cartridge: &mut dyn MapperCartridge,
-) -> MapperPpuCartridgeBus<'_> {
-    MapperPpuCartridgeBus(cartridge)
-}
-
-pub(crate) struct CpuPpuCartridgeBus<'a>(&'a mut dyn crate::cpu::CpuCartridgeBus);
-
-impl PpuCartridgeBus for CpuPpuCartridgeBus<'_> {
-    fn read_ppu_pattern(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        interrupt: &mut Interrupt,
-    ) -> OpenBusReadResult {
-        PpuCartridgeBus::read_ppu_pattern(self.0, address, access, interrupt)
-    }
-
-    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        PpuCartridgeBus::write_ppu_pattern(self.0, address, value, interrupt);
-    }
-
-    fn read_ppu_nametable(
-        &mut self,
-        address: usize,
-        access: PpuReadAccess,
-        ciram: &mut [u8],
-    ) -> OpenBusReadResult {
-        PpuCartridgeBus::read_ppu_nametable(self.0, address, access, ciram)
-    }
-
-    fn write_ppu_nametable(
-        &mut self,
-        address: usize,
-        value: u8,
-        ciram: &mut [u8],
-        interrupt: &mut Interrupt,
-    ) {
-        PpuCartridgeBus::write_ppu_nametable(self.0, address, value, ciram, interrupt);
-    }
-
-    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
-        PpuCartridgeBus::peek_ppu_nametable(self.0, address, ciram)
-    }
-
-    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt) {
-        PpuCartridgeBus::notify_ppu_status_read(self.0, value, interrupt);
-    }
-
-    fn notify_ppu_ctrl(&mut self, value: u8) {
-        PpuCartridgeBus::notify_ppu_ctrl(self.0, value);
-    }
-
-    fn notify_ppu_mask(&mut self, value: u8) {
-        PpuCartridgeBus::notify_ppu_mask(self.0, value);
-    }
-
-    fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
-        PpuCartridgeBus::notify_ppu_bus_event(self.0, event, interrupt);
-    }
-}
-
-pub(crate) fn cpu_cartridge_bus(
-    cartridge: &mut dyn crate::cpu::CpuCartridgeBus,
-) -> CpuPpuCartridgeBus<'_> {
-    CpuPpuCartridgeBus(cartridge)
-}
+use crate::cartridge_bus::PpuCartridgeBus as Cartridge;
 
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
@@ -247,7 +40,7 @@ mod tests {
     use crate::cart_device::Cartridge;
     use crate::cartridge;
     use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
     use crate::screen_api::Screen;
     use crate::status::mirror_mode::MirrorMode;
 
@@ -332,13 +125,13 @@ mod tests {
         assert_eq!(ppu.cycle, 338);
         assert_eq!(ppu.ppu_bus_tick(), 10);
 
-        let mut ppu_cartridge = super::mapper_cartridge_bus(cartridge.as_mut());
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(ppu.cycle, 340);
         assert_eq!(ppu.ppu_bus_tick(), 11);
 
-        let mut ppu_cartridge = super::mapper_cartridge_bus(cartridge.as_mut());
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(ppu.scan_line, 1);
@@ -357,7 +150,7 @@ mod tests {
         assert_eq!(cartridge.read(0x0000).data, 0x02);
 
         ppu.state.vram_addr = 0x0FE8;
-        let mut ppu_cartridge = super::mapper_cartridge_bus(cartridge.as_mut());
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let _ = ppu.read_data(&mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(cartridge.read(0x0000).data, 0x03);

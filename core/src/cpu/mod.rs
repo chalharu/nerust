@@ -6,7 +6,6 @@
 
 mod addressing_mode;
 mod internal_stat;
-pub(crate) mod interrupt;
 mod memory;
 mod oamdma;
 mod opcodes;
@@ -14,7 +13,6 @@ mod register;
 
 use self::addressing_mode::*;
 use self::internal_stat::{CpuStatesEnum, InternalStat};
-use self::interrupt::{DmcDmaKind, Interrupt, IrqSource};
 use self::memory::Memory;
 use self::oamdma::OamDmaState;
 use self::opcodes::{
@@ -23,118 +21,12 @@ use self::opcodes::{
 };
 use self::register::{Register, RegisterP};
 use crate::cart_device::Cartridge as MapperCartridge;
-use crate::ppu::PpuCartridgeBus;
+use crate::cartridge_bus::{CpuCartridgeBus, mapper_cartridge_bus};
+use crate::interrupt::{DmcDmaKind, Interrupt, IrqSource};
 use crate::{Apu, Controller, PersistenceError, Ppu};
 use std::ops::Shr;
 
-pub(crate) trait CpuCartridgeBus: PpuCartridgeBus {
-    fn read(&self, address: usize) -> crate::OpenBusReadResult;
-    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt);
-    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt);
-    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt);
-}
-
-impl<T: MapperCartridge + ?Sized> CpuCartridgeBus for T {
-    fn read(&self, address: usize) -> crate::OpenBusReadResult {
-        MapperCartridge::read(self, address)
-    }
-
-    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::write(self, address, value, interrupt);
-    }
-
-    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_cpu_read(self, address, value, interrupt);
-    }
-
-    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_oam_dma(self, interrupt);
-    }
-}
-
-pub(super) use self::CpuCartridgeBus as Cartridge;
-
-struct MapperCpuCartridgeBus<'a>(&'a mut dyn MapperCartridge);
-
-impl PpuCartridgeBus for MapperCpuCartridgeBus<'_> {
-    fn read_ppu_pattern(
-        &mut self,
-        address: usize,
-        access: crate::ppu_memory_access::PpuReadAccess,
-        interrupt: &mut Interrupt,
-    ) -> crate::OpenBusReadResult {
-        MapperCartridge::read_ppu_pattern(self.0, address, access, interrupt)
-    }
-
-    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::write_ppu_pattern(self.0, address, value, interrupt);
-    }
-
-    fn read_ppu_nametable(
-        &mut self,
-        address: usize,
-        access: crate::ppu_memory_access::PpuReadAccess,
-        ciram: &mut [u8],
-    ) -> crate::OpenBusReadResult {
-        MapperCartridge::read_ppu_nametable(self.0, address, access, ciram)
-    }
-
-    fn write_ppu_nametable(
-        &mut self,
-        address: usize,
-        value: u8,
-        ciram: &mut [u8],
-        interrupt: &mut Interrupt,
-    ) {
-        MapperCartridge::write_ppu_nametable(self.0, address, value, ciram, interrupt);
-    }
-
-    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
-        MapperCartridge::peek_ppu_nametable(self.0, address, ciram)
-    }
-
-    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_ppu_status_read(self.0, value, interrupt);
-    }
-
-    fn notify_ppu_ctrl(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_ctrl(self.0, value);
-    }
-
-    fn notify_ppu_mask(&mut self, value: u8) {
-        MapperCartridge::notify_ppu_mask(self.0, value);
-    }
-
-    fn notify_ppu_bus_event(
-        &mut self,
-        event: crate::ppu_memory_access::PpuBusEvent,
-        interrupt: &mut Interrupt,
-    ) {
-        crate::mapper::Mapper::notify_ppu_bus_event(self.0, event, interrupt);
-    }
-}
-
-impl CpuCartridgeBus for MapperCpuCartridgeBus<'_> {
-    fn read(&self, address: usize) -> crate::OpenBusReadResult {
-        MapperCartridge::read(self.0, address)
-    }
-
-    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::write(self.0, address, value, interrupt);
-    }
-
-    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_cpu_read(self.0, address, value, interrupt);
-    }
-
-    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt) {
-        MapperCartridge::notify_oam_dma(self.0, interrupt);
-    }
-}
-
-fn cpu_cartridge_bus(cartridge: &mut dyn MapperCartridge) -> MapperCpuCartridgeBus<'_> {
-    MapperCpuCartridgeBus(cartridge)
-}
+pub(super) use crate::cartridge_bus::CpuCartridgeBus as Cartridge;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where
@@ -370,7 +262,7 @@ impl Core {
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) {
-        let mut cartridge = cpu_cartridge_bus(cartridge);
+        let mut cartridge = mapper_cartridge_bus(cartridge);
         self.cycles = self.cycles.wrapping_add(1);
 
         if let Some(offset) = self.interrupt.oam_dma.take() {
@@ -418,7 +310,7 @@ impl Core {
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> bool {
-        let mut cartridge = cpu_cartridge_bus(cartridge);
+        let mut cartridge = mapper_cartridge_bus(cartridge);
         self.process_dma_cycle_bus(ppu, &mut cartridge, controller, apu)
     }
 

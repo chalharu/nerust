@@ -6,7 +6,7 @@
 
 use super::Cartridge;
 use crate::CartridgeData;
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 
@@ -85,7 +85,7 @@ mod tests {
     use crate::CartridgeData;
     use crate::CartridgeDataParts;
     use crate::RomFormat;
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
     use crate::status::mirror_mode::MirrorMode;
 

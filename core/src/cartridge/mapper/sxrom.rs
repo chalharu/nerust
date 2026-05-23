@@ -11,7 +11,7 @@ use super::mapper_save_api::{
     CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError, decode_payload, encode_payload,
 };
 use crate::CartridgeData;
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 use crate::status::mirror_mode::MirrorMode;
@@ -70,11 +70,13 @@ impl Cartridge for SxRom {
                 "unexpected SXROM runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         let runtime: SxRomRuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.control = runtime.control;

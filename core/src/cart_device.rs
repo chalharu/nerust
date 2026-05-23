@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::OpenBusReadResult;
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
@@ -219,11 +219,13 @@ pub(crate) trait Cartridge: Mapper {
                 "unexpected mapper-specific state for this mapper".into(),
             ));
         }
-        self.mapper_state_ref().validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
+        self.mapper_state_ref()
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         *self.mapper_state_mut() = state.mapper_state;
         Ok(())
     }

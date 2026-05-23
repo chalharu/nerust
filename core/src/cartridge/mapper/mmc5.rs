@@ -10,7 +10,7 @@ use self::mmc5_persistence_api::{
 };
 use super::Cartridge;
 use crate::OpenBusReadResult;
-use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::interrupt::{Interrupt, IrqSource};
 use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
 
@@ -241,11 +241,13 @@ impl Cartridge for Mmc5 {
                 "unexpected MMC5 runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         let runtime: Mmc5RuntimeState = decode_payload(&state.extra_body)?;
         runtime.validate()?;
         if runtime.exram.len() != self.exram.len() {

@@ -68,7 +68,7 @@ mod tests {
         Cartridge, CartridgeData, Mapper4Model, Mmc3, Mmc3IrqVariant, Mmc3Nec, Mmc6,
         resolve_mapper4_model,
     };
-    use crate::cpu::interrupt::{Interrupt, IrqSource};
+    use crate::interrupt::{Interrupt, IrqSource};
     use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {

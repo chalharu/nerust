@@ -6,7 +6,7 @@
 
 use crate::CartridgeData;
 use crate::OpenBusReadResult;
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 use crate::mapper_state::{MapperStateDao, MappingMode};
 use crate::ppu_bus_event::PpuBusEvent;
 use crate::status::mirror_mode::MirrorMode;
