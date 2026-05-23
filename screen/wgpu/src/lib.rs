@@ -6,6 +6,8 @@
 
 mod renderer;
 mod srgb_lut;
+mod surface;
 mod upload;
 
 pub use renderer::{RenderOutcome, Renderer};
+pub use surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};

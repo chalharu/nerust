@@ -6,13 +6,13 @@
 
 use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
+    surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::{FrameUploadLayout, pack_frame_rows},
 };
 use nerust_screen_filter::{
     NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, NesVideoAssets, PALETTE_TEXTURE_WIDTH,
 };
 use nerust_screen_traits::{LogicalSize, PhysicalSize, VideoPresentation};
-use nerust_wgpuwrap::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
     ColorWrites, CommandEncoderDescriptor, CompositeAlphaMode, Device, Extent3d, FragmentState,
@@ -659,9 +659,9 @@ fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d
 #[cfg(test)]
 mod tests {
     use super::{composed_shader_source, compute_viewport, encode_ntsc_texture};
+    use crate::SurfaceSize;
     use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
     use nerust_screen_traits::PhysicalSize;
-    use nerust_wgpuwrap::SurfaceSize;
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
