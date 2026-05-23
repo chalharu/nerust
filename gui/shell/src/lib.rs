@@ -1,9 +1,13 @@
 //! Shell-facing adapter layer for NES console sessions.
 //!
-//! This crate provides the NES-specific adapter types that connect a generic
-//! [`nerust_gui_runtime::GuiSession`] to a concrete shell binary:
+//! This crate provides the NES-specific adapter types and shell-facing runtime
+//! surface that connect a generic session runtime to a concrete shell binary:
 //!
-//! - [`NesConsoleDescriptor`] — builds a NES [`nerust_gui_runtime::GuiSession`]
+//! - [`shell_api`] — re-exports the `GuiSession`, session commands, slot
+//!   summaries, controller types, and window sizing that shell binaries need,
+//!   so OS-specific binaries do not depend on `nerust_gui_runtime` directly.
+//! - [`options`] — re-exports shell-facing console load options.
+//! - [`NesConsoleDescriptor`] — builds a NES [`crate::shell_api::GuiSession`]
 //!   and describes its controller layout.
 //! - [`NesInputAdapter`] — translates host key/button events to NES controller
 //!   inputs and flushes them to the session.
@@ -27,8 +31,10 @@
 //! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
 mod descriptor;
 mod input;
+pub mod shell_api;
 mod state;
 
 pub use self::descriptor::NesConsoleDescriptor;
 pub use self::input::NesInputAdapter;
 pub use self::state::NativeShellState;
+pub use nerust_gui_runtime::options;
