@@ -15,17 +15,17 @@ members = [
   "gui/shell",
   "gui/session",
   "gui/wgpu",
-  "glwrap",
   "nes_ntsc",
   "screen/buffer",
   "screen/filter",
+  "screen/glwrap",
   "screen/opengl",
   "screen/wgpu",
   "screen/traits",
   "serialize",
   "sound/openal",
+  "sound/filter",
   "sound/traits",
-  "soundfilter",
   "timer",
 ]
 default-members = ["core", "persistence", "console"]
@@ -72,7 +72,7 @@ nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }
 nerust_backend_wgpu = { version = "=0.1.0", path = "backend/wgpu" }
-nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
+nerust_glwrap = { version = "=0.1.0", path = "screen/glwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
 nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
 nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }
@@ -81,7 +81,7 @@ nerust_screen_traits = { version = "=0.1.0", path = "screen/traits" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
 nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }
-nerust_soundfilter = { version = "=0.1.0", path = "soundfilter" }
+nerust_soundfilter = { version = "=0.1.0", path = "sound/filter" }
 nerust_timer = { version = "=0.1.0", path = "timer" }
 nes_ntsc = { version = "=0.1.0", path = "nes_ntsc" }
 pollster = { version = "=0.4.0" }
