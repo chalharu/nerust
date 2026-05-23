@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::shell_api::shell_api::WindowSize;
 use nerust_backend_wgpu::{RenderSurfaceTarget, SurfaceSize};
-use nerust_gui_shell::shell_api::WindowSize;
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(
     target_os = "linux",

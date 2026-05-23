@@ -22,7 +22,7 @@ impl NesConsoleDescriptor {
     ///
     /// Button names use the canonical NES names: **A** and **B** (not
     /// "Primary"/"Secondary"), matching the physical labels and the key
-    /// mappings in [`crate::NesInputAdapter`].
+    /// mappings in [`crate::input::NesInputAdapter`].
     pub fn controller_descriptor(&self) -> ControllerDescriptor {
         ControllerDescriptor {
             port_count: 2,

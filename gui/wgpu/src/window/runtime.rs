@@ -5,16 +5,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
+use crate::shell_api::options::CoreOptions;
+use crate::shell_api::shell_api::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+    WindowSize,
+};
+use crate::shell_api::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
-use nerust_gui_shell::{
-    NativeShellState, NesConsoleDescriptor, NesInputAdapter,
-    options::CoreOptions,
-    shell_api::{
-        ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-        SessionCommandOutcome, WindowSize,
-    },
-};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -360,7 +358,7 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_shell::shell_api::ControllerInput;
+    use crate::shell_api::shell_api::ControllerInput;
     use tao::keyboard::KeyCode;
 
     #[test]

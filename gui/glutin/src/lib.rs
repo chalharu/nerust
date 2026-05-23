@@ -4,6 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod shell_api;
+
+use crate::shell_api::shell_api::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+    WindowSize,
+};
+use crate::shell_api::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use glutin::config::{Config, ConfigTemplateBuilder};
 use glutin::context::{
     ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentContext, PossiblyCurrentContext,
@@ -14,13 +21,6 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_shell::{
-    NativeShellState, NesConsoleDescriptor, NesInputAdapter,
-    shell_api::{
-        ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-        SessionCommandOutcome, WindowSize,
-    },
-};
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -414,7 +414,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_shell::shell_api::ControllerInput;
+    use crate::shell_api::shell_api::ControllerInput;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]

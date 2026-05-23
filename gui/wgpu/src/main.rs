@@ -6,9 +6,8 @@
 
 use clap::{Arg, Command};
 use log::LevelFilter;
-use nerust_gui_shell::options::{CoreOptions, Mmc3IrqVariant};
 use nerust_sound_openal::prepare_macos_runtime;
-use nerust_wgpu::Window;
+use nerust_wgpu::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
 use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -35,11 +34,11 @@ fn main() {
         );
 
     let matches = app.get_matches();
-    let core_options = CoreOptions {
+    let window_options = WindowLoadOptions {
         mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").map(
             |variant| match variant.as_str() {
-                "sharp" => Mmc3IrqVariant::Sharp,
-                "nec" => Mmc3IrqVariant::Nec,
+                "sharp" => WindowMmc3IrqVariant::Sharp,
+                "nec" => WindowMmc3IrqVariant::Nec,
                 _ => unreachable!(),
             },
         ),
@@ -51,7 +50,7 @@ fn main() {
         let mut buf = Vec::new();
         let _ = f.read_to_end(&mut buf).unwrap();
         let mut window = Window::new();
-        window.load_with_options(Some(filename), buf, core_options);
+        window.load_with_options(Some(filename), buf, window_options);
         window.run();
     }
 }

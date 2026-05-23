@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_gui_shell::shell_api::{SessionCommand, StateSlotSummary, slot_label};
+use crate::shell_api::shell_api::{SessionCommand, StateSlotSummary, slot_label};
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
