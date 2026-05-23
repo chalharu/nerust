@@ -2128,9 +2128,8 @@ dependencies = [
 name = "nerust_backend_opengl"
 version = "0.1.0"
 dependencies = [
- "nerust_screen_filter",
+ "nerust_screen_buffer",
  "nerust_screen_opengl",
- "nerust_screen_traits",
 ]
 
 [[package]]
@@ -2138,8 +2137,7 @@ name = "nerust_backend_wgpu"
 version = "0.1.0"
 dependencies = [
  "log",
- "nerust_screen_filter",
- "nerust_screen_traits",
+ "nerust_screen_buffer",
  "nerust_screen_wgpu",
  "pollster",
  "raw-window-handle",
@@ -2306,7 +2304,6 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_sound_traits",
  "png",

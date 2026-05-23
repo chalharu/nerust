@@ -14,6 +14,7 @@ use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 use std::time::{Duration, Instant};
 
@@ -376,7 +377,7 @@ impl PerfScreen {
     }
 }
 
-impl nerust_screen_traits::Screen for PerfScreen {
+impl Screen for PerfScreen {
     fn push(&mut self, value: u8) {
         self.checksum ^= u64::from(value);
         self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
