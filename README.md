@@ -60,9 +60,10 @@ cargo build -p nerust_gtk --release
 cargo build -p nerust_wgpu --release
 ```
 
-For OAM sprite-evaluation tracing, build the frontend you want with `--features oam-trace` and set
-`NERUST_OAM_TRACE=1` at runtime. The trace stays silent unless both the feature and the environment
-variable are enabled, and emits one machine-friendly line per scanline to stderr.
+For OAM sprite-evaluation tracing, build the frontend you want with
+`--features oam-trace` and set `NERUST_OAM_TRACE=1` at runtime. The trace
+stays silent unless both the feature and the environment variable are
+enabled, and emits one machine-friendly line per scanline to stderr.
 
 ## Usage
 
@@ -86,7 +87,8 @@ target/release/nerust [Rom File Path]
 ```
 
 ```sh
-NERUST_OAM_TRACE=1 cargo run -p nerust_glutin --release --features oam-trace -- [Rom File Path]
+NERUST_OAM_TRACE=1 cargo run -p nerust_glutin --release \
+  --features oam-trace -- [Rom File Path]
 ```
 
 ### GTK4 Frontend
@@ -134,7 +136,8 @@ target/release/nerust_wgpu [Rom File Path]
 ```
 
 ```sh
-NERUST_OAM_TRACE=1 cargo run -p nerust_wgpu --release --features oam-trace -- [Rom File Path]
+NERUST_OAM_TRACE=1 cargo run -p nerust_wgpu --release \
+  --features oam-trace -- [Rom File Path]
 ```
 
 ### ROM test tooling
