@@ -5,10 +5,12 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod mat4;
+mod traits_api;
 mod vec2d;
 mod vertex_data;
 
 use self::mat4::Mat4;
+use self::traits_api::{LogicalSize, VideoPresentation};
 use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
 use gl::types::GLint;
@@ -16,7 +18,6 @@ use nerust_glwrap::*;
 use nerust_screen_filter::{
     NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, NesVideoAssets, PALETTE_TEXTURE_WIDTH,
 };
-use nerust_screen_traits::{LogicalSize, VideoPresentation};
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;

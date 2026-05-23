@@ -1,4 +1,4 @@
-use nerust_screen_buffer::video_api::{ConsoleVideoAssets, VideoPresentation};
+use crate::screen_api::{ConsoleVideoAssets, VideoPresentation};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]

@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::{Apu, Controller, Core, CpuStepStateEnum, Ppu, Register};
+use super::CpuCartridgeBus;
+use super::exit_opcode;
 
 pub(crate) trait Store {
     fn getter(register: &Register) -> u8;
@@ -12,7 +14,7 @@ pub(crate) trait Store {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {

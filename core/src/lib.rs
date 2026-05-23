@@ -22,6 +22,7 @@ mod persistence;
 mod ppu;
 mod ppu_bus_event;
 mod ppu_memory_access;
+mod screen_api;
 mod status;
 
 use self::apu::Core as Apu;
@@ -29,8 +30,8 @@ use self::cart_device::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
+use self::screen_api::Screen;
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -326,9 +327,10 @@ impl Core {
             &mut self.apu,
         );
         for _ in 0..3 {
+            let mut ppu_cartridge = crate::ppu::mapper_cartridge_bus(self.cartridge.as_mut());
             if self
                 .ppu
-                .step(screen, self.cartridge.as_mut(), self.cpu.interrupt_mut())
+                .step(screen, &mut ppu_cartridge, self.cpu.interrupt_mut())
             {
                 result = true;
             }

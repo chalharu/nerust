@@ -7,6 +7,7 @@
 mod renderer;
 mod srgb_lut;
 mod surface;
+mod traits_api;
 mod upload;
 
 pub use renderer::{RenderOutcome, Renderer};

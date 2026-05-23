@@ -4,14 +4,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::MirrorMode;
-use crate::cart_device::Cartridge;
+use super::Cartridge;
+use super::mapper_save_api::{
+    CartridgeRuntimeState, MAPPER_KIND_MMC2, PersistenceError, decode_payload, encode_payload,
+};
+use crate::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC2, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
+use crate::status::mirror_mode::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -54,7 +56,7 @@ impl Cartridge for Mmc2 {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_MMC2.into(),
-            extra_body: crate::persistence::encode_payload(&Mmc2RuntimeState {
+            extra_body: encode_payload(&Mmc2RuntimeState {
                 chr_bank_0_fd: self.chr_bank_0_fd,
                 chr_bank_0_fe: self.chr_bank_0_fe,
                 chr_bank_1_fd: self.chr_bank_1_fd,
@@ -79,7 +81,7 @@ impl Cartridge for Mmc2 {
             self.data_ref().prog_rom_len(),
             self.data_ref().char_rom_len(),
         )?;
-        let runtime: Mmc2RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        let runtime: Mmc2RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.chr_bank_0_fd = runtime.chr_bank_0_fd;
         self.chr_bank_0_fe = runtime.chr_bank_0_fe;
@@ -272,12 +274,15 @@ impl Mapper for Mmc2 {
 
 #[cfg(test)]
 mod tests {
+    use super::Cartridge;
     use super::{LatchState, Mmc2};
-    use crate::cart_device::Cartridge;
+    use crate::CartridgeData;
+    use crate::CartridgeDataParts;
+    use crate::RomFormat;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
     use crate::ppu_bus_event::PpuBusEvent;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
+    use crate::status::mirror_mode::MirrorMode;
 
     fn test_data(mapper_type: u16) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

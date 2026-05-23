@@ -22,8 +22,119 @@ use self::opcodes::{
     *,
 };
 use self::register::{Register, RegisterP};
-use super::*;
+use crate::cart_device::Cartridge as MapperCartridge;
+use crate::ppu::PpuCartridgeBus;
+use crate::{Apu, Controller, PersistenceError, Ppu};
 use std::ops::Shr;
+
+pub(crate) trait CpuCartridgeBus: PpuCartridgeBus {
+    fn read(&self, address: usize) -> crate::OpenBusReadResult;
+    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt);
+    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt);
+    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt);
+}
+
+impl<T: MapperCartridge + ?Sized> CpuCartridgeBus for T {
+    fn read(&self, address: usize) -> crate::OpenBusReadResult {
+        MapperCartridge::read(self, address)
+    }
+
+    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::write(self, address, value, interrupt);
+    }
+
+    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::notify_cpu_read(self, address, value, interrupt);
+    }
+
+    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt) {
+        MapperCartridge::notify_oam_dma(self, interrupt);
+    }
+}
+
+pub(super) use self::CpuCartridgeBus as Cartridge;
+
+struct MapperCpuCartridgeBus<'a>(&'a mut dyn MapperCartridge);
+
+impl PpuCartridgeBus for MapperCpuCartridgeBus<'_> {
+    fn read_ppu_pattern(
+        &mut self,
+        address: usize,
+        access: crate::ppu_memory_access::PpuReadAccess,
+        interrupt: &mut Interrupt,
+    ) -> crate::OpenBusReadResult {
+        MapperCartridge::read_ppu_pattern(self.0, address, access, interrupt)
+    }
+
+    fn write_ppu_pattern(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::write_ppu_pattern(self.0, address, value, interrupt);
+    }
+
+    fn read_ppu_nametable(
+        &mut self,
+        address: usize,
+        access: crate::ppu_memory_access::PpuReadAccess,
+        ciram: &mut [u8],
+    ) -> crate::OpenBusReadResult {
+        MapperCartridge::read_ppu_nametable(self.0, address, access, ciram)
+    }
+
+    fn write_ppu_nametable(
+        &mut self,
+        address: usize,
+        value: u8,
+        ciram: &mut [u8],
+        interrupt: &mut Interrupt,
+    ) {
+        MapperCartridge::write_ppu_nametable(self.0, address, value, ciram, interrupt);
+    }
+
+    fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8> {
+        MapperCartridge::peek_ppu_nametable(self.0, address, ciram)
+    }
+
+    fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::notify_ppu_status_read(self.0, value, interrupt);
+    }
+
+    fn notify_ppu_ctrl(&mut self, value: u8) {
+        MapperCartridge::notify_ppu_ctrl(self.0, value);
+    }
+
+    fn notify_ppu_mask(&mut self, value: u8) {
+        MapperCartridge::notify_ppu_mask(self.0, value);
+    }
+
+    fn notify_ppu_bus_event(
+        &mut self,
+        event: crate::ppu_memory_access::PpuBusEvent,
+        interrupt: &mut Interrupt,
+    ) {
+        crate::mapper::Mapper::notify_ppu_bus_event(self.0, event, interrupt);
+    }
+}
+
+impl CpuCartridgeBus for MapperCpuCartridgeBus<'_> {
+    fn read(&self, address: usize) -> crate::OpenBusReadResult {
+        MapperCartridge::read(self.0, address)
+    }
+
+    fn write(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::write(self.0, address, value, interrupt);
+    }
+
+    fn notify_cpu_read(&mut self, address: usize, value: u8, interrupt: &mut Interrupt) {
+        MapperCartridge::notify_cpu_read(self.0, address, value, interrupt);
+    }
+
+    fn notify_oam_dma(&mut self, interrupt: &mut Interrupt) {
+        MapperCartridge::notify_oam_dma(self.0, interrupt);
+    }
+}
+
+fn cpu_cartridge_bus(cartridge: &mut dyn MapperCartridge) -> MapperCpuCartridgeBus<'_> {
+    MapperCpuCartridgeBus(cartridge)
+}
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where
@@ -104,110 +215,110 @@ pub(crate) struct Core {
 macro_rules! cpu_stepfunc_entries {
     ($with_entries:ident) => {
         $with_entries! {
-            (CpuStatesEnum::FetchOpCode, FetchOpCode::exec),
-            (CpuStatesEnum::Reset, Reset::exec),
-            (CpuStatesEnum::Irq, Irq::exec),
-            (CpuStatesEnum::AbsoluteIndirect, AbsoluteIndirect::exec),
-            (CpuStatesEnum::AbsoluteXRMW, AbsoluteXRMW::exec),
-            (CpuStatesEnum::AbsoluteX, AbsoluteX::exec),
-            (CpuStatesEnum::AbsoluteYRMW, AbsoluteYRMW::exec),
-            (CpuStatesEnum::AbsoluteY, AbsoluteY::exec),
-            (CpuStatesEnum::Absolute, Absolute::exec),
-            (CpuStatesEnum::Accumulator, Accumulator::exec),
-            (CpuStatesEnum::Immediate, Immediate::exec),
-            (CpuStatesEnum::Implied, Implied::exec),
-            (CpuStatesEnum::IndexedIndirect, IndexedIndirect::exec),
-            (CpuStatesEnum::IndirectIndexedRMW, IndirectIndexedRMW::exec),
-            (CpuStatesEnum::IndirectIndexed, IndirectIndexed::exec),
-            (CpuStatesEnum::Relative, Relative::exec),
-            (CpuStatesEnum::ZeroPageX, ZeroPageX::exec),
-            (CpuStatesEnum::ZeroPageY, ZeroPageY::exec),
-            (CpuStatesEnum::ZeroPage, ZeroPage::exec),
-            (CpuStatesEnum::And, And::exec),
-            (CpuStatesEnum::Eor, Eor::exec),
-            (CpuStatesEnum::Ora, Ora::exec),
-            (CpuStatesEnum::Adc, Adc::exec),
-            (CpuStatesEnum::Sbc, Sbc::exec),
-            (CpuStatesEnum::Bit, Bit::exec),
-            (CpuStatesEnum::Lax, Lax::exec),
-            (CpuStatesEnum::Anc, Anc::exec),
-            (CpuStatesEnum::Alr, Alr::exec),
-            (CpuStatesEnum::Arr, Arr::exec),
-            (CpuStatesEnum::Xaa, Xaa::exec),
-            (CpuStatesEnum::Las, Las::exec),
-            (CpuStatesEnum::Axs, Axs::exec),
-            (CpuStatesEnum::Sax, Sax::exec),
-            (CpuStatesEnum::Tas, Tas::exec),
-            (CpuStatesEnum::Ahx, Ahx::exec),
-            (CpuStatesEnum::Shx, Shx::exec),
-            (CpuStatesEnum::Shy, Shy::exec),
-            (CpuStatesEnum::Cmp, Cmp::exec),
-            (CpuStatesEnum::Cpx, Cpx::exec),
-            (CpuStatesEnum::Cpy, Cpy::exec),
-            (CpuStatesEnum::Bcc, Bcc::exec),
-            (CpuStatesEnum::Bcs, Bcs::exec),
-            (CpuStatesEnum::Beq, Beq::exec),
-            (CpuStatesEnum::Bmi, Bmi::exec),
-            (CpuStatesEnum::Bne, Bne::exec),
-            (CpuStatesEnum::Bpl, Bpl::exec),
-            (CpuStatesEnum::Bvc, Bvc::exec),
-            (CpuStatesEnum::Bvs, Bvs::exec),
-            (CpuStatesEnum::Dex, Dex::exec),
-            (CpuStatesEnum::Dey, Dey::exec),
-            (CpuStatesEnum::Dec, Dec::exec),
-            (CpuStatesEnum::Clc, Clc::exec),
-            (CpuStatesEnum::Cld, Cld::exec),
-            (CpuStatesEnum::Cli, Cli::exec),
-            (CpuStatesEnum::Clv, Clv::exec),
-            (CpuStatesEnum::Sec, Sec::exec),
-            (CpuStatesEnum::Sed, Sed::exec),
-            (CpuStatesEnum::Sei, Sei::exec),
-            (CpuStatesEnum::Inx, Inx::exec),
-            (CpuStatesEnum::Iny, Iny::exec),
-            (CpuStatesEnum::Inc, Inc::exec),
-            (CpuStatesEnum::Brk, Brk::exec),
-            (CpuStatesEnum::Rti, Rti::exec),
-            (CpuStatesEnum::Rts, Rts::exec),
-            (CpuStatesEnum::Jmp, Jmp::exec),
-            (CpuStatesEnum::Jsr, Jsr::exec),
-            (CpuStatesEnum::Lda, Lda::exec),
-            (CpuStatesEnum::Ldx, Ldx::exec),
-            (CpuStatesEnum::Ldy, Ldy::exec),
-            (CpuStatesEnum::Nop, Nop::exec),
-            (CpuStatesEnum::Kil, Kil::exec),
-            (CpuStatesEnum::Isc, Isc::exec),
-            (CpuStatesEnum::Dcp, Dcp::exec),
-            (CpuStatesEnum::Slo, Slo::exec),
-            (CpuStatesEnum::Rla, Rla::exec),
-            (CpuStatesEnum::Sre, Sre::exec),
-            (CpuStatesEnum::Rra, Rra::exec),
-            (CpuStatesEnum::AslAcc, AslAcc::exec),
-            (CpuStatesEnum::AslMem, AslMem::exec),
-            (CpuStatesEnum::LsrAcc, LsrAcc::exec),
-            (CpuStatesEnum::LsrMem, LsrMem::exec),
-            (CpuStatesEnum::RolAcc, RolAcc::exec),
-            (CpuStatesEnum::RolMem, RolMem::exec),
-            (CpuStatesEnum::RorAcc, RorAcc::exec),
-            (CpuStatesEnum::RorMem, RorMem::exec),
-            (CpuStatesEnum::Pla, Pla::exec),
-            (CpuStatesEnum::Plp, Plp::exec),
-            (CpuStatesEnum::Pha, Pha::exec),
-            (CpuStatesEnum::Php, Php::exec),
-            (CpuStatesEnum::Sta, Sta::exec),
-            (CpuStatesEnum::Stx, Stx::exec),
-            (CpuStatesEnum::Sty, Sty::exec),
-            (CpuStatesEnum::Tax, Tax::exec),
-            (CpuStatesEnum::Tay, Tay::exec),
-            (CpuStatesEnum::Tsx, Tsx::exec),
-            (CpuStatesEnum::Txa, Txa::exec),
-            (CpuStatesEnum::Tya, Tya::exec),
-            (CpuStatesEnum::Txs, Txs::exec),
+            (crate::cpu::CpuStatesEnum::FetchOpCode, <crate::cpu::FetchOpCode as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Reset, <crate::cpu::Reset as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Irq, <crate::cpu::Irq as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AbsoluteIndirect, <crate::cpu::AbsoluteIndirect as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AbsoluteXRMW, <crate::cpu::AbsoluteXRMW as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AbsoluteX, <crate::cpu::AbsoluteX as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AbsoluteYRMW, <crate::cpu::AbsoluteYRMW as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AbsoluteY, <crate::cpu::AbsoluteY as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Absolute, <crate::cpu::Absolute as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Accumulator, <crate::cpu::Accumulator as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Immediate, <crate::cpu::Immediate as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Implied, <crate::cpu::Implied as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::IndexedIndirect, <crate::cpu::IndexedIndirect as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::IndirectIndexedRMW, <crate::cpu::IndirectIndexedRMW as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::IndirectIndexed, <crate::cpu::IndirectIndexed as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Relative, <crate::cpu::Relative as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::ZeroPageX, <crate::cpu::ZeroPageX as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::ZeroPageY, <crate::cpu::ZeroPageY as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::ZeroPage, <crate::cpu::ZeroPage as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::And, <crate::cpu::And as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Eor, <crate::cpu::Eor as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Ora, <crate::cpu::Ora as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Adc, <crate::cpu::Adc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sbc, <crate::cpu::Sbc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bit, <crate::cpu::Bit as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Lax, <crate::cpu::Lax as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Anc, <crate::cpu::Anc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Alr, <crate::cpu::Alr as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Arr, <crate::cpu::Arr as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Xaa, <crate::cpu::Xaa as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Las, <crate::cpu::Las as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Axs, <crate::cpu::Axs as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sax, <crate::cpu::Sax as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Tas, <crate::cpu::Tas as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Ahx, <crate::cpu::Ahx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Shx, <crate::cpu::Shx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Shy, <crate::cpu::Shy as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Cmp, <crate::cpu::Cmp as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Cpx, <crate::cpu::Cpx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Cpy, <crate::cpu::Cpy as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bcc, <crate::cpu::Bcc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bcs, <crate::cpu::Bcs as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Beq, <crate::cpu::Beq as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bmi, <crate::cpu::Bmi as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bne, <crate::cpu::Bne as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bpl, <crate::cpu::Bpl as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bvc, <crate::cpu::Bvc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Bvs, <crate::cpu::Bvs as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Dex, <crate::cpu::Dex as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Dey, <crate::cpu::Dey as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Dec, <crate::cpu::Dec as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Clc, <crate::cpu::Clc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Cld, <crate::cpu::Cld as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Cli, <crate::cpu::Cli as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Clv, <crate::cpu::Clv as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sec, <crate::cpu::Sec as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sed, <crate::cpu::Sed as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sei, <crate::cpu::Sei as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Inx, <crate::cpu::Inx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Iny, <crate::cpu::Iny as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Inc, <crate::cpu::Inc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Brk, <crate::cpu::Brk as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Rti, <crate::cpu::Rti as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Rts, <crate::cpu::Rts as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Jmp, <crate::cpu::Jmp as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Jsr, <crate::cpu::Jsr as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Lda, <crate::cpu::Lda as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Ldx, <crate::cpu::Ldx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Ldy, <crate::cpu::Ldy as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Nop, <crate::cpu::Nop as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Kil, <crate::cpu::Kil as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Isc, <crate::cpu::Isc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Dcp, <crate::cpu::Dcp as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Slo, <crate::cpu::Slo as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Rla, <crate::cpu::Rla as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sre, <crate::cpu::Sre as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Rra, <crate::cpu::Rra as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AslAcc, <crate::cpu::AslAcc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::AslMem, <crate::cpu::AslMem as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::LsrAcc, <crate::cpu::LsrAcc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::LsrMem, <crate::cpu::LsrMem as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::RolAcc, <crate::cpu::RolAcc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::RolMem, <crate::cpu::RolMem as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::RorAcc, <crate::cpu::RorAcc as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::RorMem, <crate::cpu::RorMem as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Pla, <crate::cpu::Pla as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Plp, <crate::cpu::Plp as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Pha, <crate::cpu::Pha as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Php, <crate::cpu::Php as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sta, <crate::cpu::Sta as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Stx, <crate::cpu::Stx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Sty, <crate::cpu::Sty as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Tax, <crate::cpu::Tax as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Tay, <crate::cpu::Tay as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Tsx, <crate::cpu::Tsx as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Txa, <crate::cpu::Txa as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Tya, <crate::cpu::Tya as crate::cpu::CpuStepState>::exec),
+            (crate::cpu::CpuStatesEnum::Txs, <crate::cpu::Txs as crate::cpu::CpuStepState>::exec),
         }
     };
 }
 
 macro_rules! cpu_stepfunc_array {
-    ($(($state:expr, $func:path)),+ $(,)?) => {
+    ($(($state:expr, $func:expr)),+ $(,)?) => {
         [$($func),+]
     };
 }
@@ -255,10 +366,11 @@ impl Core {
     pub(crate) fn step(
         &mut self,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn MapperCartridge,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) {
+        let mut cartridge = cpu_cartridge_bus(cartridge);
         self.cycles = self.cycles.wrapping_add(1);
 
         if let Some(offset) = self.interrupt.oam_dma.take() {
@@ -269,13 +381,13 @@ impl Core {
             self.dmc_dma = Some(DmcDmaState::from_kind(kind));
         }
 
-        if self.process_dma_cycle(ppu, cartridge, controller, apu) {
+        if self.process_dma_cycle_bus(ppu, &mut cartridge, controller, apu) {
             return;
         }
 
         let mut machine = self.cpu_stepfunc;
         self.internal_stat.step += 1;
-        while let CpuStepStateEnum::Exit(s) = machine(self, ppu, cartridge, controller, apu) {
+        while let CpuStepStateEnum::Exit(s) = machine(self, ppu, &mut cartridge, controller, apu) {
             self.set_cpu_state(s);
             self.internal_stat.step = 1;
             machine = self.cpu_stepfunc;
@@ -300,6 +412,17 @@ impl Core {
     }
 
     fn process_dma_cycle(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn MapperCartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> bool {
+        let mut cartridge = cpu_cartridge_bus(cartridge);
+        self.process_dma_cycle_bus(ppu, &mut cartridge, controller, apu)
+    }
+
+    fn process_dma_cycle_bus(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
@@ -537,12 +660,15 @@ impl<'de> serde::Deserialize<'de> for Core {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        CPU_STEPFUNCS, Core, CpuStatesEnum, CpuStepStateFunc, DmcDmaKind, DmcDmaPhase, DmcDmaState,
+    };
     use crate::controller::standard_controller::StandardController;
+    use crate::{Apu, Ppu};
     use strum::IntoEnumIterator;
 
     macro_rules! cpu_stepfunc_pair_array {
-        ($(($state:expr, $func:path)),+ $(,)?) => {
+        ($(($state:expr, $func:expr)),+ $(,)?) => {
             [$(($state, $func as CpuStepStateFunc)),+]
         };
     }

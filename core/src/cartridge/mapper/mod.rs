@@ -13,6 +13,7 @@ mod crazy_climber;
 mod fme7;
 mod gnrom;
 mod mapper78;
+mod mapper_save_api;
 mod mmc2;
 mod mmc3;
 mod mmc5;
@@ -36,8 +37,10 @@ use self::nina001::Nina001;
 use self::nrom::NRom;
 use self::sxrom::SxRom;
 use self::uxrom::UxRom;
-use crate::cart_device::Cartridge;
-use crate::{CartridgeData, CartridgeError, Mmc3IrqVariant};
+use crate::CartridgeData;
+use crate::Mmc3IrqVariant;
+pub(super) use crate::cart_device::Cartridge;
+use crate::cartridge_error::CartridgeError;
 
 pub(crate) fn try_from(
     data: CartridgeData,

@@ -4,12 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::OpenBusReadResult;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 use crate::ppu_memory_access::PpuReadAccess;
-use crate::{MirrorMode, OpenBusReadResult};
+use crate::status::mirror_mode::MirrorMode;
 use std::cmp;
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {

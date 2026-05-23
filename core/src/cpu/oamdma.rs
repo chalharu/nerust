@@ -4,7 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::CpuCartridgeBus;
+use super::{Apu, Controller, Core, Ppu, read_dummy_current};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
@@ -84,7 +85,7 @@ impl OamDmaState {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) {
@@ -112,7 +113,7 @@ pub(crate) trait OamDmaStepState {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
@@ -126,7 +127,7 @@ impl OamDmaStepState for OamDma {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
         _value: &mut OamDmaStateValue,
@@ -148,7 +149,7 @@ impl OamDmaStepState for OamDmaStep1 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
@@ -176,7 +177,7 @@ impl OamDmaStepState for OamDmaStep2 {
         &mut self,
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,

@@ -14,7 +14,7 @@
 
 use thiserror::Error;
 
-pub use nerust_contract::RomIdentity;
+pub use crate::RomIdentity;
 
 /// Compatibility version for `MachineStatePayload` and `MapperSavePayload`.
 pub(crate) const PERSISTENCE_SCHEMA_VERSION: u32 = 2;

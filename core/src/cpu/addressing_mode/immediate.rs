@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::{Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu};
+use super::CpuCartridgeBus;
+use super::exit_addressing_mode;
 
 pub(crate) struct Immediate;
 
@@ -12,7 +14,7 @@ impl CpuStepState for Immediate {
     fn exec(
         core: &mut Core,
         _ppu: &mut Ppu,
-        _cartridge: &mut dyn Cartridge,
+        _cartridge: &mut dyn CpuCartridgeBus,
         _controller: &mut dyn Controller,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {

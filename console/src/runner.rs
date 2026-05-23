@@ -5,8 +5,8 @@ mod runtime;
 pub(crate) use data::ConsoleData;
 
 use super::ConsoleMetrics;
-use nerust_core::controller::standard_controller::StandardController;
-use nerust_screen_buffer::ScreenBuffer;
+use crate::core_api::StandardController;
+use crate::screen_api::ScreenBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, RwLock};

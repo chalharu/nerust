@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::*;
-use nerust_core::Mmc3IrqVariant;
+use crate::core_api::Mmc3IrqVariant;
 use std::path::{Path, PathBuf};
 
 #[test]

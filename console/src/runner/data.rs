@@ -1,5 +1,5 @@
+use crate::core_api::CartridgeData;
 use crate::{AuxiliaryInput, ConsoleRequestResult, ControllerInputs, ControllerPort, CoreOptions};
-use nerust_core::CartridgeData;
 use std::sync::mpsc::Sender;
 
 pub(crate) enum ConsoleData {

@@ -1,1 +1,1 @@
-pub use nerust_console::{CoreOptions, Mmc3IrqVariant};
+pub use crate::console_api::{CoreOptions, Mmc3IrqVariant};

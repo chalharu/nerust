@@ -4,19 +4,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod core_api;
 mod runner;
+mod screen_api;
 mod state;
 mod video;
 
+use self::core_api::{CartridgeData, Core};
+pub use self::core_api::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
 use self::runner::{ConsoleData, ConsoleRunner};
+use self::screen_api::{FilterType, LogicalSize, PhysicalSize, ScreenBuffer};
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_core::{CartridgeData, Core};
-pub use nerust_core::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
-use nerust_screen_buffer::{
-    ScreenBuffer,
-    video_api::{FilterType, LogicalSize, PhysicalSize},
-};
 use nerust_sound_traits::{MixerInput, Sound};
 pub use state::{PreviewFrame, StateExport};
 use std::hash::{Hash, Hasher};

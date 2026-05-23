@@ -1,5 +1,5 @@
+pub use crate::traits_api::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 use crate::{EncodedNtscTextures, EncodedPackedNtscTexture};
-pub use nerust_screen_traits::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoPresentationPipelineKind {

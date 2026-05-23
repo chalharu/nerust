@@ -4,13 +4,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::MirrorMode;
-use crate::cart_device::Cartridge;
+use super::Cartridge;
+use super::mapper_save_api::{
+    CartridgeRuntimeState, MAPPER_KIND_FME7, PersistenceError, decode_payload, encode_payload,
+};
+use crate::CartridgeData;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_FME7, PersistenceError};
+use crate::status::mirror_mode::MirrorMode;
 
 const IRQ_ENABLE: u8 = 0x01;
 const IRQ_COUNT: u8 = 0x80;
@@ -41,7 +43,7 @@ impl Cartridge for Fme7 {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_FME7.into(),
-            extra_body: crate::persistence::encode_payload(&Fme7RuntimeState {
+            extra_body: encode_payload(&Fme7RuntimeState {
                 command: self.command,
                 chr_banks: self.chr_banks,
                 prg_banks: self.prg_banks,
@@ -65,7 +67,7 @@ impl Cartridge for Fme7 {
             self.data_ref().prog_rom_len(),
             self.data_ref().char_rom_len(),
         )?;
-        let runtime: Fme7RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        let runtime: Fme7RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.command = runtime.command;
         self.chr_banks = runtime.chr_banks;
@@ -273,11 +275,14 @@ impl Fme7 {
 
 #[cfg(test)]
 mod tests {
+    use super::Cartridge;
     use super::Fme7;
-    use crate::cart_device::Cartridge;
+    use crate::CartridgeData;
+    use crate::CartridgeDataParts;
+    use crate::RomFormat;
     use crate::cpu::interrupt::{Interrupt, IrqSource};
     use crate::mapper::Mapper;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
+    use crate::status::mirror_mode::MirrorMode;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

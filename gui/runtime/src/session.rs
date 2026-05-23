@@ -3,8 +3,8 @@ mod persistence;
 
 use self::persistence::PersistenceState;
 use crate::StateSlotSummary;
-use nerust_console::{ConsoleMetrics, ControllerInputs};
-use nerust_gui_session::{
+use crate::console_api::{ConsoleMetrics, ControllerInputs};
+use crate::session_api::{
     ConsoleError, ConsoleVideo, ControllerPort, SessionCore, WindowSize, window_title,
 };
 

@@ -1,4 +1,5 @@
 use super::Mmc5;
+use super::mmc5_persistence_api::PersistenceError;
 use crate::apu::envelope::{Envelope, EnvelopeDao, HaveEnvelopeDao};
 use crate::apu::length_counter::{
     HaveLengthCounter, HaveLengthCounterDao, LengthCounter, LengthCounterDao,
@@ -120,16 +121,14 @@ impl Mmc5Pulse {
         }
     }
 
-    pub(super) fn validate_runtime_state(
-        &self,
-    ) -> Result<(), crate::persistence::PersistenceError> {
+    pub(super) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
         if usize::from(self.duty_mode) >= DUTY_TABLE.len() {
-            return Err(crate::persistence::PersistenceError::Validation(
+            return Err(PersistenceError::Validation(
                 "MMC5 pulse duty mode overflow".into(),
             ));
         }
         if usize::from(self.duty_value) >= DUTY_TABLE[0].len() {
-            return Err(crate::persistence::PersistenceError::Validation(
+            return Err(PersistenceError::Validation(
                 "MMC5 pulse duty value overflow".into(),
             ));
         }

@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::cart_device::Cartridge;
+use super::Cartridge;
+use crate::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
@@ -78,11 +78,14 @@ impl Mapper for GnRom {
 
 #[cfg(test)]
 mod tests {
+    use super::Cartridge;
     use super::GnRom;
-    use crate::cart_device::Cartridge;
+    use crate::CartridgeData;
+    use crate::CartridgeDataParts;
+    use crate::RomFormat;
     use crate::cpu::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
+    use crate::status::mirror_mode::MirrorMode;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {
