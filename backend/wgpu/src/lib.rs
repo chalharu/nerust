@@ -4,8 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_filter::ConsoleVideoAssets;
-use nerust_screen_traits::VideoPresentation;
+use nerust_screen_buffer::video_api::{ConsoleVideoAssets, VideoPresentation};
 pub use nerust_screen_wgpu::SurfaceSize;
 use nerust_screen_wgpu::{RenderOutcome, RenderSurface, Renderer, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};

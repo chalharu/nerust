@@ -12,7 +12,6 @@ crc.workspace = true
 nerust_cartridge_data.workspace = true
 nerust_core.workspace = true
 nerust_screen_buffer.workspace = true
-nerust_screen_filter.workspace = true
 nerust_screen_traits.workspace = true
 nerust_sound_traits.workspace = true
 png.workspace = true

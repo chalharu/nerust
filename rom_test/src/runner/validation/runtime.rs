@@ -13,9 +13,10 @@ use crate::media::{encode_screenshot_png, screen_hash};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_traits::LogicalSize;
+use nerust_screen_buffer::{
+    ScreenBuffer,
+    video_api::{FilterType, LogicalSize},
+};
 use nerust_sound_traits::MixerInput;
 
 pub(super) struct ValidationRuntime {
