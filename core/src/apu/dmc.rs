@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::timer::*;
-use crate::cpu::interrupt::*;
+use crate::interrupt::*;
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_DMC
@@ -198,7 +198,7 @@ mod tests {
         dominant_frequency_tolerance,
     };
     use super::{DMC, DMC_TABLE};
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
 
     fn expected_single_sample_frequency(rate_index: usize) -> f32 {
         CPU_CLOCK_HZ / (16.0 * f32::from(DMC_TABLE[rate_index]))

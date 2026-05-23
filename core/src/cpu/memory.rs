@@ -4,8 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::cpu::{Interrupt, Register};
-use crate::{Apu, Cartridge, Controller, Ppu};
+use crate::cpu::Register;
+use crate::interrupt::Interrupt;
+use crate::{Apu, Controller, Ppu};
+
+use super::CpuCartridgeBus as Cartridge;
 use crate::{OpenBus, OpenBusReadResult};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
@@ -48,7 +51,10 @@ impl Memory {
     ) -> u8 {
         let result = match address {
             0..=0x1FFF => OpenBusReadResult::new(self.wram[address & 0x07FF], 0xFF),
-            0x2000..=0x3FFF => ppu.read_register(address, cartridge, interrupt),
+            0x2000..=0x3FFF => {
+                let mut ppu_cartridge = crate::cartridge_bus::cpu_ppu_cartridge_bus(cartridge);
+                ppu.read_register(address, &mut ppu_cartridge, interrupt)
+            }
             0x4015 => apu.read_register(address, interrupt),
             0x4016 | 0x4017 => controller.read(address & 1),
             0x4000..=0x4014 | 0x4018..=0x401F => OpenBusReadResult::new(0, 0), // TODO: I/O registers
@@ -112,7 +118,10 @@ impl Memory {
     ) {
         match address {
             0..=0x1FFF => self.wram[address & 0x07FF] = value,
-            0x2000..=0x3FFF => ppu.write_register(address, value, cartridge, interrupt),
+            0x2000..=0x3FFF => {
+                let mut ppu_cartridge = crate::cartridge_bus::cpu_ppu_cartridge_bus(cartridge);
+                ppu.write_register(address, value, &mut ppu_cartridge, interrupt)
+            }
             0x4000..=0x4013 => apu.write_register(address, value, interrupt),
             0x4014 => {
                 interrupt.oam_dma = Some(value);

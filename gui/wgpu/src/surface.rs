@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_traits::PhysicalSize;
-use nerust_wgpuwrap::SurfaceSize;
+use crate::shell_api::shell_api::WindowSize;
+use nerust_backend_wgpu::{RenderSurfaceTarget, SurfaceSize};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(
     target_os = "linux",
@@ -61,7 +61,7 @@ enum SurfaceTargetKind {
 }
 
 impl SurfaceTarget {
-    pub(crate) fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+    pub(crate) fn new(window: Arc<TaoWindow>, content_size: WindowSize) -> Self {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -91,9 +91,10 @@ impl SurfaceTarget {
     }
 }
 
-// Safety: `SurfaceTarget` owns the platform objects backing the raw handles it returns,
-// and those objects remain alive for the lifetime of the corresponding `RenderSurface`.
-unsafe impl nerust_wgpuwrap::SurfaceTargetSource for SurfaceTarget {
+// Safety: `SurfaceTarget` owns the platform objects backing the raw handles it
+// returns, and those objects remain alive for the lifetime of the corresponding
+// render surface built by the backend.
+unsafe impl RenderSurfaceTarget for SurfaceTarget {
     fn prepare(&self) {
         #[cfg(any(
             target_os = "linux",
@@ -214,7 +215,7 @@ struct GtkRenderTarget {
     target_os = "openbsd"
 ))]
 impl GtkRenderTarget {
-    fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+    fn new(window: Arc<TaoWindow>, content_size: WindowSize) -> Self {
         let widget = EventBox::new();
         widget.set_hexpand(true);
         widget.set_vexpand(true);

@@ -4,13 +4,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::MirrorMode;
-use crate::cart_device::Cartridge;
-use crate::cpu::interrupt::Interrupt;
+use super::Cartridge;
+use super::mapper_save_api::{
+    CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError, decode_payload, encode_payload,
+};
+use crate::CartridgeData;
+use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError};
+use crate::status::mirror_mode::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct Action53RuntimeState {
@@ -40,7 +42,7 @@ impl Cartridge for Action53 {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_ACTION53.into(),
-            extra_body: crate::persistence::encode_payload(&Action53RuntimeState {
+            extra_body: encode_payload(&Action53RuntimeState {
                 selected_register: self.selected_register,
                 chr_bank: self.chr_bank,
                 inner_bank: self.inner_bank,
@@ -60,12 +62,14 @@ impl Cartridge for Action53 {
                 "unexpected Action53 runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
-        let runtime: Action53RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
+        let runtime: Action53RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.selected_register = runtime.selected_register;
         self.chr_bank = runtime.chr_bank;
@@ -221,10 +225,13 @@ impl Mapper for Action53 {
 #[cfg(test)]
 mod tests {
     use super::Action53;
-    use crate::cart_device::Cartridge;
-    use crate::cpu::interrupt::Interrupt;
+    use super::Cartridge;
+    use crate::CartridgeData;
+    use crate::CartridgeDataParts;
+    use crate::RomFormat;
+    use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
+    use crate::status::mirror_mode::MirrorMode;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

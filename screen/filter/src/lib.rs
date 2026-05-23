@@ -6,11 +6,13 @@
 
 mod filters;
 pub mod presentation;
+mod traits_api;
 
+pub use crate::presentation::{ConsoleVideoAssets, NesVideoAssets};
 use crate::presentation::{
     VideoFilterPipeline, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
 };
-use nerust_screen_traits::{LogicalSize, PhysicalSize, RGB};
+use crate::traits_api::{LogicalSize, PhysicalSize, RGB};
 use nes_ntsc::{Setup, ShaderKernelEntry};
 
 pub const BLACK_PALETTE_INDEX: u8 = nes_ntsc::BLACK;
@@ -137,27 +139,7 @@ impl FilterType {
             layout.logical_size,
             layout.physical_size,
         );
-        let pipeline = match frame_format {
-            VideoFrameFormat::Rgba => VideoFilterPipeline::DirectRgba,
-            VideoFrameFormat::Palette => match self {
-                FilterType::None => VideoFilterPipeline::Palette {
-                    palette_rgba8: self.encoded_palette_rgba8(),
-                },
-                FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo => {
-                    VideoFilterPipeline::Ntsc {
-                        palette_rgba8: self.encoded_palette_rgba8(),
-                        packed_ntsc_rgba8: self
-                            .encoded_packed_ntsc_texture_rgba8()
-                            .expect("NTSC filters should expose packed textures"),
-                        split_ntsc_textures: self
-                            .encoded_ntsc_textures_rgba8()
-                            .expect("NTSC filters should expose split textures"),
-                    }
-                }
-            },
-        };
-
-        VideoPresentation::new(frame_spec, pipeline)
+        VideoPresentation::new(frame_spec)
     }
 
     pub fn rgba_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
@@ -166,6 +148,33 @@ impl FilterType {
 
     pub fn palette_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
         self.presentation(source_logical_size, VideoFrameFormat::Palette)
+    }
+
+    /// Build the NES-specific GPU assets for a palette pipeline.
+    pub(crate) fn palette_nes_video_assets(self) -> NesVideoAssets {
+        let pipeline = match self {
+            FilterType::None => VideoFilterPipeline::Palette {
+                palette_rgba8: self.encoded_palette_rgba8(),
+            },
+            FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo => {
+                VideoFilterPipeline::Ntsc {
+                    palette_rgba8: self.encoded_palette_rgba8(),
+                    packed_ntsc_rgba8: self
+                        .encoded_packed_ntsc_texture_rgba8()
+                        .expect("NTSC filters should expose packed textures"),
+                    split_ntsc_textures: self
+                        .encoded_ntsc_textures_rgba8()
+                        .expect("NTSC filters should expose split textures"),
+                }
+            }
+        };
+
+        NesVideoAssets::new(pipeline)
+    }
+
+    /// Build the console-family GPU assets for a palette pipeline (NES variant).
+    pub fn palette_console_video_assets(self) -> ConsoleVideoAssets {
+        ConsoleVideoAssets::Nes(self.palette_nes_video_assets())
     }
 
     pub fn palette(self) -> [RGB; 64] {
@@ -241,10 +250,11 @@ impl FilterType {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
-        presentation::VideoFrameFormat, presentation::VideoPresentationPipelineKind,
+        BLACK_PALETTE_INDEX, ConsoleVideoAssets, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT,
+        PALETTE_TEXTURE_WIDTH,
+        presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
     };
-    use nerust_screen_traits::{LogicalSize, RGB};
+    use crate::traits_api::{LogicalSize, RGB};
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
         [0, 19, 31, 7, 26, 38],
@@ -455,15 +465,16 @@ mod tests {
             width: 256,
             height: 240,
         });
+        let assets = FilterType::None.palette_nes_video_assets();
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
         assert_eq!(
-            presentation.pipeline_kind(),
+            assets.pipeline_kind(),
             VideoPresentationPipelineKind::Palette
         );
-        assert!(presentation.palette_rgba8().is_some());
-        assert!(presentation.packed_ntsc_rgba8().is_none());
-        assert!(presentation.split_ntsc_textures().is_none());
+        assert!(!assets.palette_rgba8().is_empty());
+        assert!(assets.packed_ntsc_rgba8().is_none());
+        assert!(assets.split_ntsc_textures().is_none());
     }
 
     #[test]
@@ -472,15 +483,28 @@ mod tests {
             width: 256,
             height: 240,
         });
+        let assets = FilterType::NtscComposite.palette_nes_video_assets();
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
-        assert_eq!(
-            presentation.pipeline_kind(),
-            VideoPresentationPipelineKind::Ntsc
-        );
-        assert!(presentation.palette_rgba8().is_some());
-        assert!(presentation.packed_ntsc_rgba8().is_some());
-        assert!(presentation.split_ntsc_textures().is_some());
+        assert_eq!(assets.pipeline_kind(), VideoPresentationPipelineKind::Ntsc);
+        assert!(!assets.palette_rgba8().is_empty());
+        assert!(assets.packed_ntsc_rgba8().is_some());
+        assert!(assets.split_ntsc_textures().is_some());
+    }
+
+    #[test]
+    fn palette_console_video_assets_wrap_nes_pipeline() {
+        let assets = FilterType::NtscComposite.palette_console_video_assets();
+
+        match assets {
+            ConsoleVideoAssets::Nes(nes_assets) => {
+                assert_eq!(
+                    nes_assets.pipeline_kind(),
+                    VideoPresentationPipelineKind::Ntsc
+                );
+                assert!(nes_assets.uses_ntsc_pipeline());
+            }
+        }
     }
 
     #[test]
@@ -491,13 +515,12 @@ mod tests {
         });
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Rgba);
-        assert_eq!(
-            presentation.pipeline_kind(),
-            VideoPresentationPipelineKind::DirectRgba
-        );
-        assert!(presentation.palette_rgba8().is_none());
-        assert!(presentation.packed_ntsc_rgba8().is_none());
-        assert!(presentation.split_ntsc_textures().is_none());
+    }
+
+    #[test]
+    fn nes_video_assets_some_for_palette_format() {
+        let assets = FilterType::NtscComposite.palette_nes_video_assets();
+        assert!(assets.uses_ntsc_pipeline());
     }
 
     #[test]

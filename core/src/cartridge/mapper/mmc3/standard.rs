@@ -4,14 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
+use super::Cartridge;
+use super::mapper4_api::{CartridgeData, MapperState};
+use super::mapper4_persistence_api::{CartridgeRuntimeState, PersistenceError};
 use super::shared::{
     IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
     PrgRamModel,
 };
-use crate::cart_device::Cartridge;
-use crate::mapper_state::MapperState;
-use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize)]
 pub(super) struct Mmc3 {
@@ -153,9 +152,11 @@ impl Mapper4Wrapper for Mmc3 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mapper::Mapper;
-    use crate::{CartridgeDataParts, MirrorMode, RomFormat};
+    use super::super::mapper4_api::{CartridgeDataParts, Mapper, MirrorMode, RomFormat};
+    use super::{
+        CartridgeData, IrqVariant, LegacyIrqUnit, LegacyIrqVariant, LegacyMmc3State,
+        LegacyPrgRamModel, MapperState, Mmc3, Mmc3Deserialized, PrgRamModel,
+    };
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

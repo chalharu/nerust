@@ -26,8 +26,8 @@ use self::pulse::Pulse;
 use self::triangle::Triangle;
 use crate::Cpu;
 use crate::OpenBusReadResult;
-use crate::PersistenceError;
-use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::interrupt::{Interrupt, IrqSource};
+use crate::persistence::PersistenceError;
 use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ
@@ -302,7 +302,7 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::Core;
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
 
     #[test]
     fn inverted_expansion_audio_mix_centers_silence_and_flips_contribution() {

@@ -6,13 +6,15 @@
 
 // Mapper 1
 
-use super::CartridgeData;
-use crate::MirrorMode;
-use crate::cart_device::Cartridge;
-use crate::cpu::interrupt::Interrupt;
+use super::Cartridge;
+use super::mapper_save_api::{
+    CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError, decode_payload, encode_payload,
+};
+use crate::CartridgeData;
+use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError};
+use crate::status::mirror_mode::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -46,7 +48,7 @@ impl Cartridge for SxRom {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_SXROM.into(),
-            extra_body: crate::persistence::encode_payload(&SxRomRuntimeState {
+            extra_body: encode_payload(&SxRomRuntimeState {
                 control: self.control,
                 chr_bank_0: self.chr_bank_0,
                 chr_bank_1: self.chr_bank_1,
@@ -68,12 +70,14 @@ impl Cartridge for SxRom {
                 "unexpected SXROM runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.data_ref().prog_rom_len(),
-            self.data_ref().char_rom_len(),
-        )?;
-        let runtime: SxRomRuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.data_ref().prog_rom_len(),
+                self.data_ref().char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
+        let runtime: SxRomRuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.control = runtime.control;
         self.chr_bank_0 = runtime.chr_bank_0;
@@ -320,11 +324,14 @@ impl Mapper for SxRom {
 
 #[cfg(test)]
 mod tests {
+    use super::Cartridge;
     use super::SxRom;
-    use crate::cart_device::Cartridge;
+    use crate::CartridgeData;
+    use crate::CartridgeDataParts;
+    use crate::RomFormat;
     use crate::mapper::Mapper;
     use crate::mapper_state::MapperStateDao;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
+    use crate::status::mirror_mode::MirrorMode;
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
         let data = CartridgeData::new(CartridgeDataParts {

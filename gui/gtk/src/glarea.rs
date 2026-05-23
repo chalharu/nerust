@@ -1,7 +1,7 @@
 use super::State;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_screen_opengl::GlView;
+use nerust_backend_opengl::GlBackend;
 use shared_library::dynamic_library::DynamicLibrary;
 use std::cell::RefCell;
 use std::ptr;
@@ -70,7 +70,7 @@ impl GLAreaExtend for GLArea {
     }
 
     fn realize(&self) {
-        let mut view = GlView::new();
+        let mut view = GlBackend::new();
         view.use_vao(true);
         self.glarea().make_current();
         if let Some(e) = self.glarea().error() {
@@ -86,11 +86,18 @@ impl GLAreaExtend for GLArea {
                 }
             }
         });
-        GlView::load_with(epoxy::get_proc_addr);
+        GlBackend::load_with(epoxy::get_proc_addr);
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            view.on_load(state.presentation()).unwrap();
+            let video = state.video();
+            view.on_load(
+                video.presentation(),
+                video
+                    .console_video_assets()
+                    .expect("NES session always has video assets"),
+            )
+            .unwrap();
             state.view = Some(view);
         }
         self.resize(self.glarea().width(), self.glarea().height());
@@ -106,9 +113,9 @@ impl GLAreaExtend for GLArea {
             log::error!("{}", e);
             return;
         }
-        let physical_size = self.state().borrow().physical_size();
-        let rate_x = f64::from(width) / f64::from(physical_size.width);
-        let rate_y = f64::from(height) / f64::from(physical_size.height);
+        let window_size = self.state().borrow().window_size();
+        let rate_x = f64::from(width) / f64::from(window_size.width);
+        let rate_y = f64::from(height) / f64::from(window_size.height);
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;
@@ -150,7 +157,7 @@ fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
     if let Ok(state) = state.try_borrow()
         && let Some(ref view) = state.view
     {
-        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer.as_ptr()));
+        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer));
     }
     unsafe {
         epoxy::Flush();

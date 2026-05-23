@@ -4,6 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod shell_api;
+
+use crate::shell_api::shell_api::{
+    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
+    WindowSize,
+};
+use crate::shell_api::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use glutin::config::{Config, ConfigTemplateBuilder};
 use glutin::context::{
     ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentContext, PossiblyCurrentContext,
@@ -13,17 +20,13 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
-};
-use nerust_screen_opengl::GlView;
-use nerust_screen_traits::PhysicalSize;
+use nerust_backend_opengl::GlBackend;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -31,7 +34,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window as WinitWindow, WindowAttributes};
 
-fn create_window_attributes(size: PhysicalSize) -> WindowAttributes {
+fn create_window_attributes(size: WindowSize) -> WindowAttributes {
     WinitWindow::default_attributes()
         .with_inner_size(WinitLogicalSize::new(
             f64::from(size.width),
@@ -64,7 +67,7 @@ fn create_gl_context(window: &WinitWindow, gl_config: &Config) -> NotCurrentCont
 
 fn create_window(
     event_loop: &ActiveEventLoop,
-    size: PhysicalSize,
+    size: WindowSize,
 ) -> (WinitWindow, PossiblyCurrentContext, Surface<WindowSurface>) {
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder =
@@ -97,7 +100,7 @@ fn create_window(
         .expect("failed to make GL context current");
 
     let gl_display = gl_config.display();
-    GlView::load_with(|symbol| {
+    GlBackend::load_with(|symbol| {
         let symbol = CString::new(symbol).unwrap();
         gl_display.get_proc_address(symbol.as_c_str()).cast()
     });
@@ -107,9 +110,6 @@ fn create_window(
 
     (window, gl_context, gl_surface)
 }
-
-const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 fn physical_key_controller_input(key: PhysicalKey) -> Option<ControllerInput> {
     Some(match key {
@@ -133,15 +133,14 @@ fn element_state_to_input_state(state: ElementState) -> InputState {
 }
 
 pub struct Window {
-    view: Option<GlView>,
+    view: Option<GlBackend>,
     gl_context: Option<PossiblyCurrentContext>,
     gl_surface: Option<Surface<WindowSurface>>,
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
     session: GuiSession,
-    last_title_update: Instant,
-    last_presented_frame_counter: u64,
-    needs_redraw: bool,
+    shell: NativeShellState,
+    input: NesInputAdapter,
 }
 
 impl Window {
@@ -152,15 +151,16 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            session: GuiSession::default(),
-            last_title_update: Instant::now(),
-            last_presented_frame_counter: 0,
-            needs_redraw: true,
+            session: NesConsoleDescriptor.build_session(),
+            shell: NativeShellState::new(),
+            input: NesInputAdapter::new(),
         }
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        let _ = self.session.load(rom_path, data);
+        if self.session.load(rom_path, data) {
+            self.input.clear(&mut self.session);
+        }
     }
 
     pub fn run(&mut self) {
@@ -176,10 +176,17 @@ impl Window {
         }
 
         let (window, gl_context, gl_surface) =
-            create_window(event_loop, self.session.physical_size());
-        let mut view = GlView::new();
+            create_window(event_loop, self.session.window_size());
+        let mut view = GlBackend::new();
         view.use_vao(true);
-        view.on_load(self.session.presentation()).unwrap();
+        let video = self.session.video();
+        view.on_load(
+            video.presentation(),
+            video
+                .console_video_assets()
+                .expect("NES session always has video assets"),
+        )
+        .unwrap();
         let initial_size = window.inner_size();
 
         self.window = Some(window);
@@ -192,15 +199,15 @@ impl Window {
 
     fn on_update(&mut self) {
         self.session.with_frame_buffer(|frame_buffer| {
-            self.view.as_ref().unwrap().on_update(frame_buffer.as_ptr());
+            self.view.as_ref().unwrap().on_update(frame_buffer);
         });
         self.gl_surface
             .as_ref()
             .unwrap()
             .swap_buffers(self.gl_context.as_ref().unwrap())
             .unwrap();
-        self.last_presented_frame_counter = self.session.metrics().frame_counter;
-        self.needs_redraw = false;
+        self.shell
+            .on_frame_presented(self.session.metrics().frame_counter);
         self.maybe_refresh_window_title(Instant::now());
     }
 
@@ -217,7 +224,7 @@ impl Window {
             .unwrap()
             .resize(self.gl_context.as_ref().unwrap(), width, height);
 
-        let session_size = self.session.physical_size();
+        let session_size = self.session.window_size();
         let rate_x = physical_size.width as f32 / session_size.width;
         let rate_y = physical_size.height as f32 / session_size.height;
         let rate = f32::min(rate_x, rate_y);
@@ -230,7 +237,7 @@ impl Window {
             physical_size.width as i32,
             physical_size.height as i32,
         );
-        self.needs_redraw = true;
+        self.shell.needs_redraw = true;
     }
 
     fn on_close(&mut self) -> bool {
@@ -256,15 +263,14 @@ impl Window {
     }
 
     fn maybe_refresh_window_title(&mut self, now: Instant) {
-        if now.duration_since(self.last_title_update) >= TITLE_UPDATE_INTERVAL {
-            self.last_title_update = now;
+        if self.shell.should_refresh_title(now) {
             self.refresh_window_title();
         }
     }
 
     fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
         if outcome.needs_redraw {
-            self.needs_redraw = true;
+            self.shell.needs_redraw = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
@@ -323,11 +329,12 @@ impl Window {
             key => physical_key_controller_input(key),
         };
         if let Some(controller_input) = controller_input {
-            self.session.handle_controller_input(
+            self.input.handle_input(
                 ControllerPort::One,
                 controller_input,
                 element_state_to_input_state(input.state),
             );
+            self.input.flush_to_session(&mut self.session);
         }
     }
 }
@@ -353,7 +360,7 @@ impl ApplicationHandler for Window {
                     window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => self.session.clear_controller_input(),
+            WindowEvent::Focused(false) => self.input.clear(&mut self.session),
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
@@ -370,12 +377,14 @@ impl ApplicationHandler for Window {
         };
 
         let metrics = self.session.metrics();
-        if self.needs_redraw || metrics.frame_counter != self.last_presented_frame_counter {
+        if self.shell.wants_redraw(metrics.frame_counter) {
             window.request_redraw();
         }
 
-        if self.needs_redraw || (metrics.loaded && !metrics.paused) {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME_POLL_INTERVAL));
+        if self.shell.wants_poll(metrics.loaded, metrics.paused) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                now + NativeShellState::FRAME_POLL_INTERVAL,
+            ));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
         }
@@ -405,7 +414,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_runtime::ControllerInput;
+    use crate::shell_api::shell_api::ControllerInput;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
