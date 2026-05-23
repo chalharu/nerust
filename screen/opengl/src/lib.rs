@@ -448,23 +448,56 @@ fn build_glsl_source(
     source: &str,
     version_override: Option<&str>,
     extra_preamble: &[&str],
-    define_palette: bool,
 ) -> String {
     let (version_line, body) = source
         .split_once('\n')
         .expect("GLSL source must start with a version line");
+    compose_glsl_source(
+        version_override.unwrap_or(version_line),
+        extra_preamble,
+        &[body],
+    )
+}
+
+fn compose_glsl_source(version_line: &str, extra_preamble: &[&str], parts: &[&str]) -> String {
     let mut output = String::new();
-    output.push_str(version_override.unwrap_or(version_line));
+    output.push_str(version_line);
     output.push('\n');
     for line in extra_preamble {
         output.push_str(line);
         output.push('\n');
     }
-    if define_palette {
-        output.push_str("#define NERUST_FILTER_PALETTE 1\n");
+    for part in parts {
+        output.push_str(part);
+        if !part.ends_with('\n') {
+            output.push('\n');
+        }
     }
-    output.push_str(body);
     output
+}
+
+fn desktop_fragment_parts(is_palette: bool) -> [&'static str; 3] {
+    [
+        include_str!("fragment_desktop_prelude.glsl"),
+        if is_palette {
+            include_str!("fragment_desktop_palette.glsl")
+        } else {
+            include_str!("fragment_desktop_ntsc.glsl")
+        },
+        include_str!("fragment_desktop_present.glsl"),
+    ]
+}
+
+fn compat_fragment_parts(is_palette: bool) -> [&'static str; 3] {
+    [
+        include_str!("fragment_compat_prelude.glsl"),
+        if is_palette {
+            include_str!("fragment_compat_palette.glsl")
+        } else {
+            include_str!("fragment_compat_ntsc.glsl")
+        },
+        include_str!("fragment_compat_present.glsl"),
+    ]
 }
 
 fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
@@ -486,23 +519,25 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
                     include_str!("vertex_desktop.glsl"),
                     Some("#version 300 es"),
                     &["precision mediump float;"],
-                    false,
                 ),
-                build_glsl_source(
-                    include_str!("fragment_desktop.glsl"),
-                    Some("#version 300 es"),
+                compose_glsl_source(
+                    "#version 300 es",
                     &[
                         "precision mediump float;",
                         "precision highp int;",
                         "precision mediump usampler2D;",
                     ],
-                    is_palette,
+                    &desktop_fragment_parts(is_palette),
                 ),
             ),
             (
                 "gles2",
                 include_str!("vertex.glsl").to_owned(),
-                build_glsl_source(include_str!("flagment.glsl"), None, &[], is_palette),
+                compose_glsl_source(
+                    "#version 100",
+                    &["#define NERUST_MEDIUMP mediump"],
+                    &compat_fragment_parts(is_palette),
+                ),
             ),
         ]
     } else {
@@ -510,12 +545,16 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
             (
                 "desktop-core",
                 include_str!("vertex_desktop.glsl").to_owned(),
-                build_glsl_source(include_str!("fragment_desktop.glsl"), None, &[], is_palette),
+                compose_glsl_source("#version 150", &[], &desktop_fragment_parts(is_palette)),
             ),
             (
                 "desktop-legacy",
                 include_str!("vertex_legacy.glsl").to_owned(),
-                build_glsl_source(include_str!("fragment_legacy.glsl"), None, &[], is_palette),
+                compose_glsl_source(
+                    "#version 120",
+                    &["#define NERUST_MEDIUMP"],
+                    &compat_fragment_parts(is_palette),
+                ),
             ),
         ]
     };
@@ -571,7 +610,7 @@ fn gl_string(name: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_glsl_source, is_gles_context};
+    use super::{build_glsl_source, compose_glsl_source, is_gles_context};
 
     #[test]
     fn detects_gles_context_strings() {
@@ -581,11 +620,26 @@ mod tests {
     }
 
     #[test]
-    fn inserts_palette_define_after_version_line() {
-        let source = build_glsl_source("#version 120\nvoid main(void) {}\n", None, &[], true);
+    fn inserts_extra_preamble_after_version_line() {
+        let source = build_glsl_source(
+            "#version 120\nvoid main(void) {}\n",
+            None,
+            &["#define TEST 1"],
+        );
+        assert_eq!(source, "#version 120\n#define TEST 1\nvoid main(void) {}\n");
+    }
+
+    #[test]
+    fn composes_glsl_parts_in_order() {
+        let source = compose_glsl_source(
+            "#version 120",
+            &["#define NERUST_MEDIUMP"],
+            &["void helper(void) {}\n", "void main(void) {}\n"],
+        );
+
         assert_eq!(
             source,
-            "#version 120\n#define NERUST_FILTER_PALETTE 1\nvoid main(void) {}\n"
+            "#version 120\n#define NERUST_MEDIUMP\nvoid helper(void) {}\nvoid main(void) {}\n"
         );
     }
 }
