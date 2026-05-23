@@ -6,7 +6,7 @@
 
 use clap::{Arg, Command};
 use log::LevelFilter;
-use nerust_gui_runtime::{CoreOptions, Mmc3IrqVariant};
+use nerust_gui_runtime::options::{CoreOptions, Mmc3IrqVariant};
 use nerust_sound_openal::prepare_macos_runtime;
 use nerust_wgpu::Window;
 use simple_logger::SimpleLogger;
