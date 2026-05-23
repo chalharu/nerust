@@ -10,10 +10,9 @@ use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
 use nerust_contract::CoreOptions;
 use nerust_gui_runtime::{
     ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-    SessionCommandOutcome,
+    SessionCommandOutcome, WindowSize,
 };
 use nerust_gui_shell::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
-use nerust_screen_traits::PhysicalSize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -49,7 +48,7 @@ fn element_state_to_input_state(state: ElementState) -> Option<InputState> {
     })
 }
 
-fn create_window_builder(size: PhysicalSize, title: String) -> WindowBuilder {
+fn create_window_builder(size: WindowSize, title: String) -> WindowBuilder {
     WindowBuilder::new()
         .with_title(title)
         .with_inner_size(TaoLogicalSize::new(
@@ -189,19 +188,20 @@ impl WindowRuntime {
         }
 
         let window = Arc::new(
-            create_window_builder(self.session.physical_size(), self.current_window_title())
+            create_window_builder(self.session.window_size(), self.current_window_title())
                 .build(event_loop)
                 .unwrap(),
         );
-        let surface_target = SurfaceTarget::new(window.clone(), self.session.physical_size());
+        let surface_target = SurfaceTarget::new(window.clone(), self.session.window_size());
         self.app_menu.init_for_window(&window);
         self.sync_menu_state();
         let initial_size = window_surface_size(window.inner_size());
+        let video = self.session.video();
         let backend = WgpuBackend::new(
             surface_target,
             initial_size,
-            self.session.presentation(),
-            self.session
+            video.presentation(),
+            video
                 .console_video_assets()
                 .expect("NES session always has video assets"),
         )

@@ -3,30 +3,35 @@ use nerust_console::{
     PersistenceTarget, StateExport,
 };
 use nerust_contract::CoreOptions;
-use nerust_screen_traits::{PhysicalSize, VideoPresentation};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowSize {
+    pub width: f32,
+    pub height: f32,
+}
 
 #[derive(Debug)]
 pub struct SessionCore {
     paused: bool,
     loaded: bool,
     console: Console,
-    physical_size: PhysicalSize,
+    window_size: WindowSize,
 }
 
 impl SessionCore {
     pub fn from_console(console: Console) -> Self {
         let metrics = console.metrics();
         let physical_size = console.video().presentation().physical_size();
+        let window_size = WindowSize {
+            width: physical_size.width,
+            height: physical_size.height,
+        };
         Self {
             paused: metrics.paused,
             loaded: metrics.loaded,
             console,
-            physical_size,
+            window_size,
         }
-    }
-
-    pub fn presentation(&self) -> &VideoPresentation {
-        self.video().presentation()
     }
 
     pub fn video(&self) -> &ConsoleVideo {
@@ -37,8 +42,8 @@ impl SessionCore {
         self.console.with_frame_buffer(f)
     }
 
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.physical_size
+    pub fn window_size(&self) -> WindowSize {
+        self.window_size
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
@@ -161,8 +166,8 @@ mod tests {
         assert!(!core.can_pause());
         assert!(!core.can_resume());
         assert_eq!(
-            core.presentation().physical_size().width,
-            core.physical_size().width
+            core.video().presentation().physical_size().width,
+            core.window_size().width
         );
         assert!(core.with_frame_buffer(|buffer| !buffer.is_empty()));
     }

@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use nerust_backend_wgpu::{RenderSurfaceTarget, SurfaceSize};
-use nerust_screen_traits::PhysicalSize;
+use nerust_gui_runtime::WindowSize;
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(
     target_os = "linux",
@@ -61,7 +61,7 @@ enum SurfaceTargetKind {
 }
 
 impl SurfaceTarget {
-    pub(crate) fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+    pub(crate) fn new(window: Arc<TaoWindow>, content_size: WindowSize) -> Self {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -215,7 +215,7 @@ struct GtkRenderTarget {
     target_os = "openbsd"
 ))]
 impl GtkRenderTarget {
-    fn new(window: Arc<TaoWindow>, content_size: PhysicalSize) -> Self {
+    fn new(window: Arc<TaoWindow>, content_size: WindowSize) -> Self {
         let widget = EventBox::new();
         widget.set_hexpand(true);
         widget.set_vexpand(true);
