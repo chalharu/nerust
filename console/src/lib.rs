@@ -12,7 +12,8 @@ pub use nerust_contract::PersistenceTarget;
 use nerust_core::controller::standard_controller::{
     Buttons, StandardController, StandardControllerSnapshot,
 };
-use nerust_core::{CartridgeData, Core, CoreOptions, Mmc3IrqVariant, RomIdentity};
+use nerust_core::{CartridgeData, Core, RomIdentity};
+pub use nerust_core::{CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_traits::{LogicalSize, PhysicalSize};

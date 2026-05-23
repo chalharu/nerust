@@ -1,4 +1,4 @@
-pub use nerust_console::ConsoleMetrics;
+pub use nerust_console::{ConsoleMetrics, CoreOptions, Mmc3IrqVariant};
 pub use nerust_gui_session::{
     ButtonDescriptor, ConsoleError, ConsoleVideo, ControllerDescriptor, ControllerInput,
     ControllerPort, InputState, SessionCommand, SessionCommandOutcome, SessionCore, WindowSize,

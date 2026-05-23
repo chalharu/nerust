@@ -7,7 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-log.workspace = true
 nerust_console.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_screen_buffer.workspace = true

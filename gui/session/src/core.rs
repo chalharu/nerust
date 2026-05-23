@@ -1,8 +1,7 @@
 use nerust_console::{
     Console, ConsoleError, ConsoleMetrics, ConsoleVideo, ControllerInputs, ControllerPort,
-    PersistenceTarget, StateExport,
+    CoreOptions, PersistenceTarget, StateExport,
 };
-use nerust_contract::CoreOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
