@@ -296,9 +296,10 @@ impl Renderer {
             ],
         });
 
+        let shader_source = composed_shader_source();
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("nerust_wgpu_shader"),
-            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: ShaderSource::Wgsl(shader_source.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("nerust_pipeline_layout"),
@@ -596,6 +597,17 @@ fn create_render_pipeline(
     })
 }
 
+fn composed_shader_source() -> String {
+    [
+        include_str!("shader/vertex.wgsl"),
+        include_str!("shader/common.wgsl"),
+        include_str!("shader/palette_decode.wgsl"),
+        include_str!("shader/ntsc_decode.wgsl"),
+        include_str!("shader/presentation.wgsl"),
+    ]
+    .join("\n\n")
+}
+
 fn fragment_entry_point(uses_ntsc_pipeline: bool, surface_is_srgb: bool) -> &'static str {
     match (uses_ntsc_pipeline, surface_is_srgb) {
         (false, true) => "fs_palette_srgb",
@@ -646,7 +658,7 @@ fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_viewport, encode_ntsc_texture};
+    use super::{composed_shader_source, compute_viewport, encode_ntsc_texture};
     use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
     use nerust_screen_traits::PhysicalSize;
     use nerust_wgpuwrap::SurfaceSize;
@@ -695,5 +707,16 @@ mod tests {
             )
             .to_le_bytes()
         );
+    }
+
+    #[test]
+    fn composed_shader_source_keeps_decode_and_presentation_sections() {
+        let source = composed_shader_source();
+
+        assert!(source.contains("fn palette_rgb_for_output"));
+        assert!(source.contains("fn ntsc_rgb_for_output"));
+        assert!(source.contains("fn output_coords"));
+        assert!(source.contains("fn fs_palette_linear"));
+        assert!(source.contains("fn fs_ntsc_srgb"));
     }
 }
