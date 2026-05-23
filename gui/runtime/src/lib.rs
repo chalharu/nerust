@@ -1,4 +1,4 @@
-pub use nerust_console::ConsoleMetrics;
+pub use nerust_console::{ConsoleMetrics, ControllerInputs};
 pub use nerust_gui_session::{
     ButtonDescriptor, ConsoleError, ConsoleVideo, ControllerDescriptor, ControllerInput,
     ControllerPort, InputState, SessionCommand, SessionCommandOutcome, SessionCore, WindowSize,
@@ -6,6 +6,7 @@ pub use nerust_gui_session::{
 };
 pub use nerust_persistence::StateSlotSummary;
 
+pub mod console_api;
 pub mod options;
 mod session;
 mod slots;

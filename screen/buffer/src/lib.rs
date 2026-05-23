@@ -8,6 +8,7 @@ mod screen_buffer;
 mod screen_buffer_unit;
 
 pub use screen_buffer::ScreenBuffer;
+pub mod video_api;
 
 fn allocate<T: Default + Clone>(size: usize) -> Box<[T]> {
     // let mut buffer = Vec::with_capacity(size);
