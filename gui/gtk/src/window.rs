@@ -1,13 +1,13 @@
 use super::glarea::{GLArea, GLAreaExtend};
 use super::{State, TITLE_UPDATE_INTERVAL};
+use crate::shell_api::shell_api::{
+    ControllerInput, ControllerPort, InputState, SessionCommand, SessionCommandOutcome,
+    StateSlotSummary, slot_label,
+};
 use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_gui_shell::shell_api::{
-    ControllerInput, ControllerPort, InputState, SessionCommand, SessionCommandOutcome,
-    StateSlotSummary, slot_label,
-};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -524,7 +524,7 @@ fn rebuild_slot_menu(
 #[cfg(test)]
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
-    use nerust_gui_shell::shell_api::{ControllerInput, SessionCommand, SessionCommandOutcome};
+    use crate::shell_api::shell_api::{ControllerInput, SessionCommand, SessionCommandOutcome};
     use std::cell::RefCell;
 
     #[derive(Default)]

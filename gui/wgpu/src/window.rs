@@ -6,9 +6,33 @@
 
 mod runtime;
 
-use nerust_gui_shell::options::CoreOptions;
+use crate::shell_api::options::{CoreOptions, Mmc3IrqVariant as ShellMmc3IrqVariant};
 use runtime::WindowRuntime;
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WindowLoadOptions {
+    pub mmc3_irq_variant: Option<WindowMmc3IrqVariant>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowMmc3IrqVariant {
+    Sharp,
+    Nec,
+}
+
+fn core_options_from_window_options(options: WindowLoadOptions) -> CoreOptions {
+    CoreOptions {
+        mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
+    }
+}
+
+fn shell_mmc3_irq_variant(variant: WindowMmc3IrqVariant) -> ShellMmc3IrqVariant {
+    match variant {
+        WindowMmc3IrqVariant::Sharp => ShellMmc3IrqVariant::Sharp,
+        WindowMmc3IrqVariant::Nec => ShellMmc3IrqVariant::Nec,
+    }
+}
 
 pub struct Window {
     runtime: Box<WindowRuntime>,
@@ -29,9 +53,10 @@ impl Window {
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        options: CoreOptions,
+        options: WindowLoadOptions,
     ) {
-        self.runtime.load_with_options(rom_path, data, options);
+        self.runtime
+            .load_with_options(rom_path, data, core_options_from_window_options(options));
     }
 
     pub fn run(self) {

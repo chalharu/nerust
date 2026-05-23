@@ -7,11 +7,11 @@
 //!   summaries, controller types, and window sizing that shell binaries need,
 //!   so OS-specific binaries do not depend on `nerust_gui_runtime` directly.
 //! - [`options`] — re-exports shell-facing console load options.
-//! - [`NesConsoleDescriptor`] — builds a NES [`crate::shell_api::GuiSession`]
-//!   and describes its controller layout.
-//! - [`NesInputAdapter`] — translates host key/button events to NES controller
+//! - [`descriptor::NesConsoleDescriptor`] — builds a NES
+//!   [`crate::shell_api::GuiSession`] and describes its controller layout.
+//! - [`input::NesInputAdapter`] — translates host key/button events to NES controller
 //!   inputs and flushes them to the session.
-//! - [`NativeShellState`] — tracks frame-presentation and redraw timing for
+//! - [`state::NativeShellState`] — tracks frame-presentation and redraw timing for
 //!   native window shells.
 //!
 //! # Shell × Backend Composition Policy
@@ -31,10 +31,10 @@
 //! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
 mod descriptor;
 mod input;
+pub mod options;
 pub mod shell_api;
 mod state;
 
-pub use self::descriptor::NesConsoleDescriptor;
-pub use self::input::NesInputAdapter;
-pub use self::state::NativeShellState;
-pub use nerust_gui_runtime::options;
+pub use descriptor::NesConsoleDescriptor;
+pub use input::NesInputAdapter;
+pub use state::NativeShellState;
