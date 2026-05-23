@@ -1,7 +1,6 @@
 use super::GuiSession;
-use crate::StateSlotSummary;
+use crate::{CoreOptions, StateSlotSummary};
 use nerust_console::PreviewFrame;
-use nerust_contract::CoreOptions;
 use nerust_persistence::{
     SidecarPaths, ThumbnailSource, allocate_next_slot_id, delete_state_slot, latest_saved_slot_id,
     load_mapper_save, load_state_slot, resolve_sidecars, scan_state_slots_for_target,

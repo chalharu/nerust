@@ -7,10 +7,9 @@
 use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
-use nerust_contract::CoreOptions;
 use nerust_gui_runtime::{
-    ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-    SessionCommandOutcome, WindowSize,
+    ConsoleSessionFactory, ControllerInput, ControllerPort, CoreOptions, GuiSession, InputState,
+    SessionCommand, SessionCommandOutcome, WindowSize,
 };
 use nerust_gui_shell::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
 use std::path::PathBuf;
