@@ -83,5 +83,3 @@ impl Default for Interrupt {
         Self::new()
     }
 }
-
-impl Interrupt {}

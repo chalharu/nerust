@@ -10,7 +10,7 @@ use super::mapper4_api::{
 use super::mapper4_persistence_api::{
     CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError, decode_payload, encode_payload,
 };
-use crate::cpu::interrupt::{Interrupt, IrqSource};
+use crate::interrupt::{Interrupt, IrqSource};
 use crate::ppu_bus_event::PpuBusEvent;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
@@ -293,11 +293,13 @@ impl Mapper4Shared {
                 "unexpected MMC3 runtime kind".into(),
             ));
         }
-        self.state.validate_for_import(
-            &state.mapper_state,
-            self.cartridge_data.prog_rom_len(),
-            self.cartridge_data.char_rom_len(),
-        )?;
+        self.state
+            .validate_for_import(
+                &state.mapper_state,
+                self.cartridge_data.prog_rom_len(),
+                self.cartridge_data.char_rom_len(),
+            )
+            .map_err(PersistenceError::Validation)?;
         let runtime: Mapper4RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.bank_select = runtime.bank_select;

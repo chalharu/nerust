@@ -4,7 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::persistence::PersistenceError;
 use crate::status::mirror_mode::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
@@ -47,21 +46,15 @@ impl MapperState {
         incoming: &MapperState,
         program_rom_len: usize,
         character_rom_len: usize,
-    ) -> Result<(), PersistenceError> {
+    ) -> Result<(), String> {
         if incoming.sram.len() != self.sram.len() || incoming.vram.len() != self.vram.len() {
-            return Err(PersistenceError::Validation(
-                "mapper backing store length mismatch".into(),
-            ));
+            return Err("mapper backing store length mismatch".into());
         }
         if incoming.has_battery != self.has_battery {
-            return Err(PersistenceError::Validation(
-                "mapper battery configuration mismatch".into(),
-            ));
+            return Err("mapper battery configuration mismatch".into());
         }
         if incoming.character_mapping_mode != self.character_mapping_mode {
-            return Err(PersistenceError::Validation(
-                "mapper character mapping mode mismatch".into(),
-            ));
+            return Err("mapper character mapping mode mismatch".into());
         }
 
         let program_page_count = program_rom_len >> 8;
@@ -95,13 +88,11 @@ fn validate_page_table_entry(
     max_page_count: usize,
     label: &str,
     index: usize,
-) -> Result<(), PersistenceError> {
+) -> Result<(), String> {
     if let Some(page) = page
         && page >= max_page_count
     {
-        return Err(PersistenceError::Validation(format!(
-            "{label} page table entry {index} out of bounds"
-        )));
+        return Err(format!("{label} page table entry {index} out of bounds"));
     }
     Ok(())
 }

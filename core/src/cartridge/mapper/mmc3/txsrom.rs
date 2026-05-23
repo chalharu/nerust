@@ -53,7 +53,7 @@ mod tests {
     use super::super::mapper4_api::{CartridgeDataParts, Mapper, MirrorMode, RomFormat};
     use super::Cartridge;
     use super::{CartridgeData, TxSrom};
-    use crate::cpu::interrupt::Interrupt;
+    use crate::interrupt::Interrupt;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

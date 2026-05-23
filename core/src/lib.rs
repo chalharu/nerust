@@ -12,10 +12,12 @@
 mod apu;
 mod cart_device;
 mod cartridge;
+mod cartridge_bus;
 mod cartridge_data;
 mod cartridge_error;
 pub mod controller;
 mod cpu;
+mod interrupt;
 mod mapper;
 mod mapper_state;
 mod persistence;
@@ -327,7 +329,8 @@ impl Core {
             &mut self.apu,
         );
         for _ in 0..3 {
-            let mut ppu_cartridge = crate::ppu::mapper_cartridge_bus(self.cartridge.as_mut());
+            let mut ppu_cartridge =
+                crate::cartridge_bus::mapper_cartridge_bus(self.cartridge.as_mut());
             if self
                 .ppu
                 .step(screen, &mut ppu_cartridge, self.cpu.interrupt_mut())

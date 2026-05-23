@@ -4,7 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::cpu::{Interrupt, Register};
+use crate::cpu::Register;
+use crate::interrupt::Interrupt;
 use crate::{Apu, Controller, Ppu};
 
 use super::CpuCartridgeBus as Cartridge;
@@ -51,7 +52,7 @@ impl Memory {
         let result = match address {
             0..=0x1FFF => OpenBusReadResult::new(self.wram[address & 0x07FF], 0xFF),
             0x2000..=0x3FFF => {
-                let mut ppu_cartridge = crate::ppu::cpu_cartridge_bus(cartridge);
+                let mut ppu_cartridge = crate::cartridge_bus::cpu_ppu_cartridge_bus(cartridge);
                 ppu.read_register(address, &mut ppu_cartridge, interrupt)
             }
             0x4015 => apu.read_register(address, interrupt),
@@ -118,7 +119,7 @@ impl Memory {
         match address {
             0..=0x1FFF => self.wram[address & 0x07FF] = value,
             0x2000..=0x3FFF => {
-                let mut ppu_cartridge = crate::ppu::cpu_cartridge_bus(cartridge);
+                let mut ppu_cartridge = crate::cartridge_bus::cpu_ppu_cartridge_bus(cartridge);
                 ppu.write_register(address, value, &mut ppu_cartridge, interrupt)
             }
             0x4000..=0x4013 => apu.write_register(address, value, interrupt),

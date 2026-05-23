@@ -5,7 +5,7 @@ use crate::apu::length_counter::{
     HaveLengthCounter, HaveLengthCounterDao, LengthCounter, LengthCounterDao,
 };
 use crate::apu::timer::{HaveTimerDao, TimerDao};
-use crate::cpu::interrupt::Interrupt;
+use crate::interrupt::Interrupt;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],
