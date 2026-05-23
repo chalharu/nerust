@@ -2141,7 +2141,6 @@ dependencies = [
  "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_screen_wgpu",
- "nerust_wgpuwrap",
  "pollster",
  "raw-window-handle",
 ]
@@ -2358,7 +2357,7 @@ version = "0.1.0"
 dependencies = [
  "nerust_screen_filter",
  "nerust_screen_traits",
- "nerust_wgpuwrap",
+ "raw-window-handle",
  "wgpu",
 ]
 
@@ -2409,14 +2408,6 @@ dependencies = [
  "raw-window-handle",
  "simple_logger",
  "tao",
-]
-
-[[package]]
-name = "nerust_wgpuwrap"
-version = "0.1.0"
-dependencies = [
- "raw-window-handle",
- "wgpu",
 ]
 
 [[package]]

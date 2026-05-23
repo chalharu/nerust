@@ -6,11 +6,9 @@
 
 use nerust_screen_filter::ConsoleVideoAssets;
 use nerust_screen_traits::VideoPresentation;
-use nerust_screen_wgpu::{RenderOutcome, Renderer};
-use nerust_wgpuwrap::RenderSurface;
+pub use nerust_screen_wgpu::SurfaceSize;
+use nerust_screen_wgpu::{RenderOutcome, RenderSurface, Renderer, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
-
-pub use nerust_wgpuwrap::SurfaceSize;
 
 /// Shell-side contract for surfaces that can host a wgpu renderer.
 ///
@@ -34,7 +32,7 @@ struct ShellSurfaceTarget<T>(T);
 // Safety: `T` is required to uphold the `RenderSurfaceTarget` contract, and
 // `RenderSurface` stores `Surface<'static>` ahead of the wrapped target so the
 // wgpu surface is dropped before the native target handles it was built from.
-unsafe impl<T: RenderSurfaceTarget> nerust_wgpuwrap::SurfaceTargetSource for ShellSurfaceTarget<T> {
+unsafe impl<T: RenderSurfaceTarget> SurfaceTargetSource for ShellSurfaceTarget<T> {
     fn prepare(&self) {
         self.0.prepare();
     }
@@ -66,7 +64,7 @@ pub enum RenderResult {
 /// App-facing wgpu render backend.
 ///
 /// Owns the [`RenderSurface`] and [`Renderer`] lifecycle so that wgpu shells
-/// are free from direct `nerust_screen_wgpu` / `nerust_wgpuwrap` dependencies.
+/// are free from direct surface-management dependencies below the backend.
 /// Surface recreation and reconfiguration after resize or loss are handled
 /// transparently inside [`render`](Self::render).
 pub struct WgpuBackend<T: RenderSurfaceTarget> {
