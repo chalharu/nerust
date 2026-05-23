@@ -1,18 +1,14 @@
+mod persistence;
+
+use self::persistence::PersistenceState;
+use crate::StateSlotSummary;
 use crate::slots::adjacent_slot_id;
-use nerust_console::{ConsoleMetrics, ControllerInputs, PreviewFrame};
-use nerust_contract::CoreOptions;
+use nerust_console::{ConsoleMetrics, ControllerInputs};
 use nerust_gui_session::{
     ConsoleError, ControllerPort, SessionCommand, SessionCommandOutcome, SessionCore, window_title,
 };
-use nerust_persistence::{
-    SidecarPaths, StateSlotSummary, ThumbnailSource, allocate_next_slot_id, delete_state_slot,
-    latest_saved_slot_id, load_mapper_save, load_state_slot, resolve_sidecars,
-    scan_state_slots_for_target, state_slot_path, write_mapper_save, write_recovery_mapper_save,
-    write_state_slot,
-};
 use nerust_screen_filter::ConsoleVideoAssets;
 use nerust_screen_traits::{PhysicalSize, VideoPresentation};
-use std::path::PathBuf;
 
 pub trait ConsoleSessionFactory {
     fn build_session(&self) -> GuiSession;
@@ -21,24 +17,14 @@ pub trait ConsoleSessionFactory {
 #[derive(Debug)]
 pub struct GuiSession {
     core: SessionCore,
-    rom_path: Option<PathBuf>,
-    sidecars: Option<SidecarPaths>,
-    mapper_save_flush_allowed: bool,
-    mapper_save_recovery_written: bool,
-    slots: Vec<StateSlotSummary>,
-    active_slot_id: Option<u64>,
+    persistence: PersistenceState,
 }
 
 impl GuiSession {
     pub fn from_session_core(core: SessionCore) -> Self {
         Self {
             core,
-            rom_path: None,
-            sidecars: None,
-            mapper_save_flush_allowed: true,
-            mapper_save_recovery_written: false,
-            slots: Vec::new(),
-            active_slot_id: None,
+            persistence: PersistenceState::default(),
         }
     }
 
@@ -83,11 +69,11 @@ impl GuiSession {
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
-        &self.slots
+        self.persistence.slots()
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
-        self.active_slot_id
+        self.persistence.active_slot_id()
     }
 
     pub fn reset(&self) -> Result<(), ConsoleError> {
@@ -222,260 +208,23 @@ impl GuiSession {
         self.core.clear_all_inputs();
     }
 
-    pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
-        self.load_with_options(rom_path, data, CoreOptions::default())
-    }
-
-    pub fn load_with_options(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        options: CoreOptions,
-    ) -> bool {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush before load failed: {error}");
-            return false;
-        }
-        if let Err(error) = self.core.load_rom(data, options) {
-            log::warn!("ROM load failed: {error}");
-            return false;
-        }
-        self.rom_path = rom_path;
-        self.sidecars = self.rom_path.as_deref().map(resolve_sidecars);
-        self.mapper_save_flush_allowed = true;
-        self.mapper_save_recovery_written = false;
-        self.active_slot_id = None;
-        self.refresh_slots();
-        self.active_slot_id = latest_saved_slot_id(&self.slots);
-        if let Err(error) = self.load_mapper_save_if_available() {
-            self.mapper_save_flush_allowed = false;
-            log::warn!("mapper save auto-load failed: {error}");
-        }
-        true
-    }
-
-    pub fn unload(&mut self) -> bool {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush before unload failed: {error}");
-            return false;
-        }
-        let _ = self.core.unload_rom();
-        self.rom_path = None;
-        self.sidecars = None;
-        self.mapper_save_flush_allowed = true;
-        self.mapper_save_recovery_written = false;
-        self.active_slot_id = None;
-        self.slots.clear();
-        true
-    }
-
-    pub fn flush_before_exit(&mut self) {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush before close failed: {error}");
-        }
-    }
-
-    pub fn save_active_slot_or_new(&mut self) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        let slot_id =
-            self.active_slot_id
-                .or_else(|| match allocate_next_slot_id(&sidecars.states_dir) {
-                    Ok(slot_id) => Some(slot_id),
-                    Err(error) => {
-                        log::warn!("allocating state slot failed: {error}");
-                        None
-                    }
-                });
-        if let Some(slot_id) = slot_id {
-            self.save_slot(slot_id, true);
-        }
-    }
-
-    pub fn create_slot(&mut self) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        match allocate_next_slot_id(&sidecars.states_dir) {
-            Ok(slot_id) => self.save_slot(slot_id, true),
-            Err(error) => log::warn!("allocating state slot failed: {error}"),
-        }
-    }
-
-    pub fn save_slot(&mut self, slot_id: u64, make_active: bool) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        match self.core.export_state() {
-            Ok(export) => {
-                let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
-                match write_state_slot(
-                    &sidecars.states_dir,
-                    slot_id,
-                    &export.machine_state,
-                    export.target,
-                    preview.as_ref(),
-                ) {
-                    Ok(_) => {
-                        if make_active {
-                            self.active_slot_id = Some(slot_id);
-                        }
-                        self.refresh_slots();
-                    }
-                    Err(error) => log::warn!("saving state slot failed: {error}"),
-                }
-            }
-            Err(error) => log::warn!("state export failed: {error}"),
-        }
-    }
-
-    pub fn load_active_slot(&mut self) -> bool {
-        self.active_slot_id
-            .is_some_and(|slot_id| self.load_slot(slot_id))
-    }
-
-    pub fn load_slot(&mut self, slot_id: u64) -> bool {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return false;
-        };
-        match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
-            Ok(slot) => {
-                if let Err(error) = self.core.import_state(slot.machine_state) {
-                    log::warn!("state import failed: {error}");
-                    false
-                } else {
-                    self.active_slot_id = Some(slot_id);
-                    self.core.sync_paused_from_console();
-                    self.refresh_slots();
-                    true
-                }
-            }
-            Err(error) => {
-                log::warn!("loading state slot failed: {error}");
-                false
-            }
-        }
-    }
-
-    pub fn delete_slot(&mut self, slot_id: u64) {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return;
-        };
-        match delete_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
-            Ok(()) => {
-                if self.active_slot_id == Some(slot_id) {
-                    self.active_slot_id = None;
-                }
-                self.refresh_slots();
-            }
-            Err(error) => log::warn!("deleting state slot failed: {error}"),
-        }
-    }
-
     pub fn select_active_slot(&mut self, slot_id: u64) {
-        self.active_slot_id = Some(slot_id);
+        self.persistence.select_active_slot(slot_id);
     }
 
     pub fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
-        let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, forward)?;
-        self.active_slot_id = Some(next_slot_id);
+        let next_slot_id = adjacent_slot_id(
+            self.persistence.slots(),
+            self.persistence.active_slot_id(),
+            forward,
+        )?;
+        self.persistence.select_active_slot(next_slot_id);
         Some(next_slot_id)
-    }
-
-    fn refresh_slots(&mut self) {
-        self.slots = if let Some(sidecars) = self.sidecars.as_ref() {
-            match self.core.persistence_target() {
-                Ok(target) => match scan_state_slots_for_target(&sidecars.states_dir, target) {
-                    Ok(slots) => slots,
-                    Err(error) => {
-                        log::warn!("slot scan failed: {error}");
-                        Vec::new()
-                    }
-                },
-                Err(error) => {
-                    log::warn!("state slot target unavailable: {error}");
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-        if self
-            .active_slot_id
-            .is_some_and(|slot_id| !self.slots.iter().any(|slot| slot.slot_id == slot_id))
-        {
-            self.active_slot_id = None;
-        }
-    }
-
-    fn load_mapper_save_if_available(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if let Some(bytes) =
-            load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
-        {
-            self.core
-                .import_mapper_save(bytes)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn flush_mapper_save(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if !self.mapper_save_flush_allowed {
-            if self.mapper_save_recovery_written {
-                return Ok(());
-            }
-            if let Some(bytes) = self
-                .core
-                .export_mapper_save()
-                .map_err(|error| error.to_string())?
-            {
-                let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
-                    .map_err(|error| error.to_string())?;
-                self.mapper_save_recovery_written = true;
-                log::warn!(
-                    "mapper save auto-load failed earlier; wrote recovery save to {}",
-                    path.display()
-                );
-            }
-            return Ok(());
-        }
-        match self
-            .core
-            .export_mapper_save()
-            .map_err(|error| error.to_string())?
-        {
-            Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
-                .map_err(|error| error.to_string()),
-            None => Ok(()),
-        }
-    }
-}
-
-impl Drop for GuiSession {
-    fn drop(&mut self) {
-        if let Err(error) = self.flush_mapper_save() {
-            log::warn!("mapper save flush during shutdown failed: {error}");
-        }
     }
 }
 
 fn redraw_needed_after_pause_change(executed: bool, was_paused: bool, paused: bool) -> bool {
     executed && was_paused && !paused
-}
-
-fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
-    ThumbnailSource {
-        width: preview.width,
-        height: preview.height,
-        rgba: preview.rgba.clone(),
-    }
 }
 
 #[cfg(test)]
