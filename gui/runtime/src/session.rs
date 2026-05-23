@@ -5,10 +5,9 @@ use crate::StateSlotSummary;
 use crate::slots::adjacent_slot_id;
 use nerust_console::{ConsoleMetrics, ControllerInputs};
 use nerust_gui_session::{
-    ConsoleError, ControllerPort, SessionCommand, SessionCommandOutcome, SessionCore, window_title,
+    ConsoleError, ConsoleVideo, ControllerPort, SessionCommand, SessionCommandOutcome, SessionCore,
+    WindowSize, window_title,
 };
-use nerust_screen_filter::ConsoleVideoAssets;
-use nerust_screen_traits::{PhysicalSize, VideoPresentation};
 
 pub trait ConsoleSessionFactory {
     fn build_session(&self) -> GuiSession;
@@ -28,20 +27,16 @@ impl GuiSession {
         }
     }
 
-    pub fn presentation(&self) -> &VideoPresentation {
-        self.core.presentation()
-    }
-
-    pub fn console_video_assets(&self) -> Option<&ConsoleVideoAssets> {
-        self.core.video().console_video_assets()
+    pub fn video(&self) -> &ConsoleVideo {
+        self.core.video()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         self.core.with_frame_buffer(f)
     }
 
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.core.physical_size()
+    pub fn window_size(&self) -> WindowSize {
+        self.core.window_size()
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
@@ -291,6 +286,6 @@ mod tests {
 
         assert!(!session.loaded());
         assert!(session.paused());
-        assert!(session.physical_size().width > 0.0);
+        assert!(session.window_size().width > 0.0);
     }
 }

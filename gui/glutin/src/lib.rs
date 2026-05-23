@@ -16,10 +16,9 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_runtime::{
     ConsoleSessionFactory, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-    SessionCommandOutcome,
+    SessionCommandOutcome, WindowSize,
 };
 use nerust_gui_shell::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
-use nerust_screen_traits::PhysicalSize;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -33,7 +32,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window as WinitWindow, WindowAttributes};
 
-fn create_window_attributes(size: PhysicalSize) -> WindowAttributes {
+fn create_window_attributes(size: WindowSize) -> WindowAttributes {
     WinitWindow::default_attributes()
         .with_inner_size(WinitLogicalSize::new(
             f64::from(size.width),
@@ -66,7 +65,7 @@ fn create_gl_context(window: &WinitWindow, gl_config: &Config) -> NotCurrentCont
 
 fn create_window(
     event_loop: &ActiveEventLoop,
-    size: PhysicalSize,
+    size: WindowSize,
 ) -> (WinitWindow, PossiblyCurrentContext, Surface<WindowSurface>) {
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder =
@@ -175,12 +174,13 @@ impl Window {
         }
 
         let (window, gl_context, gl_surface) =
-            create_window(event_loop, self.session.physical_size());
+            create_window(event_loop, self.session.window_size());
         let mut view = GlBackend::new();
         view.use_vao(true);
+        let video = self.session.video();
         view.on_load(
-            self.session.presentation(),
-            self.session
+            video.presentation(),
+            video
                 .console_video_assets()
                 .expect("NES session always has video assets"),
         )
@@ -222,7 +222,7 @@ impl Window {
             .unwrap()
             .resize(self.gl_context.as_ref().unwrap(), width, height);
 
-        let session_size = self.session.physical_size();
+        let session_size = self.session.window_size();
         let rate_x = physical_size.width as f32 / session_size.width;
         let rate_y = physical_size.height as f32 / session_size.height;
         let rate = f32::min(rate_x, rate_y);

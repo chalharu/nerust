@@ -8,11 +8,10 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_runtime::{
-    ConsoleSessionFactory, ConsoleVideoAssets, ControllerInput, ControllerPort, GuiSession,
-    InputState, SessionCommand, SessionCommandOutcome, StateSlotSummary, VideoPresentation,
+    ConsoleSessionFactory, ConsoleVideo, ControllerInput, ControllerPort, GuiSession, InputState,
+    SessionCommand, SessionCommandOutcome, StateSlotSummary, WindowSize,
 };
 use nerust_gui_shell::{NesConsoleDescriptor, NesInputAdapter};
-use nerust_screen_traits::PhysicalSize;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -37,22 +36,16 @@ impl State {
         }
     }
 
-    pub(crate) fn presentation(&self) -> &VideoPresentation {
-        self.session.presentation()
-    }
-
-    pub(crate) fn required_console_video_assets(&self) -> &ConsoleVideoAssets {
-        self.session
-            .console_video_assets()
-            .expect("NES session always has video assets")
+    pub(crate) fn video(&self) -> &ConsoleVideo {
+        self.session.video()
     }
 
     pub(crate) fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         self.session.with_frame_buffer(f)
     }
 
-    pub(crate) fn physical_size(&self) -> PhysicalSize {
-        self.session.physical_size()
+    pub(crate) fn window_size(&self) -> WindowSize {
+        self.session.window_size()
     }
 
     pub(crate) fn can_pause(&self) -> bool {

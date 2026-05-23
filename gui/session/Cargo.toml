@@ -10,7 +10,6 @@ rust-version.workspace = true
 log.workspace = true
 nerust_console.workspace = true
 nerust_contract.workspace = true
-nerust_screen_traits.workspace = true
 
 [dev-dependencies]
 nerust_screen_buffer.workspace = true

@@ -2217,7 +2217,6 @@ dependencies = [
  "nerust_backend_opengl",
  "nerust_gui_runtime",
  "nerust_gui_shell",
- "nerust_screen_traits",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",
@@ -2247,7 +2246,6 @@ dependencies = [
  "nerust_backend_opengl",
  "nerust_gui_runtime",
  "nerust_gui_shell",
- "nerust_screen_traits",
  "nerust_sound_openal",
  "shared_library",
  "simple_logger",
@@ -2264,7 +2262,6 @@ dependencies = [
  "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_traits",
  "nerust_sound_traits",
 ]
 
@@ -2277,7 +2274,6 @@ dependencies = [
  "nerust_contract",
  "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_traits",
  "nerust_sound_traits",
 ]
 
@@ -2418,7 +2414,6 @@ dependencies = [
  "nerust_contract",
  "nerust_gui_runtime",
  "nerust_gui_shell",
- "nerust_screen_traits",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",

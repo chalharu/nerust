@@ -90,8 +90,14 @@ impl GLAreaExtend for GLArea {
         {
             let state = self.state();
             let mut state = state.borrow_mut();
-            view.on_load(state.presentation(), state.required_console_video_assets())
-                .unwrap();
+            let video = state.video();
+            view.on_load(
+                video.presentation(),
+                video
+                    .console_video_assets()
+                    .expect("NES session always has video assets"),
+            )
+            .unwrap();
             state.view = Some(view);
         }
         self.resize(self.glarea().width(), self.glarea().height());
@@ -107,9 +113,9 @@ impl GLAreaExtend for GLArea {
             log::error!("{}", e);
             return;
         }
-        let physical_size = self.state().borrow().physical_size();
-        let rate_x = f64::from(width) / f64::from(physical_size.width);
-        let rate_y = f64::from(height) / f64::from(physical_size.height);
+        let window_size = self.state().borrow().window_size();
+        let rate_x = f64::from(width) / f64::from(window_size.width);
+        let rate_y = f64::from(height) / f64::from(window_size.height);
         let rate = f64::min(rate_x, rate_y);
         let scale_x = (rate / rate_x) as f32;
         let scale_y = (rate / rate_y) as f32;
