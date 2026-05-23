@@ -4,7 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::Register;
+use super::Accumulate;
 
 fn set_nz_from_value(register: &mut Register, data: u8) -> u8 {
     register.set_nz_from_value(data);

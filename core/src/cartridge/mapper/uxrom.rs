@@ -6,8 +6,8 @@
 
 // Mapper 2
 
-use super::CartridgeData;
-use crate::cart_device::Cartridge;
+use super::Cartridge;
+use crate::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};

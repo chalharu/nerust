@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::MirrorMode;
-use crate::PersistenceError;
+use crate::persistence::PersistenceError;
+use crate::status::mirror_mode::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 pub(crate) enum MappingMode {

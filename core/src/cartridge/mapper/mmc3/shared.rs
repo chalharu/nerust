@@ -4,12 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::MirrorMode;
+use super::mapper4_api::{
+    CartridgeData, CartridgeDataDao, Mapper, MapperState, MapperStateDao, MappingMode, MirrorMode,
+};
+use super::mapper4_persistence_api::{
+    CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError, decode_payload, encode_payload,
+};
 use crate::cpu::interrupt::{Interrupt, IrqSource};
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError};
 use crate::ppu_bus_event::PpuBusEvent;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
@@ -273,7 +274,7 @@ impl Mapper4Shared {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_MMC3.into(),
-            extra_body: crate::persistence::encode_payload(&Mapper4RuntimeState {
+            extra_body: encode_payload(&Mapper4RuntimeState {
                 bank_select: self.bank_select,
                 bank_data: self.bank_data,
                 mirroring: self.mirroring,
@@ -297,7 +298,7 @@ impl Mapper4Shared {
             self.cartridge_data.prog_rom_len(),
             self.cartridge_data.char_rom_len(),
         )?;
-        let runtime: Mapper4RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        let runtime: Mapper4RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.bank_select = runtime.bank_select;
         self.bank_data = runtime.bank_data;
@@ -312,7 +313,7 @@ impl Mapper4Shared {
     }
 
     fn character_bank_count(&self) -> usize {
-        if self.mapper_state_ref().character_mapping_mode == crate::mapper_state::MappingMode::Ram {
+        if self.mapper_state_ref().character_mapping_mode == MappingMode::Ram {
             self.mapper_state_ref().vram.len() / 0x0400
         } else {
             self.data_ref().char_rom_len() / 0x0400

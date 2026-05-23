@@ -6,6 +6,7 @@
 
 mod screen_buffer;
 mod screen_buffer_unit;
+mod traits_api;
 
 pub use screen_buffer::ScreenBuffer;
 pub mod video_api;

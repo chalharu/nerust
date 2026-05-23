@@ -1,4 +1,4 @@
-use nerust_console::{
+use crate::console_api::{
     Console, ConsoleError, ConsoleMetrics, ConsoleVideo, ControllerInputs, ControllerPort,
     CoreOptions, PersistenceTarget, StateExport,
 };
@@ -132,7 +132,7 @@ impl SessionCore {
 #[cfg(test)]
 mod tests {
     use super::SessionCore;
-    use nerust_console::Console;
+    use crate::console_api::Console;
     use nerust_screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
 

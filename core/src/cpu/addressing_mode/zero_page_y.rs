@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::{Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu};
+use super::CpuCartridgeBus;
+use super::exit_addressing_mode;
 
 pub(crate) struct ZeroPageY;
 
@@ -12,7 +14,7 @@ impl CpuStepState for ZeroPageY {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {

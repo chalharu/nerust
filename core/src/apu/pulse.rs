@@ -7,7 +7,7 @@
 use super::envelope::*;
 use super::length_counter::*;
 use super::timer::*;
-use crate::PersistenceError;
+use crate::persistence::PersistenceError;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],

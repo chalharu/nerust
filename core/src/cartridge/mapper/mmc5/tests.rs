@@ -1,11 +1,10 @@
+use super::Cartridge;
+use super::mmc5_mapper_api::{CartridgeData, CartridgeDataParts, Mapper, MirrorMode, RomFormat};
 use super::{ChrBankSet, Mmc5};
-use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
-use crate::mapper::Mapper;
 use crate::ppu::Core as PpuCore;
 use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
-use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
 
 fn test_data() -> CartridgeData {
     CartridgeData::new(CartridgeDataParts {

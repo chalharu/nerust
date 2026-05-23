@@ -4,17 +4,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
+use self::mmc5_mapper_api::{CartridgeData, CartridgeDataDao, Mapper, MapperState, MapperStateDao};
+use self::mmc5_persistence_api::{
+    CartridgeRuntimeState, MAPPER_KIND_MMC5, PersistenceError, decode_payload, encode_payload,
+};
+use super::Cartridge;
 use crate::OpenBusReadResult;
-use crate::cart_device::Cartridge;
 use crate::cpu::interrupt::{Interrupt, IrqSource};
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{CartridgeRuntimeState, MAPPER_KIND_MMC5, PersistenceError};
 use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 use crate::ppu_memory_access::PpuReadAccess;
 
 mod audio;
+mod mmc5_mapper_api;
+mod mmc5_persistence_api;
 mod ppu;
 mod program;
 #[cfg(test)]
@@ -171,7 +173,7 @@ impl Cartridge for Mmc5 {
         Ok(CartridgeRuntimeState {
             mapper_state: self.state.clone(),
             extra_kind: MAPPER_KIND_MMC5.into(),
-            extra_body: crate::persistence::encode_payload(&Mmc5RuntimeState {
+            extra_body: encode_payload(&Mmc5RuntimeState {
                 prg_mode: self.prg_mode,
                 chr_mode: self.chr_mode,
                 prg_ram_protect_1: self.prg_ram_protect_1,
@@ -244,7 +246,7 @@ impl Cartridge for Mmc5 {
             self.data_ref().prog_rom_len(),
             self.data_ref().char_rom_len(),
         )?;
-        let runtime: Mmc5RuntimeState = crate::persistence::decode_payload(&state.extra_body)?;
+        let runtime: Mmc5RuntimeState = decode_payload(&state.extra_body)?;
         runtime.validate()?;
         if runtime.exram.len() != self.exram.len() {
             return Err(PersistenceError::Validation(

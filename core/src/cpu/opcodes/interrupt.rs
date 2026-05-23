@@ -4,7 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::{
+    Apu, Controller, Core, CpuStepState, CpuStepStateEnum, IRQ_VECTOR, IrqSource, NMI_VECTOR, Ppu,
+    RESET_VECTOR, RegisterP, pull, push, read_dummy_current,
+};
+use super::CpuCartridgeBus;
+use super::exit_opcode;
 
 pub(crate) struct Brk;
 
@@ -12,7 +17,7 @@ impl CpuStepState for Brk {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -94,7 +99,7 @@ impl CpuStepState for Rti {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -143,7 +148,7 @@ impl CpuStepState for Irq {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -225,7 +230,7 @@ impl CpuStepState for Reset {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {

@@ -1,5 +1,6 @@
-use crate::shell_api::{ButtonDescriptor, ControllerDescriptor, GuiSession};
-use nerust_gui_runtime::{ConsoleSessionFactory, SessionCore, console_api::Console};
+use crate::shell_api::{
+    ButtonDescriptor, Console, ConsoleSessionFactory, ControllerDescriptor, GuiSession, SessionCore,
+};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;

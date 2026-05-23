@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeData;
-use crate::cart_device::Cartridge;
+use super::Cartridge;
+use crate::CartridgeData;
 use crate::cpu::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};

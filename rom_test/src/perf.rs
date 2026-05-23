@@ -4,17 +4,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use crate::core_api::{Buttons, Core, StandardController};
 use crate::error::RomTestError;
 use crate::events::{ButtonCode, ControllerPad, PadState, RomAssertion};
 use crate::harness::{CaseHarness, apply_button_state, drive_case};
 use crate::manifest::{RomCase, load_default_manifest, read_rom};
 use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
+use crate::screen_api::Screen;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_core::Core;
-use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 use std::time::{Duration, Instant};
 
