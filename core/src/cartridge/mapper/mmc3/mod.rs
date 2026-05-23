@@ -4,24 +4,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod mapper4_api;
+mod mapper4_persistence_api;
 mod mmc3_nec;
 mod mmc6;
 mod shared;
 mod standard;
 mod txsrom;
 
+use self::mapper4_api::{CartridgeData, CartridgeError, Mmc3IrqVariant};
 use self::mmc3_nec::Mmc3Nec;
 use self::mmc6::Mmc6;
 use self::standard::Mmc3;
 use self::txsrom::TxSrom;
-use super::CartridgeData;
-use crate::CartridgeError;
-use crate::Mmc3IrqVariant;
-use crate::cart_device::Cartridge;
-#[cfg(test)]
-use crate::mapper::Mapper;
-#[cfg(test)]
-use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
+pub(super) use crate::cart_device::Cartridge;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -66,11 +62,14 @@ pub(crate) fn try_from_txsrom(data: CartridgeData) -> Result<Box<dyn Cartridge>,
 
 #[cfg(test)]
 mod tests {
+    use super::mapper4_api::{CartridgeDataParts, Mapper, MirrorMode, RomFormat};
     use super::shared::{IrqVariant, PrgRamModel};
-    use super::*;
-    use crate::cart_device::Cartridge;
-    use crate::cpu::interrupt::{Interrupt, IrqSource};
-    use crate::{CartridgeDataParts, MirrorMode, RomFormat};
+    use super::{
+        Cartridge, CartridgeData, Mapper4Model, Mmc3, Mmc3IrqVariant, Mmc3Nec, Mmc6,
+        resolve_mapper4_model,
+    };
+    use crate::interrupt::{Interrupt, IrqSource};
+    use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

@@ -6,7 +6,7 @@
 
 use super::error::RomTestError;
 use super::serde_helpers::{hex_u8, hex_u16, hex_u64};
-use nerust_core::controller::standard_controller::Buttons;
+use crate::core_api::Buttons;
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,7 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::*;
+use super::super::{
+    Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu, read_dummy_current,
+};
+use super::CpuCartridgeBus;
+use super::exit_opcode;
 
 pub(crate) struct Jmp;
 
@@ -12,7 +16,7 @@ impl CpuStepState for Jmp {
     fn exec(
         core: &mut Core,
         _ppu: &mut Ppu,
-        _cartridge: &mut dyn Cartridge,
+        _cartridge: &mut dyn CpuCartridgeBus,
         _controller: &mut dyn Controller,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -28,7 +32,7 @@ impl CpuStepState for Jsr {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -91,7 +95,7 @@ impl CpuStepState for Rts {
     fn exec(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {

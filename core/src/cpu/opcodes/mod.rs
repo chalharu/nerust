@@ -6,14 +6,14 @@
 
 macro_rules! cpu_step_state_impl {
     ($name:ident) => {
-        impl CpuStepState for $name {
+        impl super::super::CpuStepState for $name {
             fn exec(
-                core: &mut Core,
-                ppu: &mut Ppu,
-                cartridge: &mut dyn Cartridge,
-                controller: &mut dyn Controller,
-                apu: &mut Apu,
-            ) -> CpuStepStateEnum {
+                core: &mut super::super::Core,
+                ppu: &mut super::super::Ppu,
+                cartridge: &mut dyn super::CpuCartridgeBus,
+                controller: &mut dyn super::super::Controller,
+                apu: &mut super::super::Apu,
+            ) -> super::super::CpuStepStateEnum {
                 Self::exec_opcode(core, ppu, cartridge, controller, apu)
             }
         }
@@ -24,16 +24,16 @@ macro_rules! accumulate {
     ($name:ident, $getter:expr, $setter:expr, $calc:expr) => {
         pub(crate) struct $name;
 
-        impl Accumulate for $name {
-            fn getter(register: &Register) -> u8 {
+        impl super::Accumulate for $name {
+            fn getter(register: &super::super::Register) -> u8 {
                 $getter(register)
             }
 
-            fn setter(register: &mut Register, value: u8) {
+            fn setter(register: &mut super::super::Register, value: u8) {
                 $setter(register, value);
             }
 
-            fn calculator(register: &mut Register, value: u8) -> u8 {
+            fn calculator(register: &mut super::super::Register, value: u8) -> u8 {
                 $calc(register, value)
             }
         }
@@ -47,7 +47,7 @@ macro_rules! accumulate_memory {
         pub(crate) struct $name;
 
         impl AccumulateMemory for $name {
-            fn calculator(register: &mut Register, value: u8) -> u8 {
+            fn calculator(register: &mut super::super::Register, value: u8) -> u8 {
                 $calc(register, value)
             }
         }
@@ -91,7 +91,10 @@ pub(crate) use self::shift::*;
 pub(crate) use self::stack::*;
 pub(crate) use self::store::*;
 pub(crate) use self::transfer::*;
-use super::*;
+pub(super) use super::CpuCartridgeBus;
+use super::{
+    Apu, Controller, Core, CpuStatesEnum, CpuStepStateEnum, Ppu, Register, read_dummy_current,
+};
 
 fn exit_opcode(core: &mut Core) -> CpuStepStateEnum {
     CpuStepStateEnum::Exit(if core.interrupt.executing {
@@ -109,7 +112,7 @@ pub(crate) trait Accumulate {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
@@ -135,7 +138,7 @@ pub(crate) trait AccumulateMemory {
     fn exec_opcode(
         core: &mut Core,
         ppu: &mut Ppu,
-        cartridge: &mut dyn Cartridge,
+        cartridge: &mut dyn CpuCartridgeBus,
         controller: &mut dyn Controller,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {

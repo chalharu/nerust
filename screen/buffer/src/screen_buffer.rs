@@ -6,11 +6,16 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::presentation::VideoPresentation;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
-use nerust_screen_traits::{LogicalSize, PhysicalSize, Screen};
+use super::traits_api::{LogicalSize, PhysicalSize, Screen, VideoPresentation};
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, ConsoleVideoAssets, FilterType, NesFilter};
 use std::hash::{Hash, Hasher};
 use std::mem;
+
+const DEFAULT_NES_FILTER_TYPE: FilterType = FilterType::NtscComposite;
+const DEFAULT_NES_SOURCE_LOGICAL_SIZE: LogicalSize = LogicalSize {
+    width: 256,
+    height: 240,
+};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PublishMode {
@@ -21,6 +26,7 @@ enum PublishMode {
 pub struct ScreenBuffer {
     filter_type: FilterType,
     video_presentation: VideoPresentation,
+    console_video_assets: Option<ConsoleVideoAssets>,
     publish_mode: PublishMode,
     filter: Option<Box<dyn NesFilter>>,
     dest: Option<ScreenBufferUnit>,
@@ -37,16 +43,23 @@ impl ScreenBuffer {
             src_size,
             PublishMode::FilteredRgba,
             filter_type.rgba_presentation(src_size),
+            None,
         )
     }
 
     pub fn new_gpu(filter_type: FilterType, src_size: LogicalSize) -> Self {
+        let video_presentation = filter_type.palette_presentation(src_size);
         Self::with_publish_mode(
             filter_type,
             src_size,
             PublishMode::SourcePalette,
-            filter_type.palette_presentation(src_size),
+            video_presentation,
+            Some(filter_type.palette_console_video_assets()),
         )
+    }
+
+    pub fn new_nes_gpu_default() -> Self {
+        Self::new_gpu(DEFAULT_NES_FILTER_TYPE, DEFAULT_NES_SOURCE_LOGICAL_SIZE)
     }
 
     fn with_publish_mode(
@@ -54,6 +67,7 @@ impl ScreenBuffer {
         src_size: LogicalSize,
         publish_mode: PublishMode,
         video_presentation: VideoPresentation,
+        console_video_assets: Option<ConsoleVideoAssets>,
     ) -> Self {
         let src_buffer_size = src_size.height * src_size.width;
         let src_buffer = allocate(src_buffer_size);
@@ -74,6 +88,7 @@ impl ScreenBuffer {
         let mut result = Self {
             filter_type,
             video_presentation,
+            console_video_assets,
             publish_mode,
             filter,
             src_buffer,
@@ -149,6 +164,10 @@ impl ScreenBuffer {
         &self.video_presentation
     }
 
+    pub fn console_video_assets(&self) -> Option<&ConsoleVideoAssets> {
+        self.console_video_assets.as_ref()
+    }
+
     pub fn clear(&mut self) {
         if let Some(dest) = self.dest.as_mut() {
             dest.clear();
@@ -220,12 +239,10 @@ impl Hash for ScreenBuffer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::traits_api::{LogicalSize, Screen};
     use super::ScreenBuffer;
-    use nerust_screen_filter::{
-        FilterType,
-        presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
-    };
-    use nerust_screen_traits::{LogicalSize, Screen};
+    use nerust_screen_filter::FilterType;
+    use nerust_screen_filter::presentation::VideoFrameFormat;
 
     #[test]
     fn all_filters_publish_full_frames() {
@@ -267,8 +284,20 @@ mod tests {
             VideoFrameFormat::Palette
         );
         assert_eq!(
-            screen.video_presentation().pipeline_kind(),
-            VideoPresentationPipelineKind::Ntsc
+            screen
+                .console_video_assets()
+                .map(|assets| assets.as_nes().unwrap().pipeline_kind()),
+            Some(nerust_screen_filter::presentation::VideoPresentationPipelineKind::Ntsc)
         );
+    }
+
+    #[test]
+    fn default_nes_gpu_screen_buffer_uses_standard_source_size() {
+        let screen = ScreenBuffer::new_nes_gpu_default();
+
+        assert!(screen.publishes_palette_frame());
+        assert!(matches!(screen.filter_type(), FilterType::NtscComposite));
+        assert_eq!(screen.source_logical_size().width, 256);
+        assert_eq!(screen.source_logical_size().height, 240);
     }
 }

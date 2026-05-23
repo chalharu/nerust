@@ -1,0 +1,11 @@
+[package]
+name = "nerust_backend_opengl"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_screen_buffer.workspace = true
+nerust_screen_opengl.workspace = true

@@ -1,14 +1,19 @@
 [workspace]
 resolver = "3"
 members = [
+  "backend/opengl",
+  "backend/wgpu",
   "cartridge/data",
   "console",
+  "contract",
   "core",
   "persistence",
   "rom_test",
   "gui/gtk",
   "gui/glutin",
   "gui/runtime",
+  "gui/shell",
+  "gui/session",
   "gui/wgpu",
   "glwrap",
   "nes_ntsc",
@@ -22,7 +27,6 @@ members = [
   "sound/traits",
   "soundfilter",
   "timer",
-  "wgpuwrap",
 ]
 default-members = ["core", "persistence", "console"]
 
@@ -59,12 +63,16 @@ log = { version = "=0.4.29", default-features = false }
 muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
+nerust_contract = { version = "=0.1.0", path = "contract" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
+nerust_gui_shell = { version = "=0.1.0", path = "gui/shell" }
+nerust_gui_session = { version = "=0.1.0", path = "gui/session" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
+nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }
+nerust_backend_wgpu = { version = "=0.1.0", path = "backend/wgpu" }
 nerust_glwrap = { version = "=0.1.0", path = "glwrap" }
-nerust_wgpuwrap = { version = "=0.1.0", path = "wgpuwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
 nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
 nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }

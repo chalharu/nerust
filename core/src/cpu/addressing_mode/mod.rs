@@ -37,7 +37,8 @@ pub(crate) use self::relative::Relative;
 pub(crate) use self::zero_page::ZeroPage;
 pub(crate) use self::zero_page_x::ZeroPageX;
 pub(crate) use self::zero_page_y::ZeroPageY;
-use super::*;
+pub(super) use super::CpuCartridgeBus;
+use super::{Core, CpuStatesEnum, CpuStepStateEnum};
 
 pub(crate) struct AddressingModeLut([CpuStatesEnum; 256]);
 

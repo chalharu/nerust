@@ -2125,6 +2125,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_backend_opengl"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_buffer",
+ "nerust_screen_opengl",
+]
+
+[[package]]
+name = "nerust_backend_wgpu"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nerust_screen_buffer",
+ "nerust_screen_wgpu",
+ "pollster",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "nerust_cartridge_data"
 version = "0.1.0"
 dependencies = [
@@ -2142,8 +2161,6 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
- "nerust_screen_filter",
- "nerust_screen_traits",
  "nerust_sound_traits",
  "nerust_timer",
  "rmp-serde",
@@ -2154,6 +2171,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "nerust_core"
 version = "0.1.0"
 dependencies = [
@@ -2161,6 +2186,7 @@ dependencies = [
  "crc",
  "hound",
  "log",
+ "nerust_contract",
  "nerust_screen_traits",
  "nerust_serialize",
  "nerust_sound_traits",
@@ -2182,10 +2208,8 @@ dependencies = [
  "glutin",
  "glutin-winit",
  "log",
- "nerust_core",
- "nerust_gui_runtime",
- "nerust_screen_opengl",
- "nerust_screen_traits",
+ "nerust_backend_opengl",
+ "nerust_gui_shell",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",
@@ -2212,10 +2236,8 @@ dependencies = [
  "gtk4",
  "libc",
  "log",
- "nerust_core",
- "nerust_gui_runtime",
- "nerust_screen_opengl",
- "nerust_screen_traits",
+ "nerust_backend_opengl",
+ "nerust_gui_shell",
  "nerust_sound_openal",
  "shared_library",
  "simple_logger",
@@ -2227,10 +2249,29 @@ version = "0.1.0"
 dependencies = [
  "log",
  "nerust_console",
- "nerust_core",
+ "nerust_gui_session",
  "nerust_persistence",
+ "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_traits",
+ "nerust_sound_traits",
+]
+
+[[package]]
+name = "nerust_gui_session"
+version = "0.1.0"
+dependencies = [
+ "nerust_console",
+ "nerust_screen_buffer",
+ "nerust_screen_filter",
+ "nerust_sound_traits",
+]
+
+[[package]]
+name = "nerust_gui_shell"
+version = "0.1.0"
+dependencies = [
+ "nerust_gui_runtime",
+ "nerust_screen_buffer",
  "nerust_sound_openal",
  "nerust_timer",
 ]
@@ -2241,7 +2282,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "libc",
- "nerust_core",
+ "nerust_contract",
  "png",
  "rmp-serde",
  "serde",
@@ -2261,7 +2302,6 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_core",
  "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_traits",
  "nerust_sound_traits",
  "png",
@@ -2312,7 +2352,7 @@ version = "0.1.0"
 dependencies = [
  "nerust_screen_filter",
  "nerust_screen_traits",
- "nerust_wgpuwrap",
+ "raw-window-handle",
  "wgpu",
 ]
 
@@ -2356,24 +2396,12 @@ dependencies = [
  "gtk",
  "log",
  "muda",
- "nerust_core",
- "nerust_gui_runtime",
- "nerust_screen_traits",
- "nerust_screen_wgpu",
+ "nerust_backend_wgpu",
+ "nerust_gui_shell",
  "nerust_sound_openal",
- "nerust_wgpuwrap",
- "pollster",
  "raw-window-handle",
  "simple_logger",
  "tao",
-]
-
-[[package]]
-name = "nerust_wgpuwrap"
-version = "0.1.0"
-dependencies = [
- "raw-window-handle",
- "wgpu",
 ]
 
 [[package]]

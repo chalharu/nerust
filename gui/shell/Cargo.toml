@@ -1,0 +1,13 @@
+[package]
+name = "nerust_gui_shell"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_gui_runtime.workspace = true
+nerust_screen_buffer.workspace = true
+nerust_sound_openal.workspace = true
+nerust_timer.workspace = true

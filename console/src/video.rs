@@ -1,4 +1,4 @@
-use nerust_screen_filter::presentation::VideoPresentation;
+use crate::screen_api::{ConsoleVideoAssets, VideoPresentation};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
@@ -18,16 +18,19 @@ impl VideoFrameBuffer {
 #[derive(Debug, Clone)]
 pub struct ConsoleVideo {
     presentation: VideoPresentation,
+    console_video_assets: Option<ConsoleVideoAssets>,
     frame_buffer: VideoFrameBuffer,
 }
 
 impl ConsoleVideo {
     pub(crate) fn new(
         presentation: VideoPresentation,
+        console_video_assets: Option<ConsoleVideoAssets>,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
     ) -> Self {
         Self {
             presentation,
+            console_video_assets,
             frame_buffer: VideoFrameBuffer::from_shared(frame_buffer),
         }
     }
@@ -38,6 +41,10 @@ impl ConsoleVideo {
 
     pub fn frame_buffer(&self) -> &VideoFrameBuffer {
         &self.frame_buffer
+    }
+
+    pub fn console_video_assets(&self) -> Option<&ConsoleVideoAssets> {
+        self.console_video_assets.as_ref()
     }
 }
 

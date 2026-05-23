@@ -4,23 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::MirrorMode;
+use crate::RomFormat;
 use crate::cartridge_error::CartridgeError;
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RomFormat {
-    INes,
-    Nes20,
-}
-
-impl RomFormat {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::INes => "iNES",
-            Self::Nes20 => "NES 2.0",
-        }
-    }
-}
+use crate::status::mirror_mode::MirrorMode;
 
 #[derive(Debug, Clone)]
 pub struct CartridgeDataParts {
@@ -174,7 +160,7 @@ impl CartridgeData {
 }
 
 mod mirror_mode_serde {
-    use crate::MirrorMode;
+    use crate::status::mirror_mode::MirrorMode;
     use serde::{Deserialize as _, Deserializer, Serializer, de::Error};
     use serde_derive::Deserialize;
 
@@ -229,7 +215,8 @@ mod mirror_mode_serde {
 #[cfg(test)]
 mod tests {
     use super::{CartridgeData, CartridgeDataParts, RomFormat};
-    use crate::{Core, MirrorMode};
+    use crate::Core;
+    use crate::status::mirror_mode::MirrorMode;
 
     #[test]
     fn inspect_cartridge_reads_ines_metadata() {

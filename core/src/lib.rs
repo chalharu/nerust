@@ -12,16 +12,19 @@
 mod apu;
 mod cart_device;
 mod cartridge;
+mod cartridge_bus;
 mod cartridge_data;
 mod cartridge_error;
 pub mod controller;
 mod cpu;
+mod interrupt;
 mod mapper;
 mod mapper_state;
 mod persistence;
 mod ppu;
 mod ppu_bus_event;
 mod ppu_memory_access;
+mod screen_api;
 mod status;
 
 use self::apu::Core as Apu;
@@ -29,8 +32,8 @@ use self::cart_device::Cartridge;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
+use self::screen_api::Screen;
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -49,29 +52,13 @@ fn crc64(bytes: &[u8]) -> u64 {
     hasher.0.finalize()
 }
 
-pub use self::cartridge_data::{CartridgeData, CartridgeDataParts, RomFormat};
+pub use self::cartridge_data::{CartridgeData, CartridgeDataParts};
 pub use self::cartridge_error::CartridgeError;
-pub use self::persistence::{PersistenceError, RomIdentity};
+pub use self::persistence::PersistenceError;
 pub use self::status::mirror_mode::MirrorMode;
+pub use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget, RomFormat, RomIdentity};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-#[derive(
-    serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Mmc3IrqVariant {
-    #[default]
-    Sharp,
-    Nec,
-}
-
-#[derive(
-    serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq,
-)]
-pub struct CoreOptions {
-    pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomInfo {
@@ -342,9 +329,11 @@ impl Core {
             &mut self.apu,
         );
         for _ in 0..3 {
+            let mut ppu_cartridge =
+                crate::cartridge_bus::mapper_cartridge_bus(self.cartridge.as_mut());
             if self
                 .ppu
-                .step(screen, self.cartridge.as_mut(), self.cpu.interrupt_mut())
+                .step(screen, &mut ppu_cartridge, self.cpu.interrupt_mut())
             {
                 result = true;
             }

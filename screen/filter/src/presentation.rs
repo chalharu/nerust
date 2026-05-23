@@ -1,62 +1,14 @@
+pub use crate::traits_api::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 use crate::{EncodedNtscTextures, EncodedPackedNtscTexture};
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum VideoFrameFormat {
-    Rgba,
-    Palette,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct VideoFrameSpec {
-    frame_format: VideoFrameFormat,
-    source_logical_size: LogicalSize,
-    logical_size: LogicalSize,
-    physical_size: PhysicalSize,
-}
-
-impl VideoFrameSpec {
-    pub fn new(
-        frame_format: VideoFrameFormat,
-        source_logical_size: LogicalSize,
-        logical_size: LogicalSize,
-        physical_size: PhysicalSize,
-    ) -> Self {
-        Self {
-            frame_format,
-            source_logical_size,
-            logical_size,
-            physical_size,
-        }
-    }
-
-    pub fn frame_format(&self) -> VideoFrameFormat {
-        self.frame_format
-    }
-
-    pub fn source_logical_size(&self) -> LogicalSize {
-        self.source_logical_size
-    }
-
-    pub fn logical_size(&self) -> LogicalSize {
-        self.logical_size
-    }
-
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.physical_size
-    }
-}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoPresentationPipelineKind {
-    DirectRgba,
     Palette,
     Ntsc,
 }
 
 #[derive(Debug, Clone)]
 pub enum VideoFilterPipeline {
-    DirectRgba,
     Palette {
         palette_rgba8: Box<[u8]>,
     },
@@ -70,18 +22,16 @@ pub enum VideoFilterPipeline {
 impl VideoFilterPipeline {
     pub fn kind(&self) -> VideoPresentationPipelineKind {
         match self {
-            Self::DirectRgba => VideoPresentationPipelineKind::DirectRgba,
             Self::Palette { .. } => VideoPresentationPipelineKind::Palette,
             Self::Ntsc { .. } => VideoPresentationPipelineKind::Ntsc,
         }
     }
 
-    pub fn palette_rgba8(&self) -> Option<&[u8]> {
+    pub fn palette_rgba8(&self) -> &[u8] {
         match self {
             Self::Palette { palette_rgba8 } | Self::Ntsc { palette_rgba8, .. } => {
-                Some(palette_rgba8.as_ref())
+                palette_rgba8.as_ref()
             }
-            Self::DirectRgba => None,
         }
     }
 
@@ -90,7 +40,7 @@ impl VideoFilterPipeline {
             Self::Ntsc {
                 packed_ntsc_rgba8, ..
             } => Some(packed_ntsc_rgba8.rgba8.as_ref()),
-            Self::DirectRgba | Self::Palette { .. } => None,
+            Self::Palette { .. } => None,
         }
     }
 
@@ -100,43 +50,47 @@ impl VideoFilterPipeline {
                 split_ntsc_textures,
                 ..
             } => Some(split_ntsc_textures),
-            Self::DirectRgba | Self::Palette { .. } => None,
+            Self::Palette { .. } => None,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct VideoPresentation {
-    frame_spec: VideoFrameSpec,
+pub struct NesVideoAssets {
     pipeline: VideoFilterPipeline,
 }
 
-impl VideoPresentation {
-    pub(crate) fn new(frame_spec: VideoFrameSpec, pipeline: VideoFilterPipeline) -> Self {
-        Self {
-            frame_spec,
-            pipeline,
+/// Console-family video asset contract.
+///
+/// Each variant carries the GPU upload data for one console family.
+/// The current implementation only covers the NES; a future SNES variant
+/// would be added here without touching the shared rendering layers.
+#[derive(Debug, Clone)]
+pub enum ConsoleVideoAssets {
+    /// NES palette / NTSC shader textures.
+    Nes(NesVideoAssets),
+    // Future: Snes(SnesVideoAssets),
+}
+
+impl ConsoleVideoAssets {
+    /// Return the inner [`NesVideoAssets`] if this is the NES variant.
+    pub fn as_nes(&self) -> Option<&NesVideoAssets> {
+        match self {
+            Self::Nes(assets) => Some(assets),
         }
     }
 
-    pub fn source_logical_size(&self) -> LogicalSize {
-        self.frame_spec.source_logical_size()
+    /// Convenience delegate: palette RGBA8 data regardless of console family.
+    pub fn palette_rgba8(&self) -> &[u8] {
+        match self {
+            Self::Nes(assets) => assets.palette_rgba8(),
+        }
     }
+}
 
-    pub fn logical_size(&self) -> LogicalSize {
-        self.frame_spec.logical_size()
-    }
-
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.frame_spec.physical_size()
-    }
-
-    pub fn frame_format(&self) -> VideoFrameFormat {
-        self.frame_spec.frame_format()
-    }
-
-    pub fn is_palette_frame(&self) -> bool {
-        matches!(self.frame_spec.frame_format(), VideoFrameFormat::Palette)
+impl NesVideoAssets {
+    pub(crate) fn new(pipeline: VideoFilterPipeline) -> Self {
+        Self { pipeline }
     }
 
     pub fn pipeline_kind(&self) -> VideoPresentationPipelineKind {
@@ -151,7 +105,7 @@ impl VideoPresentation {
         matches!(self.pipeline.kind(), VideoPresentationPipelineKind::Ntsc)
     }
 
-    pub fn palette_rgba8(&self) -> Option<&[u8]> {
+    pub fn palette_rgba8(&self) -> &[u8] {
         self.pipeline.palette_rgba8()
     }
 
@@ -161,43 +115,5 @@ impl VideoPresentation {
 
     pub fn split_ntsc_textures(&self) -> Option<&EncodedNtscTextures> {
         self.pipeline.split_ntsc_textures()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{VideoFrameFormat, VideoFrameSpec};
-    use nerust_screen_traits::{LogicalSize, PhysicalSize};
-
-    #[test]
-    fn video_frame_spec_accessors_match_constructor_inputs() {
-        let spec = VideoFrameSpec::new(
-            VideoFrameFormat::Palette,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            LogicalSize {
-                width: 602,
-                height: 240,
-            },
-            PhysicalSize {
-                width: 602.0,
-                height: 480.0,
-            },
-        );
-
-        assert_eq!(spec.frame_format(), VideoFrameFormat::Palette);
-        let source_logical_size = spec.source_logical_size();
-        assert_eq!(source_logical_size.width, 256);
-        assert_eq!(source_logical_size.height, 240);
-
-        let logical_size = spec.logical_size();
-        assert_eq!(logical_size.width, 602);
-        assert_eq!(logical_size.height, 240);
-
-        let physical_size = spec.physical_size();
-        assert_eq!(physical_size.width, 602.0);
-        assert_eq!(physical_size.height, 480.0);
     }
 }

@@ -9,14 +9,16 @@ mod tileinfo;
 
 use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
-use crate::PersistenceError;
-use crate::cart_device::Cartridge;
-use crate::cpu::interrupt::Interrupt;
+use crate::cart_device::Cartridge as MapperCartridge;
+use crate::interrupt::Interrupt;
+use crate::persistence::PersistenceError;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
+use crate::screen_api::Screen;
 use crate::{OpenBus, OpenBusReadResult};
-use nerust_screen_traits::Screen;
 use std::cmp;
 use std::mem;
+
+use crate::cartridge_bus::PpuCartridgeBus as Cartridge;
 
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
@@ -34,11 +36,13 @@ struct DecayableOpenBus {
 #[cfg(test)]
 mod tests {
     use super::Core;
+    use crate::RomFormat;
     use crate::cart_device::Cartridge;
     use crate::cartridge;
-    use crate::cpu::interrupt::Interrupt;
-    use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
-    use nerust_screen_traits::Screen;
+    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::interrupt::Interrupt;
+    use crate::screen_api::Screen;
+    use crate::status::mirror_mode::MirrorMode;
 
     #[derive(Default)]
     struct NullScreen;
@@ -121,12 +125,14 @@ mod tests {
         assert_eq!(ppu.cycle, 338);
         assert_eq!(ppu.ppu_bus_tick(), 10);
 
-        ppu.step(&mut screen, cartridge.as_mut(), &mut interrupt);
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(ppu.cycle, 340);
         assert_eq!(ppu.ppu_bus_tick(), 11);
 
-        ppu.step(&mut screen, cartridge.as_mut(), &mut interrupt);
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(ppu.scan_line, 1);
         assert_eq!(ppu.cycle, 0);
@@ -144,7 +150,8 @@ mod tests {
         assert_eq!(cartridge.read(0x0000).data, 0x02);
 
         ppu.state.vram_addr = 0x0FE8;
-        let _ = ppu.read_data(cartridge.as_mut(), &mut interrupt);
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        let _ = ppu.read_data(&mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(cartridge.read(0x0000).data, 0x03);
     }
@@ -539,10 +546,14 @@ impl Core {
         self.render_executing = render_executing;
     }
 
-    pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {
+    pub(crate) fn peek_vram(
+        &self,
+        mut address: usize,
+        cartridge: &dyn MapperCartridge,
+    ) -> Option<u8> {
         address &= 0x3FFF;
         match address {
-            0x2000..=0x3EFF => cartridge.peek_ppu_nametable(address, &self.vram),
+            0x2000..=0x3EFF => MapperCartridge::peek_ppu_nametable(cartridge, address, &self.vram),
             0x3F00..=0x3FFF => Some(self.palette[Self::palette_address(address)]),
             _ => None,
         }

@@ -1,17 +1,18 @@
 mod crash_handler;
 mod glarea;
+mod shell_api;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
+use crate::shell_api::shell_api::{
+    ConsoleVideo, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
+    SessionCommandOutcome, StateSlotSummary, WindowSize,
+};
+use crate::shell_api::{NesConsoleDescriptor, NesInputAdapter};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_gui_runtime::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
-    StateSlotSummary, VideoPresentation,
-};
-use nerust_screen_opengl::GlView;
-use nerust_screen_traits::PhysicalSize;
+use nerust_backend_opengl::GlBackend;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -22,28 +23,30 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) struct State {
-    view: Option<GlView>,
+    view: Option<GlBackend>,
     session: GuiSession,
+    input: NesInputAdapter,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
             view: None,
-            session: GuiSession::default(),
+            session: NesConsoleDescriptor.build_session(),
+            input: NesInputAdapter::new(),
         }
     }
 
-    pub(crate) fn presentation(&self) -> &VideoPresentation {
-        self.session.presentation()
+    pub(crate) fn video(&self) -> &ConsoleVideo {
+        self.session.video()
     }
 
     pub(crate) fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         self.session.with_frame_buffer(f)
     }
 
-    pub(crate) fn physical_size(&self) -> PhysicalSize {
-        self.session.physical_size()
+    pub(crate) fn window_size(&self) -> WindowSize {
+        self.session.window_size()
     }
 
     pub(crate) fn can_pause(&self) -> bool {
@@ -56,6 +59,7 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
+            self.input.clear(&mut self.session);
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -69,7 +73,11 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload()
+        let unloaded = self.session.unload();
+        if unloaded {
+            self.input.clear(&mut self.session);
+        }
+        unloaded
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -86,11 +94,12 @@ impl State {
         input: ControllerInput,
         state: InputState,
     ) {
-        self.session.handle_controller_input(port, input, state);
+        self.input.handle_input(port, input, state);
+        self.input.flush_to_session(&mut self.session);
     }
 
     pub(crate) fn clear_controller_input(&mut self) {
-        self.session.clear_controller_input();
+        self.input.clear(&mut self.session);
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {

@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
-use nerust_core::{CartridgeData, CartridgeDataParts, RomFormat};
+use crate::core_api::{CartridgeData, CartridgeDataParts, RomFormat};
 use std::cmp;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(
