@@ -6,6 +6,10 @@ license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+oam-trace = []
+
 [dependencies]
 bitflags.workspace = true
 crc.workspace = true

@@ -5,6 +5,10 @@ authors.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+oam-trace = ["nerust_console/oam-trace", "nerust_core/oam-trace"]
+
 [dependencies]
 log.workspace = true
 nerust_console.workspace = true

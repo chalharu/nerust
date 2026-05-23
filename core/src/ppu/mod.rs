@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#[cfg(feature = "oam-trace")]
+mod oam_trace;
 mod spriteinfo;
 mod tileinfo;
 
@@ -482,6 +484,9 @@ pub(crate) struct Core {
     openbus_vram: OpenBus,
     openbus_io: DecayableOpenBus,
     has_next_sprite: bool,
+    #[cfg(feature = "oam-trace")]
+    #[serde(skip)]
+    oam_trace_start_address: u8,
     // screen_buffer: [u8; 256 * 240],
 }
 
@@ -528,6 +533,8 @@ impl Core {
             openbus_vram: OpenBus::new(),
             openbus_io: DecayableOpenBus::new(),
             has_next_sprite: false,
+            #[cfg(feature = "oam-trace")]
+            oam_trace_start_address: 0,
             // screen_buffer: [0; 256 * 240],
         }
     }
@@ -558,6 +565,10 @@ impl Core {
         // self.post_render_executing = false;
         // self.oam_read_buffer = 0;
         self.has_next_sprite = false;
+        #[cfg(feature = "oam-trace")]
+        {
+            self.oam_trace_start_address = 0;
+        }
     }
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
@@ -600,6 +611,21 @@ impl Core {
         self.sprite_count = sprite_count;
         self.cycle = cycle;
         self.render_executing = render_executing;
+    }
+
+    #[cfg(feature = "oam-trace")]
+    #[inline]
+    fn emit_oam_trace(&self) {
+        oam_trace::emit_scanline_trace(
+            self.frames,
+            self.scan_line,
+            if self.control.sprite_size { 16 } else { 8 },
+            self.oam_trace_start_address,
+            self.status.sprite_overflow,
+            self.sprite_count,
+            &self.primary_oam,
+            &self.secondary_oam,
+        );
     }
 
     pub(crate) fn peek_vram(&self, mut address: usize, cartridge: &dyn Cartridge) -> Option<u8> {
@@ -1265,6 +1291,10 @@ impl Core {
                     self.has_sprite = false;
                     self.secondary_oam_address = 0;
                     self.sprite_overflow_delay = 0;
+                    #[cfg(feature = "oam-trace")]
+                    {
+                        self.oam_trace_start_address = self.state.oam_address;
+                    }
 
                     self.sprite_reading = true;
                     self.oam_address_high = (self.state.oam_address >> 2) & 0x3F;
@@ -1349,6 +1379,10 @@ impl Core {
                     }
                 }
                 self.state.oam_address = (self.oam_address_high << 2) | (self.oam_address_low & 3);
+                #[cfg(feature = "oam-trace")]
+                if self.cycle == 256 {
+                    self.emit_oam_trace();
+                }
             }
         }
     }

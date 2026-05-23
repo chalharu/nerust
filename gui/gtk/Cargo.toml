@@ -6,6 +6,10 @@ license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+oam-trace = ["nerust_core/oam-trace", "nerust_gui_runtime/oam-trace"]
+
 [dependencies]
 epoxy.workspace = true
 gdk.workspace = true
