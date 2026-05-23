@@ -8,15 +8,15 @@ mod video;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
-pub use nerust_contract::PersistenceTarget;
 use nerust_core::controller::standard_controller::{
     Buttons, StandardController, StandardControllerSnapshot,
 };
 use nerust_core::{CartridgeData, Core, RomIdentity};
-pub use nerust_core::{CoreOptions, Mmc3IrqVariant};
-use nerust_screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_traits::{LogicalSize, PhysicalSize};
+pub use nerust_core::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
+use nerust_screen_buffer::{
+    ScreenBuffer,
+    video_api::{FilterType, LogicalSize, PhysicalSize},
+};
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::{TARGET_FPS, Timer};
 use std::hash::{Hash, Hasher};

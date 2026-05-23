@@ -1,6 +1,6 @@
-use nerust_console::Console;
 use nerust_gui_runtime::{
     ButtonDescriptor, ConsoleSessionFactory, ControllerDescriptor, GuiSession, SessionCore,
+    console_api::Console,
 };
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_sound_openal::OpenAl;

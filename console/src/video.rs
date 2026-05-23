@@ -1,5 +1,4 @@
-use nerust_screen_filter::ConsoleVideoAssets;
-use nerust_screen_traits::VideoPresentation;
+use nerust_screen_buffer::video_api::{ConsoleVideoAssets, VideoPresentation};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
