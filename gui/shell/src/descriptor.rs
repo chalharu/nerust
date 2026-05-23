@@ -1,7 +1,5 @@
-use nerust_gui_runtime::{
-    ButtonDescriptor, ConsoleSessionFactory, ControllerDescriptor, GuiSession, SessionCore,
-    console_api::Console,
-};
+use crate::shell_api::{ButtonDescriptor, ControllerDescriptor, GuiSession};
+use nerust_gui_runtime::{ConsoleSessionFactory, SessionCore, console_api::Console};
 use nerust_screen_buffer::ScreenBuffer;
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
@@ -13,6 +11,11 @@ impl NesConsoleDescriptor {
     pub fn build_console(self) -> Console {
         let speaker = OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20);
         Console::new(speaker, ScreenBuffer::new_nes_gpu_default())
+    }
+
+    pub fn build_session(&self) -> GuiSession {
+        let core = SessionCore::from_console(self.build_console());
+        GuiSession::from_session_core(core)
     }
 
     /// Returns the controller descriptor for the NES.
@@ -63,8 +66,7 @@ impl NesConsoleDescriptor {
 
 impl ConsoleSessionFactory for NesConsoleDescriptor {
     fn build_session(&self) -> GuiSession {
-        let core = SessionCore::from_console(self.build_console());
-        GuiSession::from_session_core(core)
+        NesConsoleDescriptor::build_session(self)
     }
 }
 

@@ -7,11 +7,13 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_runtime::{
-    ConsoleSessionFactory, ConsoleVideo, ControllerInput, ControllerPort, GuiSession, InputState,
-    SessionCommand, SessionCommandOutcome, StateSlotSummary, WindowSize,
+use nerust_gui_shell::{
+    NesConsoleDescriptor, NesInputAdapter,
+    shell_api::{
+        ConsoleVideo, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
+        SessionCommandOutcome, StateSlotSummary, WindowSize,
+    },
 };
-use nerust_gui_shell::{NesConsoleDescriptor, NesInputAdapter};
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;

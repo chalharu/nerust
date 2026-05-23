@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use nerust_backend_wgpu::{RenderSurfaceTarget, SurfaceSize};
-use nerust_gui_runtime::WindowSize;
+use nerust_gui_shell::shell_api::WindowSize;
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(
     target_os = "linux",
