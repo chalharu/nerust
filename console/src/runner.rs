@@ -1,8 +1,10 @@
+mod persistence;
+
 use super::{
     AuxiliaryInput, ConsoleError, ConsoleMetrics, ConsoleReply, ConsoleRequestResult,
     ControllerInputs, ControllerPort, Crc64Hasher,
 };
-use crate::{CoreOptions, PersistenceTarget, state};
+use crate::{CoreOptions, state};
 use nerust_core::controller::standard_controller::StandardController;
 use nerust_core::{CartridgeData, Core};
 use nerust_screen_buffer::ScreenBuffer;
@@ -203,74 +205,31 @@ impl ConsoleRunner {
                         Self::reply(reply, result);
                     }
                     ConsoleData::ExportMapperSave(reply) => {
-                        let result =
-                            core.as_ref()
-                                .ok_or_else(Self::core_not_loaded)
-                                .and_then(|core| {
-                                    core.export_mapper_save()
-                                        .map(ConsoleReply::MapperSave)
-                                        .map_err(|error| ConsoleError::Core(error.to_string()))
-                                });
+                        let result = self.export_mapper_save_reply(core.as_ref());
                         Self::reply(reply, result);
                     }
                     ConsoleData::ImportMapperSave { bytes, reply } => {
-                        let result =
-                            core.as_mut()
-                                .ok_or_else(Self::core_not_loaded)
-                                .and_then(|core| {
-                                    core.import_mapper_save(&bytes)
-                                        .map(|_| ConsoleReply::Unit)
-                                        .map_err(|error| ConsoleError::Core(error.to_string()))
-                                });
+                        let result = self.import_mapper_save_reply(core.as_mut(), &bytes);
                         Self::reply(reply, result);
                     }
                     ConsoleData::PersistenceTarget(reply) => {
-                        let result = core.as_ref().ok_or_else(Self::core_not_loaded).map(|core| {
-                            ConsoleReply::PersistenceTarget(PersistenceTarget {
-                                rom_identity: core.rom_identity(),
-                                options: core.options(),
-                            })
-                        });
+                        let result = self.persistence_target_reply(core.as_ref());
                         Self::reply(reply, result);
                     }
                     ConsoleData::ExportState(reply) => {
-                        let result =
-                            core.as_ref()
-                                .ok_or_else(Self::core_not_loaded)
-                                .and_then(|core| {
-                                    state::build_state_export(
-                                        core,
-                                        &self.screen,
-                                        &self.controller,
-                                        self.frame_counter,
-                                        self.paused,
-                                    )
-                                    .map(ConsoleReply::StateExport)
-                                });
+                        let result = self.export_state_reply(core.as_ref());
                         Self::reply(reply, result);
                     }
                     ConsoleData::ImportState { bytes, reply } => {
-                        let result =
-                            core.as_mut()
-                                .ok_or_else(Self::core_not_loaded)
-                                .and_then(|core| {
-                                    state::restore_imported_state(
-                                        core,
-                                        &mut self.screen,
-                                        &mut self.controller,
-                                        &mut self.frame_counter,
-                                        &mut self.paused,
-                                        &bytes,
-                                    )?;
-                                    if self.paused {
-                                        speaker.pause();
-                                    } else {
-                                        speaker.start();
-                                    }
-                                    self.publish_frame();
-                                    Ok(ConsoleReply::Unit)
-                                });
-                        self.publish_metrics(core.is_some());
+                        let result = self.import_state_reply(core.as_mut(), &bytes);
+                        if result.is_ok() {
+                            if self.paused {
+                                speaker.pause();
+                            } else {
+                                speaker.start();
+                            }
+                            self.publish_frame();
+                        }
                         Self::reply(reply, result);
                     }
                 }
