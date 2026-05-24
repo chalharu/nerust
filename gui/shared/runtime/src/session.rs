@@ -3,7 +3,7 @@ mod persistence;
 
 use self::persistence::PersistenceState;
 use nerust_console::video::ConsoleVideo;
-use nerust_console::{ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
+use nerust_console::{ConsoleError, ConsoleMetrics, NesInputFrame};
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;
@@ -82,12 +82,16 @@ impl GuiSession {
         self.core.resume();
     }
 
-    pub fn set_port_inputs(&mut self, port: ControllerPort, inputs: ControllerInputs) {
-        self.core.set_port_inputs(port, inputs);
+    pub fn apply_nes_input_frame(&mut self, frame: NesInputFrame) {
+        self.core.apply_nes_input_frame(frame);
     }
 
-    pub fn clear_all_inputs(&mut self) {
-        self.core.clear_all_inputs();
+    pub fn current_nes_input_frame(&self) -> NesInputFrame {
+        self.core.current_nes_input_frame()
+    }
+
+    pub fn clear_nes_input_frame(&mut self) {
+        self.core.clear_nes_input_frame();
     }
 }
 

@@ -4,10 +4,13 @@ use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_console::ControllerPort;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_session::input::{ControllerInput, InputState};
+use nerust_gui_shell::descriptor::{
+    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
+    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
+};
+use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
 use std::fs::File;
@@ -71,24 +74,24 @@ pub(crate) enum KeyEventState {
     Release,
 }
 
-fn gdk_key_controller_input(key: gdk::Key) -> Option<ControllerInput> {
+fn gdk_key_controller_input(key: gdk::Key) -> Option<DigitalControlId> {
     Some(match key {
-        gdk::Key::z => ControllerInput::A,
-        gdk::Key::x => ControllerInput::B,
-        gdk::Key::c => ControllerInput::Select,
-        gdk::Key::v => ControllerInput::Start,
-        gdk::Key::Up => ControllerInput::Up,
-        gdk::Key::Down => ControllerInput::Down,
-        gdk::Key::Left => ControllerInput::Left,
-        gdk::Key::Right => ControllerInput::Right,
+        gdk::Key::z => NES_CONTROL_A,
+        gdk::Key::x => NES_CONTROL_B,
+        gdk::Key::c => NES_CONTROL_SELECT,
+        gdk::Key::v => NES_CONTROL_START,
+        gdk::Key::Up => NES_CONTROL_UP,
+        gdk::Key::Down => NES_CONTROL_DOWN,
+        gdk::Key::Left => NES_CONTROL_LEFT,
+        gdk::Key::Right => NES_CONTROL_RIGHT,
         _ => return None,
     })
 }
 
-fn key_event_input_state(event: KeyEventState) -> InputState {
+fn key_event_input_state(event: KeyEventState) -> DigitalInputState {
     match event {
-        KeyEventState::Press => InputState::Pressed,
-        KeyEventState::Release => InputState::Released,
+        KeyEventState::Press => DigitalInputState::Pressed,
+        KeyEventState::Release => DigitalInputState::Released,
     }
 }
 
@@ -498,11 +501,13 @@ impl WindowExtend for Window {
             _ => (),
         }
         if let Some(controller_input) = gdk_key_controller_input(key) {
-            self.state().borrow_mut().handle_controller_input(
-                ControllerPort::One,
-                controller_input,
-                key_event_input_state(event),
-            );
+            self.state()
+                .borrow_mut()
+                .handle_controller_input(DigitalInputEvent::new(
+                    NES_ATTACHMENT_PLAYER_ONE,
+                    controller_input,
+                    key_event_input_state(event),
+                ));
         }
         false
     }
@@ -526,7 +531,9 @@ fn rebuild_slot_menu(
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
     use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-    use nerust_gui_session::input::ControllerInput;
+    use nerust_gui_shell::descriptor::{
+        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
+    };
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -574,21 +581,12 @@ mod tests {
 
     #[test]
     fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::z),
-            Some(ControllerInput::A)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::x),
-            Some(ControllerInput::B)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Up),
-            Some(ControllerInput::Up)
-        );
+        assert_eq!(gdk_key_controller_input(gdk::Key::z), Some(NES_CONTROL_A));
+        assert_eq!(gdk_key_controller_input(gdk::Key::x), Some(NES_CONTROL_B));
+        assert_eq!(gdk_key_controller_input(gdk::Key::Up), Some(NES_CONTROL_UP));
         assert_eq!(
             gdk_key_controller_input(gdk::Key::Right),
-            Some(ControllerInput::Right)
+            Some(NES_CONTROL_RIGHT)
         );
         assert_eq!(gdk_key_controller_input(gdk::Key::Return), None);
     }

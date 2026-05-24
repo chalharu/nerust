@@ -1,4 +1,4 @@
-use crate::{ConsoleError, ControllerInputs};
+use crate::{ConsoleError, ControllerInputs, NesInputFrame};
 use nerust_contract_options::CoreOptions;
 use nerust_contract_persistence::PersistenceTarget;
 use nerust_contract_rom::RomIdentity;
@@ -120,6 +120,21 @@ fn controller_inputs_from_buttons(buttons: Buttons) -> ControllerInputs {
 
 pub(crate) fn buttons_from_controller_inputs(inputs: ControllerInputs) -> Buttons {
     Buttons::from_bits_retain(inputs.bits())
+}
+
+pub(crate) fn buttons_from_nes_input_frame(frame: NesInputFrame) -> [Buttons; 2] {
+    [
+        buttons_from_controller_inputs(frame.player_one),
+        buttons_from_controller_inputs(frame.player_two),
+    ]
+}
+
+pub(crate) fn nes_input_frame_from_snapshot(snapshot: StandardControllerSnapshot) -> NesInputFrame {
+    NesInputFrame {
+        player_one: controller_inputs_from_buttons(snapshot.buttons[0]),
+        player_two: controller_inputs_from_buttons(snapshot.buttons[1]),
+        microphone: snapshot.microphone,
+    }
 }
 
 fn controller_runtime_state_from_snapshot(

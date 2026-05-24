@@ -14,14 +14,16 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_console::ControllerPort;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_session::input::{ControllerInput, InputState};
-use nerust_gui_shell::descriptor::NesConsoleDescriptor;
+use nerust_gui_shell::descriptor::{
+    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
+    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP, NesConsoleDescriptor,
+};
 use nerust_gui_shell::input::NesInputAdapter;
 use nerust_gui_shell::state::NativeShellState;
+use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -112,24 +114,24 @@ fn create_window(
     (window, gl_context, gl_surface)
 }
 
-fn physical_key_controller_input(key: PhysicalKey) -> Option<ControllerInput> {
+fn physical_key_controller_input(key: PhysicalKey) -> Option<DigitalControlId> {
     Some(match key {
-        PhysicalKey::Code(KeyCode::KeyZ) => ControllerInput::A,
-        PhysicalKey::Code(KeyCode::KeyX) => ControllerInput::B,
-        PhysicalKey::Code(KeyCode::KeyC) => ControllerInput::Select,
-        PhysicalKey::Code(KeyCode::KeyV) => ControllerInput::Start,
-        PhysicalKey::Code(KeyCode::ArrowUp) => ControllerInput::Up,
-        PhysicalKey::Code(KeyCode::ArrowDown) => ControllerInput::Down,
-        PhysicalKey::Code(KeyCode::ArrowLeft) => ControllerInput::Left,
-        PhysicalKey::Code(KeyCode::ArrowRight) => ControllerInput::Right,
+        PhysicalKey::Code(KeyCode::KeyZ) => NES_CONTROL_A,
+        PhysicalKey::Code(KeyCode::KeyX) => NES_CONTROL_B,
+        PhysicalKey::Code(KeyCode::KeyC) => NES_CONTROL_SELECT,
+        PhysicalKey::Code(KeyCode::KeyV) => NES_CONTROL_START,
+        PhysicalKey::Code(KeyCode::ArrowUp) => NES_CONTROL_UP,
+        PhysicalKey::Code(KeyCode::ArrowDown) => NES_CONTROL_DOWN,
+        PhysicalKey::Code(KeyCode::ArrowLeft) => NES_CONTROL_LEFT,
+        PhysicalKey::Code(KeyCode::ArrowRight) => NES_CONTROL_RIGHT,
         _ => return None,
     })
 }
 
-fn element_state_to_input_state(state: ElementState) -> InputState {
+fn element_state_to_input_state(state: ElementState) -> DigitalInputState {
     match state {
-        ElementState::Pressed => InputState::Pressed,
-        ElementState::Released => InputState::Released,
+        ElementState::Pressed => DigitalInputState::Pressed,
+        ElementState::Released => DigitalInputState::Released,
     }
 }
 
@@ -160,7 +162,7 @@ impl Window {
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
-            self.input.clear(&mut self.session);
+            self.input.sync_from_session(&self.session);
         }
     }
 
@@ -282,6 +284,14 @@ impl Window {
     fn apply_session_command(&mut self, command: SessionCommand) {
         let outcome = self.session.run_command(command);
         if outcome.executed
+            && matches!(
+                command,
+                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
+            )
+        {
+            self.input.sync_from_session(&self.session);
+        }
+        if outcome.executed
             && let SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot = command
             && let Some(slot_id) = self.session.active_slot_id()
         {
@@ -330,11 +340,11 @@ impl Window {
             key => physical_key_controller_input(key),
         };
         if let Some(controller_input) = controller_input {
-            self.input.handle_input(
-                ControllerPort::One,
+            self.input.handle_input(DigitalInputEvent::new(
+                NES_ATTACHMENT_PLAYER_ONE,
                 controller_input,
                 element_state_to_input_state(input.state),
-            );
+            ));
             self.input.flush_to_session(&mut self.session);
         }
     }
@@ -415,26 +425,28 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_session::input::ControllerInput;
+    use nerust_gui_shell::descriptor::{
+        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
+    };
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
     fn physical_key_mapping_matches_controller_layout() {
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(ControllerInput::A)
+            Some(NES_CONTROL_A)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
-            Some(ControllerInput::B)
+            Some(NES_CONTROL_B)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),
-            Some(ControllerInput::Up)
+            Some(NES_CONTROL_UP)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowRight)),
-            Some(ControllerInput::Right)
+            Some(NES_CONTROL_RIGHT)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::Enter)),

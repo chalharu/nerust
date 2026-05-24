@@ -10,6 +10,10 @@ rust-version.workspace = true
 nerust_console.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
+nerust_input_schema.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_sound_openal.workspace = true
 nerust_timer.workspace = true
+
+[dev-dependencies]
+nerust_sound_traits.workspace = true

@@ -16,6 +16,7 @@ nerust_console.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
+nerust_input_schema.workspace = true
 nerust_sound_openal.workspace = true
 raw-window-handle.workspace = true
 simple_logger.workspace = true
