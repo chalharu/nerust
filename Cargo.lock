@@ -2390,6 +2390,8 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_contract_options",
  "nerust_core",
+ "nerust_input_nes",
+ "nerust_input_nes_runtime",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
