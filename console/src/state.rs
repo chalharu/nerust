@@ -3,8 +3,9 @@ use nerust_contract_options::CoreOptions;
 use nerust_contract_persistence::PersistenceTarget;
 use nerust_contract_rom::RomIdentity;
 use nerust_core::Core;
-use nerust_input_nes::{
-    Buttons, StandardController, StandardControllerSnapshot, decode_controller_state,
+use nerust_input_nes::frame::Buttons;
+use nerust_input_nes_runtime::{
+    StandardController, StandardControllerSnapshot, decode_controller_state,
     encode_controller_state,
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;

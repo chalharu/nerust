@@ -11,7 +11,7 @@ use nerust_console::video::ConsoleVideo;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
-use nerust_input_schema::DigitalInputEvent;
+use nerust_gui_shell::session::input::NesButton;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
@@ -81,8 +81,8 @@ impl State {
         self.session.run_command(command)
     }
 
-    pub(crate) fn handle_controller_input(&mut self, event: DigitalInputEvent) {
-        self.session.handle_controller_input(event);
+    pub(crate) fn handle_player_one_button(&mut self, button: NesButton, pressed: bool) {
+        self.session.handle_player_one_button(button, pressed);
     }
 
     pub(crate) fn clear_controller_input(&mut self) {

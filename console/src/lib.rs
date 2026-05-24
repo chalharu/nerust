@@ -129,6 +129,7 @@ enum ConsoleReply {
     PersistenceTarget(PersistenceTarget),
     StateExport(StateExport),
     ControllerState(Vec<u8>),
+    InputState(Vec<u8>),
 }
 
 type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
@@ -319,6 +320,15 @@ impl Console {
             ConsoleReply::ControllerState(bytes) => Ok(bytes),
             _ => Err(ConsoleError::Core(
                 "unexpected current controller state reply".into(),
+            )),
+        }
+    }
+
+    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        match self.send_request(ConsoleData::CurrentInputState)? {
+            ConsoleReply::InputState(bytes) => Ok(bytes),
+            _ => Err(ConsoleError::Core(
+                "unexpected current input state reply".into(),
             )),
         }
     }

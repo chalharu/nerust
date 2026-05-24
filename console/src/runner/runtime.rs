@@ -1,8 +1,9 @@
 use super::{ConsoleData, ConsoleRunner};
 use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher};
 use nerust_core::Core;
-use nerust_input_nes::{
-    decode_controller_state, decode_input_state, encode_controller_state, snapshot_with_input_frame,
+use nerust_input_nes_runtime::{
+    apply_input_state as apply_runtime_input_state, decode_controller_state,
+    encode_controller_state, encode_input_state,
 };
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
@@ -10,8 +11,8 @@ use std::sync::mpsc::Sender;
 
 impl ConsoleRunner {
     fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), ConsoleError> {
-        let frame = decode_input_state(bytes).map_err(ConsoleError::Core)?;
-        let snapshot = snapshot_with_input_frame(self.controller.export_snapshot(), frame);
+        let snapshot = apply_runtime_input_state(self.controller.export_snapshot(), bytes)
+            .map_err(ConsoleError::Core)?;
         self.controller.import_snapshot(snapshot);
         Ok(())
     }
@@ -24,6 +25,10 @@ impl ConsoleRunner {
 
     fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
         encode_controller_state(self.controller.export_snapshot()).map_err(ConsoleError::Core)
+    }
+
+    fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        encode_input_state(self.controller.export_snapshot()).map_err(ConsoleError::Core)
     }
 
     fn reply(reply: Sender<ConsoleRequestResult>, result: Result<ConsoleReply, ConsoleError>) {
@@ -140,6 +145,12 @@ impl ConsoleRunner {
                             reply,
                             self.current_controller_state()
                                 .map(ConsoleReply::ControllerState),
+                        );
+                    }
+                    ConsoleData::CurrentInputState(reply) => {
+                        Self::reply(
+                            reply,
+                            self.current_input_state().map(ConsoleReply::InputState),
                         );
                     }
                     ConsoleData::ImportState { bytes, reply } => {

@@ -12,11 +12,7 @@ use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::load::NesLoadOptions;
 use nerust_gui_shell::session::NesSession;
-use nerust_input_nes::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
-use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
+use nerust_gui_shell::session::input::NesButton;
 use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,24 +27,24 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-fn keycode_controller_input(code: KeyCode) -> Option<DigitalControlId> {
+fn keycode_controller_input(code: KeyCode) -> Option<NesButton> {
     Some(match code {
-        KeyCode::KeyZ => NES_CONTROL_A,
-        KeyCode::KeyX => NES_CONTROL_B,
-        KeyCode::KeyC => NES_CONTROL_SELECT,
-        KeyCode::KeyV => NES_CONTROL_START,
-        KeyCode::ArrowUp => NES_CONTROL_UP,
-        KeyCode::ArrowDown => NES_CONTROL_DOWN,
-        KeyCode::ArrowLeft => NES_CONTROL_LEFT,
-        KeyCode::ArrowRight => NES_CONTROL_RIGHT,
+        KeyCode::KeyZ => NesButton::A,
+        KeyCode::KeyX => NesButton::B,
+        KeyCode::KeyC => NesButton::Select,
+        KeyCode::KeyV => NesButton::Start,
+        KeyCode::ArrowUp => NesButton::Up,
+        KeyCode::ArrowDown => NesButton::Down,
+        KeyCode::ArrowLeft => NesButton::Left,
+        KeyCode::ArrowRight => NesButton::Right,
         _ => return None,
     })
 }
 
-fn element_state_to_input_state(state: ElementState) -> Option<DigitalInputState> {
+fn element_state_to_pressed(state: ElementState) -> Option<bool> {
     Some(match state {
-        ElementState::Pressed => DigitalInputState::Pressed,
-        ElementState::Released => DigitalInputState::Released,
+        ElementState::Pressed => true,
+        ElementState::Released => false,
         _ => return None,
     })
 }
@@ -331,14 +327,11 @@ impl WindowRuntime {
             code => keycode_controller_input(code),
         };
 
-        if let Some(input_state) = element_state_to_input_state(input.state)
+        if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(controller_input) = code
         {
-            self.session.handle_controller_input(DigitalInputEvent::new(
-                NES_ATTACHMENT_PLAYER_ONE,
-                controller_input,
-                input_state,
-            ));
+            self.session
+                .handle_player_one_button(controller_input, pressed);
         }
     }
 
@@ -362,20 +355,20 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_input_nes::{NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP};
+    use nerust_gui_shell::session::input::NesButton;
     use tao::keyboard::KeyCode;
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(NES_CONTROL_A));
-        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(NES_CONTROL_B));
+        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(NesButton::A));
+        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(NesButton::B));
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),
-            Some(NES_CONTROL_UP)
+            Some(NesButton::Up)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowRight),
-            Some(NES_CONTROL_RIGHT)
+            Some(NesButton::Right)
         );
         assert_eq!(keycode_controller_input(KeyCode::Enter), None);
     }

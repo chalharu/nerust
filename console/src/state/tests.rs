@@ -1,8 +1,9 @@
 use super::*;
 use crate::Console;
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
-use nerust_input_nes::{
-    Buttons, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
+use nerust_input_nes::frame::Buttons;
+use nerust_input_nes_runtime::{
+    StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
