@@ -7,7 +7,7 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_contract_settings::KeyboardKey;
+use nerust_contract_settings::input::KeyboardKey;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
@@ -398,7 +398,7 @@ impl WindowRuntime {
                 && let Some(action) = shortcut_action_for_key(&settings, key)
                 && matches!(
                     action,
-                    nerust_contract_settings::ShortcutAction::ToggleFullscreen
+                    nerust_contract_settings::shortcut::ShortcutAction::ToggleFullscreen
                 )
             {
                 self.toggle_fullscreen();
@@ -453,7 +453,7 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_settings_key;
-    use nerust_contract_settings::KeyboardKey;
+    use nerust_contract_settings::input::KeyboardKey;
     use tao::keyboard::KeyCode;
 
     #[test]

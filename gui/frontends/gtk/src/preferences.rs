@@ -1,9 +1,13 @@
 use gtk::prelude::*;
 use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_settings::{
-    BindingProfile, ControlBinding, DesktopSettings, HostInputSource, KeyboardKey, NesCoreSettings,
-    NesSettings, NesVideoFilter, PersistedAttachmentId, PersistedControlId, ShortcutAction,
-    ShortcutBinding, StoragePolicy, SystemSettings,
+    desktop::{DesktopSettings, StoragePolicy, SystemSettings},
+    input::{
+        BindingProfile, ControlBinding, HostInputSource, KeyboardKey, PersistedAttachmentId,
+        PersistedControlId,
+    },
+    nes::{NesCoreSettings, NesSettings, NesVideoFilter, NesVideoSettings},
+    shortcut::{ShortcutAction, ShortcutBinding},
 };
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_shell::settings::{
@@ -335,7 +339,7 @@ impl PreferencesDialogState {
                 core: NesCoreSettings {
                     mmc3_irq_variant: mmc3_variant_from_combo(&self.mmc3_irq_variant),
                 },
-                video: nerust_contract_settings::NesVideoSettings {
+                video: NesVideoSettings {
                     filter: nes_filter_from_combo(&self.nes_filter),
                 },
             }),

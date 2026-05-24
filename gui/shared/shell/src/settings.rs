@@ -1,8 +1,12 @@
 use crate::load::NesLoadOptions;
 use nerust_contract_settings::{
-    BindingProfile, ControlBinding, DesktopSettings, HostInputSource, KeyboardKey, NesSettings,
-    NesVideoFilter, PersistedAttachmentId, PersistedControlId, ShortcutAction, ShortcutBinding,
-    SystemSettings,
+    desktop::{DesktopSettings, SystemSettings},
+    input::{
+        BindingProfile, ControlBinding, HostInputSource, KeyboardKey, PersistedAttachmentId,
+        PersistedControlId,
+    },
+    nes::{NesSettings, NesVideoFilter},
+    shortcut::{ShortcutAction, ShortcutBinding},
 };
 use nerust_gui_runtime::settings::{DesktopSettingsManager, SettingsError};
 use nerust_gui_session::commands::SessionCommand;
@@ -578,7 +582,9 @@ mod tests {
     };
     use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
     use nerust_contract_options::Mmc3IrqVariant;
-    use nerust_contract_settings::{KeyboardKey, NesVideoFilter, ShortcutAction, SystemSettings};
+    use nerust_contract_settings::{
+        desktop::SystemSettings, input::KeyboardKey, nes::NesVideoFilter, shortcut::ShortcutAction,
+    };
     use nerust_gui_runtime::settings::DesktopSettingsManager;
     use nerust_gui_session::commands::SessionCommand;
     use nerust_input_nes::topology::{
@@ -621,14 +627,16 @@ mod tests {
             .get_mut(&nerust_input_schema::SystemId::Nes)
             .unwrap()
             .bindings
-            .push(nerust_contract_settings::ControlBinding {
-                attachment: nerust_contract_settings::PersistedAttachmentId::new(
+            .push(nerust_contract_settings::input::ControlBinding {
+                attachment: nerust_contract_settings::input::PersistedAttachmentId::new(
                     NES_ATTACHMENT_PLAYER_TWO.as_str(),
                 ),
-                control: nerust_contract_settings::PersistedControlId::digital(
+                control: nerust_contract_settings::input::PersistedControlId::digital(
                     FAMICOM_P2_CONTROL_MICROPHONE.as_str(),
                 ),
-                source: nerust_contract_settings::HostInputSource::Keyboard(KeyboardKey::KeyM),
+                source: nerust_contract_settings::input::HostInputSource::Keyboard(
+                    KeyboardKey::KeyM,
+                ),
             });
         let event = controller_event_for_key(&settings, KeyboardKey::KeyM, true).unwrap();
 

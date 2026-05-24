@@ -14,7 +14,7 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_contract_settings::KeyboardKey;
+use nerust_contract_settings::input::KeyboardKey;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
@@ -369,7 +369,7 @@ impl Window {
                 && let Some(action) = shortcut_action_for_key(&settings, key)
                 && matches!(
                     action,
-                    nerust_contract_settings::ShortcutAction::ToggleFullscreen
+                    nerust_contract_settings::shortcut::ShortcutAction::ToggleFullscreen
                 )
             {
                 self.toggle_fullscreen();
@@ -482,7 +482,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_settings_key;
-    use nerust_contract_settings::KeyboardKey;
+    use nerust_contract_settings::input::KeyboardKey;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]

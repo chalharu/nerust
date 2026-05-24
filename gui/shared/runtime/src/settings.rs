@@ -1,6 +1,6 @@
 use crc::{CRC_32_ISO_HDLC, Crc};
 use directories::ProjectDirs;
-use nerust_contract_settings::{
+use nerust_contract_settings::desktop::{
     DESKTOP_SETTINGS_SCHEMA_VERSION, DesktopSettings, HostSettings, StoragePolicy,
 };
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
@@ -362,7 +362,7 @@ mod tests {
         DesktopSettingsManager, SettingsError, app_data_sidecars, merge_yaml,
         normalized_settings_value, resolve_persistence_paths, rom_storage_key,
     };
-    use nerust_contract_settings::{
+    use nerust_contract_settings::desktop::{
         DesktopSettings, PersistenceSettings, StoragePolicy, SystemSettings,
     };
     use nerust_input_schema::SystemId;

@@ -5,7 +5,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_contract_settings::{KeyboardKey, ShortcutAction};
+use nerust_contract_settings::{input::KeyboardKey, shortcut::ShortcutAction};
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::settings::{
@@ -623,7 +623,7 @@ fn rebuild_slot_menu(
 #[cfg(test)]
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_settings_key, load_active_slot};
-    use nerust_contract_settings::KeyboardKey;
+    use nerust_contract_settings::input::KeyboardKey;
     use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
     use std::cell::RefCell;
 
