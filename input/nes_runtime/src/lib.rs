@@ -139,6 +139,18 @@ impl StandardController {
         self.index2 = snapshot.index2;
         self.strobe = snapshot.strobe;
     }
+
+    pub fn set_pad1(&mut self, buttons: Buttons) {
+        self.buttons[0] = buttons;
+    }
+
+    pub fn set_pad2(&mut self, buttons: Buttons) {
+        self.buttons[1] = buttons;
+    }
+
+    pub fn set_microphone(&mut self, microphone: bool) {
+        self.microphone = microphone;
+    }
 }
 
 impl Default for StandardController {
@@ -316,5 +328,25 @@ mod tests {
             strobe: false,
         });
         assert_eq!(controller.read(0).data & 0x04, 0x00);
+    }
+
+    #[test]
+    fn setter_helpers_update_runtime_state() {
+        let mut controller = StandardController::new();
+
+        controller.set_pad1(Buttons::A | Buttons::START);
+        controller.set_pad2(Buttons::LEFT);
+        controller.set_microphone(true);
+
+        assert_eq!(
+            controller.export_snapshot(),
+            StandardControllerSnapshot {
+                buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
+                microphone: true,
+                index1: 0,
+                index2: 0,
+                strobe: false,
+            }
+        );
     }
 }
