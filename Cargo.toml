@@ -9,12 +9,12 @@ members = [
   "core",
   "persistence",
   "rom_test",
-  "gui/gtk",
-  "gui/glutin",
-  "gui/runtime",
-  "gui/shell",
-  "gui/session",
-  "gui/wgpu",
+  "gui/frontends/gtk",
+  "gui/frontends/glutin",
+  "gui/shared/runtime",
+  "gui/shared/shell",
+  "gui/shared/session",
+  "gui/frontends/wgpu",
   "nes_ntsc",
   "screen/buffer",
   "screen/filter",
@@ -65,9 +65,9 @@ nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_contract = { version = "=0.1.0", path = "contract" }
 nerust_core = { version = "=0.1.0", path = "core" }
-nerust_gui_runtime = { version = "=0.1.0", path = "gui/runtime" }
-nerust_gui_shell = { version = "=0.1.0", path = "gui/shell" }
-nerust_gui_session = { version = "=0.1.0", path = "gui/session" }
+nerust_gui_runtime = { version = "=0.1.0", path = "gui/shared/runtime" }
+nerust_gui_shell = { version = "=0.1.0", path = "gui/shared/shell" }
+nerust_gui_session = { version = "=0.1.0", path = "gui/shared/session" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }
