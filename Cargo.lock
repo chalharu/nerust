@@ -2253,6 +2253,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
+ "nerust_input_schema",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",
@@ -2284,6 +2285,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
+ "nerust_input_schema",
  "nerust_persistence",
  "nerust_sound_openal",
  "shared_library",
@@ -2323,10 +2325,16 @@ dependencies = [
  "nerust_console",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_input_schema",
  "nerust_screen_buffer",
  "nerust_sound_openal",
+ "nerust_sound_traits",
  "nerust_timer",
 ]
+
+[[package]]
+name = "nerust_input_schema"
+version = "0.1.0"
 
 [[package]]
 name = "nerust_persistence"
@@ -2494,6 +2502,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
+ "nerust_input_schema",
  "nerust_persistence",
  "nerust_screen_wgpu",
  "nerust_sound_openal",
