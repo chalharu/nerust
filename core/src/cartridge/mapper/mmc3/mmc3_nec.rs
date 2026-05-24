@@ -5,9 +5,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use super::mapper4_api::CartridgeData;
-use super::mapper4_persistence_api::{CartridgeRuntimeState, PersistenceError};
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::CartridgeRuntimeState;
+use crate::persistence_error::PersistenceError;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc3Nec {

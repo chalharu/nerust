@@ -5,7 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::FilterUnit;
-use crate::traits_api::{LogicalSize, PhysicalSize, RGB};
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
+use nerust_screen_rgb::RGB;
 
 #[derive(Debug)]
 pub(crate) struct NesNtsc {
@@ -30,21 +32,21 @@ impl NesNtsc {
 
     pub(crate) fn composite(source: LogicalSize) -> Self {
         Self {
-            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::Composite, source.width),
+            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::setup::Setup::Composite, source.width),
             source,
         }
     }
 
     pub(crate) fn svideo(source: LogicalSize) -> Self {
         Self {
-            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::SVideo, source.width),
+            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::setup::Setup::SVideo, source.width),
             source,
         }
     }
 
     pub(crate) fn rgb(source: LogicalSize) -> Self {
         Self {
-            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::Setup::RGB, source.width),
+            ntsc: nes_ntsc::NesNtsc::new(&nes_ntsc::setup::Setup::RGB, source.width),
             source,
         }
     }

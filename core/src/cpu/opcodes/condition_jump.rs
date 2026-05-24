@@ -4,10 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use super::super::CpuCartridgeBus;
 use super::super::{
     Apu, Controller, Core, CpuStepStateEnum, Ppu, Register, page_crossed, read_dummy_current,
 };
-use super::CpuCartridgeBus;
 use super::exit_opcode;
 
 macro_rules! condition_jump {

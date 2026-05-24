@@ -5,16 +5,17 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod error;
-mod raw;
-mod vertex;
+pub mod raw;
+pub mod vertex;
 
 use self::error::*;
+use self::raw::{
+    get_active_attrib, get_active_uniform, get_attrib_location, get_programiv, get_uniform_location,
+};
 use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
-pub use raw::*;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::{ptr, str};
-pub use vertex::*;
 
 fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
     let result = func();

@@ -1,4 +1,5 @@
-use crate::screen_api::{ConsoleVideoAssets, VideoPresentation};
+use nerust_screen_filter::presentation::ConsoleVideoAssets;
+use nerust_screen_video::VideoPresentation;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]

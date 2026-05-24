@@ -5,7 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::FilterUnit;
-use crate::traits_api::{LogicalSize, PhysicalSize, RGB};
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
+use nerust_screen_rgb::RGB;
 
 pub(crate) const PALETTE: [u32; 64] = [
     0x66_6666, 0x00_2A88, 0x14_12A7, 0x3B_00A4, 0x5C_007E, 0x6E_0040, 0x6C_0600, 0x56_1D00,

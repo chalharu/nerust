@@ -6,7 +6,7 @@
 
 mod runtime;
 
-use crate::shell_api::options::{CoreOptions, Mmc3IrqVariant as ShellMmc3IrqVariant};
+use nerust_contract_options::{CoreOptions, Mmc3IrqVariant as ShellMmc3IrqVariant};
 use runtime::WindowRuntime;
 use std::path::PathBuf;
 

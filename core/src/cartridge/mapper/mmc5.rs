@@ -4,19 +4,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use self::mmc5_mapper_api::{CartridgeData, CartridgeDataDao, Mapper, MapperState, MapperStateDao};
-use self::mmc5_persistence_api::{
-    CartridgeRuntimeState, MAPPER_KIND_MMC5, PersistenceError, decode_payload, encode_payload,
-};
 use super::Cartridge;
 use crate::OpenBusReadResult;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC5};
 use crate::interrupt::{Interrupt, IrqSource};
-use crate::ppu_bus_event::{PpuBusAccess, PpuBusEvent};
+use crate::mapper::{CartridgeDataDao, Mapper};
+use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence_codec::{decode_payload, encode_payload};
+use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuReadAccess;
+use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
 
 mod audio;
-mod mmc5_mapper_api;
-mod mmc5_persistence_api;
 mod ppu;
 mod program;
 #[cfg(test)]
@@ -777,8 +777,12 @@ impl Mapper for Mmc5 {
 
     fn initialize(&mut self) {
         self.set_mirror_mode(match self.data_ref().mirror_mode() {
-            crate::MirrorMode::Vertical => crate::MirrorMode::Vertical,
-            crate::MirrorMode::Horizontal => crate::MirrorMode::Horizontal,
+            nerust_contract_mirror::MirrorMode::Vertical => {
+                nerust_contract_mirror::MirrorMode::Vertical
+            }
+            nerust_contract_mirror::MirrorMode::Horizontal => {
+                nerust_contract_mirror::MirrorMode::Horizontal
+            }
             mode => mode,
         });
     }

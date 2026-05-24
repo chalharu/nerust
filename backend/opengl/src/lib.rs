@@ -4,8 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_buffer::video_api::{ConsoleVideoAssets, VideoPresentation};
+use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_opengl::GlView;
+use nerust_screen_video::VideoPresentation;
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.

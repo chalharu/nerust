@@ -4,7 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::shell_api::shell_api::{SessionCommand, StateSlotSummary, slot_label};
+use nerust_gui_runtime::slots::slot_label;
+use nerust_gui_session::commands::SessionCommand;
+use nerust_persistence::model::StateSlotSummary;
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -27,7 +29,7 @@ pub(crate) enum UserEvent {
     target_os = "macos",
     target_os = "windows"
 ))]
-mod imp {
+pub(crate) mod imp {
     use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
     #[cfg(any(
         target_os = "linux",
@@ -284,7 +286,7 @@ mod imp {
     target_os = "macos",
     target_os = "windows"
 )))]
-mod imp {
+pub(crate) mod imp {
     use super::{StateSlotSummary, TaoWindow, UserEvent};
     use tao::event_loop::EventLoopProxy;
 
@@ -309,5 +311,3 @@ mod imp {
         pub(crate) fn clear_event_handler(&self) {}
     }
 }
-
-pub(crate) use imp::AppMenu;

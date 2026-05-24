@@ -89,7 +89,7 @@ impl Init {
         // generate luma (y) filter using sinc kernel
         {
             // sinc with rolloff (dsf)
-            let rolloff = 1.0 + setup.sharpness() * 0.032;
+            let rolloff: f32 = 1.0 + setup.sharpness() * 0.032;
             let maxh = 32.0;
             let pow_a_n = rolloff.powf(maxh);
 
@@ -195,3 +195,4 @@ impl Init {
         }
     }
 }
+use crate::setup::Setup;

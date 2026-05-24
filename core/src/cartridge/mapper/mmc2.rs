@@ -5,15 +5,15 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use super::mapper_save_api::{
-    CartridgeRuntimeState, MAPPER_KIND_MMC2, PersistenceError, decode_payload, encode_payload,
-};
-use crate::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC2};
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::ppu_bus_event::PpuBusEvent;
-use crate::status::mirror_mode::MirrorMode;
+use crate::persistence_codec::{decode_payload, encode_payload};
+use crate::persistence_error::PersistenceError;
+use crate::ppu_memory_access::PpuBusEvent;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -278,13 +278,13 @@ impl Mapper for Mmc2 {
 mod tests {
     use super::Cartridge;
     use super::{LatchState, Mmc2};
-    use crate::CartridgeData;
-    use crate::CartridgeDataParts;
-    use crate::RomFormat;
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use crate::ppu_bus_event::PpuBusEvent;
-    use crate::status::mirror_mode::MirrorMode;
+    use crate::ppu_memory_access::PpuBusEvent;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data(mapper_type: u16) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {
@@ -320,7 +320,7 @@ mod tests {
                 address: 0x0FE8,
                 ppu_tick: 0,
                 from_cpu_register: false,
-                access: crate::ppu_bus_event::PpuBusAccess::Read,
+                access: crate::ppu_memory_access::PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -329,7 +329,7 @@ mod tests {
                 address: 0x1FE8,
                 ppu_tick: 1,
                 from_cpu_register: false,
-                access: crate::ppu_bus_event::PpuBusAccess::Read,
+                access: crate::ppu_memory_access::PpuBusAccess::Read,
             },
             &mut interrupt,
         );
@@ -344,7 +344,7 @@ mod tests {
                 address: 0x0FD8,
                 ppu_tick: 2,
                 from_cpu_register: false,
-                access: crate::ppu_bus_event::PpuBusAccess::Read,
+                access: crate::ppu_memory_access::PpuBusAccess::Read,
             },
             &mut interrupt,
         );

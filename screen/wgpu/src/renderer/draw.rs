@@ -5,8 +5,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::{RenderOutcome, Renderer};
-use crate::traits_api::PhysicalSize;
-use crate::{RenderSurface, SurfaceSize, SurfaceTargetSource, upload::pack_frame_rows};
+use crate::{
+    surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
+    upload::pack_frame_rows,
+};
+use nerust_screen_physical::PhysicalSize;
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,

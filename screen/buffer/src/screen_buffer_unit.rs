@@ -5,8 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::allocate;
-use super::traits_api::{LogicalSize, RGB};
 use nerust_screen_filter::FilterFunc;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_rgb::RGB;
 use std::{mem, slice};
 
 const OPAQUE_BLACK: u32 = 0xFF00_0000;

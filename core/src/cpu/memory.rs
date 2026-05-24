@@ -13,7 +13,7 @@ use crate::{OpenBus, OpenBusReadResult};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Memory {
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     wram: [u8; 2048],
     openbus: OpenBus,
 }

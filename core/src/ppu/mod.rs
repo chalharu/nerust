@@ -11,10 +11,10 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge as MapperCartridge;
 use crate::interrupt::Interrupt;
-use crate::persistence::PersistenceError;
+use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
-use crate::screen_api::Screen;
 use crate::{OpenBus, OpenBusReadResult};
+use nerust_screen_video::Screen;
 use std::cmp;
 use std::mem;
 
@@ -36,13 +36,14 @@ struct DecayableOpenBus {
 #[cfg(test)]
 mod tests {
     use super::Core;
-    use crate::RomFormat;
     use crate::cart_device::Cartridge;
     use crate::cartridge;
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
-    use crate::screen_api::Screen;
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
+    use nerust_screen_video::Screen;
 
     #[derive(Default)]
     struct NullScreen;
@@ -378,7 +379,7 @@ impl Status {
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
 pub(crate) struct Core {
     // memory
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     vram: [u8; 2048],
     palette: [u8; 32],
 
@@ -390,7 +391,7 @@ pub(crate) struct Core {
     bus_tick: u64,
     buffered_data: u8,
 
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     primary_oam: [u8; 256],
     secondary_oam: [u8; 32],
     secondary_oam_address: u8,
@@ -402,7 +403,7 @@ pub(crate) struct Core {
     current_tile: TileInfo,
     previous_tile: TileInfo,
     next_tile: TileInfo,
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     sprites: [SpriteInfo; 64],
     sprite_index: u8,
     sprite_count: u8,

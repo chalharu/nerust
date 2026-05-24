@@ -13,27 +13,40 @@ mod apu;
 mod cart_device;
 mod cartridge;
 mod cartridge_bus;
-mod cartridge_data;
-mod cartridge_error;
+pub mod cartridge_data_parts;
+pub mod cartridge_error;
+pub mod cartridge_rom;
+mod cartridge_runtime_state;
 pub mod controller;
 mod cpu;
 mod interrupt;
 mod mapper;
 mod mapper_state;
-mod persistence;
+mod persistence_codec;
+mod persistence_error;
 mod ppu;
-mod ppu_bus_event;
 mod ppu_memory_access;
-mod screen_api;
-mod status;
 
 use self::apu::Core as Apu;
 use self::cart_device::Cartridge;
+#[cfg(test)]
+use self::cartridge_data_parts::CartridgeDataParts;
+use self::cartridge_rom::CartridgeData;
+use self::cartridge_runtime_state::CartridgeRuntimeState;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
+use self::persistence_codec::{
+    PERSISTENCE_SCHEMA_VERSION, decode_payload, encode_payload, validate_schema_version,
+};
+use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
-use self::screen_api::Screen;
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_contract_mirror::MirrorMode;
+use nerust_contract_options::CoreOptions;
+#[cfg(test)]
+use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -51,12 +64,6 @@ fn crc64(bytes: &[u8]) -> u64 {
     hasher.0.update(bytes);
     hasher.0.finalize()
 }
-
-pub use self::cartridge_data::{CartridgeData, CartridgeDataParts};
-pub use self::cartridge_error::CartridgeError;
-pub use self::persistence::PersistenceError;
-pub use self::status::mirror_mode::MirrorMode;
-pub use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget, RomFormat, RomIdentity};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -96,7 +103,7 @@ pub struct Core {
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct MapperSavePayload {
     schema_version: u32,
-    rom_identity: persistence::RomIdentity,
+    rom_identity: RomIdentity,
     options: CoreOptions,
     #[serde(with = "serde_bytes")]
     prg_ram: Vec<u8>,
@@ -112,12 +119,12 @@ struct MapperSavePayload {
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct MachineStatePayload {
     schema_version: u32,
-    rom_identity: persistence::RomIdentity,
+    rom_identity: RomIdentity,
     options: CoreOptions,
     cpu: Cpu,
     ppu: Ppu,
     apu: Apu,
-    cartridge: persistence::CartridgeRuntimeState,
+    cartridge: CartridgeRuntimeState,
 }
 
 impl Core {
@@ -233,22 +240,20 @@ impl Core {
         }
         let (prg_ram, chr_ram) = self.cartridge.export_mapper_save_state()?;
         let payload = MapperSavePayload {
-            schema_version: persistence::PERSISTENCE_SCHEMA_VERSION,
+            schema_version: PERSISTENCE_SCHEMA_VERSION,
             rom_identity: self.rom_identity(),
             options: self.options,
             prg_ram,
             chr_ram,
         };
-        Ok(Some(persistence::encode_payload(&payload)?))
+        Ok(Some(encode_payload(&payload)?))
     }
 
     pub fn import_mapper_save(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        let payload: MapperSavePayload = persistence::decode_payload(bytes)?;
-        persistence::validate_schema_version(payload.schema_version)?;
+        let payload: MapperSavePayload = decode_payload(bytes)?;
+        validate_schema_version(payload.schema_version)?;
         if payload.rom_identity != self.rom_identity() {
-            return Err(
-                persistence::PersistenceError::Validation("ROM identity mismatch".into()).into(),
-            );
+            return Err(PersistenceError::Validation("ROM identity mismatch".into()).into());
         }
         self.cartridge
             .import_mapper_save_state(&payload.prg_ram, &payload.chr_ram)?;
@@ -257,7 +262,7 @@ impl Core {
 
     pub fn export_machine_state(&self) -> Result<Vec<u8>, Error> {
         let payload = MachineStatePayload {
-            schema_version: persistence::PERSISTENCE_SCHEMA_VERSION,
+            schema_version: PERSISTENCE_SCHEMA_VERSION,
             rom_identity: self.rom_identity(),
             options: self.options,
             cpu: self.cpu.clone(),
@@ -265,12 +270,12 @@ impl Core {
             apu: self.apu.clone(),
             cartridge: self.cartridge.export_runtime_state()?,
         };
-        Ok(persistence::encode_payload(&payload)?)
+        Ok(encode_payload(&payload)?)
     }
 
     pub fn import_machine_state(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        let payload: MachineStatePayload = persistence::decode_payload(bytes)?;
-        persistence::validate_schema_version(payload.schema_version)?;
+        let payload: MachineStatePayload = decode_payload(bytes)?;
+        validate_schema_version(payload.schema_version)?;
         let rom_identity = payload.rom_identity;
         let options = payload.options;
         self.validate_persistence_target(rom_identity, options)?;
@@ -354,14 +359,12 @@ impl Core {
         &self,
         identity: RomIdentity,
         options: CoreOptions,
-    ) -> Result<(), persistence::PersistenceError> {
+    ) -> Result<(), PersistenceError> {
         if self.rom_identity() != identity {
-            return Err(persistence::PersistenceError::Validation(
-                "ROM identity mismatch".into(),
-            ));
+            return Err(PersistenceError::Validation("ROM identity mismatch".into()));
         }
         if self.options != options {
-            return Err(persistence::PersistenceError::Validation(
+            return Err(PersistenceError::Validation(
                 "runtime options mismatch".into(),
             ));
         }
@@ -483,15 +486,15 @@ mod persistence_tests {
 
     fn decode_machine_state_fixture() -> (Vec<u8>, MachineStatePayload) {
         let bytes = fixture_bytes(MACHINE_STATE_FIXTURE_HEX);
-        let payload = persistence::decode_payload::<MachineStatePayload>(&bytes)
+        let payload = decode_payload::<MachineStatePayload>(&bytes)
             .expect("machine state fixture should decode");
         (bytes, payload)
     }
 
     fn decode_mapper_save_fixture() -> (Vec<u8>, MapperSavePayload) {
         let bytes = fixture_bytes(MAPPER_SAVE_FIXTURE_HEX);
-        let payload = persistence::decode_payload::<MapperSavePayload>(&bytes)
-            .expect("mapper save fixture should decode");
+        let payload =
+            decode_payload::<MapperSavePayload>(&bytes).expect("mapper save fixture should decode");
         (bytes, payload)
     }
 
@@ -499,7 +502,7 @@ mod persistence_tests {
         let bytes = core
             .export_machine_state()
             .expect("machine state should export");
-        persistence::decode_payload(&bytes).expect("machine state should decode")
+        decode_payload(&bytes).expect("machine state should decode")
     }
 
     fn export_mapper_save_payload(core: &Core) -> MapperSavePayload {
@@ -507,16 +510,13 @@ mod persistence_tests {
             .export_mapper_save()
             .expect("mapper save should export")
             .expect("mapper save should exist");
-        persistence::decode_payload(&bytes).expect("mapper save should decode")
+        decode_payload(&bytes).expect("mapper save should decode")
     }
 
     #[test]
     fn machine_state_fixture_round_trip_preserves_core_owned_fields() {
         let (bytes, fixture) = decode_machine_state_fixture();
-        assert_eq!(
-            fixture.schema_version,
-            persistence::PERSISTENCE_SCHEMA_VERSION
-        );
+        assert_eq!(fixture.schema_version, PERSISTENCE_SCHEMA_VERSION);
         assert_eq!(
             fixture.rom_identity,
             Core::new(nrom_test_data()).unwrap().rom_identity()
@@ -533,8 +533,8 @@ mod persistence_tests {
         assert_eq!(exported.rom_identity, fixture.rom_identity);
         assert_eq!(exported.options, fixture.options);
         assert_eq!(
-            persistence::encode_payload(&exported).expect("exported payload should encode"),
-            persistence::encode_payload(&fixture).expect("fixture payload should encode")
+            encode_payload(&exported).expect("exported payload should encode"),
+            encode_payload(&fixture).expect("fixture payload should encode")
         );
     }
 
@@ -542,7 +542,7 @@ mod persistence_tests {
     fn machine_state_rejects_schema_mismatch() {
         let (_, mut payload) = decode_machine_state_fixture();
         payload.schema_version += 1;
-        let bytes = persistence::encode_payload(&payload).expect("payload should encode");
+        let bytes = encode_payload(&payload).expect("payload should encode");
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
 
         let error = target
@@ -558,10 +558,7 @@ mod persistence_tests {
     #[test]
     fn mapper_save_fixture_round_trip_preserves_battery_backed_ram() {
         let (bytes, fixture) = decode_mapper_save_fixture();
-        assert_eq!(
-            fixture.schema_version,
-            persistence::PERSISTENCE_SCHEMA_VERSION
-        );
+        assert_eq!(fixture.schema_version, PERSISTENCE_SCHEMA_VERSION);
         assert_eq!(
             fixture.rom_identity,
             Core::new(mmc6_test_data()).unwrap().rom_identity()
@@ -590,7 +587,7 @@ mod persistence_tests {
     fn mapper_save_rejects_schema_mismatch() {
         let (_, mut payload) = decode_mapper_save_fixture();
         payload.schema_version += 1;
-        let bytes = persistence::encode_payload(&payload).expect("payload should encode");
+        let bytes = encode_payload(&payload).expect("payload should encode");
         let mut target = Core::new(mmc6_test_data()).expect("target core should construct");
 
         let error = target
@@ -620,7 +617,7 @@ mod persistence_tests {
     fn mapper_save_failed_import_does_not_mutate_existing_state() {
         let (_, mut payload) = decode_mapper_save_fixture();
         payload.prg_ram.pop();
-        let bytes = persistence::encode_payload(&payload).expect("payload should encode");
+        let bytes = encode_payload(&payload).expect("payload should encode");
 
         let mut target = Core::new(mmc6_test_data()).expect("target core should construct");
         let before = export_mapper_save_payload(&target);
@@ -683,11 +680,10 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered.cartridge.mapper_state.sram.push(1);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let before = target
@@ -710,11 +706,10 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered.cartridge.mapper_state.program_page_table[0] = Some(usize::MAX);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let before = target
@@ -738,11 +733,10 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered.cpu.set_internal_opcode_for_test(0x100);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let before = target
@@ -766,13 +760,12 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered
             .ppu
             .set_sprite_fetch_state_for_test(9, 0, 316, true);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let before = target
@@ -796,13 +789,12 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered
             .ppu
             .set_sprite_fetch_state_for_test(8, 0, 315, true);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let error = target
@@ -819,13 +811,12 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered
             .ppu
             .set_sprite_fetch_state_for_test(8, 0, 316, true);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         target
@@ -839,11 +830,10 @@ mod persistence_tests {
         let payload = source
             .export_machine_state()
             .expect("machine state should export");
-        let mut tampered = persistence::decode_payload::<MachineStatePayload>(&payload)
+        let mut tampered = decode_payload::<MachineStatePayload>(&payload)
             .expect("machine state payload should decode");
         tampered.apu.set_pulse_duty_for_test(4, 0);
-        let tampered_payload =
-            persistence::encode_payload(&tampered).expect("tampered payload should encode");
+        let tampered_payload = encode_payload(&tampered).expect("tampered payload should encode");
 
         let mut target = Core::new(nrom_test_data()).expect("target core should construct");
         let before = target
@@ -886,7 +876,7 @@ mod persistence_tests {
             .export_mapper_save()
             .expect("mapper save should export")
             .expect("battery-backed mapper should expose persistent save");
-        let decoded = persistence::decode_payload::<MapperSavePayload>(&payload)
+        let decoded = decode_payload::<MapperSavePayload>(&payload)
             .expect("mapper save payload should decode");
         assert_eq!(decoded.prg_ram.len(), 0x2000);
     }
@@ -916,7 +906,7 @@ mod persistence_tests {
             .export_mapper_save()
             .expect("mapper save should export")
             .expect("battery-backed iNES PRG RAM should expose persistent save");
-        let decoded = persistence::decode_payload::<MapperSavePayload>(&payload)
+        let decoded = decode_payload::<MapperSavePayload>(&payload)
             .expect("mapper save payload should decode");
         assert_eq!(decoded.prg_ram.len(), 0x2000);
         assert!(decoded.chr_ram.is_empty());

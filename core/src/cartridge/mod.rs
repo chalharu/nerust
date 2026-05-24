@@ -5,10 +5,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod mapper;
-use crate::CoreOptions;
 use crate::cart_device::Cartridge;
-use crate::cartridge_data::CartridgeData;
 use crate::cartridge_error::CartridgeError;
+use crate::cartridge_rom::CartridgeData;
+use nerust_contract_options::CoreOptions;
 
 pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
     try_from_with_options(data, CoreOptions::default())

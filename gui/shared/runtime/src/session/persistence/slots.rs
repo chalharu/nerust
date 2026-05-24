@@ -1,9 +1,10 @@
 use super::GuiSession;
-use crate::console_api::PreviewFrame;
-use nerust_persistence::{
-    ThumbnailSource, allocate_next_slot_id, delete_state_slot, load_state_slot,
-    scan_state_slots_for_target, state_slot_path, write_state_slot,
+use nerust_console::state::PreviewFrame;
+use nerust_persistence::slots::{
+    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots_for_target,
+    state_slot_path, write_state_slot,
 };
+use nerust_persistence::thumbnail::ThumbnailSource;
 
 impl GuiSession {
     pub fn save_active_slot_or_new(&mut self) {

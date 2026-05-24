@@ -2129,7 +2129,9 @@ name = "nerust_backend_opengl"
 version = "0.1.0"
 dependencies = [
  "nerust_screen_buffer",
+ "nerust_screen_filter",
  "nerust_screen_opengl",
+ "nerust_screen_video",
 ]
 
 [[package]]
@@ -2138,6 +2140,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "nerust_screen_buffer",
+ "nerust_screen_filter",
+ "nerust_screen_video",
  "nerust_screen_wgpu",
  "pollster",
  "raw-window-handle",
@@ -2147,6 +2151,8 @@ dependencies = [
 name = "nerust_cartridge_data"
 version = "0.1.0"
 dependencies = [
+ "nerust_contract_mirror",
+ "nerust_contract_rom",
  "nerust_core",
  "thiserror 2.0.18",
 ]
@@ -2159,8 +2165,15 @@ dependencies = [
  "crc",
  "log",
  "nerust_cartridge_data",
+ "nerust_contract_options",
+ "nerust_contract_persistence",
+ "nerust_contract_rom",
  "nerust_core",
  "nerust_screen_buffer",
+ "nerust_screen_filter",
+ "nerust_screen_logical",
+ "nerust_screen_physical",
+ "nerust_screen_video",
  "nerust_sound_traits",
  "nerust_timer",
  "rmp-serde",
@@ -2171,9 +2184,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_contract"
+name = "nerust_contract_mirror"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "nerust_contract_options"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "nerust_contract_persistence"
+version = "0.1.0"
+dependencies = [
+ "nerust_contract_options",
+ "nerust_contract_rom",
+]
+
+[[package]]
+name = "nerust_contract_rom"
+version = "0.1.0"
+dependencies = [
+ "nerust_contract_mirror",
  "serde",
  "serde_derive",
 ]
@@ -2186,8 +2224,10 @@ dependencies = [
  "crc",
  "hound",
  "log",
- "nerust_contract",
- "nerust_screen_traits",
+ "nerust_contract_mirror",
+ "nerust_contract_options",
+ "nerust_contract_rom",
+ "nerust_screen_video",
  "nerust_serialize",
  "nerust_sound_traits",
  "rmp-serde",
@@ -2209,6 +2249,9 @@ dependencies = [
  "glutin-winit",
  "log",
  "nerust_backend_opengl",
+ "nerust_console",
+ "nerust_gui_runtime",
+ "nerust_gui_session",
  "nerust_gui_shell",
  "nerust_sound_openal",
  "raw-window-handle",
@@ -2237,7 +2280,11 @@ dependencies = [
  "libc",
  "log",
  "nerust_backend_opengl",
+ "nerust_console",
+ "nerust_gui_runtime",
+ "nerust_gui_session",
  "nerust_gui_shell",
+ "nerust_persistence",
  "nerust_sound_openal",
  "shared_library",
  "simple_logger",
@@ -2249,6 +2296,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "nerust_console",
+ "nerust_contract_options",
  "nerust_gui_session",
  "nerust_persistence",
  "nerust_screen_buffer",
@@ -2261,6 +2309,8 @@ name = "nerust_gui_session"
 version = "0.1.0"
 dependencies = [
  "nerust_console",
+ "nerust_contract_options",
+ "nerust_contract_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_sound_traits",
@@ -2270,7 +2320,9 @@ dependencies = [
 name = "nerust_gui_shell"
 version = "0.1.0"
 dependencies = [
+ "nerust_console",
  "nerust_gui_runtime",
+ "nerust_gui_session",
  "nerust_screen_buffer",
  "nerust_sound_openal",
  "nerust_timer",
@@ -2282,7 +2334,10 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "libc",
- "nerust_contract",
+ "nerust_contract_mirror",
+ "nerust_contract_options",
+ "nerust_contract_persistence",
+ "nerust_contract_rom",
  "png",
  "rmp-serde",
  "serde",
@@ -2300,9 +2355,12 @@ dependencies = [
  "clap",
  "crc",
  "nerust_cartridge_data",
+ "nerust_contract_options",
  "nerust_core",
  "nerust_screen_buffer",
- "nerust_screen_traits",
+ "nerust_screen_filter",
+ "nerust_screen_logical",
+ "nerust_screen_video",
  "nerust_sound_traits",
  "png",
  "serde",
@@ -2316,15 +2374,29 @@ name = "nerust_screen_buffer"
 version = "0.1.0"
 dependencies = [
  "nerust_screen_filter",
- "nerust_screen_traits",
+ "nerust_screen_logical",
+ "nerust_screen_physical",
+ "nerust_screen_rgb",
+ "nerust_screen_video",
 ]
 
 [[package]]
 name = "nerust_screen_filter"
 version = "0.1.0"
 dependencies = [
- "nerust_screen_traits",
+ "nerust_screen_logical",
+ "nerust_screen_physical",
+ "nerust_screen_rgb",
+ "nerust_screen_video",
  "nes_ntsc",
+]
+
+[[package]]
+name = "nerust_screen_logical"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -2335,11 +2407,21 @@ dependencies = [
  "log",
  "nerust_glwrap",
  "nerust_screen_filter",
- "nerust_screen_traits",
+ "nerust_screen_logical",
+ "nerust_screen_video",
 ]
 
 [[package]]
-name = "nerust_screen_traits"
+name = "nerust_screen_physical"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_logical",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "nerust_screen_rgb"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -2347,11 +2429,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_screen_video"
+version = "0.1.0"
+dependencies = [
+ "nerust_screen_logical",
+ "nerust_screen_physical",
+]
+
+[[package]]
 name = "nerust_screen_wgpu"
 version = "0.1.0"
 dependencies = [
  "nerust_screen_filter",
- "nerust_screen_traits",
+ "nerust_screen_logical",
+ "nerust_screen_physical",
+ "nerust_screen_video",
  "raw-window-handle",
  "wgpu",
 ]
@@ -2397,7 +2489,13 @@ dependencies = [
  "log",
  "muda",
  "nerust_backend_wgpu",
+ "nerust_console",
+ "nerust_contract_options",
+ "nerust_gui_runtime",
+ "nerust_gui_session",
  "nerust_gui_shell",
+ "nerust_persistence",
+ "nerust_screen_wgpu",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",

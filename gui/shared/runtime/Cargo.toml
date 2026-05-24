@@ -8,6 +8,7 @@ edition.workspace = true
 [dependencies]
 log.workspace = true
 nerust_console.workspace = true
+nerust_contract_options.workspace = true
 nerust_gui_session.workspace = true
 nerust_persistence.workspace = true
 

@@ -1,18 +1,21 @@
 mod crash_handler;
 mod glarea;
-mod shell_api;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
-use crate::shell_api::shell_api::{
-    ConsoleVideo, ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand,
-    SessionCommandOutcome, StateSlotSummary, WindowSize,
-};
-use crate::shell_api::{NesConsoleDescriptor, NesInputAdapter};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
+use nerust_console::ControllerPort;
+use nerust_console::video::ConsoleVideo;
+use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
+use nerust_gui_session::core::WindowSize;
+use nerust_gui_session::input::{ControllerInput, InputState};
+use nerust_gui_shell::descriptor::NesConsoleDescriptor;
+use nerust_gui_shell::input::NesInputAdapter;
+use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;

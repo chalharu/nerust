@@ -1,4 +1,6 @@
-use crate::shell_api::{ControllerInput, ControllerInputs, ControllerPort, GuiSession, InputState};
+use nerust_console::{ControllerInputs, ControllerPort};
+use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_session::input::{ControllerInput, InputState};
 
 #[derive(Debug)]
 pub struct NesInputAdapter {
@@ -66,7 +68,8 @@ impl NesInputAdapter {
 #[cfg(test)]
 mod tests {
     use super::NesInputAdapter;
-    use crate::shell_api::{ControllerInput, ControllerInputs, ControllerPort, InputState};
+    use nerust_console::{ControllerInputs, ControllerPort};
+    use nerust_gui_session::input::{ControllerInput, InputState};
 
     #[test]
     fn nes_input_adapter_maps_a_to_controller_a_and_b_to_controller_b() {

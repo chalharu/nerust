@@ -3,12 +3,8 @@
 //! This crate provides the NES-specific adapter types and shell-facing runtime
 //! surface that connect a generic session runtime to a concrete shell binary:
 //!
-//! - [`shell_api`] — re-exports the `GuiSession`, session commands, slot
-//!   summaries, controller types, and window sizing that shell binaries need,
-//!   so OS-specific binaries do not depend on `nerust_gui_runtime` directly.
-//! - [`options`] — re-exports shell-facing console load options.
 //! - [`descriptor::NesConsoleDescriptor`] — builds a NES
-//!   [`crate::shell_api::GuiSession`] and describes its controller layout.
+//!   [`nerust_gui_runtime::session::GuiSession`] and describes its controller layout.
 //! - [`input::NesInputAdapter`] — translates host key/button events to NES controller
 //!   inputs and flushes them to the session.
 //! - [`state::NativeShellState`] — tracks frame-presentation and redraw timing for
@@ -29,12 +25,6 @@
 //! - `nerust_gtk`    → `nerust_backend_opengl` (GTK 3 + OpenGL 3.3)
 //! - `nerust_glutin` → `nerust_backend_opengl` (winit + glutin + OpenGL 3.3)
 //! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
-mod descriptor;
-mod input;
-pub mod options;
-pub mod shell_api;
-mod state;
-
-pub use descriptor::NesConsoleDescriptor;
-pub use input::NesInputAdapter;
-pub use state::NativeShellState;
+pub mod descriptor;
+pub mod input;
+pub mod state;
