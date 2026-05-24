@@ -10,8 +10,9 @@ use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.
 ///
-/// This is the composition unit consumed by OpenGL-based shells (`gui/glutin`,
-/// `gui/gtk`). It owns the [`GlView`] lifecycle and keeps shells free from any
+/// This is the composition unit consumed by OpenGL-based shells
+/// (`gui/frontends/glutin`, `gui/frontends/gtk`). It owns the [`GlView`]
+/// lifecycle and keeps shells free from any
 /// direct dependency on `nerust_screen_opengl`.
 #[derive(Debug)]
 pub struct GlBackend {
