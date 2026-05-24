@@ -1,5 +1,5 @@
 use super::{GuiSession, commands::redraw_needed_after_pause_change};
-use nerust_console::{Console, ConsoleMetrics};
+use nerust_console::console::{Console, ConsoleMetrics};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;

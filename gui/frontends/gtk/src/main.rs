@@ -7,7 +7,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
-use nerust_console::ControllerPort;
+use nerust_console::console::ControllerPort;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};

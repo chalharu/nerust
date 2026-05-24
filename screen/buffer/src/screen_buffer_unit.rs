@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::allocate;
-use nerust_screen_filter::FilterFunc;
+use nerust_screen_filter::filter::FilterFunc;
 use nerust_screen_traits::{logical_size::LogicalSize, rgb::RGB};
 use std::{mem, slice};
 

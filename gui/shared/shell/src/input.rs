@@ -1,4 +1,4 @@
-use nerust_console::{ControllerInputs, ControllerPort};
+use nerust_console::console::{ControllerInputs, ControllerPort};
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::input::{ControllerInput, InputState};
 
@@ -68,7 +68,7 @@ impl NesInputAdapter {
 #[cfg(test)]
 mod tests {
     use super::NesInputAdapter;
-    use nerust_console::{ControllerInputs, ControllerPort};
+    use nerust_console::console::{ControllerInputs, ControllerPort};
     use nerust_gui_session::input::{ControllerInput, InputState};
 
     #[test]
