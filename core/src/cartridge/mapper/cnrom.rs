@@ -7,7 +7,7 @@
 // Mapper 3 or 185
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};

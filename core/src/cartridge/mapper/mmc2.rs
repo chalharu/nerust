@@ -5,15 +5,15 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC2};
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{
-    CartridgeRuntimeState, MAPPER_KIND_MMC2, PersistenceError, decode_payload, encode_payload,
-};
+use crate::persistence_codec::{decode_payload, encode_payload};
+use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuBusEvent;
-use nerust_contract::MirrorMode;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -278,12 +278,13 @@ impl Mapper for Mmc2 {
 mod tests {
     use super::Cartridge;
     use super::{LatchState, Mmc2};
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
     use crate::ppu_memory_access::PpuBusEvent;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data(mapper_type: u16) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

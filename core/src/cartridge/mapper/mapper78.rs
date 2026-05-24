@@ -5,11 +5,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use nerust_contract::MirrorMode;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mapper78 {
@@ -103,11 +103,12 @@ impl Mapper for Mapper78 {
 mod tests {
     use super::Cartridge;
     use super::Mapper78;
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

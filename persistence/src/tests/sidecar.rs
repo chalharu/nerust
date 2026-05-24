@@ -1,4 +1,4 @@
-use super::support::prepare_test_dir;
+use super::prepare_test_dir;
 use crate::sidecar::{
     load_mapper_save, resolve_sidecars, write_mapper_save, write_recovery_mapper_save,
 };

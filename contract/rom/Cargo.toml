@@ -1,5 +1,5 @@
 [package]
-name = "nerust_contract"
+name = "nerust_contract_rom"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -7,5 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nerust_contract_mirror.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

@@ -12,9 +12,9 @@ use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::core::Core;
-use nerust_screen_traits::Screen;
+use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
 use std::time::{Duration, Instant};
 

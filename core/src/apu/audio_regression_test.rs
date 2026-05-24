@@ -5,12 +5,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::fft_test::CPU_CLOCK_HZ;
-use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+use crate::Core;
+use crate::cartridge_data_parts::CartridgeDataParts;
+use crate::cartridge_rom::CartridgeData;
 use crate::controller::standard_controller::StandardController;
-use crate::core::Core;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-use nerust_contract::{MirrorMode, RomFormat};
-use nerust_screen_traits::Screen;
+use nerust_contract_mirror::MirrorMode;
+use nerust_contract_rom::RomFormat;
+use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
 use std::io::Cursor;
 

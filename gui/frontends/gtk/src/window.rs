@@ -4,7 +4,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
-use nerust_console::console::ControllerPort;
+use nerust_console::ControllerPort;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::input::{ControllerInput, InputState};

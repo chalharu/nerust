@@ -7,11 +7,11 @@
 // Mapper 7
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use nerust_contract::MirrorMode;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct AxRom {

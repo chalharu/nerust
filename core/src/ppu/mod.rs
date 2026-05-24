@@ -11,10 +11,10 @@ use self::spriteinfo::SpriteInfo;
 use self::tileinfo::TileInfo;
 use crate::cart_device::Cartridge as MapperCartridge;
 use crate::interrupt::Interrupt;
-use crate::persistence::PersistenceError;
+use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
 use crate::{OpenBus, OpenBusReadResult};
-use nerust_screen_traits::Screen;
+use nerust_screen_video::Screen;
 use std::cmp;
 use std::mem;
 
@@ -38,11 +38,12 @@ mod tests {
     use super::Core;
     use crate::cart_device::Cartridge;
     use crate::cartridge;
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
-    use nerust_screen_traits::Screen;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
+    use nerust_screen_video::Screen;
 
     #[derive(Default)]
     struct NullScreen;

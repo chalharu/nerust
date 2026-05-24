@@ -6,8 +6,9 @@
 
 use super::Cartridge;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
-use crate::cartridge_data::CartridgeData;
-use crate::persistence::{CartridgeRuntimeState, PersistenceError};
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::CartridgeRuntimeState;
+use crate::persistence_error::PersistenceError;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Mmc3Nec {

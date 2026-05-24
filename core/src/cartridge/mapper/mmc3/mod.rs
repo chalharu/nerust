@@ -15,9 +15,9 @@ use self::mmc6::Mmc6;
 use self::standard::Mmc3;
 use self::txsrom::TxSrom;
 use crate::cart_device::Cartridge;
-use crate::cartridge_data::CartridgeData;
 use crate::cartridge_error::CartridgeError;
-use nerust_contract::Mmc3IrqVariant;
+use crate::cartridge_rom::CartridgeData;
+use nerust_contract_options::Mmc3IrqVariant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -67,12 +67,12 @@ mod tests {
         Cartridge, CartridgeData, Mapper4Model, Mmc3, Mmc3IrqVariant, Mmc3Nec, Mmc6,
         resolve_mapper4_model,
     };
-    use crate::cartridge_data::CartridgeDataParts;
+    use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::interrupt::{Interrupt, IrqSource};
     use crate::mapper::Mapper;
     use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

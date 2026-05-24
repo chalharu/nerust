@@ -4,7 +4,7 @@ mod runtime;
 
 use data::ConsoleData;
 
-use crate::console::ConsoleMetrics;
+use super::ConsoleMetrics;
 use nerust_core::controller::standard_controller::StandardController;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_timer::{TARGET_FPS, Timer};

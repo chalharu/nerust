@@ -11,11 +11,11 @@ use crate::manifest::RomCase;
 use crate::media::HashingMixer;
 use crate::media::{encode_screenshot_png, screen_hash};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_core::Core;
 use nerust_core::controller::standard_controller::{Buttons, StandardController};
-use nerust_core::core::Core;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::filter::FilterType;
-use nerust_screen_traits::logical_size::LogicalSize;
+use nerust_screen_filter::FilterType;
+use nerust_screen_logical::LogicalSize;
 use nerust_sound_traits::MixerInput;
 
 pub(super) struct ValidationRuntime {

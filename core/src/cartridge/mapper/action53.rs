@@ -5,14 +5,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_ACTION53};
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence::{
-    CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError, decode_payload, encode_payload,
-};
-use nerust_contract::MirrorMode;
+use crate::persistence_codec::{decode_payload, encode_payload};
+use crate::persistence_error::PersistenceError;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct Action53RuntimeState {
@@ -226,11 +226,12 @@ impl Mapper for Action53 {
 mod tests {
     use super::Action53;
     use super::Cartridge;
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

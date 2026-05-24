@@ -6,8 +6,9 @@
 
 use super::Cartridge;
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
-use crate::cartridge_data::CartridgeData;
-use crate::persistence::{CartridgeRuntimeState, PersistenceError};
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::CartridgeRuntimeState;
+use crate::persistence_error::PersistenceError;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct TxSrom {
@@ -52,11 +53,11 @@ impl Mapper4Wrapper for TxSrom {
 mod tests {
     use super::Cartridge;
     use super::{CartridgeData, TxSrom};
-    use crate::cartridge_data::CartridgeDataParts;
+    use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

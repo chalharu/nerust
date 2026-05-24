@@ -1,9 +1,8 @@
-use nerust_console::console::{
-    Console, ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort,
-};
 use nerust_console::state::StateExport;
 use nerust_console::video::ConsoleVideo;
-use nerust_contract::{CoreOptions, PersistenceTarget};
+use nerust_console::{Console, ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
+use nerust_contract_options::CoreOptions;
+use nerust_contract_persistence::PersistenceTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -134,7 +133,7 @@ impl SessionCore {
 #[cfg(test)]
 mod tests {
     use super::SessionCore;
-    use nerust_console::console::Console;
+    use nerust_console::Console;
     use nerust_screen_buffer::screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
 

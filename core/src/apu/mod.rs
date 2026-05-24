@@ -27,7 +27,7 @@ use self::triangle::Triangle;
 use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::interrupt::{Interrupt, IrqSource};
-use crate::persistence::PersistenceError;
+use crate::persistence_error::PersistenceError;
 use nerust_sound_traits::MixerInput;
 
 // // 240Hz フレームシーケンサ

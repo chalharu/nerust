@@ -5,7 +5,7 @@ use crate::metadata::{
 };
 use crate::model::StateSlotSummary;
 use crate::time::system_time_from_millis;
-use nerust_contract::PersistenceTarget;
+use nerust_contract_persistence::PersistenceTarget;
 use std::fs::File;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
