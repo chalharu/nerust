@@ -579,8 +579,8 @@ mod tests {
     use super::{
         CPU_STEPFUNCS, Core, CpuStatesEnum, CpuStepStateFunc, DmcDmaKind, DmcDmaPhase, DmcDmaState,
     };
-    use crate::controller::standard_controller::StandardController;
-    use crate::{Apu, Ppu};
+    use crate::controller::Controller;
+    use crate::{Apu, OpenBusReadResult, Ppu};
     use strum::IntoEnumIterator;
 
     macro_rules! cpu_stepfunc_pair_array {
@@ -601,10 +601,21 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct TestController;
+
+    impl Controller for TestController {
+        fn read(&mut self, _address: usize) -> OpenBusReadResult {
+            OpenBusReadResult::new(0, 0)
+        }
+
+        fn write(&mut self, _value: u8) {}
+    }
+
     fn dmc_dma_stall_cycles(cpu: &mut Core) -> usize {
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = StandardController::new();
+        let mut controller = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
         let mut stalled_cycles = 0;
 
@@ -656,7 +667,7 @@ mod tests {
         cpu.cycles = 0;
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = StandardController::new();
+        let mut controller = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         apu.write_register(0x4010, 0x00, cpu.interrupt_mut());
@@ -695,7 +706,7 @@ mod tests {
 
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = StandardController::new();
+        let mut controller = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         set_write_cycle(&mut cpu);
@@ -730,7 +741,7 @@ mod tests {
 
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = StandardController::new();
+        let mut controller = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         set_write_cycle(&mut cpu);

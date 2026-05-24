@@ -6,7 +6,7 @@ use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::descriptor::{
+use nerust_input_nes::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
@@ -531,9 +531,7 @@ fn rebuild_slot_menu(
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
     use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-    use nerust_gui_shell::descriptor::{
-        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
-    };
+    use nerust_input_nes::{NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP};
     use std::cell::RefCell;
 
     #[derive(Default)]

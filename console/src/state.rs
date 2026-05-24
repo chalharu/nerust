@@ -1,10 +1,11 @@
-use crate::{ConsoleError, ControllerInputs, NesInputFrame};
+use crate::ConsoleError;
 use nerust_contract_options::CoreOptions;
 use nerust_contract_persistence::PersistenceTarget;
 use nerust_contract_rom::RomIdentity;
 use nerust_core::Core;
-use nerust_core::controller::standard_controller::{
-    Buttons, StandardController, StandardControllerSnapshot,
+use nerust_input_nes::{
+    Buttons, StandardController, StandardControllerSnapshot, decode_controller_state,
+    encode_controller_state,
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 
@@ -14,7 +15,8 @@ use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 /// `core_state` bytes remain owned by `nerust_core` and must continue to be treated as opaque by
 /// the archive layer.
 const LEGACY_CONSOLE_STATE_SCHEMA_VERSION: u32 = 1;
-const CONSOLE_STATE_SCHEMA_VERSION: u32 = 2;
+const STRUCTURED_CONSOLE_STATE_SCHEMA_VERSION: u32 = 2;
+const CONSOLE_STATE_SCHEMA_VERSION: u32 = 3;
 const STANDARD_CONTROLLER_MAX_INDEX: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,28 +33,6 @@ pub struct StateExport {
     pub target: PersistenceTarget,
 }
 
-/// Console-owned runtime controller wrapper state.
-///
-/// This mirrors the current `StandardController` runtime semantics, including latched button bits,
-/// shift indices, microphone state, and strobe mode.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
-struct ControllerPortStatePayload {
-    input_bits: u32,
-    index: u64,
-}
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
-struct ControllerAuxiliaryStatePayload {
-    microphone: bool,
-}
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
-struct ControllerStatePayload {
-    ports: [ControllerPortStatePayload; 2],
-    auxiliary: ControllerAuxiliaryStatePayload,
-    strobe: bool,
-}
-
 #[derive(serde_derive::Deserialize)]
 struct LegacyControllerStatePayload {
     pad1_bits: u32,
@@ -63,21 +43,21 @@ struct LegacyControllerStatePayload {
     strobe: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ControllerPortRuntimeState {
-    inputs: ControllerInputs,
-    index: usize,
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct StructuredControllerPortStatePayload {
+    input_bits: u32,
+    index: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ControllerAuxiliaryRuntimeState {
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct StructuredControllerAuxiliaryStatePayload {
     microphone: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ControllerRuntimeState {
-    ports: [ControllerPortRuntimeState; 2],
-    auxiliary: ControllerAuxiliaryRuntimeState,
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct StructuredControllerStatePayload {
+    ports: [StructuredControllerPortStatePayload; 2],
+    auxiliary: StructuredControllerAuxiliaryStatePayload,
     strobe: bool,
 }
 
@@ -93,7 +73,8 @@ struct ConsoleStatePayload {
     core_state: Vec<u8>,
     frame_counter: u64,
     paused: bool,
-    controller: ControllerStatePayload,
+    #[serde(with = "serde_bytes")]
+    controller_state: Vec<u8>,
     rom_identity: RomIdentity,
     options: CoreOptions,
     #[serde(with = "serde_bytes")]
@@ -114,155 +95,65 @@ struct LegacyConsoleStatePayload {
     source_frame: Vec<u8>,
 }
 
-fn controller_inputs_from_buttons(buttons: Buttons) -> ControllerInputs {
-    ControllerInputs::from_bits_retain(buttons.bits())
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+struct StructuredConsoleStatePayload {
+    schema_version: u32,
+    #[serde(with = "serde_bytes")]
+    core_state: Vec<u8>,
+    frame_counter: u64,
+    paused: bool,
+    controller: StructuredControllerStatePayload,
+    rom_identity: RomIdentity,
+    options: CoreOptions,
+    #[serde(with = "serde_bytes")]
+    source_frame: Vec<u8>,
 }
 
-pub(crate) fn buttons_from_controller_inputs(inputs: ControllerInputs) -> Buttons {
-    Buttons::from_bits_retain(inputs.bits())
+fn legacy_buttons(value: u32, label: &str) -> Result<Buttons, ConsoleError> {
+    Ok(Buttons::from_bits_retain(u8::try_from(value).map_err(
+        |_| ConsoleError::Core(format!("controller {label} input overflow")),
+    )?))
 }
 
-pub(crate) fn buttons_from_nes_input_frame(frame: NesInputFrame) -> [Buttons; 2] {
-    [
-        buttons_from_controller_inputs(frame.player_one),
-        buttons_from_controller_inputs(frame.player_two),
-    ]
-}
-
-pub(crate) fn nes_input_frame_from_snapshot(snapshot: StandardControllerSnapshot) -> NesInputFrame {
-    NesInputFrame {
-        player_one: controller_inputs_from_buttons(snapshot.buttons[0]),
-        player_two: controller_inputs_from_buttons(snapshot.buttons[1]),
-        microphone: snapshot.microphone,
+fn legacy_index(value: u64, label: &str) -> Result<usize, ConsoleError> {
+    let index = usize::try_from(value)
+        .map_err(|_| ConsoleError::Core(format!("controller {label} index overflow")))?;
+    if index > STANDARD_CONTROLLER_MAX_INDEX {
+        return Err(ConsoleError::Core(format!(
+            "controller {label} index out of range"
+        )));
     }
+    Ok(index)
 }
 
-fn controller_runtime_state_from_snapshot(
-    snapshot: StandardControllerSnapshot,
-) -> ControllerRuntimeState {
-    ControllerRuntimeState {
-        ports: [
-            ControllerPortRuntimeState {
-                inputs: controller_inputs_from_buttons(snapshot.buttons[0]),
-                index: snapshot.index1,
-            },
-            ControllerPortRuntimeState {
-                inputs: controller_inputs_from_buttons(snapshot.buttons[1]),
-                index: snapshot.index2,
-            },
-        ],
-        auxiliary: ControllerAuxiliaryRuntimeState {
-            microphone: snapshot.microphone,
-        },
-        strobe: snapshot.strobe,
-    }
-}
-
-fn controller_runtime_state_to_snapshot(
-    state: ControllerRuntimeState,
-) -> StandardControllerSnapshot {
-    StandardControllerSnapshot {
-        buttons: [
-            buttons_from_controller_inputs(state.ports[0].inputs),
-            buttons_from_controller_inputs(state.ports[1].inputs),
-        ],
-        microphone: state.auxiliary.microphone,
-        index1: state.ports[0].index,
-        index2: state.ports[1].index,
-        strobe: state.strobe,
-    }
-}
-
-fn controller_runtime_state_to_payload(state: ControllerRuntimeState) -> ControllerStatePayload {
-    ControllerStatePayload {
-        ports: [
-            ControllerPortStatePayload {
-                input_bits: u32::from(state.ports[0].inputs.bits()),
-                index: state.ports[0].index as u64,
-            },
-            ControllerPortStatePayload {
-                input_bits: u32::from(state.ports[1].inputs.bits()),
-                index: state.ports[1].index as u64,
-            },
-        ],
-        auxiliary: ControllerAuxiliaryStatePayload {
-            microphone: state.auxiliary.microphone,
-        },
-        strobe: state.strobe,
-    }
-}
-
-fn controller_snapshot_to_payload(snapshot: StandardControllerSnapshot) -> ControllerStatePayload {
-    controller_runtime_state_to_payload(controller_runtime_state_from_snapshot(snapshot))
-}
-
-fn controller_runtime_state_from_payload(
-    payload: &ControllerStatePayload,
-) -> Result<ControllerRuntimeState, ConsoleError> {
-    let decode_port = |payload: &ControllerPortStatePayload, label: &str| {
-        let index = usize::try_from(payload.index)
-            .map_err(|_| ConsoleError::Core(format!("controller {label} index overflow")))?;
-        if index > STANDARD_CONTROLLER_MAX_INDEX {
-            return Err(ConsoleError::Core(format!(
-                "controller {label} index out of range"
-            )));
-        }
-        Ok(ControllerPortRuntimeState {
-            inputs: ControllerInputs::from_bits_retain(
-                u8::try_from(payload.input_bits).map_err(|_| {
-                    ConsoleError::Core(format!("controller {label} input overflow"))
-                })?,
-            ),
-            index,
-        })
-    };
-    Ok(ControllerRuntimeState {
-        ports: [
-            decode_port(&payload.ports[0], "port1")?,
-            decode_port(&payload.ports[1], "port2")?,
-        ],
-        auxiliary: ControllerAuxiliaryRuntimeState {
-            microphone: payload.auxiliary.microphone,
-        },
-        strobe: payload.strobe,
-    })
-}
-
-fn controller_snapshot_from_payload(
-    payload: &ControllerStatePayload,
-) -> Result<StandardControllerSnapshot, ConsoleError> {
-    controller_runtime_state_from_payload(payload).map(controller_runtime_state_to_snapshot)
-}
-
-fn controller_runtime_state_from_legacy_payload(
+fn legacy_controller_snapshot(
     payload: &LegacyControllerStatePayload,
-) -> Result<ControllerRuntimeState, ConsoleError> {
-    controller_runtime_state_from_payload(&ControllerStatePayload {
-        ports: [
-            ControllerPortStatePayload {
-                input_bits: payload.pad1_bits,
-                index: payload.index1,
-            },
-            ControllerPortStatePayload {
-                input_bits: payload.pad2_bits,
-                index: payload.index2,
-            },
+) -> Result<StandardControllerSnapshot, ConsoleError> {
+    Ok(StandardControllerSnapshot {
+        buttons: [
+            legacy_buttons(payload.pad1_bits, "port1")?,
+            legacy_buttons(payload.pad2_bits, "port2")?,
         ],
-        auxiliary: ControllerAuxiliaryStatePayload {
-            microphone: payload.microphone,
-        },
+        microphone: payload.microphone,
+        index1: legacy_index(payload.index1, "port1")?,
+        index2: legacy_index(payload.index2, "port2")?,
         strobe: payload.strobe,
     })
 }
 
-fn validate_console_state_schema_version(version: u32, expected: u32) -> Result<(), ConsoleError> {
-    if version == expected {
-        Ok(())
-    } else {
-        Err(ConsoleError::Core(format!(
-            "unsupported console state schema version: {version}"
-        )))
-    }
+fn structured_controller_snapshot(
+    payload: &StructuredControllerStatePayload,
+) -> Result<StandardControllerSnapshot, ConsoleError> {
+    Ok(StandardControllerSnapshot {
+        buttons: [
+            legacy_buttons(payload.ports[0].input_bits, "port1")?,
+            legacy_buttons(payload.ports[1].input_bits, "port2")?,
+        ],
+        microphone: payload.auxiliary.microphone,
+        index1: legacy_index(payload.ports[0].index, "port1")?,
+        index2: legacy_index(payload.ports[1].index, "port2")?,
+        strobe: payload.strobe,
+    })
 }
 
 fn encode_console_state_payload(payload: &ConsoleStatePayload) -> Result<Vec<u8>, ConsoleError> {
@@ -272,29 +163,55 @@ fn encode_console_state_payload(payload: &ConsoleStatePayload) -> Result<Vec<u8>
 fn decode_console_state_payload(bytes: &[u8]) -> Result<ConsoleStatePayload, ConsoleError> {
     match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
         Ok(payload) => {
-            validate_console_state_schema_version(
-                payload.schema_version,
-                CONSOLE_STATE_SCHEMA_VERSION,
-            )?;
+            if payload.schema_version != CONSOLE_STATE_SCHEMA_VERSION {
+                return Err(ConsoleError::Core(format!(
+                    "unsupported console state schema version: {}",
+                    payload.schema_version
+                )));
+            }
             Ok(payload)
         }
         Err(current_error) => {
+            if let Ok(structured) = rmp_serde::from_slice::<StructuredConsoleStatePayload>(bytes) {
+                if structured.schema_version != STRUCTURED_CONSOLE_STATE_SCHEMA_VERSION {
+                    return Err(ConsoleError::Core(format!(
+                        "unsupported console state schema version: {}",
+                        structured.schema_version
+                    )));
+                }
+                return Ok(ConsoleStatePayload {
+                    schema_version: CONSOLE_STATE_SCHEMA_VERSION,
+                    core_state: structured.core_state,
+                    frame_counter: structured.frame_counter,
+                    paused: structured.paused,
+                    controller_state: encode_controller_state(structured_controller_snapshot(
+                        &structured.controller,
+                    )?)
+                    .map_err(ConsoleError::Core)?,
+                    rom_identity: structured.rom_identity,
+                    options: structured.options,
+                    source_frame: structured.source_frame,
+                });
+            }
             let legacy =
                 rmp_serde::from_slice::<LegacyConsoleStatePayload>(bytes).map_err(|_| {
                     ConsoleError::Core(format!("console state decode failed: {current_error}"))
                 })?;
-            validate_console_state_schema_version(
-                legacy.schema_version,
-                LEGACY_CONSOLE_STATE_SCHEMA_VERSION,
-            )?;
+            if legacy.schema_version != LEGACY_CONSOLE_STATE_SCHEMA_VERSION {
+                return Err(ConsoleError::Core(format!(
+                    "unsupported console state schema version: {}",
+                    legacy.schema_version
+                )));
+            }
             Ok(ConsoleStatePayload {
                 schema_version: CONSOLE_STATE_SCHEMA_VERSION,
                 core_state: legacy.core_state,
                 frame_counter: legacy.frame_counter,
                 paused: legacy.paused,
-                controller: controller_runtime_state_to_payload(
-                    controller_runtime_state_from_legacy_payload(&legacy.controller)?,
-                ),
+                controller_state: encode_controller_state(legacy_controller_snapshot(
+                    &legacy.controller,
+                )?)
+                .map_err(ConsoleError::Core)?,
                 rom_identity: legacy.rom_identity,
                 options: legacy.options,
                 source_frame: legacy.source_frame,
@@ -365,7 +282,8 @@ pub(crate) fn build_state_export(
         core_state: machine_state,
         frame_counter,
         paused,
-        controller: controller_snapshot_to_payload(controller.export_snapshot()),
+        controller_state: encode_controller_state(controller.export_snapshot())
+            .map_err(ConsoleError::Core)?,
         rom_identity: target.rom_identity,
         options: target.options,
         source_frame,
@@ -387,7 +305,8 @@ pub(crate) fn restore_imported_state(
 ) -> Result<(), ConsoleError> {
     let payload = decode_console_state_payload(bytes)?;
     validate_console_state_target(core, &payload)?;
-    let controller_snapshot = controller_snapshot_from_payload(&payload.controller)?;
+    let controller_snapshot =
+        decode_controller_state(&payload.controller_state).map_err(ConsoleError::Core)?;
     if screen.publishes_palette_frame()
         && !payload.source_frame.is_empty()
         && payload.source_frame.len() != screen.source_frame_len()

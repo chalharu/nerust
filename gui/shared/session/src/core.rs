@@ -1,6 +1,6 @@
 use nerust_console::state::StateExport;
 use nerust_console::video::ConsoleVideo;
-use nerust_console::{Console, ConsoleError, ConsoleMetrics, NesInputFrame};
+use nerust_console::{Console, ConsoleError, ConsoleMetrics};
 use nerust_contract_options::CoreOptions;
 use nerust_contract_persistence::PersistenceTarget;
 
@@ -15,7 +15,6 @@ pub struct SessionCore {
     paused: bool,
     loaded: bool,
     console: Console,
-    nes_input_frame: NesInputFrame,
     window_size: WindowSize,
 }
 
@@ -31,7 +30,6 @@ impl SessionCore {
             paused: metrics.paused,
             loaded: metrics.loaded,
             console,
-            nes_input_frame: NesInputFrame::default(),
             window_size,
         }
     }
@@ -82,30 +80,27 @@ impl SessionCore {
         self.paused = false;
     }
 
-    pub fn apply_nes_input_frame(&mut self, frame: NesInputFrame) {
-        self.nes_input_frame = frame;
-        self.console.apply_nes_input_frame(frame);
+    pub fn apply_controller_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.console.apply_controller_state(bytes)
     }
 
-    pub fn clear_nes_input_frame(&mut self) {
-        self.apply_nes_input_frame(NesInputFrame::default());
+    pub fn apply_input_state(&mut self, bytes: Vec<u8>) {
+        self.console.apply_input_state(bytes);
     }
 
-    pub fn current_nes_input_frame(&self) -> NesInputFrame {
-        self.nes_input_frame
+    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        self.console.current_controller_state()
     }
 
     pub fn load_rom(&mut self, data: Vec<u8>, options: CoreOptions) -> Result<(), ConsoleError> {
         self.console.load_with_options(data, options)?;
         self.loaded = true;
-        self.clear_nes_input_frame();
         Ok(())
     }
 
     pub fn unload_rom(&mut self) -> Result<(), ConsoleError> {
         let result = self.console.unload();
         self.loaded = false;
-        self.clear_nes_input_frame();
         result
     }
 
@@ -114,9 +109,7 @@ impl SessionCore {
     }
 
     pub fn import_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.console.import_state(bytes)?;
-        self.nes_input_frame = self.console.current_nes_input_frame()?;
-        Ok(())
+        self.console.import_state(bytes)
     }
 
     pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, ConsoleError> {

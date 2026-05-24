@@ -8,11 +8,9 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_console::video::ConsoleVideo;
-use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::descriptor::NesConsoleDescriptor;
-use nerust_gui_shell::input::NesInputAdapter;
+use nerust_gui_shell::session::NesSession;
 use nerust_input_schema::DigitalInputEvent;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
@@ -26,16 +24,14 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub(crate) struct State {
     view: Option<GlBackend>,
-    session: GuiSession,
-    input: NesInputAdapter,
+    session: NesSession,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
             view: None,
-            session: NesConsoleDescriptor.build_session(),
-            input: NesInputAdapter::new(),
+            session: NesSession::new(),
         }
     }
 
@@ -61,7 +57,6 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
-            self.input.sync_from_session(&self.session);
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -75,11 +70,7 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        let unloaded = self.session.unload();
-        if unloaded {
-            self.input.sync_from_session(&self.session);
-        }
-        unloaded
+        self.session.unload()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -87,25 +78,15 @@ impl State {
     }
 
     pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        let outcome = self.session.run_command(command);
-        if outcome.executed
-            && matches!(
-                command,
-                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
-            )
-        {
-            self.input.sync_from_session(&self.session);
-        }
-        outcome
+        self.session.run_command(command)
     }
 
     pub(crate) fn handle_controller_input(&mut self, event: DigitalInputEvent) {
-        self.input.handle_input(event);
-        self.input.flush_to_session(&mut self.session);
+        self.session.handle_controller_input(event);
     }
 
     pub(crate) fn clear_controller_input(&mut self) {
-        self.input.clear(&mut self.session);
+        self.session.clear_controller_input();
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {
