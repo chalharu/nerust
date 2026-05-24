@@ -7,7 +7,7 @@
 // Mapper 0
 
 use super::Cartridge;
-use crate::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 

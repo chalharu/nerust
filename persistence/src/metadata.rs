@@ -1,6 +1,9 @@
 use crate::error::PersistenceError;
 use crate::time::unix_millis;
-use nerust_contract::{MirrorMode, Mmc3IrqVariant, PersistenceTarget, RomFormat};
+use nerust_contract_mirror::MirrorMode;
+use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_rom::RomFormat;
 use std::io::{Read, Seek};
 use std::time::SystemTime;
 use zip::ZipArchive;

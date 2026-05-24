@@ -1,6 +1,9 @@
 use super::*;
-use crate::screen_api::{FilterType, LogicalSize, ScreenBuffer};
-use crate::{Console, ControllerInputs, CoreOptions, Mmc3IrqVariant};
+use crate::{Console, ControllerInputs};
+use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_logical::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

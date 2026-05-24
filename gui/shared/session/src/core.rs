@@ -1,7 +1,8 @@
-use crate::console_api::{
-    Console, ConsoleError, ConsoleMetrics, ConsoleVideo, ControllerInputs, ControllerPort,
-    CoreOptions, PersistenceTarget, StateExport,
-};
+use nerust_console::state::StateExport;
+use nerust_console::video::ConsoleVideo;
+use nerust_console::{Console, ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
+use nerust_contract_options::CoreOptions;
+use nerust_contract_persistence::PersistenceTarget;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -132,8 +133,8 @@ impl SessionCore {
 #[cfg(test)]
 mod tests {
     use super::SessionCore;
-    use crate::console_api::Console;
-    use nerust_screen_buffer::ScreenBuffer;
+    use nerust_console::Console;
+    use nerust_screen_buffer::screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
 
     #[derive(Default)]

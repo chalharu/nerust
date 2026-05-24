@@ -1,0 +1,11 @@
+[package]
+name = "nerust_contract_persistence"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_contract_options.workspace = true
+nerust_contract_rom.workspace = true

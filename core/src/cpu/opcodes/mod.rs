@@ -56,42 +56,25 @@ macro_rules! accumulate_memory {
     };
 }
 
-mod arithmetic;
-mod bit;
-mod combined;
-mod compare;
-mod condition_jump;
-mod decrement;
-mod flag_control;
-mod increment;
-pub(crate) mod interrupt;
-mod jump;
-mod load;
-mod nop;
-mod rmw;
-mod shift;
-mod stack;
-mod store;
-mod transfer;
+pub(super) mod arithmetic;
+pub(super) mod bit;
+pub(super) mod combined;
+pub(super) mod compare;
+pub(super) mod condition_jump;
+pub(super) mod decrement;
+pub(super) mod flag_control;
+pub(super) mod increment;
+pub(super) mod interrupt;
+pub(super) mod jump;
+pub(super) mod load;
+pub(super) mod nop;
+pub(super) mod rmw;
+pub(super) mod shift;
+pub(super) mod stack;
+pub(super) mod store;
+pub(super) mod transfer;
 
-pub(crate) use self::arithmetic::*;
-pub(crate) use self::bit::*;
-pub(crate) use self::combined::*;
-pub(crate) use self::compare::*;
-pub(crate) use self::condition_jump::*;
-pub(crate) use self::decrement::*;
-pub(crate) use self::flag_control::*;
-pub(crate) use self::increment::*;
-pub(crate) use self::interrupt::*;
-pub(crate) use self::jump::*;
-pub(crate) use self::load::*;
-pub(crate) use self::nop::*;
-pub(crate) use self::rmw::*;
-pub(crate) use self::shift::*;
-pub(crate) use self::stack::*;
-pub(crate) use self::store::*;
-pub(crate) use self::transfer::*;
-pub(super) use super::CpuCartridgeBus;
+use super::CpuCartridgeBus;
 use super::{
     Apu, Controller, Core, CpuStatesEnum, CpuStepStateEnum, Ppu, Register, read_dummy_current,
 };

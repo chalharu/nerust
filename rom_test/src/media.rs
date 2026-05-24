@@ -6,7 +6,7 @@
 
 use super::error::RomTestError;
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_screen_buffer::ScreenBuffer;
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::MixerInput;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::{Hash, Hasher};

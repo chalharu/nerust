@@ -1,6 +1,12 @@
-use crate::core_api::{Buttons, Core, RomIdentity, StandardController, StandardControllerSnapshot};
-use crate::screen_api::ScreenBuffer;
-use crate::{ConsoleError, ControllerInputs, CoreOptions, PersistenceTarget};
+use crate::{ConsoleError, ControllerInputs};
+use nerust_contract_options::CoreOptions;
+use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_rom::RomIdentity;
+use nerust_core::Core;
+use nerust_core::controller::standard_controller::{
+    Buttons, StandardController, StandardControllerSnapshot,
+};
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 
 /// Compatibility version for the console-owned wrapper around opaque core machine-state bytes.
 ///

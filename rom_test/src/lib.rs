@@ -9,7 +9,6 @@
     reason = "different harness targets reuse this facade with different subsets of the shared API"
 )]
 
-mod core_api;
 pub mod error;
 pub mod events;
 pub mod harness;
@@ -19,26 +18,6 @@ pub mod perf;
 pub mod report;
 pub mod results;
 pub mod runner;
-mod screen_api;
 mod serde_helpers;
 #[cfg(test)]
 mod tests;
-
-pub use self::error::RomTestError;
-pub use self::events::{
-    ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent, RomEventKind,
-};
-pub use self::harness::{CaseHarness, drive_case};
-pub use self::manifest::{
-    AudioExpectation, DEFAULT_AUDIO_SAMPLE_RATE, RomCase, RomCategory, RomManifest,
-    default_manifest_path, load_default_manifest, load_manifest, read_rom,
-};
-pub use self::report::{ReportSummary, default_output_root, write_html_report};
-pub use self::results::{
-    AudioObservation, CartridgeRamCheck, CaseOutcome, CaseValidation, ExecutionTotals,
-    PpuVramCheck, ScreenCheck, ValidationOptions, WorkRamCheck,
-};
-pub use self::runner::validate_case;
-
-#[cfg(test)]
-pub(crate) use self::manifest::apply_case_rom_overrides;

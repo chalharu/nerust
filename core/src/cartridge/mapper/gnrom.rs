@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use crate::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
@@ -80,12 +80,12 @@ impl Mapper for GnRom {
 mod tests {
     use super::Cartridge;
     use super::GnRom;
-    use crate::CartridgeData;
-    use crate::CartridgeDataParts;
-    use crate::RomFormat;
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

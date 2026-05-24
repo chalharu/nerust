@@ -1,4 +1,5 @@
-use nerust_persistence::{StateSlotSummary, format_slot_saved_at};
+use nerust_persistence::model::StateSlotSummary;
+use nerust_persistence::time::format_slot_saved_at;
 
 pub fn slot_label(slot: &StateSlotSummary, active_slot: Option<u64>) -> String {
     let saved_at = format_slot_saved_at(slot.saved_at);
@@ -39,7 +40,7 @@ pub(crate) fn adjacent_slot_id(
 #[cfg(test)]
 mod tests {
     use super::{adjacent_slot_id, slot_label};
-    use nerust_persistence::StateSlotSummary;
+    use nerust_persistence::model::StateSlotSummary;
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
 

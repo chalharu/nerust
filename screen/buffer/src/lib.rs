@@ -4,12 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod screen_buffer;
+pub mod screen_buffer;
 mod screen_buffer_unit;
-mod traits_api;
-
-pub use screen_buffer::ScreenBuffer;
-pub mod video_api;
 
 fn allocate<T: Default + Clone>(size: usize) -> Box<[T]> {
     // let mut buffer = Vec::with_capacity(size);

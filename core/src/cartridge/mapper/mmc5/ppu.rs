@@ -1,6 +1,7 @@
-use super::mmc5_mapper_api::{CartridgeDataDao, MapperStateDao};
 use super::{ChrBankSet, Mmc5};
 use crate::OpenBusReadResult;
+use crate::mapper::CartridgeDataDao;
+use crate::mapper_state::MapperStateDao;
 use crate::ppu_memory_access::PpuReadAccess;
 
 impl Mmc5 {

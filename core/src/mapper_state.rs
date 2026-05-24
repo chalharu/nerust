@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::status::mirror_mode::MirrorMode;
+use nerust_contract_mirror::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 pub(crate) enum MappingMode {
@@ -14,11 +14,11 @@ pub(crate) enum MappingMode {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct MapperState {
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     pub(crate) program_page_table: [Option<usize>; 256],
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     pub(crate) character_page_table: [Option<usize>; 256],
-    #[serde(with = "nerust_serialize::BigArray")]
+    #[serde(with = "nerust_serialize::array::BigArray")]
     pub(crate) sram_page_table: [Option<usize>; 256],
     pub(crate) sram: Vec<u8>,
     pub(crate) vram: Vec<u8>,

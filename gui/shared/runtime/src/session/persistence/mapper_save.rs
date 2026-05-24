@@ -1,5 +1,7 @@
 use super::GuiSession;
-use nerust_persistence::{load_mapper_save, write_mapper_save, write_recovery_mapper_save};
+use nerust_persistence::sidecar::{
+    load_mapper_save, write_mapper_save, write_recovery_mapper_save,
+};
 
 impl GuiSession {
     pub(super) fn load_mapper_save_if_available(&mut self) -> Result<(), String> {

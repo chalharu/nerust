@@ -7,7 +7,7 @@
 use clap::{Arg, Command};
 use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
-use nerust_wgpu::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
+use nerust_wgpu::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
 use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{BufReader, Read};
