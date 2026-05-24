@@ -1,7 +1,8 @@
 use super::{GuiSession, commands::redraw_needed_after_pause_change};
-use crate::console_api::{Console, ConsoleMetrics};
-use crate::{SessionCore, window_title};
-use nerust_screen_buffer::ScreenBuffer;
+use nerust_console::{Console, ConsoleMetrics};
+use nerust_gui_session::core::SessionCore;
+use nerust_gui_session::title::window_title;
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
 
 #[derive(Default)]

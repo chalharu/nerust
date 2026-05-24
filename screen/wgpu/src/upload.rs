@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::traits_api::LogicalSize;
+use nerust_screen_traits::logical_size::LogicalSize;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct FrameUploadLayout {
@@ -70,7 +70,7 @@ pub(crate) fn pack_frame_rows(
 #[cfg(test)]
 mod tests {
     use super::{FrameUploadLayout, pack_frame_rows};
-    use crate::traits_api::LogicalSize;
+    use nerust_screen_traits::logical_size::LogicalSize;
 
     #[test]
     fn aligned_upload_layout_keeps_native_row_pitch() {

@@ -7,14 +7,14 @@
 // Mapper 1
 
 use super::Cartridge;
-use super::mapper_save_api::{
-    CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError, decode_payload, encode_payload,
-};
-use crate::CartridgeData;
+use crate::cartridge_data::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::status::mirror_mode::MirrorMode;
+use crate::persistence::{
+    CartridgeRuntimeState, MAPPER_KIND_SXROM, PersistenceError, decode_payload, encode_payload,
+};
+use nerust_contract::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct SxRom {
@@ -326,12 +326,11 @@ impl Mapper for SxRom {
 mod tests {
     use super::Cartridge;
     use super::SxRom;
-    use crate::CartridgeData;
-    use crate::CartridgeDataParts;
-    use crate::RomFormat;
+    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
     use crate::mapper::Mapper;
     use crate::mapper_state::MapperStateDao;
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract::MirrorMode;
+    use nerust_contract::RomFormat;
 
     fn new_mapper(prg_rom_len: usize, chr_rom_len: usize, prg_ram_banks_8k: u8) -> SxRom {
         let data = CartridgeData::new(CartridgeDataParts {

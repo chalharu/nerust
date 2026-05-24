@@ -1,6 +1,6 @@
 use super::GuiSession;
-use crate::session_api::{SessionCommand, SessionCommandOutcome};
 use crate::slots::adjacent_slot_id;
+use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 
 impl GuiSession {
     pub fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {

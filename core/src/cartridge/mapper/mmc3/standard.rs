@@ -5,12 +5,13 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use super::mapper4_api::{CartridgeData, MapperState};
-use super::mapper4_persistence_api::{CartridgeRuntimeState, PersistenceError};
 use super::shared::{
     IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
     PrgRamModel,
 };
+use crate::cartridge_data::CartridgeData;
+use crate::mapper_state::MapperState;
+use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize)]
 pub(super) struct Mmc3 {
@@ -152,11 +153,14 @@ impl Mapper4Wrapper for Mmc3 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::mapper4_api::{CartridgeDataParts, Mapper, MirrorMode, RomFormat};
     use super::{
         CartridgeData, IrqVariant, LegacyIrqUnit, LegacyIrqVariant, LegacyMmc3State,
         LegacyPrgRamModel, MapperState, Mmc3, Mmc3Deserialized, PrgRamModel,
     };
+    use crate::cartridge_data::CartridgeDataParts;
+    use crate::mapper::Mapper;
+    use nerust_contract::MirrorMode;
+    use nerust_contract::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

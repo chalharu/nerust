@@ -4,11 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod core_api;
 mod ines;
 mod nes20;
 
-use crate::core_api::{CartridgeData, CartridgeDataParts, MirrorMode};
+use nerust_contract::MirrorMode;
+use nerust_core::cartridge_data::{CartridgeData, CartridgeDataParts};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CartridgeParseError {
@@ -57,7 +57,7 @@ fn validate_mirror_mode(mirror_mode: u8) -> Result<MirrorMode, CartridgeParseErr
 #[cfg(test)]
 mod tests {
     use super::parse_cartridge_bytes;
-    use crate::core_api::{MirrorMode, RomFormat};
+    use nerust_contract::{MirrorMode, RomFormat};
 
     #[test]
     fn parses_ines_metadata() {

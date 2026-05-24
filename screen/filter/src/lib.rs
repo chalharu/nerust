@@ -6,14 +6,12 @@
 
 mod filters;
 pub mod presentation;
-mod traits_api;
-
-pub use crate::presentation::{ConsoleVideoAssets, NesVideoAssets};
-use crate::presentation::{
-    VideoFilterPipeline, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+use crate::presentation::{ConsoleVideoAssets, NesVideoAssets, VideoFilterPipeline};
+use nerust_screen_traits::{
+    VideoFrameFormat, VideoFrameSpec, VideoPresentation, logical_size::LogicalSize,
+    physical_size::PhysicalSize, rgb::RGB,
 };
-use crate::traits_api::{LogicalSize, PhysicalSize, RGB};
-use nes_ntsc::{Setup, ShaderKernelEntry};
+use nes_ntsc::{ShaderKernelEntry, setup::Setup};
 
 pub const BLACK_PALETTE_INDEX: u8 = nes_ntsc::BLACK;
 pub const PALETTE_TEXTURE_WIDTH: u32 = 64;
@@ -254,7 +252,7 @@ mod tests {
         PALETTE_TEXTURE_WIDTH,
         presentation::{VideoFrameFormat, VideoPresentationPipelineKind},
     };
-    use crate::traits_api::{LogicalSize, RGB};
+    use nerust_screen_traits::{logical_size::LogicalSize, rgb::RGB};
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
         [0, 19, 31, 7, 26, 38],

@@ -1,11 +1,11 @@
 use super::Mmc5;
-use super::mmc5_persistence_api::PersistenceError;
 use crate::apu::envelope::{Envelope, EnvelopeDao, HaveEnvelopeDao};
 use crate::apu::length_counter::{
     HaveLengthCounter, HaveLengthCounterDao, LengthCounter, LengthCounterDao,
 };
 use crate::apu::timer::{HaveTimerDao, TimerDao};
 use crate::interrupt::Interrupt;
+use crate::persistence::PersistenceError;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
     [false, true, false, false, false, false, false, false],

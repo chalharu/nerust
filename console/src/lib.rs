@@ -4,27 +4,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod core_api;
 mod runner;
-mod screen_api;
-mod state;
-mod video;
+pub mod state;
+pub mod video;
 
-use self::core_api::{CartridgeData, Core};
-pub use self::core_api::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
-use self::runner::{ConsoleData, ConsoleRunner};
-use self::screen_api::{FilterType, LogicalSize, PhysicalSize, ScreenBuffer};
+use self::runner::ConsoleRunner;
+use self::runner::data::ConsoleData;
+use self::state::StateExport;
+use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
+use nerust_core::Core;
+use nerust_core::cartridge_data::CartridgeData;
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_traits::{logical_size::LogicalSize, physical_size::PhysicalSize};
 use nerust_sound_traits::{MixerInput, Sound};
-pub use state::{PreviewFrame, StateExport};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
 use thiserror::Error;
-pub use video::ConsoleVideo;
 
 // The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);

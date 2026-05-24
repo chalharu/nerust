@@ -1,5 +1,5 @@
 use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
-use crate::state_slot_path;
+use crate::slots::state_slot_path;
 use crate::time::unix_millis;
 use nerust_contract::{CoreOptions, PersistenceTarget, RomIdentity};
 use std::env;

@@ -13,27 +13,30 @@ mod apu;
 mod cart_device;
 mod cartridge;
 mod cartridge_bus;
-mod cartridge_data;
-mod cartridge_error;
+pub mod cartridge_data;
+pub mod cartridge_error;
 pub mod controller;
 mod cpu;
 mod interrupt;
 mod mapper;
 mod mapper_state;
-mod persistence;
+pub mod persistence;
 mod ppu;
-mod ppu_bus_event;
 mod ppu_memory_access;
-mod screen_api;
-mod status;
 
 use self::apu::Core as Apu;
 use self::cart_device::Cartridge;
+use self::cartridge_data::CartridgeData;
+#[cfg(test)]
+use self::cartridge_data::CartridgeDataParts;
 use self::controller::Controller;
 use self::cpu::Core as Cpu;
 use self::ppu::Core as Ppu;
-use self::screen_api::Screen;
 use crc::{CRC_64_XZ, Crc, Digest};
+#[cfg(test)]
+use nerust_contract::Mmc3IrqVariant;
+use nerust_contract::{CoreOptions, MirrorMode, RomFormat, RomIdentity};
+use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -51,12 +54,6 @@ fn crc64(bytes: &[u8]) -> u64 {
     hasher.0.update(bytes);
     hasher.0.finalize()
 }
-
-pub use self::cartridge_data::{CartridgeData, CartridgeDataParts};
-pub use self::cartridge_error::CartridgeError;
-pub use self::persistence::PersistenceError;
-pub use self::status::mirror_mode::MirrorMode;
-pub use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget, RomFormat, RomIdentity};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -96,7 +93,7 @@ pub struct Core {
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct MapperSavePayload {
     schema_version: u32,
-    rom_identity: persistence::RomIdentity,
+    rom_identity: RomIdentity,
     options: CoreOptions,
     #[serde(with = "serde_bytes")]
     prg_ram: Vec<u8>,
@@ -112,7 +109,7 @@ struct MapperSavePayload {
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct MachineStatePayload {
     schema_version: u32,
-    rom_identity: persistence::RomIdentity,
+    rom_identity: RomIdentity,
     options: CoreOptions,
     cpu: Cpu,
     ppu: Ppu,

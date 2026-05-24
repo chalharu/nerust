@@ -3,8 +3,8 @@ use super::{
     setup::{composed_shader_source, encode_ntsc_texture},
 };
 use crate::SurfaceSize;
-use crate::traits_api::PhysicalSize;
 use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
+use nerust_screen_traits::physical_size::PhysicalSize;
 
 #[test]
 fn viewport_preserves_aspect_ratio() {

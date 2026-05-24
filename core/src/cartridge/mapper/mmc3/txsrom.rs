@@ -5,9 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use super::mapper4_api::CartridgeData;
-use super::mapper4_persistence_api::{CartridgeRuntimeState, PersistenceError};
 use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
+use crate::cartridge_data::CartridgeData;
+use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct TxSrom {
@@ -50,10 +50,13 @@ impl Mapper4Wrapper for TxSrom {
 
 #[cfg(test)]
 mod tests {
-    use super::super::mapper4_api::{CartridgeDataParts, Mapper, MirrorMode, RomFormat};
     use super::Cartridge;
     use super::{CartridgeData, TxSrom};
+    use crate::cartridge_data::CartridgeDataParts;
     use crate::interrupt::Interrupt;
+    use crate::mapper::Mapper;
+    use nerust_contract::MirrorMode;
+    use nerust_contract::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

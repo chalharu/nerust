@@ -5,14 +5,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use super::mapper_save_api::{
-    CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError, decode_payload, encode_payload,
-};
-use crate::CartridgeData;
+use crate::cartridge_data::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::status::mirror_mode::MirrorMode;
+use crate::persistence::{
+    CartridgeRuntimeState, MAPPER_KIND_ACTION53, PersistenceError, decode_payload, encode_payload,
+};
+use nerust_contract::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct Action53RuntimeState {
@@ -226,12 +226,11 @@ impl Mapper for Action53 {
 mod tests {
     use super::Action53;
     use super::Cartridge;
-    use crate::CartridgeData;
-    use crate::CartridgeDataParts;
-    use crate::RomFormat;
+    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract::MirrorMode;
+    use nerust_contract::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

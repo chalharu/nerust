@@ -6,12 +6,13 @@
 
 use super::Renderer;
 use crate::{
-    RenderSurface, SurfaceSize, SurfaceTargetSource, srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
-    traits_api::VideoPresentation, upload::FrameUploadLayout,
+    srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
+    surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
+    upload::FrameUploadLayout,
 };
-use nerust_screen_filter::{
-    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, NesVideoAssets, PALETTE_TEXTURE_WIDTH,
-};
+use nerust_screen_filter::presentation::NesVideoAssets;
+use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_traits::VideoPresentation;
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,

@@ -4,9 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::RomFormat;
 use crate::cartridge_error::CartridgeError;
-use crate::status::mirror_mode::MirrorMode;
+use nerust_contract::MirrorMode;
+use nerust_contract::RomFormat;
 
 #[derive(Debug, Clone)]
 pub struct CartridgeDataParts {
@@ -160,7 +160,7 @@ impl CartridgeData {
 }
 
 mod mirror_mode_serde {
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract::MirrorMode;
     use serde::{Deserialize as _, Deserializer, Serializer, de::Error};
     use serde_derive::Deserialize;
 
@@ -216,7 +216,7 @@ mod mirror_mode_serde {
 mod tests {
     use super::{CartridgeData, CartridgeDataParts, RomFormat};
     use crate::Core;
-    use crate::status::mirror_mode::MirrorMode;
+    use nerust_contract::MirrorMode;
 
     #[test]
     fn inspect_cartridge_reads_ines_metadata() {

@@ -4,7 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::core_api::{Buttons, Core, StandardController};
 use crate::error::RomTestError;
 use crate::events::{ButtonCode, ControllerPad, PadState};
 use crate::harness::apply_button_state;
@@ -12,10 +11,11 @@ use crate::manifest::RomCase;
 use crate::media::HashingMixer;
 use crate::media::{encode_screenshot_png, screen_hash};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_screen_buffer::{
-    ScreenBuffer,
-    video_api::{FilterType, LogicalSize},
-};
+use nerust_core::Core;
+use nerust_core::controller::standard_controller::{Buttons, StandardController};
+use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_traits::logical_size::LogicalSize;
 use nerust_sound_traits::MixerInput;
 
 pub(super) struct ValidationRuntime {

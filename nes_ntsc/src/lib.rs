@@ -5,9 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod init;
-mod setup;
+pub mod setup;
 
-pub use self::setup::Setup;
+use self::setup::Setup;
 use self::setup::SetupValues;
 
 use self::init::Init;
