@@ -11,22 +11,46 @@ mod oamdma;
 mod opcodes;
 mod register;
 
-use self::addressing_mode::*;
+use self::addressing_mode::{
+    AddressingModeLut, absolute::Absolute, absolute_indirect::AbsoluteIndirect,
+    absolute_x::AbsoluteX, absolute_x_rmw::AbsoluteXRMW, absolute_y::AbsoluteY,
+    absolute_y_rmw::AbsoluteYRMW, accumulator::Accumulator, immediate::Immediate, implied::Implied,
+    indexed_indirect::IndexedIndirect, indirect_indexed::IndirectIndexed,
+    indirect_indexed_rmw::IndirectIndexedRMW, relative::Relative, zero_page::ZeroPage,
+    zero_page_x::ZeroPageX, zero_page_y::ZeroPageY,
+};
 use self::internal_stat::{CpuStatesEnum, InternalStat};
 use self::memory::Memory;
 use self::oamdma::OamDmaState;
 use self::opcodes::{
-    interrupt::{Irq, Reset},
-    *,
+    Opcodes,
+    arithmetic::{Adc, And, Eor, Ora, Sbc},
+    bit::Bit,
+    combined::{Ahx, Alr, Anc, Arr, Axs, Las, Lax, Sax, Shx, Shy, Tas, Xaa},
+    compare::{Cmp, Cpx, Cpy},
+    condition_jump::{Bcc, Bcs, Beq, Bmi, Bne, Bpl, Bvc, Bvs},
+    decrement::{Dec, Dex, Dey},
+    flag_control::{Clc, Cld, Cli, Clv, Sec, Sed, Sei},
+    increment::{Inc, Inx, Iny},
+    interrupt::{Brk, Irq, Reset, Rti},
+    jump::{Jmp, Jsr, Rts},
+    load::{Lda, Ldx, Ldy},
+    nop::{Kil, Nop},
+    rmw::{Dcp, Isc, Rla, Rra, Slo, Sre},
+    shift::{AslAcc, AslMem, LsrAcc, LsrMem, RolAcc, RolMem, RorAcc, RorMem},
+    stack::{Pha, Php, Pla, Plp},
+    store::{Sta, Stx, Sty},
+    transfer::{Tax, Tay, Tsx, Txa, Txs, Tya},
 };
 use self::register::{Register, RegisterP};
 use crate::cart_device::Cartridge as MapperCartridge;
 use crate::cartridge_bus::{CpuCartridgeBus, mapper_cartridge_bus};
 use crate::interrupt::{DmcDmaKind, Interrupt, IrqSource};
-use crate::{Apu, Controller, PersistenceError, Ppu};
+use crate::persistence::PersistenceError;
+use crate::{Apu, Controller, Ppu};
 use std::ops::Shr;
 
-pub(super) use crate::cartridge_bus::CpuCartridgeBus as Cartridge;
+use crate::cartridge_bus::CpuCartridgeBus as Cartridge;
 
 fn page_crossed<T: Shr<usize>>(a: T, b: T) -> bool
 where

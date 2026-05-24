@@ -6,12 +6,11 @@
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::Core;
-use crate::RomFormat;
 use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
 use crate::controller::standard_controller::StandardController;
-use crate::screen_api::Screen;
-use crate::status::mirror_mode::MirrorMode;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use nerust_contract::{MirrorMode, RomFormat};
+use nerust_screen_traits::Screen;
 use nerust_sound_traits::MixerInput;
 use std::io::Cursor;
 

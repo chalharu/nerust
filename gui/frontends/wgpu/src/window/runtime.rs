@@ -4,15 +4,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::app_menu::{AppMenu, MenuCommand, UserEvent};
-use crate::shell_api::options::CoreOptions;
-use crate::shell_api::shell_api::{
-    ControllerInput, ControllerPort, GuiSession, InputState, SessionCommand, SessionCommandOutcome,
-    WindowSize,
-};
-use crate::shell_api::{NativeShellState, NesConsoleDescriptor, NesInputAdapter};
+use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
-use nerust_backend_wgpu::{RenderResult, SurfaceSize, WgpuBackend};
+use nerust_backend_wgpu::{RenderResult, WgpuBackend};
+use nerust_console::ControllerPort;
+use nerust_contract::CoreOptions;
+use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
+use nerust_gui_session::core::WindowSize;
+use nerust_gui_session::input::{ControllerInput, InputState};
+use nerust_gui_shell::descriptor::NesConsoleDescriptor;
+use nerust_gui_shell::input::NesInputAdapter;
+use nerust_gui_shell::state::NativeShellState;
+use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -358,7 +362,7 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use crate::shell_api::shell_api::ControllerInput;
+    use nerust_gui_session::input::ControllerInput;
     use tao::keyboard::KeyCode;
 
     #[test]

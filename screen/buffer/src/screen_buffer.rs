@@ -6,8 +6,11 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
-use super::traits_api::{LogicalSize, PhysicalSize, Screen, VideoPresentation};
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, ConsoleVideoAssets, FilterType, NesFilter};
+use nerust_screen_filter::presentation::ConsoleVideoAssets;
+use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
+use nerust_screen_traits::{
+    Screen, VideoPresentation, logical_size::LogicalSize, physical_size::PhysicalSize,
+};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -239,10 +242,9 @@ impl Hash for ScreenBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::super::traits_api::{LogicalSize, Screen};
     use super::ScreenBuffer;
     use nerust_screen_filter::FilterType;
-    use nerust_screen_filter::presentation::VideoFrameFormat;
+    use nerust_screen_traits::{Screen, VideoFrameFormat, logical_size::LogicalSize};
 
     #[test]
     fn all_filters_publish_full_frames() {

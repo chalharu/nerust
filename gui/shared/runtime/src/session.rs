@@ -2,11 +2,11 @@ mod commands;
 mod persistence;
 
 use self::persistence::PersistenceState;
-use crate::StateSlotSummary;
-use crate::console_api::{ConsoleMetrics, ControllerInputs};
-use crate::session_api::{
-    ConsoleError, ConsoleVideo, ControllerPort, SessionCore, WindowSize, window_title,
-};
+use nerust_console::video::ConsoleVideo;
+use nerust_console::{ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
+use nerust_gui_session::core::{SessionCore, WindowSize};
+use nerust_gui_session::title::window_title;
+use nerust_persistence::model::StateSlotSummary;
 
 pub trait ConsoleSessionFactory {
     fn build_session(&self) -> GuiSession;

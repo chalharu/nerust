@@ -10,7 +10,7 @@ use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
 use crate::persistence::{CartridgeRuntimeState, PersistenceError};
 use crate::ppu_memory_access::PpuReadAccess;
-use crate::status::mirror_mode::MirrorMode;
+use nerust_contract::MirrorMode;
 use std::cmp;
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {

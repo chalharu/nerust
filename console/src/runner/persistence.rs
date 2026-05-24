@@ -1,5 +1,6 @@
 use super::ConsoleRunner;
-use crate::{ConsoleError, ConsoleReply, PersistenceTarget, core_api::Core, state};
+use crate::{ConsoleError, ConsoleReply, PersistenceTarget, state};
+use nerust_core::Core;
 
 impl ConsoleRunner {
     pub(super) fn export_mapper_save_reply(

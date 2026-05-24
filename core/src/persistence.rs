@@ -14,8 +14,6 @@
 
 use thiserror::Error;
 
-pub use crate::RomIdentity;
-
 /// Compatibility version for `MachineStatePayload` and `MapperSavePayload`.
 pub(crate) const PERSISTENCE_SCHEMA_VERSION: u32 = 2;
 

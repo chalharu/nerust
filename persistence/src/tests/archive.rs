@@ -1,9 +1,8 @@
 use super::support::{prepare_test_dir, test_metadata, test_rom_identity, write_fixture_archive};
 use crate::archive::build_state_archive;
 use crate::metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY};
-use crate::{
-    ThumbnailSource, load_state_slot, scan_state_slots, state_slot_path, write_state_slot,
-};
+use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
+use crate::thumbnail::ThumbnailSource;
 use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};

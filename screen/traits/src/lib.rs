@@ -4,13 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod logical_size;
-mod physical_size;
-mod rgb;
+pub mod logical_size;
+pub mod physical_size;
+pub mod rgb;
 
-pub use logical_size::LogicalSize;
-pub use physical_size::PhysicalSize;
-pub use rgb::RGB;
+use crate::logical_size::LogicalSize;
+use crate::physical_size::PhysicalSize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoFrameFormat {

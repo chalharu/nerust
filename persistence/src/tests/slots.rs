@@ -1,8 +1,9 @@
 use super::support::{prepare_test_dir, test_rom_identity, test_target};
-use crate::{
-    ThumbnailSource, allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots,
+use crate::slots::{
+    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots,
     scan_state_slots_for_target, state_slot_path, write_state_slot,
 };
+use crate::thumbnail::ThumbnailSource;
 use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget, RomFormat, RomIdentity};
 use std::fs;
 
