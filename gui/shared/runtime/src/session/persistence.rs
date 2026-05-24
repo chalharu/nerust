@@ -2,9 +2,10 @@ mod mapper_save;
 mod slots;
 
 use super::GuiSession;
+use crate::settings::SettingsError;
 use nerust_contract_options::CoreOptions;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
+use nerust_persistence::sidecar::SidecarPaths;
 use nerust_persistence::time::latest_saved_slot_id;
 
 #[derive(Debug, Default)]
@@ -49,7 +50,19 @@ impl GuiSession {
             log::warn!("ROM load failed: {error}");
             return false;
         }
-        self.persistence.sidecars = rom_path.as_deref().map(resolve_sidecars);
+        self.persistence.sidecars = rom_path.as_deref().and_then(|rom_path| {
+            match self.settings.resolve_persistence_paths(rom_path) {
+                Ok(paths) => Some(paths),
+                Err(SettingsError::PersistenceUnavailable) => {
+                    log::warn!("desktop settings persistence store is unavailable; disabling ROM persistence");
+                    None
+                }
+                Err(error) => {
+                    log::warn!("desktop persistence path resolution failed: {error}");
+                    None
+                }
+            }
+        });
         self.persistence.mapper_save_flush_allowed = true;
         self.persistence.mapper_save_recovery_written = false;
         self.persistence.active_slot_id = None;

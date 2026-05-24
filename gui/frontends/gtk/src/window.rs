@@ -1,12 +1,16 @@
 use super::glarea::{GLArea, GLAreaExtend};
+use super::preferences::present_preferences_dialog;
 use super::{State, TITLE_UPDATE_INTERVAL};
 use gtk::gio;
 use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
+use nerust_contract_settings::{KeyboardKey, ShortcutAction};
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::input::NesButton;
+use nerust_gui_shell::settings::{
+    controller_event_for_key, current_or_default, shortcut_command_for_key,
+};
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
 use std::fs::File;
@@ -40,6 +44,7 @@ pub(crate) struct WindowCore {
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
     delete_slot_menu: gio::Menu,
+    fullscreened: bool,
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -70,16 +75,54 @@ pub(crate) enum KeyEventState {
     Release,
 }
 
-fn gdk_key_controller_input(key: gdk::Key) -> Option<NesButton> {
+fn gdk_key_settings_key(key: gdk::Key) -> Option<KeyboardKey> {
     Some(match key {
-        gdk::Key::z => NesButton::A,
-        gdk::Key::x => NesButton::B,
-        gdk::Key::c => NesButton::Select,
-        gdk::Key::v => NesButton::Start,
-        gdk::Key::Up => NesButton::Up,
-        gdk::Key::Down => NesButton::Down,
-        gdk::Key::Left => NesButton::Left,
-        gdk::Key::Right => NesButton::Right,
+        gdk::Key::a | gdk::Key::A => KeyboardKey::KeyA,
+        gdk::Key::b | gdk::Key::B => KeyboardKey::KeyB,
+        gdk::Key::c | gdk::Key::C => KeyboardKey::KeyC,
+        gdk::Key::d | gdk::Key::D => KeyboardKey::KeyD,
+        gdk::Key::e | gdk::Key::E => KeyboardKey::KeyE,
+        gdk::Key::f | gdk::Key::F => KeyboardKey::KeyF,
+        gdk::Key::g | gdk::Key::G => KeyboardKey::KeyG,
+        gdk::Key::h | gdk::Key::H => KeyboardKey::KeyH,
+        gdk::Key::i | gdk::Key::I => KeyboardKey::KeyI,
+        gdk::Key::j | gdk::Key::J => KeyboardKey::KeyJ,
+        gdk::Key::k | gdk::Key::K => KeyboardKey::KeyK,
+        gdk::Key::l | gdk::Key::L => KeyboardKey::KeyL,
+        gdk::Key::m | gdk::Key::M => KeyboardKey::KeyM,
+        gdk::Key::n | gdk::Key::N => KeyboardKey::KeyN,
+        gdk::Key::o | gdk::Key::O => KeyboardKey::KeyO,
+        gdk::Key::p | gdk::Key::P => KeyboardKey::KeyP,
+        gdk::Key::q | gdk::Key::Q => KeyboardKey::KeyQ,
+        gdk::Key::r | gdk::Key::R => KeyboardKey::KeyR,
+        gdk::Key::s | gdk::Key::S => KeyboardKey::KeyS,
+        gdk::Key::t | gdk::Key::T => KeyboardKey::KeyT,
+        gdk::Key::u | gdk::Key::U => KeyboardKey::KeyU,
+        gdk::Key::v | gdk::Key::V => KeyboardKey::KeyV,
+        gdk::Key::w | gdk::Key::W => KeyboardKey::KeyW,
+        gdk::Key::x | gdk::Key::X => KeyboardKey::KeyX,
+        gdk::Key::y | gdk::Key::Y => KeyboardKey::KeyY,
+        gdk::Key::z | gdk::Key::Z => KeyboardKey::KeyZ,
+        gdk::Key::Up => KeyboardKey::ArrowUp,
+        gdk::Key::Down => KeyboardKey::ArrowDown,
+        gdk::Key::Left => KeyboardKey::ArrowLeft,
+        gdk::Key::Right => KeyboardKey::ArrowRight,
+        gdk::Key::Return => KeyboardKey::Enter,
+        gdk::Key::Escape => KeyboardKey::Escape,
+        gdk::Key::space => KeyboardKey::Space,
+        gdk::Key::Tab => KeyboardKey::Tab,
+        gdk::Key::F1 => KeyboardKey::F1,
+        gdk::Key::F2 => KeyboardKey::F2,
+        gdk::Key::F3 => KeyboardKey::F3,
+        gdk::Key::F4 => KeyboardKey::F4,
+        gdk::Key::F5 => KeyboardKey::F5,
+        gdk::Key::F6 => KeyboardKey::F6,
+        gdk::Key::F7 => KeyboardKey::F7,
+        gdk::Key::F8 => KeyboardKey::F8,
+        gdk::Key::F9 => KeyboardKey::F9,
+        gdk::Key::F10 => KeyboardKey::F10,
+        gdk::Key::F11 => KeyboardKey::F11,
+        gdk::Key::F12 => KeyboardKey::F12,
         _ => return None,
     })
 }
@@ -130,6 +173,7 @@ impl WindowExtend for Window {
         let close_action = gio::SimpleAction::new("close", None);
         let pause_action = gio::SimpleAction::new("pause", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        let preferences_action = gio::SimpleAction::new("preferences", None);
         let state_create_action = gio::SimpleAction::new("state-create", None);
         let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
         let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
@@ -141,6 +185,10 @@ impl WindowExtend for Window {
             gio::SimpleAction::new("state-load-slot", Some(&u64::static_variant_type()));
         let state_delete_slot_action =
             gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
+        let fullscreened = {
+            let settings = state.borrow().settings();
+            current_or_default(&settings).video.fullscreen
+        };
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
@@ -160,6 +208,7 @@ impl WindowExtend for Window {
             save_slot_menu: state_menus.save_slot_menu,
             load_slot_menu: state_menus.load_slot_menu,
             delete_slot_menu: state_menus.delete_slot_menu,
+            fullscreened,
         }));
         let _ = GLArea::bind(glarea.clone(), result.state());
         {
@@ -175,7 +224,18 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = window.connect_is_active_notify(move |window| {
                 if !window.is_active() {
-                    result.state().borrow_mut().clear_controller_input();
+                    let settings = result.state().borrow().settings();
+                    let settings = current_or_default(&settings);
+                    if settings.host.clear_input_on_focus_loss {
+                        result.state().borrow_mut().clear_controller_input();
+                    }
+                    if settings.host.pause_on_focus_loss {
+                        let _ = result
+                            .state()
+                            .borrow_mut()
+                            .run_command(SessionCommand::Pause);
+                        result.update_actions();
+                    }
                 }
             });
         }
@@ -236,6 +296,15 @@ impl WindowExtend for Window {
             });
         }
         window.add_action(&resume_action);
+
+        {
+            let result = result.clone();
+            let _ = preferences_action.connect_activate(move |_, _| {
+                let settings = result.state().borrow().settings();
+                present_preferences_dialog(&result.window(), settings);
+            });
+        }
+        window.add_action(&preferences_action);
 
         {
             let result = result.clone();
@@ -350,6 +419,16 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
+        let settings = self.state().borrow().settings();
+        let settings = current_or_default(&settings);
+        if let Some(path) = settings
+            .paths
+            .default_open_dir
+            .or(settings.general.last_open_directory)
+        {
+            let folder = gio::File::for_path(path);
+            let _ = file_chooser_native.set_current_folder(Some(&folder));
+        }
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
             if response == gtk::ResponseType::Accept
@@ -392,6 +471,16 @@ impl WindowExtend for Window {
     fn realize(&self) {}
 
     fn close_request(&self) -> bool {
+        let window = self.window();
+        if !self.borrow().fullscreened {
+            let width = window.width().max(1) as u32;
+            let height = window.height().max(1) as u32;
+            let _ = self
+                .state()
+                .borrow()
+                .settings()
+                .remember_window_size(width, height);
+        }
         self.state().borrow_mut().flush_before_exit();
         self.application().quit();
         false
@@ -466,37 +555,52 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        // とりあえず、pad1のみ次の通りとする。
-        // A      -> Z
-        // B      -> X
-        // Select -> C
-        // Start  -> V
-        // Up     -> Up
-        // Down   -> Down
-        // Left   -> Left
-        // Right  -> Right
-        match key {
-            gdk::Key::F5 if matches!(event, KeyEventState::Release) => {
-                let _ = self
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::SaveActiveSlotOrNew);
-                self.update_actions();
-                return false;
-            }
-            gdk::Key::F8 if matches!(event, KeyEventState::Release) => {
-                let state = self.state();
-                if load_active_slot(state.as_ref()) {
-                    self.update_actions();
+        let settings = self.state().borrow().settings();
+        let settings = current_or_default(&settings);
+        if let Some(key) = gdk_key_settings_key(key) {
+            if matches!(event, KeyEventState::Release) {
+                if let Some(controller_event) = controller_event_for_key(&settings, key, false) {
+                    self.state()
+                        .borrow_mut()
+                        .handle_controller_input(controller_event);
+                }
+                if matches!(
+                    nerust_gui_shell::settings::shortcut_action_for_key(&settings, key),
+                    Some(ShortcutAction::ToggleFullscreen)
+                ) {
+                    let fullscreened = {
+                        let mut core = self.borrow_mut();
+                        core.fullscreened = !core.fullscreened;
+                        core.fullscreened
+                    };
+                    if fullscreened {
+                        self.window().fullscreen();
+                    } else {
+                        self.window().unfullscreen();
+                    }
+                    return false;
+                }
+                if let Some(command) = shortcut_command_for_key(&settings, key) {
+                    match command {
+                        SessionCommand::TogglePause
+                        | SessionCommand::Reset
+                        | SessionCommand::SaveActiveSlotOrNew
+                        | SessionCommand::LoadActiveSlot
+                        | SessionCommand::SelectNextSlot
+                        | SessionCommand::SelectPreviousSlot => {
+                            let _ = self.state().borrow_mut().run_command(command);
+                            self.update_actions();
+                            return false;
+                        }
+                        _ => {}
+                    }
                 }
                 return false;
             }
-            _ => (),
-        }
-        if let Some(controller_input) = gdk_key_controller_input(key) {
-            self.state()
-                .borrow_mut()
-                .handle_player_one_button(controller_input, key_event_pressed(event));
+            if let Some(event) = controller_event_for_key(&settings, key, key_event_pressed(event))
+            {
+                self.state().borrow_mut().handle_controller_input(event);
+            }
         }
         false
     }
@@ -518,9 +622,9 @@ fn rebuild_slot_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
+    use super::{ActiveSlotLoader, gdk_key_settings_key, load_active_slot};
+    use nerust_contract_settings::KeyboardKey;
     use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-    use nerust_gui_shell::session::input::NesButton;
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -567,14 +671,20 @@ mod tests {
     }
 
     #[test]
-    fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(gdk_key_controller_input(gdk::Key::z), Some(NesButton::A));
-        assert_eq!(gdk_key_controller_input(gdk::Key::x), Some(NesButton::B));
-        assert_eq!(gdk_key_controller_input(gdk::Key::Up), Some(NesButton::Up));
+    fn gdk_key_mapping_matches_settings_keys() {
+        assert_eq!(gdk_key_settings_key(gdk::Key::z), Some(KeyboardKey::KeyZ));
+        assert_eq!(gdk_key_settings_key(gdk::Key::x), Some(KeyboardKey::KeyX));
         assert_eq!(
-            gdk_key_controller_input(gdk::Key::Right),
-            Some(NesButton::Right)
+            gdk_key_settings_key(gdk::Key::Up),
+            Some(KeyboardKey::ArrowUp)
         );
-        assert_eq!(gdk_key_controller_input(gdk::Key::Return), None);
+        assert_eq!(
+            gdk_key_settings_key(gdk::Key::Right),
+            Some(KeyboardKey::ArrowRight)
+        );
+        assert_eq!(
+            gdk_key_settings_key(gdk::Key::Return),
+            Some(KeyboardKey::Enter)
+        );
     }
 }

@@ -7,6 +7,7 @@ members = [
   "console",
   "contract/mirror",
   "contract/options",
+  "contract/settings",
   "contract/persistence",
   "contract/rom",
   "core",
@@ -57,6 +58,7 @@ alto = { version = "=3.0.4" }
 bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
 crc = { version = "=3.4.0" }
+directories = { version = "=6.0.0" }
 epoxy = { version = "=0.1.0" }
 fs2 = { version = "=0.4.3" }
 gdk = { version = "=0.11.2", package = "gdk4" }
@@ -74,6 +76,7 @@ nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
 nerust_contract_mirror = { version = "=0.1.0", path = "contract/mirror" }
 nerust_contract_options = { version = "=0.1.0", path = "contract/options" }
+nerust_contract_settings = { version = "=0.1.0", path = "contract/settings" }
 nerust_contract_persistence = { version = "=0.1.0", path = "contract/persistence" }
 nerust_contract_rom = { version = "=0.1.0", path = "contract/rom" }
 nerust_core = { version = "=0.1.0", path = "core" }

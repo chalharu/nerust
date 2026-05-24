@@ -61,8 +61,12 @@ impl ScreenBuffer {
         )
     }
 
+    pub fn new_nes_gpu(filter_type: FilterType) -> Self {
+        Self::new_gpu(filter_type, DEFAULT_NES_SOURCE_LOGICAL_SIZE)
+    }
+
     pub fn new_nes_gpu_default() -> Self {
-        Self::new_gpu(DEFAULT_NES_FILTER_TYPE, DEFAULT_NES_SOURCE_LOGICAL_SIZE)
+        Self::new_nes_gpu(DEFAULT_NES_FILTER_TYPE)
     }
 
     fn with_publish_mode(

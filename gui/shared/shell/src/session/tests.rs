@@ -1,7 +1,9 @@
 use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
 use crate::session::NesSession;
 use crate::session::input::NesButton;
+use crate::settings::default_desktop_settings;
 use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
@@ -22,9 +24,17 @@ impl MixerInput for TestSpeaker {
 }
 
 fn test_session() -> NesSession {
-    NesSession::from_gui_session(GuiSession::from_session_core(SessionCore::from_console(
-        nerust_console::Console::new(TestSpeaker, ScreenBuffer::new_nes_gpu_default()),
-    )))
+    let settings = DesktopSettingsManager::ephemeral(default_desktop_settings());
+    NesSession::from_gui_session(
+        GuiSession::from_session_core_with_settings(
+            SessionCore::from_console(nerust_console::Console::new(
+                TestSpeaker,
+                ScreenBuffer::new_nes_gpu_default(),
+            )),
+            settings.clone(),
+        ),
+        settings,
+    )
 }
 
 #[test]

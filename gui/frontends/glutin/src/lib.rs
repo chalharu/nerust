@@ -14,11 +14,16 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
+use nerust_contract_settings::KeyboardKey;
+use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
-use nerust_gui_shell::session::input::NesButton;
+use nerust_gui_shell::settings::{
+    controller_event_for_key, current_or_default, load_settings_manager, shortcut_action_for_key,
+    shortcut_command_for_key,
+};
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -30,14 +35,17 @@ use winit::dpi::{LogicalSize as WinitLogicalSize, PhysicalSize as WinitPhysicalS
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window as WinitWindow, WindowAttributes};
+use winit::window::{Fullscreen, Window as WinitWindow, WindowAttributes};
 
-fn create_window_attributes(size: WindowSize) -> WindowAttributes {
+fn create_window_attributes(
+    size: WindowSize,
+    settings: &DesktopSettingsManager,
+) -> WindowAttributes {
+    let (width, height) = settings
+        .effective_window_size(size.width as u32, size.height as u32)
+        .unwrap_or((size.width as u32, size.height as u32));
     WinitWindow::default_attributes()
-        .with_inner_size(WinitLogicalSize::new(
-            f64::from(size.width),
-            f64::from(size.height),
-        ))
+        .with_inner_size(WinitLogicalSize::new(f64::from(width), f64::from(height)))
         .with_title("Nes")
 }
 
@@ -66,10 +74,11 @@ fn create_gl_context(window: &WinitWindow, gl_config: &Config) -> NotCurrentCont
 fn create_window(
     event_loop: &ActiveEventLoop,
     size: WindowSize,
+    settings: &DesktopSettingsManager,
 ) -> (WinitWindow, PossiblyCurrentContext, Surface<WindowSurface>) {
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
-    let display_builder =
-        DisplayBuilder::new().with_window_attributes(Some(create_window_attributes(size)));
+    let display_builder = DisplayBuilder::new()
+        .with_window_attributes(Some(create_window_attributes(size, settings)));
     let (window, gl_config) = display_builder
         .build(event_loop, template, |configs| {
             configs
@@ -106,19 +115,61 @@ fn create_window(
     let _ =
         gl_surface.set_swap_interval(&gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
+    if current_or_default(settings).video.fullscreen {
+        window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+    }
+
     (window, gl_context, gl_surface)
 }
 
-fn physical_key_controller_input(key: PhysicalKey) -> Option<NesButton> {
+fn physical_key_settings_key(key: PhysicalKey) -> Option<KeyboardKey> {
     Some(match key {
-        PhysicalKey::Code(KeyCode::KeyZ) => NesButton::A,
-        PhysicalKey::Code(KeyCode::KeyX) => NesButton::B,
-        PhysicalKey::Code(KeyCode::KeyC) => NesButton::Select,
-        PhysicalKey::Code(KeyCode::KeyV) => NesButton::Start,
-        PhysicalKey::Code(KeyCode::ArrowUp) => NesButton::Up,
-        PhysicalKey::Code(KeyCode::ArrowDown) => NesButton::Down,
-        PhysicalKey::Code(KeyCode::ArrowLeft) => NesButton::Left,
-        PhysicalKey::Code(KeyCode::ArrowRight) => NesButton::Right,
+        PhysicalKey::Code(KeyCode::KeyA) => KeyboardKey::KeyA,
+        PhysicalKey::Code(KeyCode::KeyB) => KeyboardKey::KeyB,
+        PhysicalKey::Code(KeyCode::KeyC) => KeyboardKey::KeyC,
+        PhysicalKey::Code(KeyCode::KeyD) => KeyboardKey::KeyD,
+        PhysicalKey::Code(KeyCode::KeyE) => KeyboardKey::KeyE,
+        PhysicalKey::Code(KeyCode::KeyF) => KeyboardKey::KeyF,
+        PhysicalKey::Code(KeyCode::KeyG) => KeyboardKey::KeyG,
+        PhysicalKey::Code(KeyCode::KeyH) => KeyboardKey::KeyH,
+        PhysicalKey::Code(KeyCode::KeyI) => KeyboardKey::KeyI,
+        PhysicalKey::Code(KeyCode::KeyJ) => KeyboardKey::KeyJ,
+        PhysicalKey::Code(KeyCode::KeyK) => KeyboardKey::KeyK,
+        PhysicalKey::Code(KeyCode::KeyL) => KeyboardKey::KeyL,
+        PhysicalKey::Code(KeyCode::KeyM) => KeyboardKey::KeyM,
+        PhysicalKey::Code(KeyCode::KeyN) => KeyboardKey::KeyN,
+        PhysicalKey::Code(KeyCode::KeyO) => KeyboardKey::KeyO,
+        PhysicalKey::Code(KeyCode::KeyP) => KeyboardKey::KeyP,
+        PhysicalKey::Code(KeyCode::KeyQ) => KeyboardKey::KeyQ,
+        PhysicalKey::Code(KeyCode::KeyR) => KeyboardKey::KeyR,
+        PhysicalKey::Code(KeyCode::KeyS) => KeyboardKey::KeyS,
+        PhysicalKey::Code(KeyCode::KeyT) => KeyboardKey::KeyT,
+        PhysicalKey::Code(KeyCode::KeyU) => KeyboardKey::KeyU,
+        PhysicalKey::Code(KeyCode::KeyV) => KeyboardKey::KeyV,
+        PhysicalKey::Code(KeyCode::KeyW) => KeyboardKey::KeyW,
+        PhysicalKey::Code(KeyCode::KeyX) => KeyboardKey::KeyX,
+        PhysicalKey::Code(KeyCode::KeyY) => KeyboardKey::KeyY,
+        PhysicalKey::Code(KeyCode::KeyZ) => KeyboardKey::KeyZ,
+        PhysicalKey::Code(KeyCode::ArrowUp) => KeyboardKey::ArrowUp,
+        PhysicalKey::Code(KeyCode::ArrowDown) => KeyboardKey::ArrowDown,
+        PhysicalKey::Code(KeyCode::ArrowLeft) => KeyboardKey::ArrowLeft,
+        PhysicalKey::Code(KeyCode::ArrowRight) => KeyboardKey::ArrowRight,
+        PhysicalKey::Code(KeyCode::Enter) => KeyboardKey::Enter,
+        PhysicalKey::Code(KeyCode::Escape) => KeyboardKey::Escape,
+        PhysicalKey::Code(KeyCode::Space) => KeyboardKey::Space,
+        PhysicalKey::Code(KeyCode::Tab) => KeyboardKey::Tab,
+        PhysicalKey::Code(KeyCode::F1) => KeyboardKey::F1,
+        PhysicalKey::Code(KeyCode::F2) => KeyboardKey::F2,
+        PhysicalKey::Code(KeyCode::F3) => KeyboardKey::F3,
+        PhysicalKey::Code(KeyCode::F4) => KeyboardKey::F4,
+        PhysicalKey::Code(KeyCode::F5) => KeyboardKey::F5,
+        PhysicalKey::Code(KeyCode::F6) => KeyboardKey::F6,
+        PhysicalKey::Code(KeyCode::F7) => KeyboardKey::F7,
+        PhysicalKey::Code(KeyCode::F8) => KeyboardKey::F8,
+        PhysicalKey::Code(KeyCode::F9) => KeyboardKey::F9,
+        PhysicalKey::Code(KeyCode::F10) => KeyboardKey::F10,
+        PhysicalKey::Code(KeyCode::F11) => KeyboardKey::F11,
+        PhysicalKey::Code(KeyCode::F12) => KeyboardKey::F12,
         _ => return None,
     })
 }
@@ -135,23 +186,33 @@ pub struct Window {
     event_loop: Option<EventLoop<()>>,
     session: NesSession,
     shell: NativeShellState,
+    settings: DesktopSettingsManager,
+    fullscreened: bool,
 }
 
 impl Window {
     pub fn new() -> Self {
+        let settings = load_settings_manager();
+        let fullscreened = current_or_default(&settings).video.fullscreen;
         Self {
             event_loop: Some(EventLoop::new().unwrap()),
             view: None,
             gl_context: None,
             gl_surface: None,
             window: None,
-            session: NesSession::new(),
+            session: NesSession::new(settings.clone()),
             shell: NativeShellState::new(),
+            fullscreened,
+            settings,
         }
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        let _ = self.session.load(rom_path, data);
+        if self.session.load(rom_path.clone(), data)
+            && let Some(path) = rom_path.as_deref()
+        {
+            let _ = self.settings.record_opened_rom(path);
+        }
     }
 
     pub fn run(&mut self) {
@@ -167,7 +228,7 @@ impl Window {
         }
 
         let (window, gl_context, gl_surface) =
-            create_window(event_loop, self.session.window_size());
+            create_window(event_loop, self.session.window_size(), &self.settings);
         let mut view = GlBackend::new();
         view.use_vao(true);
         let video = self.session.video();
@@ -228,7 +289,22 @@ impl Window {
             physical_size.width as i32,
             physical_size.height as i32,
         );
+        if !self.fullscreened
+            && let Some(window) = self.window.as_ref()
+        {
+            let logical_size = physical_size.to_logical::<f64>(window.scale_factor());
+            let width = logical_size.width.round().max(1.0) as u32;
+            let height = logical_size.height.round().max(1.0) as u32;
+            let _ = self.settings.remember_window_size(width, height);
+        }
         self.shell.needs_redraw = true;
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        self.fullscreened = !self.fullscreened;
+        if let Some(window) = self.window.as_ref() {
+            window.set_fullscreen(self.fullscreened.then_some(Fullscreen::Borderless(None)));
+        }
     }
 
     fn on_close(&mut self) -> bool {
@@ -281,47 +357,44 @@ impl Window {
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
-        // とりあえず、pad1のみ次の通りとする。
-        // A      -> Z
-        // B      -> X
-        // Select -> C
-        // Start  -> V
-        // Up     -> Up
-        // Down   -> Down
-        // Left   -> Left
-        // Right  -> Right
-        let controller_input = match input.physical_key {
-            PhysicalKey::Code(KeyCode::Space) if input.state == ElementState::Pressed => {
-                self.apply_session_command(SessionCommand::TogglePause);
-                None
+        let settings = current_or_default(&self.settings);
+        if let Some(key) = physical_key_settings_key(input.physical_key) {
+            if input.state == ElementState::Released
+                && let Some(controller_event) = controller_event_for_key(&settings, key, false)
+            {
+                self.session.handle_controller_input(controller_event);
             }
-            PhysicalKey::Code(KeyCode::Escape) => {
-                if input.state == ElementState::Released {
-                    self.apply_session_command(SessionCommand::Reset);
+            if input.state == ElementState::Released
+                && !input.repeat
+                && let Some(action) = shortcut_action_for_key(&settings, key)
+                && matches!(
+                    action,
+                    nerust_contract_settings::ShortcutAction::ToggleFullscreen
+                )
+            {
+                self.toggle_fullscreen();
+                return;
+            }
+            if input.state == ElementState::Released
+                && !input.repeat
+                && let Some(command) = shortcut_command_for_key(&settings, key)
+            {
+                match command {
+                    SessionCommand::TogglePause
+                    | SessionCommand::Reset
+                    | SessionCommand::SaveActiveSlotOrNew
+                    | SessionCommand::LoadActiveSlot
+                    | SessionCommand::SelectNextSlot
+                    | SessionCommand::SelectPreviousSlot => self.apply_session_command(command),
+                    _ => {}
                 }
-                None
+                return;
             }
-            PhysicalKey::Code(KeyCode::F5) if input.state == ElementState::Released => {
-                self.apply_session_command(SessionCommand::SaveActiveSlotOrNew);
-                None
+            if element_state_to_pressed(input.state)
+                && let Some(event) = controller_event_for_key(&settings, key, true)
+            {
+                self.session.handle_controller_input(event);
             }
-            PhysicalKey::Code(KeyCode::F6) if input.state == ElementState::Released => {
-                self.apply_session_command(SessionCommand::SelectNextSlot);
-                None
-            }
-            PhysicalKey::Code(KeyCode::F7) if input.state == ElementState::Released => {
-                self.apply_session_command(SessionCommand::SelectPreviousSlot);
-                None
-            }
-            PhysicalKey::Code(KeyCode::F8) if input.state == ElementState::Released => {
-                self.apply_session_command(SessionCommand::LoadActiveSlot);
-                None
-            }
-            key => physical_key_controller_input(key),
-        };
-        if let Some(controller_input) = controller_input {
-            self.session
-                .handle_player_one_button(controller_input, element_state_to_pressed(input.state));
         }
     }
 }
@@ -347,7 +420,15 @@ impl ApplicationHandler for Window {
                     window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => self.session.clear_controller_input(),
+            WindowEvent::Focused(false) => {
+                let settings = current_or_default(&self.settings);
+                if settings.host.clear_input_on_focus_loss {
+                    self.session.clear_controller_input();
+                }
+                if settings.host.pause_on_focus_loss {
+                    self.apply_session_command(SessionCommand::Pause);
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
@@ -400,31 +481,31 @@ impl Default for Window {
 
 #[cfg(test)]
 mod tests {
-    use super::physical_key_controller_input;
-    use nerust_gui_shell::session::input::NesButton;
+    use super::physical_key_settings_key;
+    use nerust_contract_settings::KeyboardKey;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
-    fn physical_key_mapping_matches_controller_layout() {
+    fn physical_key_mapping_matches_settings_keys() {
         assert_eq!(
-            physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(NesButton::A)
+            physical_key_settings_key(PhysicalKey::Code(KeyCode::KeyZ)),
+            Some(KeyboardKey::KeyZ)
         );
         assert_eq!(
-            physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
-            Some(NesButton::B)
+            physical_key_settings_key(PhysicalKey::Code(KeyCode::KeyX)),
+            Some(KeyboardKey::KeyX)
         );
         assert_eq!(
-            physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),
-            Some(NesButton::Up)
+            physical_key_settings_key(PhysicalKey::Code(KeyCode::ArrowUp)),
+            Some(KeyboardKey::ArrowUp)
         );
         assert_eq!(
-            physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowRight)),
-            Some(NesButton::Right)
+            physical_key_settings_key(PhysicalKey::Code(KeyCode::ArrowRight)),
+            Some(KeyboardKey::ArrowRight)
         );
         assert_eq!(
-            physical_key_controller_input(PhysicalKey::Code(KeyCode::Enter)),
-            None
+            physical_key_settings_key(PhysicalKey::Code(KeyCode::Enter)),
+            Some(KeyboardKey::Enter)
         );
     }
 }

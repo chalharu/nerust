@@ -1,9 +1,11 @@
 use crate::descriptor::NesConsoleProfile;
 use crate::load::NesLoadOptions;
 use crate::session::NesSession;
+use crate::settings::{current_or_default, effective_load_options};
 use nerust_console::ConsoleMetrics;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_input_nes::input::NesInputState;
@@ -11,14 +13,18 @@ use nerust_persistence::model::StateSlotSummary;
 use std::path::PathBuf;
 
 impl NesSession {
-    pub fn new() -> Self {
-        Self::from_gui_session(NesConsoleProfile.build_gui_session())
+    pub fn new(settings: DesktopSettingsManager) -> Self {
+        Self::from_gui_session(
+            NesConsoleProfile.build_gui_session(settings.clone()),
+            settings,
+        )
     }
 
-    pub fn from_gui_session(session: GuiSession) -> Self {
+    pub fn from_gui_session(session: GuiSession, settings: DesktopSettingsManager) -> Self {
         let mut result = Self {
             session,
             input: NesInputState::new(),
+            settings,
         };
         result.sync_input_from_session();
         result
@@ -73,11 +79,7 @@ impl NesSession {
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
-        let loaded = self.session.load(rom_path, data);
-        if loaded {
-            self.sync_input_from_session();
-        }
-        loaded
+        self.load_with_options(rom_path, data, NesLoadOptions::default())
     }
 
     pub fn load_with_options(
@@ -86,9 +88,12 @@ impl NesSession {
         data: Vec<u8>,
         options: NesLoadOptions,
     ) -> bool {
-        let loaded = self
-            .session
-            .load_with_options(rom_path, data, options.into_core_options());
+        let settings = current_or_default(&self.settings);
+        let loaded = self.session.load_with_options(
+            rom_path,
+            data,
+            effective_load_options(&settings, options).into_core_options(),
+        );
         if loaded {
             self.sync_input_from_session();
         }

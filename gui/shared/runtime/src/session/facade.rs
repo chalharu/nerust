@@ -1,5 +1,6 @@
 use super::GuiSession;
 use super::persistence::PersistenceState;
+use crate::settings::DesktopSettingsManager;
 use nerust_console::video::ConsoleVideo;
 use nerust_console::{ConsoleError, ConsoleMetrics};
 use nerust_gui_session::core::{SessionCore, WindowSize};
@@ -8,10 +9,25 @@ use nerust_persistence::model::StateSlotSummary;
 
 impl GuiSession {
     pub fn from_session_core(core: SessionCore) -> Self {
+        Self::from_session_core_with_settings(
+            core,
+            DesktopSettingsManager::ephemeral(Default::default()),
+        )
+    }
+
+    pub fn from_session_core_with_settings(
+        core: SessionCore,
+        settings: DesktopSettingsManager,
+    ) -> Self {
         Self {
             core,
             persistence: PersistenceState::default(),
+            settings,
         }
+    }
+
+    pub fn settings(&self) -> &DesktopSettingsManager {
+        &self.settings
     }
 
     pub fn video(&self) -> &ConsoleVideo {

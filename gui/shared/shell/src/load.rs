@@ -12,6 +12,17 @@ pub enum NesMmc3IrqVariant {
 }
 
 impl NesLoadOptions {
+    pub fn with_default_mmc3_irq_variant(self, default: Option<Mmc3IrqVariant>) -> Self {
+        Self {
+            mmc3_irq_variant: self
+                .mmc3_irq_variant
+                .or(default.map(|variant| match variant {
+                    Mmc3IrqVariant::Sharp => NesMmc3IrqVariant::Sharp,
+                    Mmc3IrqVariant::Nec => NesMmc3IrqVariant::Nec,
+                })),
+        }
+    }
+
     pub fn into_core_options(self) -> CoreOptions {
         CoreOptions {
             mmc3_irq_variant: self.mmc3_irq_variant.map(|variant| match variant {

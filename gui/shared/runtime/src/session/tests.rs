@@ -1,4 +1,5 @@
 use super::{GuiSession, commands::redraw_needed_after_pause_change};
+use crate::settings::DesktopSettingsManager;
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
@@ -19,10 +20,13 @@ impl MixerInput for TestSpeaker {
 }
 
 fn test_session() -> GuiSession {
-    GuiSession::from_session_core(SessionCore::from_console(Console::new(
-        TestSpeaker,
-        ScreenBuffer::new_nes_gpu_default(),
-    )))
+    GuiSession::from_session_core_with_settings(
+        SessionCore::from_console(Console::new(
+            TestSpeaker,
+            ScreenBuffer::new_nes_gpu_default(),
+        )),
+        DesktopSettingsManager::ephemeral(Default::default()),
+    )
 }
 
 #[test]

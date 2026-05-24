@@ -29,6 +29,10 @@
       <!-- <attribute name="icon">gtk-edit</attribute> -->
       <section>
         <item>
+          <attribute name="label" translatable="yes">_Preferences</attribute>
+          <attribute name="action">win.preferences</attribute>
+        </item>
+        <item>
           <attribute name="label" translatable="yes">_Resume</attribute>
           <attribute name="icon">gtk-media-play</attribute>
           <attribute name="action">win.resume</attribute>

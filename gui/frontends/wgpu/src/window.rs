@@ -7,6 +7,7 @@
 mod runtime;
 
 use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant as ShellMmc3IrqVariant};
+use nerust_gui_shell::settings::load_settings_manager;
 use runtime::WindowRuntime;
 use std::path::PathBuf;
 
@@ -40,8 +41,9 @@ pub struct Window {
 
 impl Window {
     pub fn new() -> Self {
+        let settings = load_settings_manager();
         Self {
-            runtime: Box::new(WindowRuntime::new()),
+            runtime: Box::new(WindowRuntime::new(settings)),
         }
     }
 

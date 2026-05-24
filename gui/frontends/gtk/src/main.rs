@@ -1,5 +1,6 @@
 mod crash_handler;
 mod glarea;
+mod preferences;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
@@ -8,10 +9,11 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_console::video::ConsoleVideo;
+use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
-use nerust_gui_shell::session::input::NesButton;
+use nerust_gui_shell::settings::{current_or_default, load_settings_manager};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
@@ -25,13 +27,15 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 pub(crate) struct State {
     view: Option<GlBackend>,
     session: NesSession,
+    settings: DesktopSettingsManager,
 }
 
 impl State {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(settings: DesktopSettingsManager) -> Self {
         Self {
             view: None,
-            session: NesSession::new(),
+            session: NesSession::new(settings.clone()),
+            settings,
         }
     }
 
@@ -56,7 +60,10 @@ impl State {
     }
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        if self.session.load(rom_path, data) {
+        if self.session.load(rom_path.clone(), data) {
+            if let Some(path) = rom_path.as_deref() {
+                let _ = self.settings.record_opened_rom(path);
+            }
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -81,8 +88,11 @@ impl State {
         self.session.run_command(command)
     }
 
-    pub(crate) fn handle_player_one_button(&mut self, button: NesButton, pressed: bool) {
-        self.session.handle_player_one_button(button, pressed);
+    pub(crate) fn handle_controller_input(
+        &mut self,
+        event: nerust_input_schema::DigitalInputEvent,
+    ) {
+        self.session.handle_controller_input(event);
     }
 
     pub(crate) fn clear_controller_input(&mut self) {
@@ -96,11 +106,22 @@ impl State {
     pub(crate) fn active_slot_id(&self) -> Option<u64> {
         self.session.active_slot_id()
     }
+
+    pub(crate) fn settings(&self) -> DesktopSettingsManager {
+        self.settings.clone()
+    }
 }
 
 fn build_window(app: &gtk::Application) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
+    let settings = load_settings_manager();
+    if let Ok((width, height)) = settings.effective_window_size(500, 400) {
+        window.set_default_size(width as i32, height as i32);
+    }
+    if current_or_default(&settings).video.fullscreen {
+        window.fullscreen();
+    }
     let menu_model = gtk::Builder::from_string(include_str!("../resources/menu.xml"))
         .object::<gio::Menu>("menu")
         .unwrap();
@@ -118,7 +139,7 @@ fn build_window(app: &gtk::Application) -> Window {
     state_menu.append_submenu(Some("Delete Slot"), &delete_slot_menu);
     menu_model.append_submenu(Some("Save States"), &state_menu);
 
-    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new()));
+    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(settings)));
 
     app.set_menubar(Some(&menu_model));
     app.add_window(&window);
