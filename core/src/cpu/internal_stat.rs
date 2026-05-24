@@ -340,4 +340,4 @@ impl TryFrom<usize> for CpuStatesEnum {
         })
     }
 }
-use crate::persistence::PersistenceError;
+use crate::persistence_error::PersistenceError;

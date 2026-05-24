@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
-use nerust_screen_traits::VideoPresentation;
+use nerust_screen_video::VideoPresentation;
 use nerust_screen_wgpu::renderer::{RenderOutcome, Renderer};
 use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};

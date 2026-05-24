@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::Cartridge;
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
@@ -82,11 +82,12 @@ impl Mapper for ColorDreams {
 mod tests {
     use super::Cartridge;
     use super::ColorDreams;
-    use crate::cartridge_data::{CartridgeData, CartridgeDataParts};
+    use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

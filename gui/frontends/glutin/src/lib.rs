@@ -14,7 +14,7 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_console::console::ControllerPort;
+use nerust_console::ControllerPort;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;

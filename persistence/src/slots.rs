@@ -8,7 +8,7 @@ use crate::model::{LoadedStateSlot, StateSlotSummary};
 use crate::thumbnail::{ThumbnailSource, encode_thumbnail_png};
 use crate::time::{system_time_from_millis, unix_millis};
 use fs2::FileExt;
-use nerust_contract::PersistenceTarget;
+use nerust_contract_persistence::PersistenceTarget;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

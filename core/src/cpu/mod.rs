@@ -46,7 +46,7 @@ use self::register::{Register, RegisterP};
 use crate::cart_device::Cartridge as MapperCartridge;
 use crate::cartridge_bus::{CpuCartridgeBus, mapper_cartridge_bus};
 use crate::interrupt::{DmcDmaKind, Interrupt, IrqSource};
-use crate::persistence::PersistenceError;
+use crate::persistence_error::PersistenceError;
 use crate::{Apu, Controller, Ppu};
 use std::ops::Shr;
 

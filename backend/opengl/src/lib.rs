@@ -6,7 +6,7 @@
 
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_opengl::GlView;
-use nerust_screen_traits::VideoPresentation;
+use nerust_screen_video::VideoPresentation;
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.

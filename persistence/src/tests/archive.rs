@@ -1,9 +1,8 @@
-use super::support::{prepare_test_dir, test_metadata, test_rom_identity, write_fixture_archive};
+use super::{prepare_test_dir, test_metadata, test_target_with_irq_variant, write_fixture_archive};
 use crate::archive::build_state_archive;
 use crate::metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY};
 use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
 use crate::thumbnail::ThumbnailSource;
-use nerust_contract::{CoreOptions, Mmc3IrqVariant, PersistenceTarget};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -57,12 +56,7 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
         &dir,
         7,
         b"machine-state",
-        PersistenceTarget {
-            rom_identity: test_rom_identity(),
-            options: CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-            },
-        },
+        test_target_with_irq_variant(nerust_contract_options::Mmc3IrqVariant::Sharp),
         Some(&ThumbnailSource {
             width: 2,
             height: 1,

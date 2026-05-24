@@ -5,7 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::FilterUnit;
-use nerust_screen_traits::{logical_size::LogicalSize, physical_size::PhysicalSize, rgb::RGB};
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
+use nerust_screen_rgb::RGB;
 
 #[derive(Debug)]
 pub(crate) struct NesNtsc {

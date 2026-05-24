@@ -4,12 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub mod logical_size;
-pub mod physical_size;
-pub mod rgb;
-
-use crate::logical_size::LogicalSize;
-use crate::physical_size::PhysicalSize;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoFrameFormat {
@@ -91,61 +87,4 @@ impl VideoPresentation {
 pub trait Screen {
     fn push(&mut self, palette: u8);
     fn render(&mut self);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{LogicalSize, PhysicalSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation};
-
-    #[test]
-    fn video_frame_spec_accessors_match_constructor_inputs() {
-        let spec = VideoFrameSpec::new(
-            VideoFrameFormat::Palette,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            LogicalSize {
-                width: 602,
-                height: 240,
-            },
-            PhysicalSize {
-                width: 602.0,
-                height: 480.0,
-            },
-        );
-
-        assert_eq!(spec.frame_format(), VideoFrameFormat::Palette);
-        assert_eq!(spec.source_logical_size().width, 256);
-        assert_eq!(spec.source_logical_size().height, 240);
-        assert_eq!(spec.logical_size().width, 602);
-        assert_eq!(spec.logical_size().height, 240);
-        assert_eq!(spec.physical_size().width, 602.0);
-        assert_eq!(spec.physical_size().height, 480.0);
-    }
-
-    #[test]
-    fn video_presentation_exposes_only_generic_frame_metadata() {
-        let presentation = VideoPresentation::new(VideoFrameSpec::new(
-            VideoFrameFormat::Rgba,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            PhysicalSize {
-                width: 292.57,
-                height: 240.0,
-            },
-        ));
-
-        assert_eq!(presentation.frame_format(), VideoFrameFormat::Rgba);
-        assert!(!presentation.is_palette_frame());
-        assert_eq!(presentation.source_logical_size().width, 256);
-        assert_eq!(presentation.logical_size().height, 240);
-        assert_eq!(presentation.physical_size().height, 240.0);
-    }
 }

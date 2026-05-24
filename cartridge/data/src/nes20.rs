@@ -5,8 +5,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
-use nerust_contract::RomFormat;
-use nerust_core::cartridge_data::{CartridgeData, CartridgeDataParts};
+use nerust_contract_rom::RomFormat;
+use nerust_core::cartridge_data_parts::CartridgeDataParts;
+use nerust_core::cartridge_rom::CartridgeData;
 
 pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     headers: &[u8],

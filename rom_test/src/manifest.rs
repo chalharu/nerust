@@ -6,7 +6,7 @@
 
 use super::error::RomTestError;
 use super::events::RomEvent;
-use nerust_contract::{CoreOptions, Mmc3IrqVariant};
+use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;

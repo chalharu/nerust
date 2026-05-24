@@ -5,7 +5,10 @@ members = [
   "backend/wgpu",
   "cartridge/data",
   "console",
-  "contract",
+  "contract/mirror",
+  "contract/options",
+  "contract/persistence",
+  "contract/rom",
   "core",
   "persistence",
   "rom_test",
@@ -19,9 +22,12 @@ members = [
   "screen/buffer",
   "screen/filter",
   "screen/glwrap",
+  "screen/logical",
   "screen/opengl",
+  "screen/physical",
+  "screen/rgb",
   "screen/wgpu",
-  "screen/traits",
+  "screen/video",
   "serialize",
   "sound/openal",
   "sound/filter",
@@ -63,7 +69,10 @@ log = { version = "=0.4.29", default-features = false }
 muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
-nerust_contract = { version = "=0.1.0", path = "contract" }
+nerust_contract_mirror = { version = "=0.1.0", path = "contract/mirror" }
+nerust_contract_options = { version = "=0.1.0", path = "contract/options" }
+nerust_contract_persistence = { version = "=0.1.0", path = "contract/persistence" }
+nerust_contract_rom = { version = "=0.1.0", path = "contract/rom" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/shared/runtime" }
 nerust_gui_shell = { version = "=0.1.0", path = "gui/shared/shell" }
@@ -75,9 +84,12 @@ nerust_backend_wgpu = { version = "=0.1.0", path = "backend/wgpu" }
 nerust_glwrap = { version = "=0.1.0", path = "screen/glwrap" }
 nerust_screen_buffer = { version = "=0.1.0", path = "screen/buffer" }
 nerust_screen_filter = { version = "=0.1.0", path = "screen/filter" }
+nerust_screen_logical = { version = "=0.1.0", path = "screen/logical" }
 nerust_screen_opengl = { version = "=0.1.0", path = "screen/opengl" }
+nerust_screen_physical = { version = "=0.1.0", path = "screen/physical" }
+nerust_screen_rgb = { version = "=0.1.0", path = "screen/rgb" }
 nerust_screen_wgpu = { version = "=0.1.0", path = "screen/wgpu" }
-nerust_screen_traits = { version = "=0.1.0", path = "screen/traits" }
+nerust_screen_video = { version = "=0.1.0", path = "screen/video" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
 nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }

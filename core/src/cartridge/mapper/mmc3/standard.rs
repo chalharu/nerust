@@ -9,9 +9,10 @@ use super::shared::{
     IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
     PrgRamModel,
 };
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::CartridgeRuntimeState;
 use crate::mapper_state::MapperState;
-use crate::persistence::{CartridgeRuntimeState, PersistenceError};
+use crate::persistence_error::PersistenceError;
 
 #[derive(serde_derive::Serialize)]
 pub(super) struct Mmc3 {
@@ -157,10 +158,10 @@ mod tests {
         CartridgeData, IrqVariant, LegacyIrqUnit, LegacyIrqVariant, LegacyMmc3State,
         LegacyPrgRamModel, MapperState, Mmc3, Mmc3Deserialized, PrgRamModel,
     };
-    use crate::cartridge_data::CartridgeDataParts;
+    use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::mapper::Mapper;
-    use nerust_contract::MirrorMode;
-    use nerust_contract::RomFormat;
+    use nerust_contract_mirror::MirrorMode;
+    use nerust_contract_rom::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

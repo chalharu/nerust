@@ -4,15 +4,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::cartridge_data::CartridgeData;
+use crate::cartridge_rom::CartridgeData;
+use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC3};
 use crate::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao, MappingMode};
-use crate::persistence::{
-    CartridgeRuntimeState, MAPPER_KIND_MMC3, PersistenceError, decode_payload, encode_payload,
-};
+use crate::mapper_state::MappingMode;
+use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::persistence_codec::{decode_payload, encode_payload};
+use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuBusEvent;
-use nerust_contract::MirrorMode;
+use nerust_contract_mirror::MirrorMode;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 

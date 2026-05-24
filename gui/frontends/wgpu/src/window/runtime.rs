@@ -7,8 +7,8 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_console::console::ControllerPort;
-use nerust_contract::CoreOptions;
+use nerust_console::ControllerPort;
+use nerust_contract_options::CoreOptions;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;

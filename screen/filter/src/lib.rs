@@ -4,17 +4,71 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pub mod filter;
 mod filters;
 pub mod presentation;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
+use nerust_screen_rgb::RGB;
+
+pub const BLACK_PALETTE_INDEX: u8 = nes_ntsc::BLACK;
+pub const PALETTE_TEXTURE_WIDTH: u32 = 64;
+pub const NTSC_TEXTURE_WIDTH: u32 = nes_ntsc::SHADER_COLOR_COUNT as u32;
+pub const NTSC_TEXTURE_HEIGHT: u32 =
+    (nes_ntsc::SHADER_PHASE_COUNT * nes_ntsc::SHADER_PHASE_ENTRY_COUNT) as u32;
+
+pub trait NesFilter: Send {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
+
+    fn logical_size(&self) -> LogicalSize;
+    fn physical_size(&self) -> PhysicalSize;
+}
+
+pub trait FilterFunc {
+    fn filter_func(&mut self, value: RGB);
+}
+
+impl<F: filters::FilterUnit<Input = u8, Output = RGB>> NesFilter for F {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc) {
+        filters::FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
+    }
+
+    fn logical_size(&self) -> LogicalSize {
+        filters::FilterUnit::logical_size(self)
+    }
+
+    fn physical_size(&self) -> PhysicalSize {
+        filters::FilterUnit::physical_size(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FilterType {
+    None,
+    NtscRGB,
+    NtscComposite,
+    NtscSVideo,
+}
+
+impl FilterType {
+    pub fn generate(self, size: LogicalSize) -> Box<dyn NesFilter> {
+        match self {
+            FilterType::None => Box::new(filters::rgb::NesRgb::new(size)),
+            FilterType::NtscRGB => Box::new(filters::ntsc::NesNtsc::rgb(size)),
+            FilterType::NtscComposite => Box::new(filters::ntsc::NesNtsc::composite(size)),
+            FilterType::NtscSVideo => Box::new(filters::ntsc::NesNtsc::svideo(size)),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
+    use super::{
         BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
+        presentation::{ConsoleVideoAssets, VideoPresentationPipelineKind},
     };
-    use crate::presentation::{ConsoleVideoAssets, VideoPresentationPipelineKind};
-    use nerust_screen_traits::{VideoFrameFormat, logical_size::LogicalSize, rgb::RGB};
+    use nerust_screen_logical::LogicalSize;
+    use nerust_screen_rgb::RGB;
+    use nerust_screen_video::VideoFrameFormat;
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
         [0, 19, 31, 7, 26, 38],

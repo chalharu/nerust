@@ -1,5 +1,5 @@
 [package]
-name = "nerust_screen_traits"
+name = "nerust_contract_options"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
