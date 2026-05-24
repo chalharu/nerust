@@ -28,6 +28,7 @@ pub(crate) enum ConsoleData {
     PersistenceTarget(Sender<ConsoleRequestResult>),
     ExportState(Sender<ConsoleRequestResult>),
     CurrentControllerState(Sender<ConsoleRequestResult>),
+    CurrentInputState(Sender<ConsoleRequestResult>),
     ImportState {
         bytes: Vec<u8>,
         reply: Sender<ConsoleRequestResult>,

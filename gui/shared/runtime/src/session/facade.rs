@@ -81,4 +81,8 @@ impl GuiSession {
     pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
         self.core.current_controller_state()
     }
+
+    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        self.core.current_input_state()
+    }
 }

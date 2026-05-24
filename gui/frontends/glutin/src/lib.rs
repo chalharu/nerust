@@ -18,11 +18,7 @@ use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
-use nerust_input_nes::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
-use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
+use nerust_gui_shell::session::input::NesButton;
 use raw_window_handle::HasWindowHandle;
 use std::f64;
 use std::ffi::CString;
@@ -113,25 +109,22 @@ fn create_window(
     (window, gl_context, gl_surface)
 }
 
-fn physical_key_controller_input(key: PhysicalKey) -> Option<DigitalControlId> {
+fn physical_key_controller_input(key: PhysicalKey) -> Option<NesButton> {
     Some(match key {
-        PhysicalKey::Code(KeyCode::KeyZ) => NES_CONTROL_A,
-        PhysicalKey::Code(KeyCode::KeyX) => NES_CONTROL_B,
-        PhysicalKey::Code(KeyCode::KeyC) => NES_CONTROL_SELECT,
-        PhysicalKey::Code(KeyCode::KeyV) => NES_CONTROL_START,
-        PhysicalKey::Code(KeyCode::ArrowUp) => NES_CONTROL_UP,
-        PhysicalKey::Code(KeyCode::ArrowDown) => NES_CONTROL_DOWN,
-        PhysicalKey::Code(KeyCode::ArrowLeft) => NES_CONTROL_LEFT,
-        PhysicalKey::Code(KeyCode::ArrowRight) => NES_CONTROL_RIGHT,
+        PhysicalKey::Code(KeyCode::KeyZ) => NesButton::A,
+        PhysicalKey::Code(KeyCode::KeyX) => NesButton::B,
+        PhysicalKey::Code(KeyCode::KeyC) => NesButton::Select,
+        PhysicalKey::Code(KeyCode::KeyV) => NesButton::Start,
+        PhysicalKey::Code(KeyCode::ArrowUp) => NesButton::Up,
+        PhysicalKey::Code(KeyCode::ArrowDown) => NesButton::Down,
+        PhysicalKey::Code(KeyCode::ArrowLeft) => NesButton::Left,
+        PhysicalKey::Code(KeyCode::ArrowRight) => NesButton::Right,
         _ => return None,
     })
 }
 
-fn element_state_to_input_state(state: ElementState) -> DigitalInputState {
-    match state {
-        ElementState::Pressed => DigitalInputState::Pressed,
-        ElementState::Released => DigitalInputState::Released,
-    }
+fn element_state_to_pressed(state: ElementState) -> bool {
+    matches!(state, ElementState::Pressed)
 }
 
 pub struct Window {
@@ -327,11 +320,8 @@ impl Window {
             key => physical_key_controller_input(key),
         };
         if let Some(controller_input) = controller_input {
-            self.session.handle_controller_input(DigitalInputEvent::new(
-                NES_ATTACHMENT_PLAYER_ONE,
-                controller_input,
-                element_state_to_input_state(input.state),
-            ));
+            self.session
+                .handle_player_one_button(controller_input, element_state_to_pressed(input.state));
         }
     }
 }
@@ -411,26 +401,26 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_input_nes::{NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP};
+    use nerust_gui_shell::session::input::NesButton;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
     fn physical_key_mapping_matches_controller_layout() {
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(NES_CONTROL_A)
+            Some(NesButton::A)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::KeyX)),
-            Some(NES_CONTROL_B)
+            Some(NesButton::B)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowUp)),
-            Some(NES_CONTROL_UP)
+            Some(NesButton::Up)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::ArrowRight)),
-            Some(NES_CONTROL_RIGHT)
+            Some(NesButton::Right)
         );
         assert_eq!(
             physical_key_controller_input(PhysicalKey::Code(KeyCode::Enter)),

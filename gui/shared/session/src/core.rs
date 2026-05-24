@@ -92,6 +92,10 @@ impl SessionCore {
         self.console.current_controller_state()
     }
 
+    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        self.console.current_input_state()
+    }
+
     pub fn load_rom(&mut self, data: Vec<u8>, options: CoreOptions) -> Result<(), ConsoleError> {
         self.console.load_with_options(data, options)?;
         self.loaded = true;
