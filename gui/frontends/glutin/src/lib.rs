@@ -14,15 +14,14 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::descriptor::{
+use nerust_gui_shell::session::NesSession;
+use nerust_input_nes::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP, NesConsoleDescriptor,
+    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
-use nerust_gui_shell::input::NesInputAdapter;
-use nerust_gui_shell::state::NativeShellState;
 use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
 use raw_window_handle::HasWindowHandle;
 use std::f64;
@@ -141,9 +140,8 @@ pub struct Window {
     gl_surface: Option<Surface<WindowSurface>>,
     window: Option<WinitWindow>,
     event_loop: Option<EventLoop<()>>,
-    session: GuiSession,
+    session: NesSession,
     shell: NativeShellState,
-    input: NesInputAdapter,
 }
 
 impl Window {
@@ -154,16 +152,13 @@ impl Window {
             gl_context: None,
             gl_surface: None,
             window: None,
-            session: NesConsoleDescriptor.build_session(),
+            session: NesSession::new(),
             shell: NativeShellState::new(),
-            input: NesInputAdapter::new(),
         }
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        if self.session.load(rom_path, data) {
-            self.input.sync_from_session(&self.session);
-        }
+        let _ = self.session.load(rom_path, data);
     }
 
     pub fn run(&mut self) {
@@ -284,14 +279,6 @@ impl Window {
     fn apply_session_command(&mut self, command: SessionCommand) {
         let outcome = self.session.run_command(command);
         if outcome.executed
-            && matches!(
-                command,
-                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
-            )
-        {
-            self.input.sync_from_session(&self.session);
-        }
-        if outcome.executed
             && let SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot = command
             && let Some(slot_id) = self.session.active_slot_id()
         {
@@ -340,12 +327,11 @@ impl Window {
             key => physical_key_controller_input(key),
         };
         if let Some(controller_input) = controller_input {
-            self.input.handle_input(DigitalInputEvent::new(
+            self.session.handle_controller_input(DigitalInputEvent::new(
                 NES_ATTACHMENT_PLAYER_ONE,
                 controller_input,
                 element_state_to_input_state(input.state),
             ));
-            self.input.flush_to_session(&mut self.session);
         }
     }
 }
@@ -371,7 +357,7 @@ impl ApplicationHandler for Window {
                     window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => self.input.clear(&mut self.session),
+            WindowEvent::Focused(false) => self.session.clear_controller_input(),
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
             WindowEvent::RedrawRequested => self.on_update(),
             _ => (),
@@ -425,9 +411,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::physical_key_controller_input;
-    use nerust_gui_shell::descriptor::{
-        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
-    };
+    use nerust_input_nes::{NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP};
     use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]

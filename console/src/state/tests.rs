@@ -1,6 +1,9 @@
 use super::*;
-use crate::{Console, ControllerInputs, NesInputFrame};
+use crate::Console;
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_input_nes::{
+    Buttons, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
+};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
@@ -47,6 +50,10 @@ fn fixture_bytes(hex: &str) -> Vec<u8> {
 
 fn decode_console_state(bytes: &[u8]) -> ConsoleStatePayload {
     rmp_serde::from_slice(bytes).expect("console state should decode")
+}
+
+fn decode_controller_snapshot(bytes: &[u8]) -> StandardControllerSnapshot {
+    decode_controller_state(bytes).expect("controller state should decode")
 }
 
 fn decode_legacy_console_state(bytes: &[u8]) -> LegacyConsoleStatePayload {
@@ -112,30 +119,63 @@ fn console_state_fixture_import_restores_wrapper_state() {
     assert_eq!(exported.frame_counter, fixture.frame_counter);
     assert_eq!(exported.paused, fixture.paused);
     assert_eq!(
-        exported.controller.ports[0].input_bits,
-        fixture.controller.pad1_bits
+        decode_controller_snapshot(&exported.controller_state),
+        StandardControllerSnapshot {
+            buttons: [
+                Buttons::from_bits_retain(fixture.controller.pad1_bits as u8),
+                Buttons::from_bits_retain(fixture.controller.pad2_bits as u8),
+            ],
+            microphone: fixture.controller.microphone,
+            index1: fixture.controller.index1 as usize,
+            index2: fixture.controller.index2 as usize,
+            strobe: fixture.controller.strobe,
+        }
     );
-    assert_eq!(
-        exported.controller.ports[1].input_bits,
-        fixture.controller.pad2_bits
-    );
-    assert_eq!(
-        exported.controller.auxiliary.microphone,
-        fixture.controller.microphone
-    );
-    assert_eq!(
-        exported.controller.ports[0].index,
-        fixture.controller.index1
-    );
-    assert_eq!(
-        exported.controller.ports[1].index,
-        fixture.controller.index2
-    );
-    assert_eq!(exported.controller.strobe, fixture.controller.strobe);
     assert_eq!(exported.source_frame, fixture.source_frame);
     assert_eq!(exported.rom_identity, fixture.rom_identity);
     assert_eq!(exported.options, fixture.options);
     console.with_frame_buffer(|frame| assert_eq!(frame, fixture.source_frame));
+}
+
+#[test]
+fn console_state_imports_previous_v2_schema() {
+    let console = loaded_console();
+    let current = export_console_state(&console);
+    let snapshot = decode_controller_snapshot(&current.controller_state);
+    let payload = StructuredConsoleStatePayload {
+        schema_version: STRUCTURED_CONSOLE_STATE_SCHEMA_VERSION,
+        core_state: current.core_state,
+        frame_counter: current.frame_counter,
+        paused: current.paused,
+        controller: StructuredControllerStatePayload {
+            ports: [
+                StructuredControllerPortStatePayload {
+                    input_bits: u32::from(snapshot.buttons[0].bits()),
+                    index: snapshot.index1 as u64,
+                },
+                StructuredControllerPortStatePayload {
+                    input_bits: u32::from(snapshot.buttons[1].bits()),
+                    index: snapshot.index2 as u64,
+                },
+            ],
+            auxiliary: StructuredControllerAuxiliaryStatePayload {
+                microphone: snapshot.microphone,
+            },
+            strobe: snapshot.strobe,
+        },
+        rom_identity: current.rom_identity,
+        options: current.options,
+        source_frame: current.source_frame,
+    };
+
+    console
+        .import_state(rmp_serde::to_vec_named(&payload).expect("payload should encode"))
+        .expect("v2 console state should import");
+
+    assert_eq!(
+        decode_controller_snapshot(&export_console_state(&console).controller_state),
+        snapshot
+    );
 }
 
 #[test]
@@ -158,41 +198,10 @@ fn console_state_export_import_round_trip_preserves_wrapper_fields() {
     );
     assert_eq!(exported_payload.paused, original_payload.paused);
     assert_eq!(
-        exported_payload.controller.ports[0].input_bits,
-        original_payload.controller.ports[0].input_bits
-    );
-    assert_eq!(
-        exported_payload.controller.ports[1].input_bits,
-        original_payload.controller.ports[1].input_bits
-    );
-    assert_eq!(
-        exported_payload.controller.ports[0].index,
-        original_payload.controller.ports[0].index
-    );
-    assert_eq!(
-        exported_payload.controller.ports[1].index,
-        original_payload.controller.ports[1].index
-    );
-    assert_eq!(
-        exported_payload.controller.auxiliary.microphone,
-        original_payload.controller.auxiliary.microphone
-    );
-    assert_eq!(
-        exported_payload.controller.strobe,
-        original_payload.controller.strobe
+        decode_controller_snapshot(&exported_payload.controller_state),
+        decode_controller_snapshot(&original_payload.controller_state)
     );
     assert_eq!(exported_payload.source_frame, original_payload.source_frame);
-}
-
-#[test]
-fn nes_input_frame_maps_to_standard_controller_button_pairs() {
-    let buttons = buttons_from_nes_input_frame(NesInputFrame {
-        player_one: ControllerInputs::A | ControllerInputs::START,
-        player_two: ControllerInputs::LEFT,
-        microphone: true,
-    });
-
-    assert_eq!(buttons, [Buttons::A | Buttons::START, Buttons::LEFT,]);
 }
 
 #[test]
@@ -202,20 +211,14 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
     let mut payload = decode_console_state(&export.machine_state);
     payload.frame_counter = 42;
     payload.paused = true;
-    payload.controller = ControllerStatePayload {
-        ports: [
-            ControllerPortStatePayload {
-                input_bits: u32::from((ControllerInputs::A | ControllerInputs::START).bits()),
-                index: 3,
-            },
-            ControllerPortStatePayload {
-                input_bits: u32::from(ControllerInputs::LEFT.bits()),
-                index: 5,
-            },
-        ],
-        auxiliary: ControllerAuxiliaryStatePayload { microphone: true },
+    payload.controller_state = encode_controller_state(StandardControllerSnapshot {
+        buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
+        microphone: true,
+        index1: 3,
+        index2: 5,
         strobe: true,
-    };
+    })
+    .expect("controller state should encode");
     payload.source_frame = vec![11, 29];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -227,17 +230,15 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
     assert_eq!(exported.frame_counter, 42);
     assert!(exported.paused);
     assert_eq!(
-        exported.controller.ports[0].input_bits,
-        u32::from((ControllerInputs::A | ControllerInputs::START).bits())
+        decode_controller_snapshot(&exported.controller_state),
+        StandardControllerSnapshot {
+            buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
+            microphone: true,
+            index1: 3,
+            index2: 5,
+            strobe: true,
+        }
     );
-    assert_eq!(
-        exported.controller.ports[1].input_bits,
-        u32::from(ControllerInputs::LEFT.bits())
-    );
-    assert!(exported.controller.auxiliary.microphone);
-    assert_eq!(exported.controller.ports[0].index, 3);
-    assert_eq!(exported.controller.ports[1].index, 5);
-    assert!(exported.controller.strobe);
     assert_eq!(exported.source_frame, vec![11, 29]);
     console.with_frame_buffer(|frame| assert_eq!(frame, &[11, 29]));
 }
@@ -265,71 +266,13 @@ fn console_state_rejects_invalid_controller_payload() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
     let mut payload = decode_console_state(&export.machine_state);
-    payload.controller.ports[0].input_bits = u32::from(u8::MAX) + 1;
+    payload.controller_state = vec![0x01, 0x02, 0x03];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
     let error = console
         .import_state(bytes)
         .expect_err("invalid controller payload should reject");
-    assert!(
-        error
-            .to_string()
-            .contains("controller port1 input overflow")
-    );
-}
-
-#[test]
-fn console_state_rejects_second_controller_bit_overflow() {
-    let console = loaded_console();
-    let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
-    payload.controller.ports[1].input_bits = u32::from(u8::MAX) + 1;
-    let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
-
-    let error = console
-        .import_state(bytes)
-        .expect_err("invalid second controller payload should reject");
-    assert!(
-        error
-            .to_string()
-            .contains("controller port2 input overflow")
-    );
-}
-
-#[test]
-fn console_state_rejects_out_of_range_controller_index() {
-    let console = loaded_console();
-    let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
-    payload.controller.ports[0].index = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
-    let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
-
-    let error = console
-        .import_state(bytes)
-        .expect_err("out-of-range controller index should reject");
-    assert!(
-        error
-            .to_string()
-            .contains("controller port1 index out of range")
-    );
-}
-
-#[test]
-fn console_state_rejects_out_of_range_second_controller_index() {
-    let console = loaded_console();
-    let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
-    payload.controller.ports[1].index = (STANDARD_CONTROLLER_MAX_INDEX + 1) as u64;
-    let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
-
-    let error = console
-        .import_state(bytes)
-        .expect_err("out-of-range second controller index should reject");
-    assert!(
-        error
-            .to_string()
-            .contains("controller port2 index out of range")
-    );
+    assert!(!error.to_string().is_empty());
 }
 
 #[test]
@@ -371,7 +314,7 @@ fn console_state_failed_import_does_not_mutate_existing_state() {
     let console = loaded_console();
     let before = console.export_state().expect("console state should export");
     let mut payload = decode_console_state(&before.machine_state);
-    payload.controller.ports[0].input_bits = u32::from(u8::MAX) + 1;
+    payload.controller_state = vec![0x01, 0x02, 0x03];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
     console
@@ -386,12 +329,8 @@ fn console_state_failed_import_does_not_mutate_existing_state() {
     assert_eq!(after_payload.frame_counter, before_payload.frame_counter);
     assert_eq!(after_payload.paused, before_payload.paused);
     assert_eq!(
-        after_payload.controller.ports[0].input_bits,
-        before_payload.controller.ports[0].input_bits
-    );
-    assert_eq!(
-        after_payload.controller.ports[0].index,
-        before_payload.controller.ports[0].index
+        decode_controller_snapshot(&after_payload.controller_state),
+        decode_controller_snapshot(&before_payload.controller_state)
     );
     assert_eq!(after_payload.source_frame, before_payload.source_frame);
 }

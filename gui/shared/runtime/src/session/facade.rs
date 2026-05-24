@@ -1,7 +1,7 @@
 use super::GuiSession;
 use super::persistence::PersistenceState;
 use nerust_console::video::ConsoleVideo;
-use nerust_console::{ConsoleError, ConsoleMetrics, NesInputFrame};
+use nerust_console::{ConsoleError, ConsoleMetrics};
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;
@@ -70,15 +70,15 @@ impl GuiSession {
         self.core.resume();
     }
 
-    pub fn apply_nes_input_frame(&mut self, frame: NesInputFrame) {
-        self.core.apply_nes_input_frame(frame);
+    pub fn apply_controller_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.core.apply_controller_state(bytes)
     }
 
-    pub fn current_nes_input_frame(&self) -> NesInputFrame {
-        self.core.current_nes_input_frame()
+    pub fn apply_input_state(&mut self, bytes: Vec<u8>) {
+        self.core.apply_input_state(bytes);
     }
 
-    pub fn clear_nes_input_frame(&mut self) {
-        self.core.clear_nes_input_frame();
+    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        self.core.current_controller_state()
     }
 }

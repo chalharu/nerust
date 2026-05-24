@@ -7,16 +7,15 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_contract_options::CoreOptions;
-use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::descriptor::{
+use nerust_gui_shell::load::NesLoadOptions;
+use nerust_gui_shell::session::NesSession;
+use nerust_input_nes::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP, NesConsoleDescriptor,
+    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
-use nerust_gui_shell::input::NesInputAdapter;
-use nerust_gui_shell::state::NativeShellState;
 use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
 use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
@@ -71,10 +70,9 @@ pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     window: Option<Arc<TaoWindow>>,
     backend: Option<WgpuBackend<SurfaceTarget>>,
-    session: GuiSession,
+    session: NesSession,
     app_menu: AppMenu,
     shell: NativeShellState,
-    input: NesInputAdapter,
 }
 
 impl WindowRuntime {
@@ -94,25 +92,23 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             window: None,
             backend: None,
-            session: NesConsoleDescriptor.build_session(),
+            session: NesSession::new(),
             app_menu,
             shell: NativeShellState::new(),
-            input: NesInputAdapter::new(),
         }
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) {
-        self.load_with_options(None, data, CoreOptions::default());
+        self.load_with_options(None, data, NesLoadOptions::default());
     }
 
     pub(crate) fn load_with_options(
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        options: CoreOptions,
+        options: NesLoadOptions,
     ) {
         if self.session.load_with_options(rom_path, data, options) {
-            self.input.sync_from_session(&self.session);
             self.sync_menu_state();
         }
     }
@@ -256,14 +252,6 @@ impl WindowRuntime {
 
     fn apply_session_command(&mut self, command: SessionCommand) {
         let outcome = self.session.run_command(command);
-        if outcome.executed
-            && matches!(
-                command,
-                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
-            )
-        {
-            self.input.sync_from_session(&self.session);
-        }
         self.apply_command_outcome(outcome);
     }
 
@@ -346,17 +334,16 @@ impl WindowRuntime {
         if let Some(input_state) = element_state_to_input_state(input.state)
             && let Some(controller_input) = code
         {
-            self.input.handle_input(DigitalInputEvent::new(
+            self.session.handle_controller_input(DigitalInputEvent::new(
                 NES_ATTACHMENT_PLAYER_ONE,
                 controller_input,
                 input_state,
             ));
-            self.input.flush_to_session(&mut self.session);
         }
     }
 
     fn clear_keys(&mut self) {
-        self.input.clear(&mut self.session);
+        self.session.clear_controller_input();
     }
 
     fn prepare_close(&mut self) -> bool {
@@ -375,9 +362,7 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_shell::descriptor::{
-        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
-    };
+    use nerust_input_nes::{NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP};
     use tao::keyboard::KeyCode;
 
     #[test]

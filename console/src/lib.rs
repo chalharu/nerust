@@ -23,7 +23,7 @@ use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -111,37 +111,6 @@ pub struct ConsoleMetrics {
     pub paused: bool,
 }
 
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ControllerInputs: u8 {
-        const A =      0b0000_0001;
-        const B =      0b0000_0010;
-        const SELECT = 0b0000_0100;
-        const START =  0b0000_1000;
-        const UP =     0b0001_0000;
-        const DOWN =   0b0010_0000;
-        const LEFT =   0b0100_0000;
-        const RIGHT =  0b1000_0000;
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NesInputFrame {
-    pub player_one: ControllerInputs,
-    pub player_two: ControllerInputs,
-    pub microphone: bool,
-}
-
-impl Default for NesInputFrame {
-    fn default() -> Self {
-        Self {
-            player_one: ControllerInputs::empty(),
-            player_two: ControllerInputs::empty(),
-            microphone: false,
-        }
-    }
-}
-
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsoleError {
     #[error("console worker thread is unavailable")]
@@ -159,7 +128,7 @@ enum ConsoleReply {
     MapperSave(Option<Vec<u8>>),
     PersistenceTarget(PersistenceTarget),
     StateExport(StateExport),
-    NesInputFrame(NesInputFrame),
+    ControllerState(Vec<u8>),
 }
 
 type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
@@ -260,14 +229,19 @@ impl Console {
         }
     }
 
-    pub fn apply_nes_input_frame(&self, frame: NesInputFrame) {
+    pub fn apply_input_state(&self, bytes: Vec<u8>) {
         if self
             .data_sender
-            .send(ConsoleData::NesInputFrame { frame })
+            .send(ConsoleData::ApplyInputState { bytes })
             .is_err()
         {
-            log::warn!("Core NES input frame send failed");
+            log::warn!("Core input state send failed");
         }
+    }
+
+    pub fn apply_controller_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.send_request(|reply| ConsoleData::ApplyControllerState { bytes, reply })?;
+        Ok(())
     }
 
     pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
@@ -340,11 +314,11 @@ impl Console {
         }
     }
 
-    pub fn current_nes_input_frame(&self) -> Result<NesInputFrame, ConsoleError> {
-        match self.send_request(ConsoleData::CurrentNesInputFrame)? {
-            ConsoleReply::NesInputFrame(frame) => Ok(frame),
+    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
+        match self.send_request(ConsoleData::CurrentControllerState)? {
+            ConsoleReply::ControllerState(bytes) => Ok(bytes),
             _ => Err(ConsoleError::Core(
-                "unexpected current NES input frame reply".into(),
+                "unexpected current controller state reply".into(),
             )),
         }
     }
