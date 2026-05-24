@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Console, ControllerInputs};
+use crate::{Console, ControllerInputs, NesInputFrame};
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
@@ -182,6 +182,17 @@ fn console_state_export_import_round_trip_preserves_wrapper_fields() {
         original_payload.controller.strobe
     );
     assert_eq!(exported_payload.source_frame, original_payload.source_frame);
+}
+
+#[test]
+fn nes_input_frame_maps_to_standard_controller_button_pairs() {
+    let buttons = buttons_from_nes_input_frame(NesInputFrame {
+        player_one: ControllerInputs::A | ControllerInputs::START,
+        player_two: ControllerInputs::LEFT,
+        microphone: true,
+    });
+
+    assert_eq!(buttons, [Buttons::A | Buttons::START, Buttons::LEFT,]);
 }
 
 #[test]

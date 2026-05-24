@@ -7,15 +7,17 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_console::ControllerPort;
 use nerust_contract_options::CoreOptions;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_session::input::{ControllerInput, InputState};
-use nerust_gui_shell::descriptor::NesConsoleDescriptor;
+use nerust_gui_shell::descriptor::{
+    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
+    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP, NesConsoleDescriptor,
+};
 use nerust_gui_shell::input::NesInputAdapter;
 use nerust_gui_shell::state::NativeShellState;
+use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
 use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,24 +32,24 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-fn keycode_controller_input(code: KeyCode) -> Option<ControllerInput> {
+fn keycode_controller_input(code: KeyCode) -> Option<DigitalControlId> {
     Some(match code {
-        KeyCode::KeyZ => ControllerInput::A,
-        KeyCode::KeyX => ControllerInput::B,
-        KeyCode::KeyC => ControllerInput::Select,
-        KeyCode::KeyV => ControllerInput::Start,
-        KeyCode::ArrowUp => ControllerInput::Up,
-        KeyCode::ArrowDown => ControllerInput::Down,
-        KeyCode::ArrowLeft => ControllerInput::Left,
-        KeyCode::ArrowRight => ControllerInput::Right,
+        KeyCode::KeyZ => NES_CONTROL_A,
+        KeyCode::KeyX => NES_CONTROL_B,
+        KeyCode::KeyC => NES_CONTROL_SELECT,
+        KeyCode::KeyV => NES_CONTROL_START,
+        KeyCode::ArrowUp => NES_CONTROL_UP,
+        KeyCode::ArrowDown => NES_CONTROL_DOWN,
+        KeyCode::ArrowLeft => NES_CONTROL_LEFT,
+        KeyCode::ArrowRight => NES_CONTROL_RIGHT,
         _ => return None,
     })
 }
 
-fn element_state_to_input_state(state: ElementState) -> Option<InputState> {
+fn element_state_to_input_state(state: ElementState) -> Option<DigitalInputState> {
     Some(match state {
-        ElementState::Pressed => InputState::Pressed,
-        ElementState::Released => InputState::Released,
+        ElementState::Pressed => DigitalInputState::Pressed,
+        ElementState::Released => DigitalInputState::Released,
         _ => return None,
     })
 }
@@ -110,7 +112,7 @@ impl WindowRuntime {
         options: CoreOptions,
     ) {
         if self.session.load_with_options(rom_path, data, options) {
-            self.input.clear(&mut self.session);
+            self.input.sync_from_session(&self.session);
             self.sync_menu_state();
         }
     }
@@ -254,6 +256,14 @@ impl WindowRuntime {
 
     fn apply_session_command(&mut self, command: SessionCommand) {
         let outcome = self.session.run_command(command);
+        if outcome.executed
+            && matches!(
+                command,
+                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
+            )
+        {
+            self.input.sync_from_session(&self.session);
+        }
         self.apply_command_outcome(outcome);
     }
 
@@ -336,8 +346,11 @@ impl WindowRuntime {
         if let Some(input_state) = element_state_to_input_state(input.state)
             && let Some(controller_input) = code
         {
-            self.input
-                .handle_input(ControllerPort::One, controller_input, input_state);
+            self.input.handle_input(DigitalInputEvent::new(
+                NES_ATTACHMENT_PLAYER_ONE,
+                controller_input,
+                input_state,
+            ));
             self.input.flush_to_session(&mut self.session);
         }
     }
@@ -362,26 +375,22 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_session::input::ControllerInput;
+    use nerust_gui_shell::descriptor::{
+        NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_RIGHT, NES_CONTROL_UP,
+    };
     use tao::keyboard::KeyCode;
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyZ),
-            Some(ControllerInput::A)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyX),
-            Some(ControllerInput::B)
-        );
+        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(NES_CONTROL_A));
+        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(NES_CONTROL_B));
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),
-            Some(ControllerInput::Up)
+            Some(NES_CONTROL_UP)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowRight),
-            Some(ControllerInput::Right)
+            Some(NES_CONTROL_RIGHT)
         );
         assert_eq!(keycode_controller_input(KeyCode::Enter), None);
     }

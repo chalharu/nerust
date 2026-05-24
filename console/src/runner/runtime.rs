@@ -1,14 +1,21 @@
 use super::{ConsoleData, ConsoleRunner};
-use crate::{
-    AuxiliaryInput, ConsoleError, ConsoleReply, ConsoleRequestResult, ControllerPort, Crc64Hasher,
-    state,
-};
+use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher, NesInputFrame, state};
 use nerust_core::Core;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
 
 impl ConsoleRunner {
+    fn apply_nes_input_frame(&mut self, frame: NesInputFrame) {
+        self.controller
+            .set_pad(state::buttons_from_nes_input_frame(frame));
+        self.controller.set_microphone(frame.microphone);
+    }
+
+    fn current_nes_input_frame(&self) -> NesInputFrame {
+        state::nes_input_frame_from_snapshot(self.controller.export_snapshot())
+    }
+
     fn reply(reply: Sender<ConsoleRequestResult>, result: Result<ConsoleReply, ConsoleError>) {
         if reply.send(result).is_err() {
             log::warn!("console reply send failed");
@@ -76,21 +83,7 @@ impl ConsoleRunner {
                         };
                         Self::reply(reply, result);
                     }
-                    ConsoleData::PortInputs { port, inputs } => match port {
-                        ControllerPort::One => {
-                            self.controller
-                                .set_pad1(state::buttons_from_controller_inputs(inputs));
-                        }
-                        ControllerPort::Two => {
-                            self.controller
-                                .set_pad2(state::buttons_from_controller_inputs(inputs));
-                        }
-                    },
-                    ConsoleData::AuxiliaryInput { input, active } => match input {
-                        AuxiliaryInput::Microphone => {
-                            self.controller.set_microphone(active);
-                        }
-                    },
+                    ConsoleData::NesInputFrame { frame } => self.apply_nes_input_frame(frame),
                     ConsoleData::Unload(reply) => {
                         let result = if core.is_some() {
                             self.paused = false;
@@ -119,6 +112,12 @@ impl ConsoleRunner {
                     ConsoleData::ExportState(reply) => {
                         let result = self.export_state_reply(core.as_ref());
                         Self::reply(reply, result);
+                    }
+                    ConsoleData::CurrentNesInputFrame(reply) => {
+                        Self::reply(
+                            reply,
+                            Ok(ConsoleReply::NesInputFrame(self.current_nes_input_frame())),
+                        );
                     }
                     ConsoleData::ImportState { bytes, reply } => {
                         let result = self.import_state_reply(core.as_mut(), &bytes);

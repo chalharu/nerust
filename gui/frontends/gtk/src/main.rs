@@ -7,14 +7,13 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
-use nerust_console::ControllerPort;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_session::input::{ControllerInput, InputState};
 use nerust_gui_shell::descriptor::NesConsoleDescriptor;
 use nerust_gui_shell::input::NesInputAdapter;
+use nerust_input_schema::DigitalInputEvent;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
@@ -62,7 +61,7 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         if self.session.load(rom_path, data) {
-            self.input.clear(&mut self.session);
+            self.input.sync_from_session(&self.session);
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -78,7 +77,7 @@ impl State {
     pub(crate) fn unload(&mut self) -> bool {
         let unloaded = self.session.unload();
         if unloaded {
-            self.input.clear(&mut self.session);
+            self.input.sync_from_session(&self.session);
         }
         unloaded
     }
@@ -88,16 +87,20 @@ impl State {
     }
 
     pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        self.session.run_command(command)
+        let outcome = self.session.run_command(command);
+        if outcome.executed
+            && matches!(
+                command,
+                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
+            )
+        {
+            self.input.sync_from_session(&self.session);
+        }
+        outcome
     }
 
-    pub(crate) fn handle_controller_input(
-        &mut self,
-        port: ControllerPort,
-        input: ControllerInput,
-        state: InputState,
-    ) {
-        self.input.handle_input(port, input, state);
+    pub(crate) fn handle_controller_input(&mut self, event: DigitalInputEvent) {
+        self.input.handle_input(event);
         self.input.flush_to_session(&mut self.session);
     }
 

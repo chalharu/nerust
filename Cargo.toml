@@ -10,6 +10,7 @@ members = [
   "contract/persistence",
   "contract/rom",
   "core",
+  "input/schema",
   "persistence",
   "rom_test",
   "gui/frontends/gtk",
@@ -77,6 +78,7 @@ nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/shared/runtime" }
 nerust_gui_shell = { version = "=0.1.0", path = "gui/shared/shell" }
 nerust_gui_session = { version = "=0.1.0", path = "gui/shared/session" }
+nerust_input_schema = { version = "=0.1.0", path = "input/schema" }
 nerust_persistence = { version = "=0.1.0", path = "persistence" }
 nerust_rom_test = { version = "=0.1.0", path = "rom_test" }
 nerust_backend_opengl = { version = "=0.1.0", path = "backend/opengl" }

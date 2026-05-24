@@ -111,12 +111,6 @@ pub struct ConsoleMetrics {
     pub paused: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerPort {
-    One,
-    Two,
-}
-
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct ControllerInputs: u8 {
@@ -132,8 +126,20 @@ bitflags::bitflags! {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuxiliaryInput {
-    Microphone,
+pub struct NesInputFrame {
+    pub player_one: ControllerInputs,
+    pub player_two: ControllerInputs,
+    pub microphone: bool,
+}
+
+impl Default for NesInputFrame {
+    fn default() -> Self {
+        Self {
+            player_one: ControllerInputs::empty(),
+            player_two: ControllerInputs::empty(),
+            microphone: false,
+        }
+    }
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -153,6 +159,7 @@ enum ConsoleReply {
     MapperSave(Option<Vec<u8>>),
     PersistenceTarget(PersistenceTarget),
     StateExport(StateExport),
+    NesInputFrame(NesInputFrame),
 }
 
 type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
@@ -253,23 +260,13 @@ impl Console {
         }
     }
 
-    pub fn set_port_inputs(&self, port: ControllerPort, inputs: ControllerInputs) {
+    pub fn apply_nes_input_frame(&self, frame: NesInputFrame) {
         if self
             .data_sender
-            .send(ConsoleData::PortInputs { port, inputs })
+            .send(ConsoleData::NesInputFrame { frame })
             .is_err()
         {
-            log::warn!("Core controller port input send failed");
-        }
-    }
-
-    pub fn set_auxiliary_input(&self, input: AuxiliaryInput, active: bool) {
-        if self
-            .data_sender
-            .send(ConsoleData::AuxiliaryInput { input, active })
-            .is_err()
-        {
-            log::warn!("Core controller auxiliary input send failed");
+            log::warn!("Core NES input frame send failed");
         }
     }
 
@@ -339,6 +336,15 @@ impl Console {
             ConsoleReply::PersistenceTarget(target) => Ok(target),
             _ => Err(ConsoleError::Core(
                 "unexpected persistence target reply".into(),
+            )),
+        }
+    }
+
+    pub fn current_nes_input_frame(&self) -> Result<NesInputFrame, ConsoleError> {
+        match self.send_request(ConsoleData::CurrentNesInputFrame)? {
+            ConsoleReply::NesInputFrame(frame) => Ok(frame),
+            _ => Err(ConsoleError::Core(
+                "unexpected current NES input frame reply".into(),
             )),
         }
     }
