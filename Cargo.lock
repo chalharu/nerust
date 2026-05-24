@@ -2161,7 +2161,6 @@ dependencies = [
 name = "nerust_console"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.11.1",
  "crc",
  "log",
  "nerust_cartridge_data",
@@ -2169,6 +2168,8 @@ dependencies = [
  "nerust_contract_persistence",
  "nerust_contract_rom",
  "nerust_core",
+ "nerust_input_nes",
+ "nerust_input_nes_runtime",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
@@ -2249,11 +2250,9 @@ dependencies = [
  "glutin-winit",
  "log",
  "nerust_backend_opengl",
- "nerust_console",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
- "nerust_input_schema",
  "nerust_sound_openal",
  "raw-window-handle",
  "simple_logger",
@@ -2285,7 +2284,6 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
- "nerust_input_schema",
  "nerust_persistence",
  "nerust_sound_openal",
  "shared_library",
@@ -2322,14 +2320,41 @@ dependencies = [
 name = "nerust_gui_shell"
 version = "0.1.0"
 dependencies = [
+ "log",
  "nerust_console",
+ "nerust_contract_options",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_input_nes",
  "nerust_input_schema",
+ "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_sound_openal",
  "nerust_sound_traits",
  "nerust_timer",
+]
+
+[[package]]
+name = "nerust_input_nes"
+version = "0.2.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "nerust_input_schema",
+ "rmp-serde",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "nerust_input_nes_runtime"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nerust_core",
+ "nerust_input_nes",
+ "rmp-serde",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -2365,6 +2390,8 @@ dependencies = [
  "nerust_cartridge_data",
  "nerust_contract_options",
  "nerust_core",
+ "nerust_input_nes",
+ "nerust_input_nes_runtime",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
@@ -2497,12 +2524,9 @@ dependencies = [
  "log",
  "muda",
  "nerust_backend_wgpu",
- "nerust_console",
- "nerust_contract_options",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_shell",
- "nerust_input_schema",
  "nerust_persistence",
  "nerust_screen_wgpu",
  "nerust_sound_openal",

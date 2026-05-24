@@ -6,9 +6,10 @@
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::Core;
+use crate::OpenBusReadResult;
 use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_rom::CartridgeData;
-use crate::controller::standard_controller::StandardController;
+use crate::controller::Controller;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_contract_mirror::MirrorMode;
 use nerust_contract_rom::RomFormat;
@@ -35,10 +36,21 @@ const LENGTH_TABLE: [u8; 32] = [
 #[derive(Default)]
 struct NullScreen;
 
+#[derive(Default)]
+struct NullController;
+
 impl Screen for NullScreen {
     fn push(&mut self, _palette: u8) {}
 
     fn render(&mut self) {}
+}
+
+impl Controller for NullController {
+    fn read(&mut self, _address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(0, 0)
+    }
+
+    fn write(&mut self, _value: u8) {}
 }
 
 #[derive(Debug, Clone)]
@@ -284,7 +296,7 @@ fn run_rom_until_silence(
     core.reset();
 
     let mut screen = NullScreen;
-    let mut controller = StandardController::new();
+    let mut controller = NullController;
     let mut mixer = CapturingMixer::new(sample_rate);
 
     for _ in 0..max_frames {

@@ -7,7 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bitflags.workspace = true
 crc.workspace = true
 log.workspace = true
 nerust_cartridge_data.workspace = true
@@ -15,6 +14,8 @@ nerust_contract_options.workspace = true
 nerust_contract_persistence.workspace = true
 nerust_contract_rom.workspace = true
 nerust_core.workspace = true
+nerust_input_nes.workspace = true
+nerust_input_nes_runtime.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_screen_filter.workspace = true
 nerust_screen_logical.workspace = true
