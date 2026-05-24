@@ -14,15 +14,18 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
 use nerust_backend_opengl::GlBackend;
-use nerust_contract_settings::input::KeyboardKey;
+use nerust_contract_settings::{input::KeyboardKey, shortcut::ShortcutAction};
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
 use nerust_gui_shell::settings::{
-    controller_event_for_key, current_or_default, load_settings_manager, shortcut_action_for_key,
-    shortcut_command_for_key,
+    bindings::events::{
+        controller::controller_event_for_key,
+        shortcut::{shortcut_action_for_key, shortcut_command_for_key},
+    },
+    defaults::manager::{current_or_default, load_settings_manager},
 };
 use raw_window_handle::HasWindowHandle;
 use std::f64;
@@ -367,10 +370,7 @@ impl Window {
             if input.state == ElementState::Released
                 && !input.repeat
                 && let Some(action) = shortcut_action_for_key(&settings, key)
-                && matches!(
-                    action,
-                    nerust_contract_settings::shortcut::ShortcutAction::ToggleFullscreen
-                )
+                && matches!(action, ShortcutAction::ToggleFullscreen)
             {
                 self.toggle_fullscreen();
                 return;

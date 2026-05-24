@@ -9,7 +9,11 @@ use nerust_contract_settings::{input::KeyboardKey, shortcut::ShortcutAction};
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::settings::{
-    controller_event_for_key, current_or_default, shortcut_command_for_key,
+    bindings::events::{
+        controller::controller_event_for_key,
+        shortcut::{shortcut_action_for_key, shortcut_command_for_key},
+    },
+    defaults::manager::current_or_default,
 };
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
@@ -565,7 +569,7 @@ impl WindowExtend for Window {
                         .handle_controller_input(controller_event);
                 }
                 if matches!(
-                    nerust_gui_shell::settings::shortcut_action_for_key(&settings, key),
+                    shortcut_action_for_key(&settings, key),
                     Some(ShortcutAction::ToggleFullscreen)
                 ) {
                     let fullscreened = {

@@ -1,6 +1,6 @@
 use crate::session::NesSession;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
-use nerust_input_nes::topology::{
+use nerust_input_nes::topology::ids::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };

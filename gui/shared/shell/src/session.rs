@@ -5,7 +5,7 @@ mod tests;
 
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
-use nerust_input_nes::input::NesInputState;
+use nerust_input_nes::input::state::NesInputState;
 
 #[derive(Debug)]
 pub struct NesSession {
@@ -16,6 +16,6 @@ pub struct NesSession {
 
 impl Default for NesSession {
     fn default() -> Self {
-        Self::new(crate::settings::load_settings_manager())
+        Self::new(crate::settings::defaults::manager::load_settings_manager())
     }
 }

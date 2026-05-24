@@ -1,14 +1,14 @@
 use crate::descriptor::NesConsoleProfile;
 use crate::load::NesLoadOptions;
 use crate::session::NesSession;
-use crate::settings::{current_or_default, effective_load_options};
+use crate::settings::{defaults::manager::current_or_default, nes::effective_load_options};
 use nerust_console::ConsoleMetrics;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_input_nes::input::NesInputState;
+use nerust_input_nes::input::state::NesInputState;
 use nerust_persistence::model::StateSlotSummary;
 use std::path::PathBuf;
 

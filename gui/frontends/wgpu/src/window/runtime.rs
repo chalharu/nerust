@@ -7,7 +7,7 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_contract_settings::input::KeyboardKey;
+use nerust_contract_settings::{input::KeyboardKey, shortcut::ShortcutAction};
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
@@ -15,7 +15,11 @@ use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::load::NesLoadOptions;
 use nerust_gui_shell::session::NesSession;
 use nerust_gui_shell::settings::{
-    controller_event_for_key, current_or_default, shortcut_action_for_key, shortcut_command_for_key,
+    bindings::events::{
+        controller::controller_event_for_key,
+        shortcut::{shortcut_action_for_key, shortcut_command_for_key},
+    },
+    defaults::manager::current_or_default,
 };
 use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
@@ -396,10 +400,7 @@ impl WindowRuntime {
             if input.state == ElementState::Released
                 && !input.repeat
                 && let Some(action) = shortcut_action_for_key(&settings, key)
-                && matches!(
-                    action,
-                    nerust_contract_settings::shortcut::ShortcutAction::ToggleFullscreen
-                )
+                && matches!(action, ShortcutAction::ToggleFullscreen)
             {
                 self.toggle_fullscreen();
                 return;

@@ -13,7 +13,7 @@ use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::session::NesSession;
-use nerust_gui_shell::settings::{current_or_default, load_settings_manager};
+use nerust_gui_shell::settings::defaults::manager::{current_or_default, load_settings_manager};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;

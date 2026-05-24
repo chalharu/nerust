@@ -1,9 +1,12 @@
-use crate::settings::{build_screen_buffer, build_speaker, current_or_default};
+use crate::settings::{
+    defaults::manager::current_or_default,
+    nes::{build_screen_buffer, build_speaker},
+};
 use nerust_console::Console;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::core::SessionCore;
-use nerust_input_nes::topology::input_topology_descriptor;
+use nerust_input_nes::topology::descriptor::input_topology_descriptor;
 use nerust_input_schema::InputTopologyDescriptor;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
@@ -40,7 +43,7 @@ impl NesConsoleProfile {
 #[cfg(test)]
 mod tests {
     use super::NesConsoleProfile;
-    use nerust_input_nes::topology::{
+    use nerust_input_nes::topology::ids::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,

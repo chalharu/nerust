@@ -1,7 +1,7 @@
 use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
 use crate::session::NesSession;
 use crate::session::input::NesButton;
-use crate::settings::default_desktop_settings;
+use crate::settings::defaults::seed::default_desktop_settings;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_runtime::settings::DesktopSettingsManager;
 use nerust_gui_session::core::SessionCore;

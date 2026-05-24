@@ -7,7 +7,7 @@
 mod runtime;
 
 use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant as ShellMmc3IrqVariant};
-use nerust_gui_shell::settings::load_settings_manager;
+use nerust_gui_shell::settings::defaults::manager::load_settings_manager;
 use runtime::WindowRuntime;
 use std::path::PathBuf;
 
