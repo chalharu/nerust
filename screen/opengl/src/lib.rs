@@ -15,8 +15,10 @@ use gl::types::GLint;
 use nerust_glwrap::Shader;
 use nerust_glwrap::raw::*;
 use nerust_glwrap::vertex::*;
+use nerust_screen_filter::filter::{
+    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+};
 use nerust_screen_filter::presentation::NesVideoAssets;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
 use nerust_screen_traits::{VideoPresentation, logical_size::LogicalSize};
 use std::ffi::CStr;
 use std::os::raw::c_void;

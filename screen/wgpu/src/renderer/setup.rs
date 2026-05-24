@@ -10,8 +10,10 @@ use crate::{
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::FrameUploadLayout,
 };
+use nerust_screen_filter::filter::{
+    NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+};
 use nerust_screen_filter::presentation::NesVideoAssets;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
 use nerust_screen_traits::VideoPresentation;
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,

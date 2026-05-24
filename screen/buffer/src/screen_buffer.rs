@@ -6,8 +6,8 @@
 
 use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
+use nerust_screen_filter::filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
 use nerust_screen_traits::{
     Screen, VideoPresentation, logical_size::LogicalSize, physical_size::PhysicalSize,
 };
@@ -243,7 +243,7 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::FilterType;
+    use nerust_screen_filter::filter::FilterType;
     use nerust_screen_traits::{Screen, VideoFrameFormat, logical_size::LogicalSize};
 
     #[test]

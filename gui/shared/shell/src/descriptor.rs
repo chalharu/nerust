@@ -1,4 +1,4 @@
-use nerust_console::Console;
+use nerust_console::console::Console;
 use nerust_gui_runtime::session::{ConsoleSessionFactory, GuiSession};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::descriptors::{ButtonDescriptor, ControllerDescriptor};

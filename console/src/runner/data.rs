@@ -1,4 +1,5 @@
-use crate::{AuxiliaryInput, ConsoleRequestResult, ControllerInputs, ControllerPort, CoreOptions};
+use crate::console::{AuxiliaryInput, ConsoleRequestResult, ControllerInputs, ControllerPort};
+use nerust_contract::CoreOptions;
 use nerust_core::cartridge_data::CartridgeData;
 use std::sync::mpsc::Sender;
 

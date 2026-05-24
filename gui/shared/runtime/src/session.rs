@@ -2,8 +2,8 @@ mod commands;
 mod persistence;
 
 use self::persistence::PersistenceState;
+use nerust_console::console::{ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
 use nerust_console::video::ConsoleVideo;
-use nerust_console::{ConsoleError, ConsoleMetrics, ControllerInputs, ControllerPort};
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;

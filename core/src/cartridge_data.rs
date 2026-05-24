@@ -215,7 +215,7 @@ mod mirror_mode_serde {
 #[cfg(test)]
 mod tests {
     use super::{CartridgeData, CartridgeDataParts, RomFormat};
-    use crate::Core;
+    use crate::core::Core;
     use nerust_contract::MirrorMode;
 
     #[test]
