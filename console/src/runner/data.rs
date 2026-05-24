@@ -1,4 +1,4 @@
-use crate::{AuxiliaryInput, ConsoleRequestResult, ControllerInputs, ControllerPort};
+use crate::{ConsoleRequestResult, NesInputFrame};
 use nerust_contract_options::CoreOptions;
 use nerust_core::cartridge_rom::CartridgeData;
 use std::sync::mpsc::Sender;
@@ -12,13 +12,8 @@ pub(crate) enum ConsoleData {
     Resume,
     Pause,
     Reset(Sender<ConsoleRequestResult>),
-    PortInputs {
-        port: ControllerPort,
-        inputs: ControllerInputs,
-    },
-    AuxiliaryInput {
-        input: AuxiliaryInput,
-        active: bool,
+    NesInputFrame {
+        frame: NesInputFrame,
     },
     Unload(Sender<ConsoleRequestResult>),
     ExportMapperSave(Sender<ConsoleRequestResult>),
@@ -28,6 +23,7 @@ pub(crate) enum ConsoleData {
     },
     PersistenceTarget(Sender<ConsoleRequestResult>),
     ExportState(Sender<ConsoleRequestResult>),
+    CurrentNesInputFrame(Sender<ConsoleRequestResult>),
     ImportState {
         bytes: Vec<u8>,
         reply: Sender<ConsoleRequestResult>,
