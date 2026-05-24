@@ -6,7 +6,7 @@
 
 mod runtime;
 
-use nerust_contract_options::{CoreOptions, Mmc3IrqVariant as ShellMmc3IrqVariant};
+use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant as ShellMmc3IrqVariant};
 use runtime::WindowRuntime;
 use std::path::PathBuf;
 
@@ -21,8 +21,8 @@ pub enum WindowMmc3IrqVariant {
     Nec,
 }
 
-fn core_options_from_window_options(options: WindowLoadOptions) -> CoreOptions {
-    CoreOptions {
+fn nes_load_options_from_window_options(options: WindowLoadOptions) -> NesLoadOptions {
+    NesLoadOptions {
         mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
     }
 }
@@ -55,8 +55,11 @@ impl Window {
         data: Vec<u8>,
         options: WindowLoadOptions,
     ) {
-        self.runtime
-            .load_with_options(rom_path, data, core_options_from_window_options(options));
+        self.runtime.load_with_options(
+            rom_path,
+            data,
+            nes_load_options_from_window_options(options),
+        );
     }
 
     pub fn run(self) {

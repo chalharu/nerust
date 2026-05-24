@@ -1,30 +1,16 @@
-//! Shell-facing adapter layer for NES console sessions.
+//! NES-specific shell/session composition.
 //!
-//! This crate provides the NES-specific adapter types and shell-facing runtime
-//! surface that connect a generic session runtime to a concrete shell binary:
+//! This crate owns the current NES system-facing shell adapters:
 //!
-//! - [`descriptor::NesConsoleDescriptor`] — builds a NES
-//!   [`nerust_gui_runtime::session::GuiSession`] and describes its controller layout.
-//! - [`input::NesInputAdapter`] — translates host key/button events to NES controller
-//!   inputs and flushes them to the session.
-//! - [`state::NativeShellState`] — tracks frame-presentation and redraw timing for
-//!   native window shells.
+//! - [`descriptor::NesConsoleProfile`] — describes NES topology and builds the
+//!   default NES console/session composition.
+//! - [`load`] — shell-facing NES load options kept separate from
+//!   `nerust_contract_options`.
+//! - [`session::NesSession`] — wraps the generic [`nerust_gui_runtime::session::GuiSession`]
+//!   with NES controller/input behavior.
 //!
-//! # Shell × Backend Composition Policy
-//!
-//! Backend selection is fixed at **build-time / binary level**. Each shell
-//! binary links against exactly one backend crate (`nerust_backend_opengl` or
-//! `nerust_backend_wgpu`) and there is **no runtime mechanism for switching
-//! backends** while the application is running.
-//!
-//! To add a new rendering backend, create a new binary target crate that
-//! composes `nerust_gui_shell` with the new backend. Do not add runtime
-//! dispatch or feature-flag backend selection to this crate.
-//!
-//! Current shipped combinations:
-//! - `nerust_gtk`    → `nerust_backend_opengl` (GTK 3 + OpenGL 3.3)
-//! - `nerust_glutin` → `nerust_backend_opengl` (winit + glutin + OpenGL 3.3)
-//! - `nerust_wgpu`   → `nerust_backend_wgpu`   (tao + wgpu)
+//! `NativeShellState` lives in `nerust_gui_runtime::shell` because it is common
+//! to native hosts regardless of system.
 pub mod descriptor;
-pub mod input;
-pub mod state;
+pub mod load;
+pub mod session;
