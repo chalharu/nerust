@@ -1,5 +1,6 @@
 mod crash_handler;
 mod glarea;
+mod preferences;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
@@ -8,10 +9,13 @@ use gtk::glib;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_console::video::ConsoleVideo;
+use nerust_contract_settings::input::KeyboardKey;
+use nerust_contract_settings::language::AppLanguage;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::session::NesSession;
-use nerust_gui_shell::session::input::NesButton;
+use nerust_gui_shell::session::{KeyboardShortcut, NesSession};
+use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
@@ -31,7 +35,7 @@ impl State {
     pub(crate) fn new() -> Self {
         Self {
             view: None,
-            session: NesSession::new(),
+            session: NesSession::new_for_host(HostBackendIdentity::gtk_opengl()),
         }
     }
 
@@ -65,6 +69,10 @@ impl State {
         self.session.loaded()
     }
 
+    pub(crate) fn paused(&self) -> bool {
+        self.session.paused()
+    }
+
     pub(crate) fn title(&self) -> String {
         self.session.window_title()
     }
@@ -81,8 +89,12 @@ impl State {
         self.session.run_command(command)
     }
 
-    pub(crate) fn handle_player_one_button(&mut self, button: NesButton, pressed: bool) {
-        self.session.handle_player_one_button(button, pressed);
+    pub(crate) fn handle_keyboard_key(
+        &mut self,
+        key: KeyboardKey,
+        pressed: bool,
+    ) -> Option<KeyboardShortcut> {
+        self.session.handle_keyboard_key(key, pressed)
     }
 
     pub(crate) fn clear_controller_input(&mut self) {
@@ -96,29 +108,44 @@ impl State {
     pub(crate) fn active_slot_id(&self) -> Option<u64> {
         self.session.active_slot_id()
     }
+
+    pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
+        self.session.settings_snapshot()
+    }
+
+    pub(crate) fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsApplyPlan, String> {
+        let plan = self.session.apply_settings(settings)?;
+        if (plan.session_rebuild_required || plan.scaling_changed)
+            && let Some(mut view) = self.view.take()
+        {
+            view.on_close();
+        }
+        Ok(plan)
+    }
 }
 
 fn build_window(app: &gtk::Application) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
-    let menu_model = gtk::Builder::from_string(include_str!("../resources/menu.xml"))
-        .object::<gio::Menu>("menu")
-        .unwrap();
     let state_menu = gio::Menu::new();
     let select_active_slot_menu = gio::Menu::new();
     let save_slot_menu = gio::Menu::new();
     let load_slot_menu = gio::Menu::new();
     let delete_slot_menu = gio::Menu::new();
-    state_menu.append(Some("Create Save Slot"), Some("win.state-create"));
-    state_menu.append(Some("Save Active Slot"), Some("win.state-save-active"));
-    state_menu.append(Some("Load Active Slot"), Some("win.state-load-active"));
-    state_menu.append_submenu(Some("Select Active Slot"), &select_active_slot_menu);
-    state_menu.append_submenu(Some("Save Slot"), &save_slot_menu);
-    state_menu.append_submenu(Some("Load Slot"), &load_slot_menu);
-    state_menu.append_submenu(Some("Delete Slot"), &delete_slot_menu);
-    menu_model.append_submenu(Some("Save States"), &state_menu);
 
     let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new()));
+    let language = state.borrow().settings_snapshot().shared.general.language;
+    let menu_model = build_menu_model(
+        language,
+        &state_menu,
+        &select_active_slot_menu,
+        &save_slot_menu,
+        &load_slot_menu,
+        &delete_slot_menu,
+    );
 
     app.set_menubar(Some(&menu_model));
     app.add_window(&window);
@@ -175,6 +202,56 @@ fn build_window(app: &gtk::Application) -> Window {
             delete_slot_menu,
         },
     )
+}
+
+pub(crate) fn build_menu_model(
+    language: AppLanguage,
+    state_menu: &gio::Menu,
+    select_active_slot_menu: &gio::Menu,
+    save_slot_menu: &gio::Menu,
+    load_slot_menu: &gio::Menu,
+    delete_slot_menu: &gio::Menu,
+) -> gio::Menu {
+    state_menu.remove_all();
+    state_menu.append(
+        Some(text(language, UiText::CreateSaveSlot)),
+        Some("win.state-create"),
+    );
+    state_menu.append(
+        Some(text(language, UiText::SaveActiveSlot)),
+        Some("win.state-save-active"),
+    );
+    state_menu.append(
+        Some(text(language, UiText::LoadActiveSlot)),
+        Some("win.state-load-active"),
+    );
+    state_menu.append_submenu(
+        Some(text(language, UiText::SelectActiveSlot)),
+        select_active_slot_menu,
+    );
+    state_menu.append_submenu(Some(text(language, UiText::SaveSlot)), save_slot_menu);
+    state_menu.append_submenu(Some(text(language, UiText::LoadSlot)), load_slot_menu);
+    state_menu.append_submenu(Some(text(language, UiText::DeleteSlot)), delete_slot_menu);
+
+    let file_menu = gio::Menu::new();
+    file_menu.append(Some(text(language, UiText::Open)), Some("win.open"));
+    file_menu.append(Some(text(language, UiText::Close)), Some("win.close"));
+    file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
+    file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
+
+    let emulation_menu = gio::Menu::new();
+    emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
+    emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
+    emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
+
+    let help_menu = gio::Menu::new();
+    help_menu.append(Some(text(language, UiText::About)), Some("app.about"));
+
+    let menu = gio::Menu::new();
+    menu.append_submenu(Some(text(language, UiText::File)), &file_menu);
+    menu.append_submenu(Some(text(language, UiText::Emulation)), &emulation_menu);
+    menu.append_submenu(Some(text(language, UiText::About)), &help_menu);
+    menu
 }
 
 fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Window>>>) -> Window {

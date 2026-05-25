@@ -1,0 +1,1071 @@
+use crate::State;
+use gtk::glib;
+use gtk::prelude::*;
+use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_settings::input::{
+    KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+};
+use nerust_contract_settings::language::AppLanguage;
+use nerust_contract_settings::local::ScalingMode;
+use nerust_contract_settings::nes::NesVideoFilter;
+use nerust_contract_settings::shared::{StoragePolicy, SystemSettings};
+use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
+use nerust_gui_shell::settings::bindings::conflicting_keys;
+use nerust_gui_shell::settings::bindings::descriptors::{
+    keyboard_binding_descriptors, shortcut_descriptors,
+};
+use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
+use nerust_gui_shell::settings::i18n::{UiText, text};
+use nerust_input_schema::SystemId;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureTarget {
+    Binding { attachment: String, control: String },
+    Shortcut(ShortcutAction),
+}
+
+#[derive(Clone)]
+struct InputRow {
+    target: CaptureTarget,
+    value_label: gtk::Label,
+    change_button: gtk::Button,
+    clear_button: gtk::Button,
+}
+
+pub(crate) fn present_preferences_dialog(
+    parent: &gtk::ApplicationWindow,
+    state: Rc<RefCell<State>>,
+    on_close: impl FnOnce() + 'static,
+) {
+    let language = state.borrow().settings_snapshot().shared.general.language;
+    let dialog = gtk::Dialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .title(text(language, UiText::Preferences))
+        .default_width(900)
+        .default_height(640)
+        .build();
+    dialog.add_button(text(language, UiText::Cancel), gtk::ResponseType::Cancel);
+    dialog.add_button(text(language, UiText::Ok), gtk::ResponseType::Ok);
+
+    let finish = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
+    let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
+    let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
+    let ok_button: gtk::Widget = dialog
+        .widget_for_response(gtk::ResponseType::Ok)
+        .expect("OK button");
+
+    let content = dialog.content_area();
+    content.set_spacing(12);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    content.append(&root);
+
+    let stack = gtk::Stack::new();
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    let sidebar = gtk::StackSidebar::new();
+    sidebar.set_stack(&stack);
+    root.append(&sidebar);
+    root.append(&stack);
+
+    let general_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let input_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let video_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let audio_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let system_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    stack.add_titled(
+        &general_page,
+        Some("general"),
+        text(language, UiText::General),
+    );
+    stack.add_titled(&input_page, Some("input"), text(language, UiText::Input));
+    stack.add_titled(&video_page, Some("video"), text(language, UiText::Video));
+    stack.add_titled(&audio_page, Some("audio"), text(language, UiText::Audio));
+    stack.add_titled(&system_page, Some("system"), text(language, UiText::System));
+
+    let error_label = gtk::Label::new(None);
+    error_label.set_xalign(0.0);
+    content.append(&error_label);
+
+    let language_combo = combo_box(&[
+        ("system_default", text(language, UiText::SystemDefault)),
+        ("japanese", text(language, UiText::Japanese)),
+        ("english", text(language, UiText::English)),
+    ]);
+    general_page.append(&labeled_row(
+        text(language, UiText::Language),
+        &language_combo,
+    ));
+
+    let storage_policy_combo = combo_box(&[
+        ("sidecar", text(language, UiText::Sidecar)),
+        ("app_shared_data", text(language, UiText::AppSharedData)),
+        ("custom_directory", text(language, UiText::CustomDirectory)),
+    ]);
+    general_page.append(&labeled_row(
+        text(language, UiText::SaveStoragePolicy),
+        &storage_policy_combo,
+    ));
+    let storage_dir_entry = gtk::Entry::new();
+    let storage_dir_row = labeled_row(
+        text(language, UiText::SaveStorageDirectory),
+        &storage_dir_entry,
+    );
+    let storage_error_label = gtk::Label::new(None);
+    storage_error_label.set_xalign(0.0);
+    general_page.append(&storage_dir_row);
+    general_page.append(&storage_error_label);
+
+    let input_conflict_label = gtk::Label::new(None);
+    input_conflict_label.set_xalign(0.0);
+    input_page.append(&input_conflict_label);
+    let input_rows = build_input_rows(language, &input_page);
+
+    let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
+    video_page.append(&fullscreen_check);
+    let scaling_combo = combo_box(&[
+        ("fit", text(language, UiText::FitToWindow)),
+        ("1", "1x"),
+        ("2", "2x"),
+        ("3", "3x"),
+        ("4", "4x"),
+        ("5", "5x"),
+    ]);
+    video_page.append(&labeled_row(
+        text(language, UiText::Scaling),
+        &scaling_combo,
+    ));
+    let vsync_check = gtk::CheckButton::with_label(text(language, UiText::Vsync));
+    // GTK's GLArea path does not expose a portable VSync toggle, so keep the
+    // backend-local value preserved but hidden in this frontend.
+
+    let mute_check = gtk::CheckButton::with_label(text(language, UiText::Mute));
+    audio_page.append(&mute_check);
+    let volume_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+    audio_page.append(&labeled_row(
+        text(language, UiText::MasterVolume),
+        &volume_spin,
+    ));
+    let sample_rate_combo =
+        combo_box(&[("22050", "22050"), ("44100", "44100"), ("48000", "48000")]);
+    audio_page.append(&labeled_row(
+        text(language, UiText::SampleRate),
+        &sample_rate_combo,
+    ));
+    let latency_spin = gtk::SpinButton::with_range(10.0, 200.0, 1.0);
+    audio_page.append(&labeled_row(
+        text(language, UiText::AudioLatency),
+        &latency_spin,
+    ));
+
+    let filter_combo = combo_box(&[
+        ("none", text(language, UiText::None)),
+        ("ntsc_composite", text(language, UiText::NtscComposite)),
+        ("ntsc_svideo", text(language, UiText::NtscSVideo)),
+        ("ntsc_rgb", text(language, UiText::NtscRgb)),
+    ]);
+    system_page.append(&labeled_row(text(language, UiText::Filter), &filter_combo));
+    let mmc3_combo = combo_box(&[
+        ("auto", text(language, UiText::Auto)),
+        ("sharp", text(language, UiText::Sharp)),
+        ("nec", text(language, UiText::Nec)),
+    ]);
+    system_page.append(&labeled_row(
+        text(language, UiText::Mmc3IrqVariant),
+        &mmc3_combo,
+    ));
+
+    apply_snapshot_to_widgets(
+        &draft.borrow(),
+        &language_combo,
+        &storage_policy_combo,
+        &storage_dir_entry,
+        &storage_dir_row,
+        &fullscreen_check,
+        &scaling_combo,
+        &vsync_check,
+        &mute_check,
+        &volume_spin,
+        &sample_rate_combo,
+        &latency_spin,
+        &filter_combo,
+        &mmc3_combo,
+        &input_rows,
+        &capture_target,
+        text(language, UiText::Unbound),
+        text(language, UiText::CapturePrompt),
+    );
+    refresh_validation(
+        &draft.borrow(),
+        language,
+        &ok_button,
+        &storage_dir_row,
+        &storage_error_label,
+        &input_conflict_label,
+    );
+
+    {
+        let draft = draft.clone();
+        let widgets = widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        );
+        let _ = language_combo.connect_changed(move |combo| {
+            draft.borrow_mut().shared.general.language = match combo.active_id().as_deref() {
+                Some("japanese") => AppLanguage::Japanese,
+                Some("english") => AppLanguage::English,
+                _ => AppLanguage::SystemDefault,
+            };
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    connect_general_updates(
+        language,
+        &draft,
+        &storage_policy_combo,
+        &storage_dir_entry,
+        widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        ),
+    );
+    connect_local_updates(
+        &draft,
+        &fullscreen_check,
+        &scaling_combo,
+        &vsync_check,
+        &mute_check,
+        &volume_spin,
+        &sample_rate_combo,
+        &latency_spin,
+        &filter_combo,
+        &mmc3_combo,
+        widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        ),
+    );
+
+    let key_controller = gtk::EventControllerKey::new();
+    {
+        let draft = draft.clone();
+        let capture_target = capture_target.clone();
+        let widgets = widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        );
+        let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
+            let Some(target) = capture_target.borrow().clone() else {
+                return glib::Propagation::Proceed;
+            };
+            let Some(mapped_key) = gdk_key_to_keyboard_key(key) else {
+                return glib::Propagation::Stop;
+            };
+            apply_capture_target(&mut draft.borrow_mut(), target, Some(mapped_key));
+            *capture_target.borrow_mut() = None;
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+            glib::Propagation::Stop
+        });
+    }
+    dialog.add_controller(key_controller);
+
+    for row in input_rows.iter().cloned() {
+        let capture_target = capture_target.clone();
+        let draft = draft.clone();
+        let widgets = widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        );
+        let target = row.target.clone();
+        let _ = row.change_button.connect_clicked(move |_| {
+            *capture_target.borrow_mut() = Some(target.clone());
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    for row in input_rows.iter().cloned() {
+        let capture_target = capture_target.clone();
+        let draft = draft.clone();
+        let widgets = widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        );
+        let target = row.target.clone();
+        let _ = row.clear_button.connect_clicked(move |_| {
+            apply_capture_target(&mut draft.borrow_mut(), target.clone(), None);
+            *capture_target.borrow_mut() = None;
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+
+    let finish_for_response = finish.clone();
+    {
+        let draft = draft.clone();
+        let state = state.clone();
+        let error_label = error_label.clone();
+        let capture_target = capture_target.clone();
+        let widgets = widget_bundle(
+            &ok_button,
+            &storage_dir_row,
+            &storage_error_label,
+            &input_conflict_label,
+            &language_combo,
+            &storage_policy_combo,
+            &storage_dir_entry,
+            &fullscreen_check,
+            &scaling_combo,
+            &vsync_check,
+            &mute_check,
+            &volume_spin,
+            &sample_rate_combo,
+            &latency_spin,
+            &filter_combo,
+            &mmc3_combo,
+            &input_rows,
+            &capture_target,
+            language,
+        );
+        let _ = dialog.connect_response(move |dialog, response| match response {
+            gtk::ResponseType::Ok => {
+                let snapshot = draft.borrow().clone();
+                if !validation_errors(&snapshot).is_empty() {
+                    refresh_all_from_draft(&snapshot, &widgets);
+                    return;
+                }
+                match state.borrow_mut().apply_settings(snapshot) {
+                    Ok(_) => {
+                        dialog.close();
+                        run_finish_callback(&finish_for_response);
+                    }
+                    Err(error) => {
+                        error_label.set_text(&error);
+                    }
+                }
+            }
+            _ => {
+                dialog.close();
+                run_finish_callback(&finish_for_response);
+            }
+        });
+    }
+
+    dialog.present();
+}
+
+#[derive(Clone)]
+struct WidgetBundle {
+    ok_button: gtk::Widget,
+    storage_dir_row: gtk::Box,
+    storage_error_label: gtk::Label,
+    input_conflict_label: gtk::Label,
+    language_combo: gtk::ComboBoxText,
+    storage_policy_combo: gtk::ComboBoxText,
+    storage_dir_entry: gtk::Entry,
+    fullscreen_check: gtk::CheckButton,
+    scaling_combo: gtk::ComboBoxText,
+    vsync_check: gtk::CheckButton,
+    mute_check: gtk::CheckButton,
+    volume_spin: gtk::SpinButton,
+    sample_rate_combo: gtk::ComboBoxText,
+    latency_spin: gtk::SpinButton,
+    filter_combo: gtk::ComboBoxText,
+    mmc3_combo: gtk::ComboBoxText,
+    input_rows: Vec<InputRow>,
+    capture_target: Rc<RefCell<Option<CaptureTarget>>>,
+    language: AppLanguage,
+}
+
+type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+
+#[allow(clippy::too_many_arguments)]
+fn widget_bundle(
+    ok_button: &gtk::Widget,
+    storage_dir_row: &gtk::Box,
+    storage_error_label: &gtk::Label,
+    input_conflict_label: &gtk::Label,
+    language_combo: &gtk::ComboBoxText,
+    storage_policy_combo: &gtk::ComboBoxText,
+    storage_dir_entry: &gtk::Entry,
+    fullscreen_check: &gtk::CheckButton,
+    scaling_combo: &gtk::ComboBoxText,
+    vsync_check: &gtk::CheckButton,
+    mute_check: &gtk::CheckButton,
+    volume_spin: &gtk::SpinButton,
+    sample_rate_combo: &gtk::ComboBoxText,
+    latency_spin: &gtk::SpinButton,
+    filter_combo: &gtk::ComboBoxText,
+    mmc3_combo: &gtk::ComboBoxText,
+    input_rows: &[InputRow],
+    capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
+    language: AppLanguage,
+) -> WidgetBundle {
+    WidgetBundle {
+        ok_button: ok_button.clone(),
+        storage_dir_row: storage_dir_row.clone(),
+        storage_error_label: storage_error_label.clone(),
+        input_conflict_label: input_conflict_label.clone(),
+        language_combo: language_combo.clone(),
+        storage_policy_combo: storage_policy_combo.clone(),
+        storage_dir_entry: storage_dir_entry.clone(),
+        fullscreen_check: fullscreen_check.clone(),
+        scaling_combo: scaling_combo.clone(),
+        vsync_check: vsync_check.clone(),
+        mute_check: mute_check.clone(),
+        volume_spin: volume_spin.clone(),
+        sample_rate_combo: sample_rate_combo.clone(),
+        latency_spin: latency_spin.clone(),
+        filter_combo: filter_combo.clone(),
+        mmc3_combo: mmc3_combo.clone(),
+        input_rows: input_rows.to_vec(),
+        capture_target: capture_target.clone(),
+        language,
+    }
+}
+
+fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
+    apply_snapshot_to_widgets(
+        snapshot,
+        &widgets.language_combo,
+        &widgets.storage_policy_combo,
+        &widgets.storage_dir_entry,
+        &widgets.storage_dir_row,
+        &widgets.fullscreen_check,
+        &widgets.scaling_combo,
+        &widgets.vsync_check,
+        &widgets.mute_check,
+        &widgets.volume_spin,
+        &widgets.sample_rate_combo,
+        &widgets.latency_spin,
+        &widgets.filter_combo,
+        &widgets.mmc3_combo,
+        &widgets.input_rows,
+        &widgets.capture_target,
+        text(widgets.language, UiText::Unbound),
+        text(widgets.language, UiText::CapturePrompt),
+    );
+    refresh_validation(
+        snapshot,
+        widgets.language,
+        &widgets.ok_button,
+        &widgets.storage_dir_row,
+        &widgets.storage_error_label,
+        &widgets.input_conflict_label,
+    );
+}
+
+fn connect_general_updates(
+    _language: AppLanguage,
+    draft: &Rc<RefCell<SettingsSnapshot>>,
+    storage_policy_combo: &gtk::ComboBoxText,
+    storage_dir_entry: &gtk::Entry,
+    widgets: WidgetBundle,
+) {
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = storage_policy_combo.connect_changed(move |combo| {
+            draft.borrow_mut().shared.persistence.storage_policy =
+                match combo.active_id().as_deref() {
+                    Some("app_shared_data") => StoragePolicy::AppSharedData,
+                    Some("custom_directory") => StoragePolicy::CustomDirectory,
+                    _ => StoragePolicy::Sidecar,
+                };
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = storage_dir_entry.connect_changed(move |entry| {
+            let text = entry.text();
+            draft.borrow_mut().shared.persistence.storage_directory =
+                (!text.is_empty()).then(|| text.as_str().into());
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn connect_local_updates(
+    draft: &Rc<RefCell<SettingsSnapshot>>,
+    fullscreen_check: &gtk::CheckButton,
+    scaling_combo: &gtk::ComboBoxText,
+    vsync_check: &gtk::CheckButton,
+    mute_check: &gtk::CheckButton,
+    volume_spin: &gtk::SpinButton,
+    sample_rate_combo: &gtk::ComboBoxText,
+    latency_spin: &gtk::SpinButton,
+    filter_combo: &gtk::ComboBoxText,
+    mmc3_combo: &gtk::ComboBoxText,
+    widgets: WidgetBundle,
+) {
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = fullscreen_check.connect_toggled(move |button| {
+            draft.borrow_mut().local.video.fullscreen_default = button.is_active();
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = scaling_combo.connect_changed(move |combo| {
+            draft.borrow_mut().local.video.scaling = match combo.active_id().as_deref() {
+                Some("1") => ScalingMode::X1,
+                Some("2") => ScalingMode::X2,
+                Some("3") => ScalingMode::X3,
+                Some("4") => ScalingMode::X4,
+                Some("5") => ScalingMode::X5,
+                _ => ScalingMode::FitToWindow,
+            };
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = vsync_check.connect_toggled(move |button| {
+            draft.borrow_mut().local.video.vsync = button.is_active();
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = mute_check.connect_toggled(move |button| {
+            draft.borrow_mut().local.audio.muted = button.is_active();
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = volume_spin.connect_value_changed(move |spin| {
+            draft.borrow_mut().local.audio.master_volume_percent = spin.value() as u8;
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = sample_rate_combo.connect_changed(move |combo| {
+            draft.borrow_mut().local.audio.sample_rate = combo
+                .active_id()
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(48_000);
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = latency_spin.connect_value_changed(move |spin| {
+            draft.borrow_mut().local.audio.latency_ms = spin.value() as u16;
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = filter_combo.connect_changed(move |combo| {
+            let mut snapshot = draft.borrow_mut();
+            let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+            nes.video.filter = match combo.active_id().as_deref() {
+                Some("none") => NesVideoFilter::None,
+                Some("ntsc_svideo") => NesVideoFilter::NtscSVideo,
+                Some("ntsc_rgb") => NesVideoFilter::NtscRgb,
+                _ => NesVideoFilter::NtscComposite,
+            };
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = mmc3_combo.connect_changed(move |combo| {
+            let mut snapshot = draft.borrow_mut();
+            let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+            nes.core.mmc3_irq_variant = match combo.active_id().as_deref() {
+                Some("sharp") => Some(Mmc3IrqVariant::Sharp),
+                Some("nec") => Some(Mmc3IrqVariant::Nec),
+                _ => None,
+            };
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+}
+
+fn refresh_validation(
+    snapshot: &SettingsSnapshot,
+    language: AppLanguage,
+    ok_button: &gtk::Widget,
+    storage_dir_row: &gtk::Box,
+    storage_error_label: &gtk::Label,
+    input_conflict_label: &gtk::Label,
+) {
+    let storage_error = validate_shared_settings(&snapshot.shared)
+        .err()
+        .map(|error| error.to_string());
+    let conflicts = conflicting_keys(&snapshot.shared);
+    let has_errors = storage_error.is_some() || !conflicts.is_empty();
+    storage_dir_row.set_visible(matches!(
+        snapshot.shared.persistence.storage_policy,
+        StoragePolicy::CustomDirectory
+    ));
+    storage_error_label.set_text(storage_error.as_deref().unwrap_or(""));
+    if let Some((key, labels)) = conflicts.iter().next() {
+        input_conflict_label.set_text(&format!(
+            "{}: {}",
+            keyboard_key_label(*key),
+            labels.join(", ")
+        ));
+    } else {
+        input_conflict_label.set_text("");
+    }
+    if !conflicts.is_empty() && input_conflict_label.text().is_empty() {
+        input_conflict_label.set_text(text(language, UiText::ConflictDetected));
+    }
+    ok_button.set_sensitive(!has_errors);
+}
+
+fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
+    let mut errors = Vec::new();
+    if let Err(error) = validate_shared_settings(&snapshot.shared) {
+        errors.push(error.to_string());
+    }
+    for (key, labels) in conflicting_keys(&snapshot.shared) {
+        errors.push(format!(
+            "{}: {}",
+            keyboard_key_label(key),
+            labels.join(", ")
+        ));
+    }
+    errors
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_snapshot_to_widgets(
+    snapshot: &SettingsSnapshot,
+    language_combo: &gtk::ComboBoxText,
+    storage_policy_combo: &gtk::ComboBoxText,
+    storage_dir_entry: &gtk::Entry,
+    storage_dir_row: &gtk::Box,
+    fullscreen_check: &gtk::CheckButton,
+    scaling_combo: &gtk::ComboBoxText,
+    vsync_check: &gtk::CheckButton,
+    mute_check: &gtk::CheckButton,
+    volume_spin: &gtk::SpinButton,
+    sample_rate_combo: &gtk::ComboBoxText,
+    latency_spin: &gtk::SpinButton,
+    filter_combo: &gtk::ComboBoxText,
+    mmc3_combo: &gtk::ComboBoxText,
+    input_rows: &[InputRow],
+    capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
+    unbound_label: &str,
+    capture_label: &str,
+) {
+    language_combo.set_active_id(Some(match snapshot.shared.general.language {
+        AppLanguage::Japanese => "japanese",
+        AppLanguage::English => "english",
+        AppLanguage::SystemDefault => "system_default",
+    }));
+    storage_policy_combo.set_active_id(Some(match snapshot.shared.persistence.storage_policy {
+        StoragePolicy::AppSharedData => "app_shared_data",
+        StoragePolicy::CustomDirectory => "custom_directory",
+        StoragePolicy::Sidecar => "sidecar",
+    }));
+    let storage_dir_text = snapshot
+        .shared
+        .persistence
+        .storage_directory
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    storage_dir_entry.set_text(&storage_dir_text);
+    storage_dir_row.set_visible(matches!(
+        snapshot.shared.persistence.storage_policy,
+        StoragePolicy::CustomDirectory
+    ));
+    fullscreen_check.set_active(snapshot.local.video.fullscreen_default);
+    scaling_combo.set_active_id(Some(match snapshot.local.video.scaling {
+        ScalingMode::FitToWindow => "fit",
+        ScalingMode::X1 => "1",
+        ScalingMode::X2 => "2",
+        ScalingMode::X3 => "3",
+        ScalingMode::X4 => "4",
+        ScalingMode::X5 => "5",
+    }));
+    vsync_check.set_active(snapshot.local.video.vsync);
+    mute_check.set_active(snapshot.local.audio.muted);
+    volume_spin.set_value(f64::from(snapshot.local.audio.master_volume_percent));
+    sample_rate_combo.set_active_id(Some(match snapshot.local.audio.sample_rate {
+        22_050 => "22050",
+        44_100 => "44100",
+        _ => "48000",
+    }));
+    latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
+    let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::Nes).unwrap();
+    filter_combo.set_active_id(Some(match nes.video.filter {
+        NesVideoFilter::None => "none",
+        NesVideoFilter::NtscSVideo => "ntsc_svideo",
+        NesVideoFilter::NtscRgb => "ntsc_rgb",
+        NesVideoFilter::NtscComposite => "ntsc_composite",
+    }));
+    mmc3_combo.set_active_id(Some(match nes.core.mmc3_irq_variant {
+        Some(Mmc3IrqVariant::Sharp) => "sharp",
+        Some(Mmc3IrqVariant::Nec) => "nec",
+        None => "auto",
+    }));
+
+    for row in input_rows {
+        row.value_label
+            .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
+                capture_label
+            } else {
+                current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
+            });
+    }
+}
+
+fn current_binding_label<'a>(
+    snapshot: &'a SettingsSnapshot,
+    target: &CaptureTarget,
+) -> Option<&'a str> {
+    match target {
+        CaptureTarget::Binding {
+            attachment,
+            control,
+        } => snapshot
+            .shared
+            .input
+            .systems
+            .get(&SystemId::Nes)?
+            .implicit_keyboard_profile()?
+            .bindings
+            .iter()
+            .find(|binding| {
+                binding.attachment.as_str() == attachment && binding.control.as_str() == control
+            })
+            .map(|binding| keyboard_key_label(binding.key)),
+        CaptureTarget::Shortcut(action) => snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .find(|binding| &binding.action == action)
+            .and_then(|binding| binding.key.map(keyboard_key_label)),
+    }
+}
+
+fn apply_capture_target(
+    snapshot: &mut SettingsSnapshot,
+    target: CaptureTarget,
+    key: Option<KeyboardKey>,
+) {
+    match target {
+        CaptureTarget::Binding {
+            attachment,
+            control,
+        } => {
+            let profile = snapshot
+                .shared
+                .input
+                .systems
+                .entry(SystemId::Nes)
+                .or_default()
+                .implicit_keyboard_profile_mut();
+            profile.bindings.retain(|binding| {
+                !(binding.attachment.as_str() == attachment && binding.control.as_str() == control)
+            });
+            if let Some(key) = key {
+                profile.bindings.push(KeyboardBinding {
+                    attachment: PersistedAttachmentId::new(attachment),
+                    control: PersistedControlId::digital(control),
+                    key,
+                });
+            }
+        }
+        CaptureTarget::Shortcut(action) => {
+            if let Some(binding) = snapshot
+                .shared
+                .input
+                .shortcuts
+                .keyboard
+                .iter_mut()
+                .find(|binding| binding.action == action)
+            {
+                binding.key = key;
+            }
+        }
+    }
+}
+
+fn build_input_rows(language: AppLanguage, input_page: &gtk::Box) -> Vec<InputRow> {
+    let mut rows = Vec::new();
+    for section in [
+        (text(language, UiText::PlayerOne), "Player 1"),
+        (text(language, UiText::PlayerTwo), "Player 2"),
+        (text(language, UiText::Shortcuts), "Shortcuts"),
+    ] {
+        let section_label = gtk::Label::new(Some(section.0));
+        section_label.set_xalign(0.0);
+        input_page.append(&section_label);
+        let grid = gtk::Grid::new();
+        grid.set_column_spacing(12);
+        grid.set_row_spacing(6);
+        input_page.append(&grid);
+
+        match section.1 {
+            "Shortcuts" => {
+                for (index, descriptor) in shortcut_descriptors().iter().enumerate() {
+                    rows.push(add_input_row(
+                        &grid,
+                        index as i32,
+                        descriptor.label,
+                        CaptureTarget::Shortcut(descriptor.action),
+                        language,
+                    ));
+                }
+            }
+            attachment_label => {
+                let section_rows = keyboard_binding_descriptors()
+                    .iter()
+                    .filter(|descriptor| descriptor.attachment_label == attachment_label);
+                for (index, descriptor) in section_rows.enumerate() {
+                    rows.push(add_input_row(
+                        &grid,
+                        index as i32,
+                        descriptor.control_label,
+                        CaptureTarget::Binding {
+                            attachment: descriptor.attachment.as_str().to_string(),
+                            control: descriptor.control.as_str().to_string(),
+                        },
+                        language,
+                    ));
+                }
+            }
+        }
+    }
+    rows
+}
+
+fn add_input_row(
+    grid: &gtk::Grid,
+    row: i32,
+    label: &str,
+    target: CaptureTarget,
+    language: AppLanguage,
+) -> InputRow {
+    let action_label = gtk::Label::new(Some(label));
+    action_label.set_xalign(0.0);
+    let value_label = gtk::Label::new(Some(""));
+    value_label.set_xalign(0.0);
+    let change_button = gtk::Button::with_label(text(language, UiText::Change));
+    let clear_button = gtk::Button::with_label(text(language, UiText::Clear));
+    grid.attach(&action_label, 0, row, 1, 1);
+    grid.attach(&value_label, 1, row, 1, 1);
+    grid.attach(&change_button, 2, row, 1, 1);
+    grid.attach(&clear_button, 3, row, 1, 1);
+    InputRow {
+        target,
+        value_label,
+        change_button,
+        clear_button,
+    }
+}
+
+fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
+    let combo = gtk::ComboBoxText::new();
+    for (id, label) in entries {
+        combo.append(Some(id), label);
+    }
+    combo
+}
+
+fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let label = gtk::Label::new(Some(label));
+    label.set_xalign(0.0);
+    label.set_width_chars(24);
+    row.append(&label);
+    row.append(widget);
+    row
+}
+
+fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
+    Some(match key {
+        gdk::Key::_0 => KeyboardKey::Digit0,
+        gdk::Key::_1 => KeyboardKey::Digit1,
+        gdk::Key::_2 => KeyboardKey::Digit2,
+        gdk::Key::_3 => KeyboardKey::Digit3,
+        gdk::Key::_4 => KeyboardKey::Digit4,
+        gdk::Key::_5 => KeyboardKey::Digit5,
+        gdk::Key::_6 => KeyboardKey::Digit6,
+        gdk::Key::_7 => KeyboardKey::Digit7,
+        gdk::Key::_8 => KeyboardKey::Digit8,
+        gdk::Key::_9 => KeyboardKey::Digit9,
+        gdk::Key::a | gdk::Key::A => KeyboardKey::KeyA,
+        gdk::Key::b | gdk::Key::B => KeyboardKey::KeyB,
+        gdk::Key::c | gdk::Key::C => KeyboardKey::KeyC,
+        gdk::Key::d | gdk::Key::D => KeyboardKey::KeyD,
+        gdk::Key::e | gdk::Key::E => KeyboardKey::KeyE,
+        gdk::Key::f | gdk::Key::F => KeyboardKey::KeyF,
+        gdk::Key::g | gdk::Key::G => KeyboardKey::KeyG,
+        gdk::Key::h | gdk::Key::H => KeyboardKey::KeyH,
+        gdk::Key::i | gdk::Key::I => KeyboardKey::KeyI,
+        gdk::Key::j | gdk::Key::J => KeyboardKey::KeyJ,
+        gdk::Key::k | gdk::Key::K => KeyboardKey::KeyK,
+        gdk::Key::l | gdk::Key::L => KeyboardKey::KeyL,
+        gdk::Key::m | gdk::Key::M => KeyboardKey::KeyM,
+        gdk::Key::n | gdk::Key::N => KeyboardKey::KeyN,
+        gdk::Key::o | gdk::Key::O => KeyboardKey::KeyO,
+        gdk::Key::p | gdk::Key::P => KeyboardKey::KeyP,
+        gdk::Key::q | gdk::Key::Q => KeyboardKey::KeyQ,
+        gdk::Key::r | gdk::Key::R => KeyboardKey::KeyR,
+        gdk::Key::s | gdk::Key::S => KeyboardKey::KeyS,
+        gdk::Key::t | gdk::Key::T => KeyboardKey::KeyT,
+        gdk::Key::u | gdk::Key::U => KeyboardKey::KeyU,
+        gdk::Key::v | gdk::Key::V => KeyboardKey::KeyV,
+        gdk::Key::w | gdk::Key::W => KeyboardKey::KeyW,
+        gdk::Key::x | gdk::Key::X => KeyboardKey::KeyX,
+        gdk::Key::y | gdk::Key::Y => KeyboardKey::KeyY,
+        gdk::Key::z | gdk::Key::Z => KeyboardKey::KeyZ,
+        gdk::Key::Up => KeyboardKey::ArrowUp,
+        gdk::Key::Down => KeyboardKey::ArrowDown,
+        gdk::Key::Left => KeyboardKey::ArrowLeft,
+        gdk::Key::Right => KeyboardKey::ArrowRight,
+        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => KeyboardKey::Enter,
+        gdk::Key::Escape => KeyboardKey::Escape,
+        gdk::Key::space => KeyboardKey::Space,
+        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => KeyboardKey::Tab,
+        gdk::Key::F1 => KeyboardKey::F1,
+        gdk::Key::F2 => KeyboardKey::F2,
+        gdk::Key::F3 => KeyboardKey::F3,
+        gdk::Key::F4 => KeyboardKey::F4,
+        gdk::Key::F5 => KeyboardKey::F5,
+        gdk::Key::F6 => KeyboardKey::F6,
+        gdk::Key::F7 => KeyboardKey::F7,
+        gdk::Key::F8 => KeyboardKey::F8,
+        gdk::Key::F9 => KeyboardKey::F9,
+        gdk::Key::F10 => KeyboardKey::F10,
+        gdk::Key::F11 => KeyboardKey::F11,
+        gdk::Key::F12 => KeyboardKey::F12,
+        _ => return None,
+    })
+}
+
+fn run_finish_callback(finish: &FinishCallback) {
+    if let Some(callback) = finish.borrow_mut().take() {
+        callback();
+    }
+}

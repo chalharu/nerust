@@ -4,7 +4,7 @@ mod slots;
 use super::GuiSession;
 use nerust_contract_options::CoreOptions;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
+use nerust_persistence::sidecar::SidecarPaths;
 use nerust_persistence::time::latest_saved_slot_id;
 
 #[derive(Debug, Default)]
@@ -31,13 +31,13 @@ impl PersistenceState {
 }
 
 impl GuiSession {
-    pub fn load(&mut self, rom_path: Option<std::path::PathBuf>, data: Vec<u8>) -> bool {
-        self.load_with_options(rom_path, data, CoreOptions::default())
+    pub fn load(&mut self, persistence_paths: Option<SidecarPaths>, data: Vec<u8>) -> bool {
+        self.load_with_options(persistence_paths, data, CoreOptions::default())
     }
 
     pub fn load_with_options(
         &mut self,
-        rom_path: Option<std::path::PathBuf>,
+        persistence_paths: Option<SidecarPaths>,
         data: Vec<u8>,
         options: CoreOptions,
     ) -> bool {
@@ -49,7 +49,12 @@ impl GuiSession {
             log::warn!("ROM load failed: {error}");
             return false;
         }
-        self.persistence.sidecars = rom_path.as_deref().map(resolve_sidecars);
+        self.configure_persistence_paths(persistence_paths);
+        true
+    }
+
+    pub fn configure_persistence_paths(&mut self, persistence_paths: Option<SidecarPaths>) {
+        self.persistence.sidecars = persistence_paths;
         self.persistence.mapper_save_flush_allowed = true;
         self.persistence.mapper_save_recovery_written = false;
         self.persistence.active_slot_id = None;
@@ -59,7 +64,6 @@ impl GuiSession {
             self.persistence.mapper_save_flush_allowed = false;
             log::warn!("mapper save auto-load failed: {error}");
         }
-        true
     }
 
     pub fn unload(&mut self) -> bool {

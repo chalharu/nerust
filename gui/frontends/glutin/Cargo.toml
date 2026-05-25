@@ -13,6 +13,7 @@ glutin-winit.workspace = true
 log.workspace = true
 nerust_backend_opengl.workspace = true
 nerust_gui_shell.workspace = true
+nerust_contract_settings.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
 nerust_sound_openal.workspace = true

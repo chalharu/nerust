@@ -1,4 +1,15 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde_derive::Serialize,
+    serde_derive::Deserialize,
+)]
 pub enum SystemId {
     Nes,
     Snes,

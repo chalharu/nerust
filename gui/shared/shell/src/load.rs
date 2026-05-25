@@ -12,6 +12,17 @@ pub enum NesMmc3IrqVariant {
 }
 
 impl NesLoadOptions {
+    pub fn with_default_mmc3_irq_variant(self, default_variant: Option<Mmc3IrqVariant>) -> Self {
+        Self {
+            mmc3_irq_variant: self.mmc3_irq_variant.or(default_variant.map(
+                |variant| match variant {
+                    Mmc3IrqVariant::Sharp => NesMmc3IrqVariant::Sharp,
+                    Mmc3IrqVariant::Nec => NesMmc3IrqVariant::Nec,
+                },
+            )),
+        }
+    }
+
     pub fn into_core_options(self) -> CoreOptions {
         CoreOptions {
             mmc3_irq_variant: self.mmc3_irq_variant.map(|variant| match variant {
@@ -36,6 +47,25 @@ mod tests {
             .into_core_options(),
             CoreOptions {
                 mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+            }
+        );
+    }
+
+    #[test]
+    fn default_irq_variant_only_applies_when_explicit_value_is_missing() {
+        assert_eq!(
+            NesLoadOptions::default().with_default_mmc3_irq_variant(Some(Mmc3IrqVariant::Sharp)),
+            NesLoadOptions {
+                mmc3_irq_variant: Some(NesMmc3IrqVariant::Sharp),
+            }
+        );
+        assert_eq!(
+            NesLoadOptions {
+                mmc3_irq_variant: Some(NesMmc3IrqVariant::Nec),
+            }
+            .with_default_mmc3_irq_variant(Some(Mmc3IrqVariant::Sharp)),
+            NesLoadOptions {
+                mmc3_irq_variant: Some(NesMmc3IrqVariant::Nec),
             }
         );
     }
