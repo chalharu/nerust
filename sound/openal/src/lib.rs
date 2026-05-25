@@ -392,6 +392,7 @@ pub struct OpenAl {
     playing_sender: Sender<bool>,
     data_sender: Sender<f32>,
     filter: NesFilter,
+    gain: f32,
     thread: Option<JoinHandle<()>>,
     source_sample_rate: u32,
     resampler: SimpleDownSampler,
@@ -403,6 +404,16 @@ impl OpenAl {
         output_rate: i32,
         buffer_width: usize,
         buffer_count: usize,
+    ) -> Self {
+        Self::with_gain(sample_rate, output_rate, buffer_width, buffer_count, 1.0)
+    }
+
+    pub fn with_gain(
+        sample_rate: i32,
+        output_rate: i32,
+        buffer_width: usize,
+        buffer_count: usize,
+        gain: f32,
     ) -> Self {
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
@@ -444,6 +455,7 @@ impl OpenAl {
 
         Self {
             filter,
+            gain,
             playing_sender,
             data_sender,
             stop_sender,
@@ -477,7 +489,7 @@ impl MixerInput for OpenAl {
         if let Some(resampled_data) = self.resampler.step(data)
             && self
                 .data_sender
-                .send(self.filter.step(resampled_data * 2.0 - 1.0))
+                .send(self.filter.step((resampled_data * 2.0 - 1.0) * self.gain))
                 .is_err()
         {
             log::warn!("OpenAL channel (data) send failed");

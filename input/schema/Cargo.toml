@@ -7,3 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_derive.workspace = true

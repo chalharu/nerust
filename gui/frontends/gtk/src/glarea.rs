@@ -1,14 +1,14 @@
 use super::State;
+use super::renderer::GtkGlRenderer;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_backend_opengl::GlBackend;
-use shared_library::dynamic_library::DynamicLibrary;
+use nerust_gui_shell::settings::nes::scaling_factor;
 use std::cell::RefCell;
-use std::ptr;
 use std::rc::Rc;
 
 pub(crate) struct GLAreaCore {
     gl_area: gtk::GLArea,
+    renderer: Rc<RefCell<GtkGlRenderer>>,
     state: Rc<RefCell<State>>,
 }
 
@@ -39,6 +39,7 @@ impl GLAreaExtend for GLArea {
 
         let result = Rc::new(RefCell::new(GLAreaCore {
             gl_area: gl_area.clone(),
+            renderer: Rc::new(RefCell::new(GtkGlRenderer::new())),
             state,
         }));
         {
@@ -70,76 +71,34 @@ impl GLAreaExtend for GLArea {
     }
 
     fn realize(&self) {
-        let mut view = GlBackend::new();
-        view.use_vao(true);
-        self.glarea().make_current();
-        if let Some(e) = self.glarea().error() {
-            log::error!("{}", e);
-            return;
-        }
-        epoxy::load_with(|s| unsafe {
-            match DynamicLibrary::open(None).unwrap().symbol(s) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::error!("{}", e);
-                    ptr::null()
-                }
-            }
-        });
-        GlBackend::load_with(epoxy::get_proc_addr);
-        {
-            let state = self.state();
-            let mut state = state.borrow_mut();
-            let video = state.video();
-            view.on_load(
-                video.presentation(),
-                video
-                    .console_video_assets()
-                    .expect("NES session always has video assets"),
-            )
-            .unwrap();
-            state.view = Some(view);
-        }
-        self.resize(self.glarea().width(), self.glarea().height());
+        let state = self.state();
+        let state = state.borrow();
+        self.borrow()
+            .renderer
+            .borrow_mut()
+            .realize(&self.glarea(), &state);
         self.glarea().queue_render();
     }
 
     fn resize(&self, width: i32, height: i32) {
-        if width <= 0 || height <= 0 {
-            return;
-        }
-        self.glarea().make_current();
-        if let Some(e) = self.glarea().error() {
-            log::error!("{}", e);
-            return;
-        }
-        let window_size = self.state().borrow().window_size();
-        let rate_x = f64::from(width) / f64::from(window_size.width);
-        let rate_y = f64::from(height) / f64::from(window_size.height);
-        let rate = f64::min(rate_x, rate_y);
-        let scale_x = (rate / rate_x) as f32;
-        let scale_y = (rate / rate_y) as f32;
-        let scale_factor = self.glarea().scale_factor();
-        let viewport_width = width.saturating_mul(scale_factor);
-        let viewport_height = height.saturating_mul(scale_factor);
-
-        if let Some(ref mut view) = self.state().borrow_mut().view {
-            view.on_resize(scale_x, scale_y, viewport_width, viewport_height);
-        }
+        let state = self.state();
+        let state = state.borrow();
+        self.borrow().renderer.borrow_mut().resize(
+            &self.glarea(),
+            state.window_size(),
+            scaling_factor(state.settings_snapshot().local.video.scaling),
+            width,
+            height,
+        );
     }
 
     fn render(&self) -> bool {
-        render(&self.glarea(), self.state());
+        render(&self.glarea(), self.borrow().renderer.clone(), self.state());
         true
     }
 
     fn unrealize(&self) {
-        let state = self.state();
-        let mut state = state.borrow_mut();
-        if let Some(ref mut view) = state.view {
-            view.on_close();
-        }
-        state.view = None;
+        self.borrow().renderer.borrow_mut().unrealize();
     }
 
     fn tick(&self) -> bool {
@@ -148,16 +107,23 @@ impl GLAreaExtend for GLArea {
     }
 }
 
-fn render(gl_area: &gtk::GLArea, state: Rc<RefCell<State>>) {
+fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc<RefCell<State>>) {
     gl_area.make_current();
     if let Some(e) = gl_area.error() {
         log::error!("{}", e);
         return;
     }
-    if let Ok(state) = state.try_borrow()
-        && let Some(ref view) = state.view
-    {
-        state.with_frame_buffer(|frame_buffer| view.on_update(frame_buffer));
+    let needs_reload = { state.borrow_mut().take_renderer_reload_pending() };
+    if needs_reload {
+        renderer.borrow_mut().unrealize();
+        if let Ok(state) = state.try_borrow() {
+            renderer.borrow_mut().realize(gl_area, &state);
+        }
+    }
+    if let Ok(state) = state.try_borrow() {
+        state.with_frame_buffer(|frame_buffer| {
+            renderer.borrow().render(frame_buffer);
+        });
     }
     unsafe {
         epoxy::Flush();

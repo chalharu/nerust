@@ -54,32 +54,11 @@ Run frontend and backend validation explicitly when touching OpenGL or UI code:
 ```sh
 cargo test -p nerust_screen_opengl --lib
 cargo test -p nerust_gui_runtime --lib
-cargo test -p nerust_glutin --lib
-cargo build -p nerust_glutin --release
 cargo build -p nerust_gtk --release
-cargo build -p nerust_wgpu --release
+cargo build -p nerust_tao --release
 ```
 
 ## Usage
-
-### Glutin Frontend
-
-#### Glutin dependencies
-
-- Cargo
-- Rust
-
-#### Build Glutin
-
-```sh
-cargo build -p nerust_glutin --release
-```
-
-#### Run Glutin
-
-```sh
-target/release/nerust [Rom File Path]
-```
 
 ### GTK4 Frontend
 
@@ -101,25 +80,27 @@ cargo build -p nerust_gtk --release
 target/release/nerust_gtk
 ```
 
-### WGPU Frontend
+### Tao Frontend
 
-#### WGPU dependencies
+#### Tao dependencies
 
 - Cargo
 - Rust
 - Linux では GTK3 開発パッケージ (`libgtk-3-dev` など)
 
-#### Build WGPU
+#### Build Tao
 
 ```sh
-cargo build -p nerust_wgpu --release
+cargo build -p nerust_tao --release
 ```
 
-#### Run WGPU
+#### Run Tao
 
 ```sh
-target/release/nerust_wgpu [Rom File Path]
+target/release/nerust_tao [Rom File Path]
 ```
+
+引数なしで起動して `File -> Open` から ROM を開くこともできます。
 
 ### ROM test tooling
 
