@@ -7,13 +7,12 @@ use gtk::glib;
 use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
 use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::session::KeyboardShortcut;
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -451,12 +450,11 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        if let Some(mut f) = File::open(path).ok().map(BufReader::new) {
-            let mut buf = Vec::new();
-            let _ = f.read_to_end(&mut buf).unwrap();
+        if let Ok(loaded_rom) = load_rom_path(path) {
+            let (rom_path, data) = loaded_rom.into_parts();
             self.state()
                 .borrow_mut()
-                .load_from_path(Some(path.to_path_buf()), buf);
+                .load_from_path(Some(rom_path), data);
             self.update_actions();
         }
     }
