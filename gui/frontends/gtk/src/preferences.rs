@@ -40,7 +40,7 @@ pub(crate) fn present_preferences_dialog(
         .modal(true)
         .title(text(language, UiText::Preferences))
         .default_width(900)
-        .default_height(640)
+        .default_height(560)
         .build();
     dialog.add_button(text(language, UiText::Cancel), gtk::ResponseType::Cancel);
     dialog.add_button(text(language, UiText::Ok), gtk::ResponseType::Ok);
@@ -58,8 +58,11 @@ pub(crate) fn present_preferences_dialog(
     content.set_margin_end(12);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
+    content.set_vexpand(true);
 
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    root.set_hexpand(true);
+    root.set_vexpand(true);
     content.append(&root);
 
     let stack = gtk::Stack::new();
@@ -67,23 +70,40 @@ pub(crate) fn present_preferences_dialog(
     stack.set_vexpand(true);
     let sidebar = gtk::StackSidebar::new();
     sidebar.set_stack(&stack);
+    sidebar.set_vexpand(true);
     root.append(&sidebar);
     root.append(&stack);
 
-    let general_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let input_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let video_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let audio_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let system_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let (general_page_scroller, general_page) = stack_page();
+    let (input_page_scroller, input_page) = stack_page();
+    let (video_page_scroller, video_page) = stack_page();
+    let (audio_page_scroller, audio_page) = stack_page();
+    let (system_page_scroller, system_page) = stack_page();
     stack.add_titled(
-        &general_page,
+        &general_page_scroller,
         Some("general"),
         text(language, UiText::General),
     );
-    stack.add_titled(&input_page, Some("input"), text(language, UiText::Input));
-    stack.add_titled(&video_page, Some("video"), text(language, UiText::Video));
-    stack.add_titled(&audio_page, Some("audio"), text(language, UiText::Audio));
-    stack.add_titled(&system_page, Some("system"), text(language, UiText::System));
+    stack.add_titled(
+        &input_page_scroller,
+        Some("input"),
+        text(language, UiText::Input),
+    );
+    stack.add_titled(
+        &video_page_scroller,
+        Some("video"),
+        text(language, UiText::Video),
+    );
+    stack.add_titled(
+        &audio_page_scroller,
+        Some("audio"),
+        text(language, UiText::Audio),
+    );
+    stack.add_titled(
+        &system_page_scroller,
+        Some("system"),
+        text(language, UiText::System),
+    );
 
     let error_label = gtk::Label::new(None);
     error_label.set_xalign(0.0);
@@ -832,21 +852,31 @@ fn apply_snapshot_to_widgets(
 }
 
 fn build_input_rows(language: AppLanguage, input_page: &gtk::Box) -> Vec<InputRow> {
+    let input_stack = gtk::Stack::new();
+    input_stack.set_hexpand(true);
+    input_stack.set_vexpand(true);
+    let input_switcher = gtk::StackSwitcher::new();
+    input_switcher.set_stack(Some(&input_stack));
+    input_switcher.set_halign(gtk::Align::Start);
+    input_page.append(&input_switcher);
+    input_page.append(&input_stack);
+
     let mut rows = Vec::new();
     for section in [
-        (text(language, UiText::PlayerOne), "Player 1"),
-        (text(language, UiText::PlayerTwo), "Player 2"),
-        (text(language, UiText::Shortcuts), "Shortcuts"),
+        ("player-one", text(language, UiText::PlayerOne), "Player 1"),
+        ("player-two", text(language, UiText::PlayerTwo), "Player 2"),
+        ("shortcuts", text(language, UiText::Shortcuts), "Shortcuts"),
     ] {
-        let section_label = gtk::Label::new(Some(section.0));
-        section_label.set_xalign(0.0);
-        input_page.append(&section_label);
+        let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        section_page.set_hexpand(true);
         let grid = gtk::Grid::new();
         grid.set_column_spacing(12);
         grid.set_row_spacing(6);
-        input_page.append(&grid);
+        grid.set_hexpand(true);
+        section_page.append(&grid);
+        input_stack.add_titled(&section_page, Some(section.0), section.1);
 
-        match section.1 {
+        match section.2 {
             "Shortcuts" => {
                 for (index, descriptor) in shortcut_descriptors().iter().enumerate() {
                     rows.push(add_input_row(
@@ -921,6 +951,20 @@ fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     row.append(&label);
     row.append(widget);
     row
+}
+
+fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_hexpand(true);
+
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_hexpand(true);
+    scroller.set_vexpand(true);
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_propagate_natural_height(false);
+    scroller.set_child(Some(&page));
+
+    (scroller, page)
 }
 
 fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
