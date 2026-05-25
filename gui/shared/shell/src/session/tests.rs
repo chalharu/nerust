@@ -1,6 +1,5 @@
 use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
-use crate::session::NesSession;
-use crate::session::input::NesButton;
+use crate::session::{KeyboardShortcut, NesSession};
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;
@@ -28,10 +27,13 @@ fn test_session() -> NesSession {
 }
 
 #[test]
-fn nes_session_flushes_digital_input_into_controller_state() {
+fn nes_session_flushes_keyboard_input_into_controller_state() {
     let mut session = test_session();
 
-    session.handle_player_one_button(NesButton::A, true);
+    assert_eq!(
+        session.handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, true,),
+        None
+    );
 
     let frame = decode_input_state(
         &session
@@ -47,6 +49,22 @@ fn nes_session_flushes_digital_input_into_controller_state() {
             player_two: Buttons::empty(),
             microphone: false,
         }
+    );
+}
+
+#[test]
+fn shortcut_key_returns_shortcut_action_without_controller_event() {
+    let mut session = test_session();
+
+    assert_eq!(
+        session.handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::Space, true,),
+        Some(KeyboardShortcut::Session(
+            nerust_contract_settings::input::ShortcutAction::TogglePause,
+        ))
+    );
+    assert_eq!(
+        session.handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::Space, true,),
+        None
     );
 }
 

@@ -1,3 +1,5 @@
+pub mod persisted;
+
 use crate::frame::{Buttons, NesInputFrame};
 use crate::topology::{
     FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,

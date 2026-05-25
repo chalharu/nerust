@@ -6,11 +6,22 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+crc.workspace = true
+directories.workspace = true
 log.workspace = true
 nerust_console.workspace = true
+nerust_contract_mirror.workspace = true
 nerust_contract_options.workspace = true
+nerust_contract_persistence.workspace = true
+nerust_contract_rom.workspace = true
+nerust_contract_settings.workspace = true
 nerust_gui_session.workspace = true
+nerust_input_schema.workspace = true
 nerust_persistence.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 nerust_screen_buffer.workspace = true

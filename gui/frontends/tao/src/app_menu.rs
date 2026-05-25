@@ -4,20 +4,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
+use std::sync::mpsc;
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum MenuCommand {
+    Open,
+    Settings,
     Session(SessionCommand),
     Quit,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
+    ApplySettings {
+        snapshot: SettingsSnapshot,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    SettingsClosed,
 }
 
 #[cfg(any(
@@ -40,6 +49,8 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
+    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_shell::settings::i18n::{UiText, text};
     use std::sync::{Arc, RwLock};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
@@ -57,8 +68,15 @@ pub(crate) mod imp {
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
+        file_menu: Submenu,
+        emulation_menu: Submenu,
+        state_menu: Submenu,
+        open: MenuItem,
+        settings: MenuItem,
         pause: MenuItem,
         resume: MenuItem,
+        reset: MenuItem,
+        quit: MenuItem,
         create_slot: MenuItem,
         save_active: MenuItem,
         load_active: MenuItem,
@@ -99,6 +117,8 @@ pub(crate) mod imp {
                 menu_bar.append(&app_menu).unwrap();
             }
 
+            let open = MenuItem::new("Open ROM...", true, None);
+            let settings = MenuItem::new("Settings...", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -107,6 +127,8 @@ pub(crate) mod imp {
             let save_active = MenuItem::new("Save Active Slot (F5)", true, None);
             let load_active = MenuItem::new("Load Active Slot (F8)", false, None);
 
+            let open_id = open.id().clone();
+            let settings_id = settings.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -117,6 +139,8 @@ pub(crate) mod imp {
             let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
             let dynamic_commands_handler = dynamic_commands.clone();
 
+            file_menu.append(&open).unwrap();
+            file_menu.append(&settings).unwrap();
             file_menu.append(&quit).unwrap();
             state_menu.append(&create_slot).unwrap();
             state_menu.append(&save_active).unwrap();
@@ -134,7 +158,11 @@ pub(crate) mod imp {
             menu_bar.append(&emulation_menu).unwrap();
 
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                let command = if event.id() == &pause_id {
+                let command = if event.id() == &open_id {
+                    Some(MenuCommand::Open)
+                } else if event.id() == &settings_id {
+                    Some(MenuCommand::Settings)
+                } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
                     Some(MenuCommand::Session(SessionCommand::Resume))
@@ -164,8 +192,15 @@ pub(crate) mod imp {
 
             Self {
                 menu_bar,
+                file_menu,
+                emulation_menu,
+                state_menu,
+                open,
+                settings,
                 pause,
                 resume,
+                reset,
+                quit,
                 create_slot,
                 save_active,
                 load_active,
@@ -210,13 +245,18 @@ pub(crate) mod imp {
             paused: bool,
             slots: &[StateSlotSummary],
             active_slot: Option<u64>,
+            settings_open: bool,
+            language: AppLanguage,
         ) {
-            self.pause.set_enabled(loaded && !paused);
-            self.resume.set_enabled(loaded && paused);
-            self.create_slot.set_enabled(loaded);
-            self.save_active.set_enabled(loaded);
+            self.update_labels(language);
+            self.open.set_enabled(!settings_open);
+            self.settings.set_enabled(!settings_open);
+            self.pause.set_enabled(!settings_open && loaded && !paused);
+            self.resume.set_enabled(!settings_open && loaded && paused);
+            self.create_slot.set_enabled(!settings_open && loaded);
+            self.save_active.set_enabled(!settings_open && loaded);
             self.load_active
-                .set_enabled(loaded && active_slot.is_some());
+                .set_enabled(!settings_open && loaded && active_slot.is_some());
             self.rebuild_dynamic_slot_menus(slots, active_slot);
         }
 
@@ -268,12 +308,50 @@ pub(crate) mod imp {
                 .write()
                 .unwrap_or_else(|err| err.into_inner()) = commands;
         }
+
+        fn update_labels(&self, language: AppLanguage) {
+            self.file_menu.set_text(text(language, UiText::File));
+            self.emulation_menu
+                .set_text(text(language, UiText::Emulation));
+            self.state_menu.set_text(text(language, UiText::SaveStates));
+            self.active_slot_menu
+                .set_text(text(language, UiText::SelectActiveSlot));
+            self.save_slot_menu
+                .set_text(text(language, UiText::SaveSlot));
+            self.load_slot_menu
+                .set_text(text(language, UiText::LoadSlot));
+            self.delete_slot_menu
+                .set_text(text(language, UiText::DeleteSlot));
+
+            self.open
+                .set_text(format!("{}...", text(language, UiText::Open)));
+            self.settings
+                .set_text(format!("{}...", text(language, UiText::Settings)));
+            self.pause.set_text(text(language, UiText::Pause));
+            self.resume.set_text(text(language, UiText::Resume));
+            self.reset.set_text(text(language, UiText::Reset));
+            self.quit.set_text(text(language, UiText::Quit));
+            self.create_slot
+                .set_text(text(language, UiText::CreateSaveSlot));
+            self.save_active.set_text(menu_label_with_shortcut(
+                text(language, UiText::SaveActiveSlot),
+                "F5",
+            ));
+            self.load_active.set_text(menu_label_with_shortcut(
+                text(language, UiText::LoadActiveSlot),
+                "F8",
+            ));
+        }
     }
 
     fn clear_submenu(menu: &Submenu) {
         while !menu.items().is_empty() {
             let _ = menu.remove_at(0);
         }
+    }
+
+    fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
+        format!("{label} ({shortcut})")
     }
 }
 
@@ -288,6 +366,7 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::{StateSlotSummary, TaoWindow, UserEvent};
+    use nerust_contract_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
     pub(crate) struct AppMenu;
@@ -305,6 +384,8 @@ pub(crate) mod imp {
             _paused: bool,
             _slots: &[StateSlotSummary],
             _active_slot: Option<u64>,
+            _settings_open: bool,
+            _language: AppLanguage,
         ) {
         }
 

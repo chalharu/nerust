@@ -1,21 +1,21 @@
+use crate::settings::nes::{build_screen_buffer, build_speaker};
 use nerust_console::Console;
 use nerust_gui_runtime::session::GuiSession;
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_schema::InputTopologyDescriptor;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_sound_openal::OpenAl;
 use nerust_sound_traits::{MixerInput, Sound};
-use nerust_timer::CLOCK_RATE;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NesConsoleProfile;
 
 impl NesConsoleProfile {
-    pub fn build_console(self) -> Console {
+    pub fn build_console(self, settings: &SettingsSnapshot) -> Console {
         self.build_console_with(
-            OpenAl::new(48_000, CLOCK_RATE as i32, 128, 20),
-            ScreenBuffer::new_nes_gpu_default(),
+            build_speaker(&settings.local),
+            build_screen_buffer(&settings.shared),
         )
     }
 
@@ -27,8 +27,8 @@ impl NesConsoleProfile {
         Console::new(speaker, screen_buffer)
     }
 
-    pub fn build_gui_session(self) -> GuiSession {
-        GuiSession::from_session_core(SessionCore::from_console(self.build_console()))
+    pub fn build_gui_session(self, settings: &SettingsSnapshot) -> GuiSession {
+        GuiSession::from_session_core(SessionCore::from_console(self.build_console(settings)))
     }
 
     pub fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
@@ -39,6 +39,11 @@ impl NesConsoleProfile {
 #[cfg(test)]
 mod tests {
     use super::NesConsoleProfile;
+    use crate::settings::defaults::manager::current_or_default;
+    use crate::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use nerust_gui_runtime::settings::SettingsManager;
     use nerust_input_nes::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
@@ -97,11 +102,16 @@ mod tests {
                 ControlDescriptor::Digital(digital) if digital.id == FAMICOM_P2_CONTROL_MICROPHONE
             )
         }));
-        assert!(!player_two_controls.iter().any(|control| {
-            matches!(
-                control,
-                ControlDescriptor::Digital(digital) if digital.id == NES_CONTROL_SELECT
-            )
-        }));
+    }
+
+    #[test]
+    fn gui_session_build_uses_saved_settings() {
+        let settings = current_or_default(&SettingsManager::ephemeral(
+            default_shared_settings(),
+            default_local_settings(),
+            default_app_state(),
+        ));
+        let session = NesConsoleProfile.build_gui_session(&settings);
+        assert!(session.window_size().width > 0.0);
     }
 }

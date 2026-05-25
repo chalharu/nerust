@@ -4,13 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
-use nerust_wgpu::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
+use nerust_tao::settings::{HELPER_FLAG, run_settings_helper_from_stdio};
+use nerust_tao::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
 use simple_logger::SimpleLogger;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 fn main() {
@@ -25,7 +24,13 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::new("filename").help("Rom file name").required(true))
+        .arg(Arg::new("filename").help("Rom file name"))
+        .arg(
+            Arg::new(HELPER_FLAG)
+                .long(HELPER_FLAG)
+                .hide(true)
+                .action(ArgAction::SetTrue),
+        )
         .arg(
             Arg::new("mmc3-irq-variant")
                 .long("mmc3-irq-variant")
@@ -34,6 +39,13 @@ fn main() {
         );
 
     let matches = app.get_matches();
+    if matches.get_flag(HELPER_FLAG) {
+        if let Err(error) = run_settings_helper_from_stdio() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let window_options = WindowLoadOptions {
         mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").map(
             |variant| match variant.as_str() {
@@ -44,13 +56,9 @@ fn main() {
         ),
     };
 
-    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from)
-        && let Some(mut f) = File::open(&filename).ok().map(BufReader::new)
-    {
-        let mut buf = Vec::new();
-        let _ = f.read_to_end(&mut buf).unwrap();
-        let mut window = Window::new();
-        window.load_with_options(Some(filename), buf, window_options);
-        window.run();
+    let mut window = Window::with_load_options(window_options);
+    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from) {
+        let _ = window.load_path(&filename);
     }
+    window.run();
 }

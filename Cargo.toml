@@ -9,6 +9,7 @@ members = [
   "contract/options",
   "contract/persistence",
   "contract/rom",
+  "contract/settings",
   "core",
   "input/schema",
   "input/nes",
@@ -16,11 +17,10 @@ members = [
   "persistence",
   "rom_test",
   "gui/frontends/gtk",
-  "gui/frontends/glutin",
+  "gui/frontends/tao",
   "gui/shared/runtime",
   "gui/shared/shell",
   "gui/shared/session",
-  "gui/frontends/wgpu",
   "nes_ntsc",
   "screen/buffer",
   "screen/filter",
@@ -57,15 +57,15 @@ alto = { version = "=3.0.4" }
 bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
 crc = { version = "=3.4.0" }
+directories = { version = "=6.0.0" }
 epoxy = { version = "=0.1.0" }
 fs2 = { version = "=0.4.3" }
 gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }
 gl = { version = "=0.14.0" }
-glutin = { version = "=0.32.3" }
-glutin-winit = { version = "=0.5.0" }
 gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
+iced = { version = "=0.14.0" }
 lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.29", default-features = false }
@@ -76,6 +76,7 @@ nerust_contract_mirror = { version = "=0.1.0", path = "contract/mirror" }
 nerust_contract_options = { version = "=0.1.0", path = "contract/options" }
 nerust_contract_persistence = { version = "=0.1.0", path = "contract/persistence" }
 nerust_contract_rom = { version = "=0.1.0", path = "contract/rom" }
+nerust_contract_settings = { version = "=0.1.0", path = "contract/settings" }
 nerust_core = { version = "=0.1.0", path = "core" }
 nerust_gui_runtime = { version = "=0.1.0", path = "gui/shared/runtime" }
 nerust_gui_shell = { version = "=0.1.0", path = "gui/shared/shell" }
@@ -106,6 +107,7 @@ pollster = { version = "=0.4.0" }
 png = { version = "=0.18.1" }
 rmp-serde = { version = "=1.3.1" }
 raw-window-handle = { version = "=0.6.2" }
+rfd = { version = "=0.17.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
 serde_derive = { version = "=1.0.228", default-features = false }

@@ -1,7 +1,9 @@
 use super::GuiSession;
 use super::persistence::PersistenceState;
+use nerust_console::state::StateExport;
 use nerust_console::video::ConsoleVideo;
 use nerust_console::{ConsoleError, ConsoleMetrics};
+use nerust_contract_persistence::PersistenceTarget;
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;
@@ -84,5 +86,17 @@ impl GuiSession {
 
     pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
         self.core.current_input_state()
+    }
+
+    pub fn export_state(&self) -> Result<StateExport, ConsoleError> {
+        self.core.export_state()
+    }
+
+    pub fn import_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        self.core.import_state(bytes)
+    }
+
+    pub fn persistence_target(&self) -> Result<PersistenceTarget, ConsoleError> {
+        self.core.persistence_target()
     }
 }
