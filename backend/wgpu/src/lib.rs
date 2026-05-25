@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_filter::presentation::ConsoleVideoAssets;
-use nerust_screen_video::VideoPresentation;
+use nerust_console::video::VideoRenderProfile;
+use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 use nerust_screen_wgpu::renderer::{PresentationOptions, RenderOutcome, Renderer};
 use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
@@ -84,17 +84,22 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
     pub fn new(
         target: T,
         initial_size: SurfaceSize,
-        presentation: &VideoPresentation,
-        assets: Option<&ConsoleVideoAssets>,
+        render_profile: &VideoRenderProfile,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
+        let presentation = VideoPresentation::new(VideoFrameSpec::new(
+            VideoFrameFormat::Rgba,
+            render_profile.source_logical_size,
+            render_profile.logical_size,
+            render_profile.physical_size,
+        ));
         let render_surface = RenderSurface::new(ShellSurfaceTarget(target))?;
         let surface_size = render_surface.surface_size(initial_size);
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             surface_size,
-            presentation,
-            assets,
+            &presentation,
+            None,
             presentation_options,
         ))?;
         Ok(Self {

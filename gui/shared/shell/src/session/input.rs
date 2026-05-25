@@ -1,22 +1,20 @@
-use crate::descriptor::SystemSessionProfile;
-use crate::session::{KeyboardShortcut, NesSession};
+use crate::session::{KeyboardShortcut, SessionHandle};
 use crate::settings::bindings::events::controller::controller_event_for_key;
 use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
 use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_schema::DigitalInputEvent;
 
-impl NesSession {
-    pub fn handle_controller_input(&mut self, event: DigitalInputEvent) {
-        self.input.handle_input(event);
-        self.apply_current_input_state();
+impl SessionHandle {
+    pub fn apply_input_event(&mut self, event: DigitalInputEvent) -> Result<(), String> {
+        self.input_adapter.apply_event(event);
+        self.apply_current_input_state()
     }
 
     pub fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,
         pressed: bool,
-    ) -> Option<KeyboardShortcut> {
+    ) -> Result<Option<KeyboardShortcut>, String> {
         let first_press = if pressed {
             self.pressed_keys.insert(key)
         } else {
@@ -24,63 +22,57 @@ impl NesSession {
             false
         };
 
+        let system_id = self.descriptor.system_id;
         if let Some(controller_input) = controller_event_for_key(
-            &self.system.settings_snapshot.shared,
-            self.system.profile.system_id(),
+            &self.settings_snapshot.shared,
+            system_id,
             key,
             pressed,
-            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+            |attachment, control, pressed| {
+                self.input_adapter
+                    .digital_event_from_persisted(attachment, control, pressed)
+            },
         ) {
-            self.handle_controller_input(controller_input);
+            self.apply_input_event(controller_input)?;
         }
 
         if first_press {
-            return shortcut_action_for_key(&self.system.settings_snapshot.shared, key).map(
-                |action| {
+            return Ok(
+                shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
                     if matches!(action, ShortcutAction::ToggleFullscreen) {
                         KeyboardShortcut::ToggleFullscreen
                     } else {
                         KeyboardShortcut::Session(action)
                     }
-                },
+                }),
             );
         }
-        None
+        Ok(None)
     }
 
-    pub fn clear_controller_input(&mut self) {
+    pub fn clear_input(&mut self) -> Result<(), String> {
         self.pressed_keys.clear();
-        let _ = self.input.clear_current_frame();
-        self.apply_current_input_state();
+        self.input_adapter.clear();
+        self.apply_current_input_state()
     }
 
-    fn current_input_frame(&self) -> Option<nerust_input_nes::frame::NesInputFrame> {
-        let bytes = self.system.session.current_input_state().ok()?;
-        match decode_input_state(&bytes) {
-            Ok(frame) => Some(frame),
-            Err(error) => {
-                log::warn!("NES input state decode failed: {error}");
-                None
+    pub(super) fn apply_current_input_state(&mut self) -> Result<(), String> {
+        let bytes = self.input_adapter.runtime_state_bytes()?;
+        self.runtime.apply_input_state(bytes)
+    }
+
+    pub(super) fn sync_input_from_runtime(&mut self) {
+        match self.runtime.current_input_state() {
+            Ok(bytes) => {
+                if let Err(error) = self.input_adapter.sync_from_runtime_state(&bytes) {
+                    log::warn!("runtime input sync failed: {error}");
+                    self.input_adapter.clear();
+                }
             }
-        }
-    }
-
-    fn apply_current_input_state(&mut self) {
-        let bytes = match encode_input_state(self.input.current_frame()) {
-            Ok(bytes) => bytes,
             Err(error) => {
-                log::warn!("NES input state encode failed: {error}");
-                return;
+                log::warn!("runtime input state read failed: {error}");
+                self.input_adapter.clear();
             }
-        };
-        self.system.session.apply_input_state(bytes);
-    }
-
-    pub(super) fn sync_input_from_session(&mut self) {
-        if let Some(frame) = self.current_input_frame() {
-            self.input.sync_from_frame(frame);
-        } else {
-            self.input = Default::default();
         }
     }
 }

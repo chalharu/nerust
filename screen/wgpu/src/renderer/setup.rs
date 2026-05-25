@@ -12,6 +12,7 @@ use crate::{
 };
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_logical::LogicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
@@ -35,7 +36,7 @@ struct FilterUniforms {
 const BLACK_RGBA8_TEXEL: [u8; 4] = [0, 0, 0, 0xFF];
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum FramePipelineKind {
+pub(super) enum FramePipelineKind {
     DirectColor,
     Palette,
     Ntsc,
@@ -82,19 +83,19 @@ impl Renderer {
             config.alpha_mode = CompositeAlphaMode::Opaque;
         }
         surface.configure(&device, &config);
-        let source_logical_size = presentation.source_logical_size();
         let logical_size = presentation.logical_size();
+        let frame_logical_size = frame_logical_size(presentation, pipeline_kind);
         let content_size = presentation.physical_size();
         let frame_upload_layout = FrameUploadLayout::for_logical_size(
-            source_logical_size,
+            frame_logical_size,
             frame_bytes_per_pixel(pipeline_kind),
         )?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
             label: Some("nerust_frame_texture"),
             size: Extent3d {
-                width: source_logical_size.width as u32,
-                height: source_logical_size.height as u32,
+                width: frame_logical_size.width as u32,
+                height: frame_logical_size.height as u32,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -160,8 +161,8 @@ impl Renderer {
         let ntsc_view = ntsc_texture.create_view(&TextureViewDescriptor::default());
         let srgb_lut_view = srgb_lut_texture.create_view(&TextureViewDescriptor::default());
         let uniforms = FilterUniforms {
-            source_width: source_logical_size.width as u32,
-            source_height: source_logical_size.height as u32,
+            source_width: frame_logical_size.width as u32,
+            source_height: frame_logical_size.height as u32,
             output_width: logical_size.width as u32,
             output_height: logical_size.height as u32,
         };
@@ -288,7 +289,7 @@ impl Renderer {
             _bind_group_layout: bind_group_layout,
             bind_group,
             pipeline,
-            source_logical_size,
+            frame_logical_size,
             content_size,
         })
     }
@@ -325,6 +326,16 @@ impl Renderer {
                 surface_size.height.max(1),
             )
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
+    }
+}
+
+pub(super) fn frame_logical_size(
+    presentation: &VideoPresentation,
+    pipeline_kind: FramePipelineKind,
+) -> LogicalSize {
+    match pipeline_kind {
+        FramePipelineKind::DirectColor => presentation.logical_size(),
+        FramePipelineKind::Palette | FramePipelineKind::Ntsc => presentation.source_logical_size(),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::load::NesLoadOptions;
+use crate::load::SystemLoadOptions;
 use nerust_contract_settings::local::{AudioSettings, HostBackendLocalSettings};
 use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_contract_settings::{
@@ -20,7 +20,7 @@ pub struct AudioBackendSpec {
 }
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
-    ScreenBuffer::new_gpu(
+    ScreenBuffer::new(
         filter_type(settings),
         nerust_screen_logical::LogicalSize {
             width: 256,
@@ -70,9 +70,9 @@ pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
 
 pub fn effective_load_options(
     settings: &DesktopSharedSettings,
-    explicit: NesLoadOptions,
-) -> NesLoadOptions {
-    explicit.with_default_mmc3_irq_variant(system_settings(settings).core.mmc3_irq_variant)
+    explicit: SystemLoadOptions,
+) -> SystemLoadOptions {
+    explicit.with_mmc3_irq_variant(system_settings(settings).core.mmc3_irq_variant)
 }
 
 pub fn system_settings(settings: &DesktopSharedSettings) -> NesSettings {
@@ -121,7 +121,7 @@ fn nearest_power_of_two(value: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{audio_backend_spec, effective_load_options, filter_type, scaling_factor};
-    use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
+    use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{default_local_settings, default_shared_settings};
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_settings::{
@@ -166,12 +166,12 @@ mod tests {
 
         let resolved = effective_load_options(
             &settings,
-            NesLoadOptions {
-                mmc3_irq_variant: Some(NesMmc3IrqVariant::Nec),
+            SystemLoadOptions {
+                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
             },
         );
 
-        assert_eq!(resolved.mmc3_irq_variant, Some(NesMmc3IrqVariant::Nec));
+        assert_eq!(resolved.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]

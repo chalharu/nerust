@@ -6,9 +6,9 @@ mod time;
 use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
 use crate::slots::state_slot_path;
 use crate::time::unix_millis;
-use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::PersistenceIdentity;
 use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_input_schema::SystemId;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -46,29 +46,12 @@ fn write_fixture_archive(name: &str) -> PathBuf {
     path
 }
 
-fn test_target() -> PersistenceTarget {
-    test_target_with(test_rom_identity(), CoreOptions::default())
+fn test_identity() -> PersistenceIdentity {
+    PersistenceIdentity::rom(SystemId::Nes, test_rom_identity())
 }
 
-fn test_target_with(rom_identity: RomIdentity, options: CoreOptions) -> PersistenceTarget {
-    PersistenceTarget {
-        rom_identity,
-        options,
-    }
-}
-
-fn test_target_with_identity(rom_identity: RomIdentity) -> PersistenceTarget {
-    test_target_with(rom_identity, CoreOptions::default())
-}
-
-fn test_target_with_irq_variant(variant: Mmc3IrqVariant) -> PersistenceTarget {
-    test_target_with(test_rom_identity(), test_options_with_irq_variant(variant))
-}
-
-fn test_options_with_irq_variant(variant: Mmc3IrqVariant) -> CoreOptions {
-    CoreOptions {
-        mmc3_irq_variant: Some(variant),
-    }
+fn test_identity_with_rom(rom_identity: RomIdentity) -> PersistenceIdentity {
+    PersistenceIdentity::rom(SystemId::Nes, rom_identity)
 }
 
 fn test_rom_identity() -> RomIdentity {
@@ -125,12 +108,12 @@ fn test_metadata(slot_id: u64, has_thumbnail: bool) -> StateArchiveMetadata {
         slot_id,
         saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
         has_thumbnail,
+        system_id: SystemId::Nes,
         mapper_type: 4,
         sub_mapper_type: 0,
         prg_rom_crc64: 1,
         chr_rom_crc64: 2,
         trainer_crc64: 3,
-        mmc3_irq_variant: 0,
         emulator_version: "test".into(),
         rom_format: 0,
         mirror_mode_kind: 0,

@@ -1,7 +1,7 @@
 use super::GuiSession;
 use nerust_console::state::PreviewFrame;
 use nerust_persistence::slots::{
-    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots_for_target,
+    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots_for_identity,
     state_slot_path, write_state_slot,
 };
 use nerust_persistence::thumbnail::ThumbnailSource;
@@ -45,8 +45,16 @@ impl GuiSession {
                 match write_state_slot(
                     &sidecars.states_dir,
                     slot_id,
-                    &export.machine_state,
-                    export.target,
+                    &export.state_blob,
+                    self.core
+                        .canonical_media_identity()
+                        .map(|identity| {
+                            nerust_contract_persistence::PersistenceIdentity::rom(
+                                self.system_id,
+                                identity.rom_identity(),
+                            )
+                        })
+                        .expect("loaded runtime should expose canonical identity"),
                     preview.as_ref(),
                 ) {
                     Ok(_) => {
@@ -108,8 +116,14 @@ impl GuiSession {
 
     pub(super) fn refresh_slots(&mut self) {
         self.persistence.slots = if let Some(sidecars) = self.persistence.sidecars.as_ref() {
-            match self.core.persistence_target() {
-                Ok(target) => match scan_state_slots_for_target(&sidecars.states_dir, target) {
+            match self.core.canonical_media_identity() {
+                Ok(identity) => match scan_state_slots_for_identity(
+                    &sidecars.states_dir,
+                    nerust_contract_persistence::PersistenceIdentity::rom(
+                        self.system_id,
+                        identity.rom_identity(),
+                    ),
+                ) {
                     Ok(slots) => slots,
                     Err(error) => {
                         log::warn!("slot scan failed: {error}");
@@ -117,7 +131,7 @@ impl GuiSession {
                     }
                 },
                 Err(error) => {
-                    log::warn!("state slot target unavailable: {error}");
+                    log::warn!("state slot identity unavailable: {error}");
                     Vec::new()
                 }
             }

@@ -1,9 +1,9 @@
 use super::GuiSession;
 use super::persistence::PersistenceState;
-use nerust_console::state::StateExport;
+use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::ConsoleVideo;
 use nerust_console::{ConsoleError, ConsoleMetrics};
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;
@@ -11,6 +11,7 @@ use nerust_persistence::model::StateSlotSummary;
 impl GuiSession {
     pub fn from_session_core(core: SessionCore) -> Self {
         Self {
+            system_id: nerust_input_schema::SystemId::Nes,
             core,
             persistence: PersistenceState::default(),
         }
@@ -88,7 +89,7 @@ impl GuiSession {
         self.core.current_input_state()
     }
 
-    pub fn export_state(&self) -> Result<StateExport, ConsoleError> {
+    pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
         self.core.export_state()
     }
 
@@ -96,7 +97,7 @@ impl GuiSession {
         self.core.import_state(bytes)
     }
 
-    pub fn persistence_target(&self) -> Result<PersistenceTarget, ConsoleError> {
-        self.core.persistence_target()
+    pub fn canonical_media_identity(&self) -> Result<CanonicalMediaIdentity, ConsoleError> {
+        self.core.canonical_media_identity()
     }
 }

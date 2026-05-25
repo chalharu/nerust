@@ -75,7 +75,7 @@ impl Renderer {
         } else {
             pack_frame_rows(
                 frame_buffer,
-                self.source_logical_size.height,
+                self.frame_logical_size.height,
                 &mut self.frame_upload_staging,
                 self.frame_upload_layout,
             );
@@ -89,7 +89,7 @@ impl Renderer {
                 layout: TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(self.frame_upload_layout.upload_bytes_per_row),
-                    rows_per_image: Some(self.source_logical_size.height as u32),
+                    rows_per_image: Some(self.frame_logical_size.height as u32),
                 },
             },
             TexelCopyTextureInfo {
@@ -99,8 +99,8 @@ impl Renderer {
                 aspect: wgpu::TextureAspect::All,
             },
             Extent3d {
-                width: self.source_logical_size.width as u32,
-                height: self.source_logical_size.height as u32,
+                width: self.frame_logical_size.width as u32,
+                height: self.frame_logical_size.height as u32,
                 depth_or_array_layers: 1,
             },
         );

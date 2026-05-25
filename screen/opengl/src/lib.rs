@@ -12,19 +12,33 @@ use self::mat4::Mat4;
 use self::vec2d::Vec2D;
 use self::vertex_data::VertexData;
 use gl::types::GLint;
+use nerust_console::video::VideoRenderProfile;
 use nerust_glwrap::Shader;
 use nerust_glwrap::raw::*;
 use nerust_glwrap::vertex::*;
-use nerust_screen_filter::presentation::NesVideoAssets;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_video::VideoPresentation;
 use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::ptr;
 use std::rc::Rc;
 
-const GL_LUMINANCE: u32 = 0x1909;
+const DIRECT_FRAGMENT_DESKTOP: &str = r#"
+uniform sampler2D frame_texture;
+in vec2 vuv;
+out vec4 frag_color;
+
+void main(void) {
+    frag_color = texture(frame_texture, vuv);
+}
+"#;
+
+const DIRECT_FRAGMENT_COMPAT: &str = r#"
+uniform sampler2D frame_texture;
+varying NERUST_MEDIUMP vec2 vuv;
+
+void main(void) {
+    gl_FragColor = texture2D(frame_texture, vuv);
+}
+"#;
 
 fn allocate(size: usize) -> Box<[u8]> {
     vec![0; size].into_boxed_slice()
@@ -33,59 +47,24 @@ fn allocate(size: usize) -> Box<[u8]> {
 #[derive(Debug)]
 pub struct GlView {
     frame_texture: u32,
-    palette_texture: u32,
-    ntsc_primary_texture: u32,
-    ntsc_secondary_texture: u32,
     shader: Option<Shader>,
-    pipeline_mode: ShaderPipelineMode,
     use_vao: bool,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
-    source_logical_size: LogicalSize,
-    single_channel_format: SingleChannelFormat,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum SingleChannelFormat {
-    RedInteger,
-    Luminance,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ShaderPipelineMode {
-    DesktopCore,
-    DesktopLegacy,
-    Gles3,
-    Gles2,
-}
-
-impl ShaderPipelineMode {
-    fn uses_packed_ntsc_lut(self) -> bool {
-        matches!(self, Self::DesktopCore | Self::Gles3)
-    }
-
-    fn uses_integer_textures(self) -> bool {
-        matches!(self, Self::DesktopCore | Self::Gles3)
-    }
+    logical_width: i32,
+    logical_height: i32,
 }
 
 impl GlView {
     pub fn new() -> Self {
         Self {
             frame_texture: 0,
-            palette_texture: 0,
-            ntsc_primary_texture: 0,
-            ntsc_secondary_texture: 0,
             shader: None,
-            pipeline_mode: ShaderPipelineMode::DesktopLegacy,
             use_vao: false,
             vba: None,
             vbo: None,
-            source_logical_size: LogicalSize {
-                width: 0,
-                height: 0,
-            },
-            single_channel_format: SingleChannelFormat::RedInteger,
+            logical_width: 0,
+            logical_height: 0,
         }
     }
 
@@ -97,102 +76,26 @@ impl GlView {
         gl::load_with(get_proc_address);
     }
 
-    pub fn on_load(
-        &mut self,
-        presentation: &VideoPresentation,
-        assets: &NesVideoAssets,
-    ) -> Result<(), String> {
-        if !presentation.is_palette_frame() {
-            return Err(
-                "nerust_screen_opengl does not yet support non-palette video presentations"
-                    .to_string(),
-            );
-        }
-
-        let source_logical_size = presentation.source_logical_size();
-        let logical_size = presentation.logical_size();
-        let (shader, pipeline_mode, single_channel_format) =
-            compile_shader_program(assets.is_palette_pipeline());
-        self.source_logical_size = source_logical_size;
-        self.pipeline_mode = pipeline_mode;
-        self.single_channel_format = single_channel_format;
+    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
+        let logical_size = render_profile.logical_size;
+        let shader = compile_shader_program();
+        self.logical_width = logical_size.width as i32;
+        self.logical_height = logical_size.height as i32;
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
-        let mut texture_names = [0; 4];
-        gen_textures(4, texture_names.as_mut_ptr()).unwrap();
+        let mut texture_names = [0; 1];
+        gen_textures(1, texture_names.as_mut_ptr()).unwrap();
         self.frame_texture = texture_names[0];
-        self.palette_texture = texture_names[1];
-        self.ntsc_primary_texture = texture_names[2];
-        self.ntsc_secondary_texture = texture_names[3];
         pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
-
-        let frame_buffer_width = source_logical_size.width.next_power_of_two();
-        let frame_buffer_height = source_logical_size.height.next_power_of_two();
-        configure_frame_texture(
+        configure_rgba_texture(
             0,
             self.frame_texture,
-            frame_buffer_width,
-            frame_buffer_height,
-            single_channel_format,
+            logical_size.width,
+            logical_size.height,
+            allocate(logical_size.width * logical_size.height * 4).as_ref(),
         );
-        if self.pipeline_mode.uses_integer_textures() {
-            configure_rgba8ui_texture(
-                1,
-                self.palette_texture,
-                PALETTE_TEXTURE_WIDTH as usize,
-                1,
-                assets.palette_rgba8(),
-            );
-        } else {
-            configure_rgba_texture(
-                1,
-                self.palette_texture,
-                PALETTE_TEXTURE_WIDTH as usize,
-                1,
-                assets.palette_rgba8(),
-            );
-        }
-        if assets.is_palette_pipeline() {
-            if self.pipeline_mode.uses_packed_ntsc_lut() {
-                configure_rgba8ui_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
-            } else {
-                configure_rgba_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
-                configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
-            }
-        } else if self.pipeline_mode.uses_packed_ntsc_lut() {
-            let texture = assets.packed_ntsc_rgba8().ok_or_else(|| {
-                "NTSC presentation data is missing packed texture bytes".to_string()
-            })?;
-            configure_rgba8ui_texture(
-                2,
-                self.ntsc_primary_texture,
-                NTSC_TEXTURE_WIDTH as usize,
-                NTSC_TEXTURE_HEIGHT as usize,
-                texture,
-            );
-            configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
-        } else if let Some(textures) = assets.split_ntsc_textures() {
-            configure_rgba_texture(
-                2,
-                self.ntsc_primary_texture,
-                NTSC_TEXTURE_WIDTH as usize,
-                NTSC_TEXTURE_HEIGHT as usize,
-                textures.primary_rgba8.as_ref(),
-            );
-            configure_rgba_texture(
-                3,
-                self.ntsc_secondary_texture,
-                NTSC_TEXTURE_WIDTH as usize,
-                NTSC_TEXTURE_HEIGHT as usize,
-                textures.secondary_rgba8.as_ref(),
-            );
-        } else {
-            configure_rgba_texture(2, self.ntsc_primary_texture, 1, 1, &[0, 0, 0, 0]);
-            configure_rgba_texture(3, self.ntsc_secondary_texture, 1, 1, &[0, 0, 0, 0]);
-        }
 
-        // vbo
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
             VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 1.0)),
@@ -229,7 +132,6 @@ impl GlView {
                 .unwrap(),
             );
         } else {
-            // attribute属性を登録
             vertex_attrib_pointer(
                 shader.get_attribute("position"),
                 2,
@@ -254,7 +156,6 @@ impl GlView {
             self.vbo = Some(vbo.clone());
         }
 
-        // uniform属性を設定する
         uniform_matrix_4fv(
             shader.get_uniform("unif_matrix"),
             1,
@@ -263,41 +164,6 @@ impl GlView {
         )
         .unwrap();
         uniform_1i(shader.get_uniform("frame_texture"), 0).unwrap();
-        uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
-        if self.pipeline_mode.uses_packed_ntsc_lut() {
-            uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
-        } else {
-            uniform_1i(shader.get_uniform("ntsc_primary_texture"), 2).unwrap();
-            uniform_1i(shader.get_uniform("ntsc_secondary_texture"), 3).unwrap();
-        }
-        uniform_1i(
-            shader.get_uniform("source_width"),
-            source_logical_size.width as i32,
-        )
-        .unwrap();
-        uniform_1i(
-            shader.get_uniform("source_height"),
-            source_logical_size.height as i32,
-        )
-        .unwrap();
-        uniform_1i(
-            shader.get_uniform("output_width"),
-            logical_size.width as i32,
-        )
-        .unwrap();
-        uniform_1i(
-            shader.get_uniform("output_height"),
-            logical_size.height as i32,
-        )
-        .unwrap();
-        uniform_2f(
-            shader.get_uniform("frame_uv_size"),
-            source_logical_size.width as f32 / frame_buffer_width as f32,
-            source_logical_size.height as f32 / frame_buffer_height as f32,
-        )
-        .unwrap();
-
-        // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
         self.shader = Some(shader);
         Ok(())
     }
@@ -312,19 +178,14 @@ impl GlView {
             bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
         }
         clear(gl::COLOR_BUFFER_BIT).unwrap();
-
-        // モデルの描画
         tex_sub_image_2d(
             gl::TEXTURE_2D,
             0,
             0,
             0,
-            self.source_logical_size.width as i32,
-            self.source_logical_size.height as i32,
-            match self.single_channel_format {
-                SingleChannelFormat::RedInteger => gl::RED_INTEGER,
-                SingleChannelFormat::Luminance => GL_LUMINANCE,
-            },
+            self.logical_width,
+            self.logical_height,
+            gl::RGBA,
             gl::UNSIGNED_BYTE,
             screen_ptr as *const c_void,
         )
@@ -353,17 +214,12 @@ impl GlView {
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
         )
         .unwrap();
-        // bind_buffer(gl::ARRAY_BUFFER, 0).unwrap();
     }
 
     pub fn on_close(&mut self) {
-        let textures = [
-            self.frame_texture,
-            self.palette_texture,
-            self.ntsc_primary_texture,
-            self.ntsc_secondary_texture,
-        ];
-        delete_textures(textures.len() as i32, textures.as_ptr()).unwrap();
+        if self.frame_texture != 0 {
+            delete_textures(1, &self.frame_texture).unwrap();
+        }
     }
 }
 
@@ -371,37 +227,6 @@ impl Default for GlView {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn configure_frame_texture(
-    unit: u32,
-    texture: u32,
-    width: usize,
-    height: usize,
-    format: SingleChannelFormat,
-) {
-    active_texture(gl::TEXTURE0 + unit).unwrap();
-    bind_texture(gl::TEXTURE_2D, texture).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
-    let (internal_format, upload_format) = match format {
-        SingleChannelFormat::RedInteger => (gl::R8UI as GLint, gl::RED_INTEGER),
-        SingleChannelFormat::Luminance => (GL_LUMINANCE as GLint, GL_LUMINANCE),
-    };
-    tex_image_2d(
-        gl::TEXTURE_2D,
-        0,
-        internal_format,
-        width as i32,
-        height as i32,
-        0,
-        upload_format,
-        gl::UNSIGNED_BYTE,
-        allocate(width * height).as_ptr() as *const _,
-    )
-    .unwrap();
 }
 
 fn configure_rgba_texture(unit: u32, texture: u32, width: usize, height: usize, data: &[u8]) {
@@ -419,27 +244,6 @@ fn configure_rgba_texture(unit: u32, texture: u32, width: usize, height: usize, 
         height as i32,
         0,
         gl::RGBA,
-        gl::UNSIGNED_BYTE,
-        data.as_ptr() as *const _,
-    )
-    .unwrap();
-}
-
-fn configure_rgba8ui_texture(unit: u32, texture: u32, width: usize, height: usize, data: &[u8]) {
-    active_texture(gl::TEXTURE0 + unit).unwrap();
-    bind_texture(gl::TEXTURE_2D, texture).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
-    tex_image_2d(
-        gl::TEXTURE_2D,
-        0,
-        gl::RGBA8UI as GLint,
-        width as i32,
-        height as i32,
-        0,
-        gl::RGBA_INTEGER,
         gl::UNSIGNED_BYTE,
         data.as_ptr() as *const _,
     )
@@ -478,31 +282,7 @@ fn compose_glsl_source(version_line: &str, extra_preamble: &[&str], parts: &[&st
     output
 }
 
-fn desktop_fragment_parts(is_palette: bool) -> [&'static str; 3] {
-    [
-        include_str!("fragment_desktop_prelude.glsl"),
-        if is_palette {
-            include_str!("fragment_desktop_palette.glsl")
-        } else {
-            include_str!("fragment_desktop_ntsc.glsl")
-        },
-        include_str!("fragment_desktop_present.glsl"),
-    ]
-}
-
-fn compat_fragment_parts(is_palette: bool) -> [&'static str; 3] {
-    [
-        include_str!("fragment_compat_prelude.glsl"),
-        if is_palette {
-            include_str!("fragment_compat_palette.glsl")
-        } else {
-            include_str!("fragment_compat_ntsc.glsl")
-        },
-        include_str!("fragment_compat_present.glsl"),
-    ]
-}
-
-fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, SingleChannelFormat) {
+fn compile_shader_program() -> Shader {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
     let is_gles = is_gles_context(context_version.as_deref());
@@ -524,12 +304,8 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
                 ),
                 compose_glsl_source(
                     "#version 300 es",
-                    &[
-                        "precision mediump float;",
-                        "precision highp int;",
-                        "precision mediump usampler2D;",
-                    ],
-                    &desktop_fragment_parts(is_palette),
+                    &["precision mediump float;"],
+                    &[DIRECT_FRAGMENT_DESKTOP],
                 ),
             ),
             (
@@ -538,7 +314,7 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
                 compose_glsl_source(
                     "#version 100",
                     &["#define NERUST_MEDIUMP mediump"],
-                    &compat_fragment_parts(is_palette),
+                    &[DIRECT_FRAGMENT_COMPAT],
                 ),
             ),
         ]
@@ -547,7 +323,7 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
             (
                 "desktop-core",
                 include_str!("vertex_desktop.glsl").to_owned(),
-                compose_glsl_source("#version 150", &[], &desktop_fragment_parts(is_palette)),
+                compose_glsl_source("#version 150", &[], &[DIRECT_FRAGMENT_DESKTOP]),
             ),
             (
                 "desktop-legacy",
@@ -555,7 +331,7 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
                 compose_glsl_source(
                     "#version 120",
                     &["#define NERUST_MEDIUMP"],
-                    &compat_fragment_parts(is_palette),
+                    &[DIRECT_FRAGMENT_COMPAT],
                 ),
             ),
         ]
@@ -566,20 +342,7 @@ fn compile_shader_program(is_palette: bool) -> (Shader, ShaderPipelineMode, Sing
         match Shader::try_new(vertex.as_str(), fragment.as_str()) {
             Ok(shader) => {
                 log::info!("selected {name} shader pipeline");
-                let (pipeline_mode, single_channel_format) = match name {
-                    "desktop-core" => (
-                        ShaderPipelineMode::DesktopCore,
-                        SingleChannelFormat::RedInteger,
-                    ),
-                    "desktop-legacy" => (
-                        ShaderPipelineMode::DesktopLegacy,
-                        SingleChannelFormat::Luminance,
-                    ),
-                    "gles3" => (ShaderPipelineMode::Gles3, SingleChannelFormat::RedInteger),
-                    "gles2" => (ShaderPipelineMode::Gles2, SingleChannelFormat::Luminance),
-                    _ => unreachable!(),
-                };
-                return (shader, pipeline_mode, single_channel_format);
+                return shader;
             }
             Err(err) => errors.push(format!("{name}: {err}")),
         }

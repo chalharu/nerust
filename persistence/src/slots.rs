@@ -8,7 +8,7 @@ use crate::model::{LoadedStateSlot, StateSlotSummary};
 use crate::thumbnail::{ThumbnailSource, encode_thumbnail_png};
 use crate::time::{system_time_from_millis, unix_millis};
 use fs2::FileExt;
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::PersistenceIdentity;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -20,11 +20,11 @@ pub fn scan_state_slots(states_dir: &Path) -> Result<Vec<StateSlotSummary>, Pers
     scan_state_slots_matching(states_dir, None)
 }
 
-pub fn scan_state_slots_for_target(
+pub fn scan_state_slots_for_identity(
     states_dir: &Path,
-    target: PersistenceTarget,
+    identity: PersistenceIdentity,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-    scan_state_slots_matching(states_dir, Some(target))
+    scan_state_slots_matching(states_dir, Some(identity))
 }
 
 pub fn allocate_next_slot_id(states_dir: &Path) -> Result<u64, PersistenceError> {
@@ -53,13 +53,13 @@ pub fn write_state_slot(
     states_dir: &Path,
     slot_id: u64,
     machine_state: &[u8],
-    target: PersistenceTarget,
+    identity: PersistenceIdentity,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
     fs::create_dir_all(states_dir)?;
     let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
     let has_thumbnail = preview.is_some();
-    let metadata = encode_slot_metadata(slot_id, saved_at, target, has_thumbnail)?;
+    let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let archive_bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
     let path = state_slot_path(states_dir, slot_id);
@@ -98,7 +98,7 @@ pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {
 
 fn scan_state_slots_matching(
     states_dir: &Path,
-    target: Option<PersistenceTarget>,
+    identity: Option<PersistenceIdentity>,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
     if !states_dir.exists() {
         return Ok(Vec::new());
@@ -110,7 +110,7 @@ fn scan_state_slots_matching(
         if path.extension().and_then(|ext| ext.to_str()) != Some("state") {
             continue;
         }
-        if let Ok(Some(summary)) = read_state_summary(&path, target) {
+        if let Ok(Some(summary)) = read_state_summary(&path, identity) {
             result.push(summary);
         }
     }
