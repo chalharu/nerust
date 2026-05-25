@@ -118,7 +118,7 @@ impl State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsApplyPlan, String> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.scaling_changed {
+        if plan.session_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
         Ok(plan)

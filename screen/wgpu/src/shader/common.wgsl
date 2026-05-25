@@ -36,11 +36,24 @@ fn palette_source_coords(output: vec2<i32>) -> vec2<i32> {
     );
 }
 
+fn direct_source_coords(output: vec2<i32>) -> vec2<i32> {
+    let output_width = i32(max(uniforms.output_width, 1u));
+    let output_height = i32(max(uniforms.output_height, 1u));
+    return vec2<i32>(
+        min((output.x * i32(uniforms.source_width)) / output_width, i32(uniforms.source_width) - 1),
+        min((output.y * i32(uniforms.source_height)) / output_height, i32(uniforms.source_height) - 1),
+    );
+}
+
 fn palette_index(x: i32, y: i32) -> u32 {
     if x < 0 || y < 0 || x >= i32(uniforms.source_width) || y >= i32(uniforms.source_height) {
         return BLACK_INDEX;
     }
     return textureLoad(frame_texture, vec2<i32>(x, y), 0).r;
+}
+
+fn direct_rgb_for_output(output: vec2<i32>) -> vec3<u32> {
+    return textureLoad(frame_texture, direct_source_coords(output), 0).rgb;
 }
 
 fn srgb_to_linear(color: vec3<u32>) -> vec3<f32> {

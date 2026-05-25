@@ -4,10 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+pub mod controller;
 mod runner;
 pub mod state;
 pub mod video;
 
+use self::controller::ControllerRuntime;
 use self::runner::ConsoleRunner;
 use self::runner::data::ConsoleData;
 use self::state::StateExport;
@@ -149,21 +151,28 @@ impl Console {
         speaker: S,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
+        controller: Box<dyn ControllerRuntime>,
     ) -> Self {
         Self::new(
             speaker,
             ScreenBuffer::new_gpu(filter_type, source_logical_size),
+            controller,
         )
     }
 
     pub fn new<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         screen_buffer: ScreenBuffer,
+        controller: Box<dyn ControllerRuntime>,
     ) -> Self {
-        Self::spawn(speaker, screen_buffer)
+        Self::spawn(speaker, screen_buffer, controller)
     }
 
-    fn spawn<S: 'static + Sound + MixerInput + Send>(speaker: S, screen: ScreenBuffer) -> Self {
+    fn spawn<S: 'static + Sound + MixerInput + Send>(
+        speaker: S,
+        screen: ScreenBuffer,
+        controller: Box<dyn ControllerRuntime>,
+    ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
         let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
@@ -187,7 +196,14 @@ impl Console {
         };
 
         result.thread = Some(thread::spawn(move || {
-            let mut state = ConsoleRunner::new(data_recv, stop_recv, screen, frame_buffer, metrics);
+            let mut state = ConsoleRunner::new(
+                data_recv,
+                stop_recv,
+                screen,
+                frame_buffer,
+                metrics,
+                controller,
+            );
             state.run(speaker);
         }));
 

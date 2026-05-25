@@ -48,7 +48,7 @@ impl GtkGlRenderer {
         self.resize(
             gl_area,
             state.window_size(),
-            scaling_factor(state.settings_snapshot().local.video.scaling),
+            scaling_factor(state.settings_snapshot().local.video.window.scaling),
             gl_area.width(),
             gl_area.height(),
         );

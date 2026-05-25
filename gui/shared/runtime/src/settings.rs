@@ -5,7 +5,6 @@ use nerust_contract_settings::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, Desk
 use nerust_contract_settings::local::{
     HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
 };
-use nerust_contract_settings::nes::NesVideoFilter;
 use nerust_contract_settings::shared::{
     DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings, StoragePolicy, SystemSettings,
 };
@@ -42,52 +41,142 @@ pub enum SettingsError {
     LockPoisoned,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostBackendIdentity {
-    host: String,
-    backend: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostKind {
+    Gtk,
+    Glutin,
+    Tao,
 }
 
-impl HostBackendIdentity {
-    pub fn new(host: impl Into<String>, backend: impl Into<String>) -> Self {
-        Self {
-            host: host.into(),
-            backend: backend.into(),
+impl HostKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gtk => "gtk",
+            Self::Glutin => "glutin",
+            Self::Tao => "tao",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderBackendKind {
+    OpenGl,
+    Wgpu,
+}
+
+impl RenderBackendKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenGl => "opengl",
+            Self::Wgpu => "wgpu",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostWindowCapabilities {
+    pub remembers_window_size: bool,
+    pub supports_fullscreen_default: bool,
+    pub supports_scaling: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendPresentationCapabilities {
+    pub supports_vsync: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostBackendCapabilities {
+    pub window: HostWindowCapabilities,
+    pub presentation: Option<BackendPresentationCapabilities>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostBackendProfile {
+    host: HostKind,
+    backend: RenderBackendKind,
+}
+
+pub type HostBackendIdentity = HostBackendProfile;
+
+impl HostBackendProfile {
+    pub fn new(host: HostKind, backend: RenderBackendKind) -> Self {
+        Self { host, backend }
+    }
+
+    pub fn host(&self) -> HostKind {
+        self.host
+    }
+
+    pub fn backend(&self) -> RenderBackendKind {
+        self.backend
+    }
+
+    pub fn capabilities(&self) -> HostBackendCapabilities {
+        match (self.host, self.backend) {
+            (HostKind::Gtk, RenderBackendKind::OpenGl) => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: false,
+                    supports_fullscreen_default: true,
+                    supports_scaling: true,
+                },
+                presentation: None,
+            },
+            (HostKind::Glutin, RenderBackendKind::OpenGl) => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: true,
+                    supports_fullscreen_default: true,
+                    supports_scaling: true,
+                },
+                presentation: None,
+            },
+            (HostKind::Tao, RenderBackendKind::Wgpu) => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: true,
+                    supports_fullscreen_default: true,
+                    supports_scaling: true,
+                },
+                presentation: Some(BackendPresentationCapabilities {
+                    supports_vsync: true,
+                }),
+            },
+            _ => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: true,
+                    supports_fullscreen_default: true,
+                    supports_scaling: true,
+                },
+                presentation: None,
+            },
         }
     }
 
-    pub fn host(&self) -> &str {
-        self.host.as_str()
-    }
-
-    pub fn backend(&self) -> &str {
-        self.backend.as_str()
-    }
-
     pub fn gtk_opengl() -> Self {
-        Self::new("gtk", "opengl")
+        Self::new(HostKind::Gtk, RenderBackendKind::OpenGl)
     }
 
     pub fn glutin_opengl() -> Self {
-        Self::new("glutin", "opengl")
+        Self::new(HostKind::Glutin, RenderBackendKind::OpenGl)
     }
 
     pub fn tao_wgpu() -> Self {
-        Self::new("tao", "wgpu")
+        Self::new(HostKind::Tao, RenderBackendKind::Wgpu)
     }
 
     fn file_stem(&self) -> String {
         format!(
             "{}+{}",
-            sanitize_path_component(&self.host),
-            sanitize_path_component(&self.backend)
+            sanitize_path_component(self.host.label()),
+            sanitize_path_component(self.backend.label())
         )
     }
 }
 
-impl fmt::Display for HostBackendIdentity {
+impl fmt::Display for HostBackendProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}+{}", self.host, self.backend)
+        write!(f, "{}+{}", self.host.label(), self.backend.label())
     }
 }
 
@@ -114,6 +203,9 @@ pub struct SettingsApplyPlan {
     pub bindings_changed: bool,
     pub persistence_changed: bool,
     pub session_rebuild_required: bool,
+    pub renderer_rebuild_required: bool,
+    pub window_settings_changed: bool,
+    pub backend_presentation_changed: bool,
     pub scaling_changed: bool,
     pub vsync_changed: bool,
     pub fullscreen_default_changed: bool,
@@ -295,8 +387,10 @@ impl SettingsManager {
         };
         let shared_document =
             merge_serialized_value(guard.shared_document.clone(), &normalized.shared)?;
-        let local_document =
-            merge_serialized_value(guard.local_document.clone(), &normalized.local)?;
+        let local_document = merge_serialized_value(
+            strip_legacy_local_video_fields(guard.local_document.clone()),
+            &normalized.local,
+        )?;
         let app_state_document =
             merge_serialized_value(guard.app_state_document.clone(), &normalized.app_state)?;
         save_snapshot_store(
@@ -420,18 +514,37 @@ impl SettingsManager {
     }
 }
 
-pub fn derive_apply_plan(before: &SettingsSnapshot, after: &SettingsSnapshot) -> SettingsApplyPlan {
+pub fn derive_apply_plan(
+    host_backend: HostBackendProfile,
+    before: &SettingsSnapshot,
+    after: &SettingsSnapshot,
+) -> SettingsApplyPlan {
     let audio_changed = before.local.audio != after.local.audio;
     let visual_changed = live_system_settings_changed(&before.shared, &after.shared);
+    let window_capabilities = host_backend.capabilities().window;
+    let presentation_capabilities = host_backend.capabilities().presentation;
+    let scaling_changed = before.local.video.window.scaling != after.local.video.window.scaling;
+    let vsync_changed =
+        before.local.video.presentation.vsync != after.local.video.presentation.vsync;
+    let fullscreen_default_changed =
+        before.local.video.window.fullscreen_default != after.local.video.window.fullscreen_default;
+    let backend_presentation_changed = presentation_capabilities
+        .map(|capabilities| capabilities.supports_vsync)
+        .unwrap_or(false)
+        && vsync_changed;
+    let window_settings_changed = (window_capabilities.supports_scaling && scaling_changed)
+        || (window_capabilities.supports_fullscreen_default && fullscreen_default_changed);
     SettingsApplyPlan {
         language_changed: before.shared.general != after.shared.general,
         bindings_changed: before.shared.input != after.shared.input,
         persistence_changed: before.shared.persistence != after.shared.persistence,
         session_rebuild_required: audio_changed || visual_changed,
-        scaling_changed: before.local.video.scaling != after.local.video.scaling,
-        vsync_changed: before.local.video.vsync != after.local.video.vsync,
-        fullscreen_default_changed: before.local.video.fullscreen_default
-            != after.local.video.fullscreen_default,
+        renderer_rebuild_required: audio_changed || visual_changed || backend_presentation_changed,
+        window_settings_changed,
+        backend_presentation_changed,
+        scaling_changed,
+        vsync_changed,
+        fullscreen_default_changed,
     }
 }
 
@@ -813,21 +926,41 @@ fn merge_yaml(into: &mut Value, overlay: Value) {
     }
 }
 
+fn strip_legacy_local_video_fields(mut document: Value) -> Value {
+    let Some(video) = document
+        .as_mapping_mut()
+        .and_then(|mapping| mapping.get_mut(Value::String("video".into())))
+        .and_then(Value::as_mapping_mut)
+    else {
+        return document;
+    };
+    for key in ["fullscreen_default", "scaling", "vsync"] {
+        video.remove(Value::String(key.into()));
+    }
+    document
+}
+
 fn live_system_settings_changed(
     before: &DesktopSharedSettings,
     after: &DesktopSharedSettings,
 ) -> bool {
-    nes_live_filter(before) != nes_live_filter(after)
+    before.systems.iter().any(|(system_id, before_settings)| {
+        system_live_settings_changed(Some(before_settings), after.systems.get(system_id))
+    }) || after
+        .systems
+        .iter()
+        .any(|(system_id, _)| !before.systems.contains_key(system_id))
 }
 
-fn nes_live_filter(settings: &DesktopSharedSettings) -> NesVideoFilter {
-    settings
-        .systems
-        .get(&SystemId::Nes)
-        .map(|settings| match settings {
-            SystemSettings::Nes(nes) => nes.video.filter,
-        })
-        .unwrap_or_default()
+fn system_live_settings_changed(
+    before: Option<&SystemSettings>,
+    after: Option<&SystemSettings>,
+) -> bool {
+    match (before, after) {
+        (Some(before), Some(after)) => before.requires_live_session_rebuild(after),
+        (None, None) => false,
+        _ => true,
+    }
 }
 
 fn empty_mapping() -> Value {
@@ -1313,6 +1446,46 @@ input:
     }
 
     #[test]
+    fn local_settings_save_prunes_legacy_flat_video_fields() {
+        let existing: Value = serde_yaml::from_str(
+            r#"
+schema_version: 1
+video:
+  fullscreen_default: true
+  scaling: x3
+  vsync: false
+  future: keep-video
+"#,
+        )
+        .unwrap();
+        let merged = super::merge_serialized_value(
+            super::strip_legacy_local_video_fields(existing),
+            &test_local_defaults(),
+        )
+        .unwrap();
+
+        let decoded: HostBackendLocalSettings = serde_yaml::from_value(merged.clone()).unwrap();
+        assert!(!decoded.video.window.fullscreen_default);
+        assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
+        assert!(decoded.video.presentation.vsync);
+
+        let video = merged
+            .as_mapping()
+            .unwrap()
+            .get(Value::String("video".into()))
+            .unwrap()
+            .as_mapping()
+            .unwrap();
+        assert!(!video.contains_key(Value::String("fullscreen_default".into())));
+        assert!(!video.contains_key(Value::String("scaling".into())));
+        assert!(!video.contains_key(Value::String("vsync".into())));
+        assert_eq!(
+            video.get(Value::String("future".into())).unwrap(),
+            &Value::String("keep-video".into())
+        );
+    }
+
+    #[test]
     fn apply_plan_flags_changed_categories() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
@@ -1321,10 +1494,10 @@ input:
         };
         let mut after = before.clone();
         after.shared.general.language = AppLanguage::Japanese;
-        after.local.video.scaling = ScalingMode::X3;
+        after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = super::derive_apply_plan(&before, &after);
+        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert_eq!(
             plan,
@@ -1333,6 +1506,9 @@ input:
                 bindings_changed: false,
                 persistence_changed: false,
                 session_rebuild_required: true,
+                renderer_rebuild_required: true,
+                window_settings_changed: true,
+                backend_presentation_changed: false,
                 scaling_changed: true,
                 vsync_changed: false,
                 fullscreen_default_changed: false,
@@ -1351,7 +1527,7 @@ input:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = super::derive_apply_plan(&before, &after);
+        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.session_rebuild_required);
     }
@@ -1367,9 +1543,43 @@ input:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = super::derive_apply_plan(&before, &after);
+        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(!plan.session_rebuild_required);
+    }
+
+    #[test]
+    fn gtk_opengl_ignores_backend_presentation_changes() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
+
+        let plan = super::derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
+
+        assert!(plan.vsync_changed);
+        assert!(!plan.backend_presentation_changed);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn tao_wgpu_rebuilds_renderer_for_vsync_changes() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
+
+        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+
+        assert!(plan.vsync_changed);
+        assert!(plan.backend_presentation_changed);
+        assert!(plan.renderer_rebuild_required);
     }
 
     #[test]

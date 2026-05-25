@@ -94,6 +94,7 @@ impl HostState {
             .settings_snapshot()
             .local
             .video
+            .window
             .fullscreen_default
         {
             window.set_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -264,7 +265,7 @@ impl HostState {
         settings: SettingsSnapshot,
     ) -> Result<SettingsApplyPlan, String> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.scaling_changed {
+        if plan.window_settings_changed {
             self.update_window_size_for_scaling();
         }
         self.sync_menu_state();
@@ -411,7 +412,7 @@ impl HostState {
     }
 
     fn startup_window_size(&self) -> TaoLogicalSize<f64> {
-        match scaling_factor(self.session.settings_snapshot().local.video.scaling) {
+        match scaling_factor(self.session.settings_snapshot().local.video.window.scaling) {
             Some(scale) => logical_window_size(self.session.window_size(), Some(scale)),
             None => self
                 .remembered_fit_window_size()
@@ -424,7 +425,8 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let Some(scale) = scaling_factor(self.session.settings_snapshot().local.video.scaling)
+        let Some(scale) =
+            scaling_factor(self.session.settings_snapshot().local.video.window.scaling)
         else {
             return;
         };
@@ -443,7 +445,7 @@ impl HostState {
             return;
         };
         if window.fullscreen().is_some()
-            || scaling_factor(self.session.settings_snapshot().local.video.scaling).is_some()
+            || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
         }

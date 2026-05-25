@@ -1,7 +1,7 @@
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
 use nerust_gui_shell::session::NesSession;
-use nerust_screen_wgpu::surface::SurfaceSize;
+use nerust_screen_wgpu::{renderer::PresentationOptions, surface::SurfaceSize};
 use std::sync::Arc;
 use tao::window::Window as TaoWindow;
 
@@ -16,9 +16,10 @@ impl WgpuRenderer {
             SurfaceTarget::new(window.clone(), session.window_size()),
             SurfaceSize::new(window.inner_size().width, window.inner_size().height),
             video.presentation(),
-            video
-                .console_video_assets()
-                .expect("NES session always has video assets"),
+            video.console_video_assets(),
+            PresentationOptions {
+                vsync: session.settings_snapshot().local.video.presentation.vsync,
+            },
         )
         .unwrap();
         Self { backend }

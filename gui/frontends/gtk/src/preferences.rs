@@ -8,16 +8,17 @@ use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::nes::NesVideoFilter;
 use nerust_contract_settings::shared::{StoragePolicy, SystemSettings};
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
+use nerust_gui_shell::descriptor::NesConsoleProfile;
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
-    keyboard_binding_descriptors, shortcut_descriptors,
+    keyboard_binding_sections, shortcut_descriptors,
 };
 use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
 use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::SystemId;
+use nerust_input_schema::{InputTopologyDescriptor, SystemId};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -148,7 +149,8 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let input_rows = build_input_rows(language, &input_page);
+    let topology = NesConsoleProfile.input_topology_descriptor();
+    let input_rows = build_input_rows(language, &input_page, &topology);
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -633,7 +635,7 @@ fn connect_local_updates(
         let draft = draft.clone();
         let widgets = widgets.clone();
         let _ = fullscreen_check.connect_toggled(move |button| {
-            draft.borrow_mut().local.video.fullscreen_default = button.is_active();
+            draft.borrow_mut().local.video.window.fullscreen_default = button.is_active();
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -641,7 +643,7 @@ fn connect_local_updates(
         let draft = draft.clone();
         let widgets = widgets.clone();
         let _ = scaling_combo.connect_changed(move |combo| {
-            draft.borrow_mut().local.video.scaling = match combo.active_id().as_deref() {
+            draft.borrow_mut().local.video.window.scaling = match combo.active_id().as_deref() {
                 Some("1") => ScalingMode::X1,
                 Some("2") => ScalingMode::X2,
                 Some("3") => ScalingMode::X3,
@@ -656,7 +658,7 @@ fn connect_local_updates(
         let draft = draft.clone();
         let widgets = widgets.clone();
         let _ = vsync_check.connect_toggled(move |button| {
-            draft.borrow_mut().local.video.vsync = button.is_active();
+            draft.borrow_mut().local.video.presentation.vsync = button.is_active();
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -737,7 +739,10 @@ fn refresh_validation(
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared);
+    let conflicts = conflicting_keys(
+        &snapshot.shared,
+        &NesConsoleProfile.input_topology_descriptor(),
+    );
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -764,7 +769,10 @@ fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    for (key, labels) in conflicting_keys(&snapshot.shared) {
+    for (key, labels) in conflicting_keys(
+        &snapshot.shared,
+        &NesConsoleProfile.input_topology_descriptor(),
+    ) {
         errors.push(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -817,8 +825,8 @@ fn apply_snapshot_to_widgets(
         snapshot.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
     ));
-    fullscreen_check.set_active(snapshot.local.video.fullscreen_default);
-    scaling_combo.set_active_id(Some(match snapshot.local.video.scaling {
+    fullscreen_check.set_active(snapshot.local.video.window.fullscreen_default);
+    scaling_combo.set_active_id(Some(match snapshot.local.video.window.scaling {
         ScalingMode::FitToWindow => "fit",
         ScalingMode::X1 => "1",
         ScalingMode::X2 => "2",
@@ -826,7 +834,7 @@ fn apply_snapshot_to_widgets(
         ScalingMode::X4 => "4",
         ScalingMode::X5 => "5",
     }));
-    vsync_check.set_active(snapshot.local.video.vsync);
+    vsync_check.set_active(snapshot.local.video.presentation.vsync);
     mute_check.set_active(snapshot.local.audio.muted);
     volume_spin.set_value(f64::from(snapshot.local.audio.master_volume_percent));
     sample_rate_combo.set_active_id(Some(match snapshot.local.audio.sample_rate {
@@ -858,7 +866,11 @@ fn apply_snapshot_to_widgets(
     }
 }
 
-fn build_input_rows(language: AppLanguage, input_page: &gtk::Box) -> Vec<InputRow> {
+fn build_input_rows(
+    language: AppLanguage,
+    input_page: &gtk::Box,
+    topology: &InputTopologyDescriptor,
+) -> Vec<InputRow> {
     let input_stack = gtk::Stack::new();
     input_stack.set_hexpand(true);
     input_stack.set_vexpand(true);
@@ -869,11 +881,7 @@ fn build_input_rows(language: AppLanguage, input_page: &gtk::Box) -> Vec<InputRo
     input_page.append(&input_stack);
 
     let mut rows = Vec::new();
-    for section in [
-        ("player-one", text(language, UiText::PlayerOne), "Player 1"),
-        ("player-two", text(language, UiText::PlayerTwo), "Player 2"),
-        ("shortcuts", text(language, UiText::Shortcuts), "Shortcuts"),
-    ] {
+    for section in keyboard_binding_sections(topology) {
         let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
         section_page.set_hexpand(true);
         let grid = gtk::Grid::new();
@@ -881,38 +889,47 @@ fn build_input_rows(language: AppLanguage, input_page: &gtk::Box) -> Vec<InputRo
         grid.set_row_spacing(6);
         grid.set_hexpand(true);
         section_page.append(&grid);
-        input_stack.add_titled(&section_page, Some(section.0), section.1);
+        input_stack.add_titled(
+            &section_page,
+            Some(section.attachment.as_str()),
+            section.attachment_label,
+        );
 
-        match section.2 {
-            "Shortcuts" => {
-                for (index, descriptor) in shortcut_descriptors().iter().enumerate() {
-                    rows.push(add_input_row(
-                        &grid,
-                        index as i32,
-                        descriptor.label,
-                        CaptureTarget::Shortcut(descriptor.action),
-                        language,
-                    ));
-                }
-            }
-            attachment_label => {
-                let section_rows = keyboard_binding_descriptors()
-                    .iter()
-                    .filter(|descriptor| descriptor.attachment_label == attachment_label);
-                for (index, descriptor) in section_rows.enumerate() {
-                    rows.push(add_input_row(
-                        &grid,
-                        index as i32,
-                        descriptor.control_label,
-                        CaptureTarget::Binding {
-                            attachment: descriptor.attachment.as_str().to_string(),
-                            control: descriptor.control.as_str().to_string(),
-                        },
-                        language,
-                    ));
-                }
-            }
+        for (index, descriptor) in section.bindings.iter().enumerate() {
+            rows.push(add_input_row(
+                &grid,
+                index as i32,
+                descriptor.control_label,
+                CaptureTarget::Binding {
+                    system: descriptor.system,
+                    attachment: descriptor.attachment.as_str().to_string(),
+                    control: descriptor.control.as_str().to_string(),
+                },
+                language,
+            ));
         }
+    }
+
+    let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    section_page.set_hexpand(true);
+    let grid = gtk::Grid::new();
+    grid.set_column_spacing(12);
+    grid.set_row_spacing(6);
+    grid.set_hexpand(true);
+    section_page.append(&grid);
+    input_stack.add_titled(
+        &section_page,
+        Some("shortcuts"),
+        text(language, UiText::Shortcuts),
+    );
+    for (index, descriptor) in shortcut_descriptors().iter().enumerate() {
+        rows.push(add_input_row(
+            &grid,
+            index as i32,
+            descriptor.label,
+            CaptureTarget::Shortcut(descriptor.action),
+            language,
+        ));
     }
     rows
 }

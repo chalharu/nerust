@@ -5,6 +5,7 @@ members = [
   "backend/wgpu",
   "cartridge/data",
   "console",
+  "contract/controller_runtime",
   "contract/mirror",
   "contract/options",
   "contract/persistence",
@@ -72,6 +73,7 @@ log = { version = "=0.4.29", default-features = false }
 muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { version = "=0.1.0", path = "cartridge/data" }
 nerust_console = { version = "=0.1.0", path = "console" }
+nerust_contract_controller_runtime = { version = "=0.1.0", path = "contract/controller_runtime" }
 nerust_contract_mirror = { version = "=0.1.0", path = "contract/mirror" }
 nerust_contract_options = { version = "=0.1.0", path = "contract/options" }
 nerust_contract_persistence = { version = "=0.1.0", path = "contract/persistence" }

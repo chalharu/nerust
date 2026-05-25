@@ -1,3 +1,4 @@
+use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_core::OpenBusReadResult;
 use nerust_core::controller::Controller;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
@@ -15,15 +16,6 @@ pub struct StandardControllerSnapshot {
     pub strobe: bool,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
-pub struct StandardController {
-    buttons: [Buttons; 2],
-    microphone: bool,
-    index1: usize,
-    index2: usize,
-    strobe: bool,
-}
-
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 struct ControllerStatePayload {
     schema_version: u32,
@@ -31,6 +23,15 @@ struct ControllerStatePayload {
     microphone: bool,
     index1: u64,
     index2: u64,
+    strobe: bool,
+}
+
+#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
+pub struct StandardController {
+    buttons: [Buttons; 2],
+    microphone: bool,
+    index1: usize,
+    index2: usize,
     strobe: bool,
 }
 
@@ -200,6 +201,38 @@ impl Controller for StandardController {
             self.index2 = 0;
         }
     }
+}
+
+impl ControllerRuntime for StandardController {
+    fn reset_runtime(&mut self) {
+        self.reset();
+    }
+
+    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.import_snapshot(crate::apply_input_state(self.export_snapshot(), bytes)?);
+        Ok(())
+    }
+
+    fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
+        decode_controller_state(bytes).map(|_| ())
+    }
+
+    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.import_snapshot(decode_controller_state(bytes)?);
+        Ok(())
+    }
+
+    fn current_controller_state(&self) -> Result<Vec<u8>, String> {
+        encode_controller_state(self.export_snapshot())
+    }
+
+    fn current_input_state(&self) -> Result<Vec<u8>, String> {
+        encode_input_state(self.export_snapshot())
+    }
+}
+
+pub fn standard_controller_runtime() -> Box<dyn ControllerRuntime> {
+    Box::new(StandardController::new())
 }
 
 #[cfg(test)]

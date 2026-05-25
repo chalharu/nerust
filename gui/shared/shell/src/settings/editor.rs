@@ -7,7 +7,11 @@ use nerust_input_schema::SystemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
-    Binding { attachment: String, control: String },
+    Binding {
+        system: SystemId,
+        attachment: String,
+        control: String,
+    },
     Shortcut(ShortcutAction),
 }
 
@@ -17,13 +21,14 @@ pub fn current_binding_key(
 ) -> Option<KeyboardKey> {
     match target {
         CaptureTarget::Binding {
+            system,
             attachment,
             control,
         } => snapshot
             .shared
             .input
             .systems
-            .get(&SystemId::Nes)?
+            .get(system)?
             .implicit_keyboard_profile()?
             .bindings
             .iter()
@@ -56,6 +61,7 @@ pub fn apply_capture_target(
 ) {
     match target {
         CaptureTarget::Binding {
+            system,
             attachment,
             control,
         } => {
@@ -63,7 +69,7 @@ pub fn apply_capture_target(
                 .shared
                 .input
                 .systems
-                .entry(SystemId::Nes)
+                .entry(*system)
                 .or_default()
                 .implicit_keyboard_profile_mut();
             profile.bindings.retain(|binding| {
@@ -101,6 +107,7 @@ mod tests {
     use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_input_nes::topology::{NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A};
+    use nerust_input_schema::SystemId;
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
@@ -118,6 +125,7 @@ mod tests {
             current_binding_key(
                 &snapshot,
                 &CaptureTarget::Binding {
+                    system: SystemId::Nes,
                     attachment: NES_ATTACHMENT_PLAYER_ONE.as_str().into(),
                     control: NES_CONTROL_A.as_str().into(),
                 }
@@ -130,6 +138,7 @@ mod tests {
     fn updates_existing_control_binding() {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
+            system: SystemId::Nes,
             attachment: NES_ATTACHMENT_PLAYER_ONE.as_str().into(),
             control: NES_CONTROL_A.as_str().into(),
         };
