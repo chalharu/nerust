@@ -8,13 +8,14 @@ use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_console::video::ConsoleVideo;
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::session::{KeyboardShortcut, NesSession};
+use nerust_gui_shell::descriptor::SystemSettingsPageModel;
+use nerust_gui_shell::load::{LoadRequest, MediaObject};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_sound_openal::prepare_macos_runtime;
@@ -25,26 +26,29 @@ use std::time::Duration;
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
-#[derive(Debug)]
 pub(crate) struct State {
-    session: NesSession,
+    session: SessionHandle,
     renderer_reload_pending: bool,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
-            session: NesSession::new_for_host(HostBackendIdentity::gtk_opengl()),
+            session: SessionHandle::new_for_host(HostBackendIdentity::gtk_opengl()),
             renderer_reload_pending: false,
         }
     }
 
-    pub(crate) fn video(&self) -> &ConsoleVideo {
-        self.session.video()
+    pub(crate) fn snapshot(&self) -> SessionSnapshot {
+        self.session.snapshot()
     }
 
-    pub(crate) fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.session.with_frame_buffer(f)
+    pub(crate) fn system_settings_page_model(&self) -> SystemSettingsPageModel {
+        self.session.system_settings_page_model()
+    }
+
+    pub(crate) fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
+        self.session.input_topology_descriptor()
     }
 
     pub(crate) fn window_size(&self) -> WindowSize {
@@ -60,7 +64,11 @@ impl State {
     }
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        if self.session.load(rom_path, data) {
+        if self
+            .session
+            .load(MediaObject::new(rom_path, data), LoadRequest::Auto)
+            .is_ok()
+        {
             let _ = self.session.run_command(SessionCommand::Resume);
         }
     }
@@ -78,7 +86,7 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload()
+        self.session.unload().unwrap_or(false)
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -86,7 +94,7 @@ impl State {
     }
 
     pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        self.session.run_command(command)
+        self.session.run_command(command).unwrap_or_default()
     }
 
     pub(crate) fn handle_keyboard_key(
@@ -94,11 +102,14 @@ impl State {
         key: KeyboardKey,
         pressed: bool,
     ) -> Option<KeyboardShortcut> {
-        self.session.handle_keyboard_key(key, pressed)
+        self.session
+            .handle_keyboard_key(key, pressed)
+            .ok()
+            .flatten()
     }
 
-    pub(crate) fn clear_controller_input(&mut self) {
-        self.session.clear_controller_input();
+    pub(crate) fn clear_input(&mut self) {
+        let _ = self.session.clear_input();
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {

@@ -1,10 +1,12 @@
 use super::{
     draw::compute_viewport,
-    setup::{composed_shader_source, encode_ntsc_texture},
+    setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
 };
 use crate::surface::SurfaceSize;
 use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
+use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[test]
 fn viewport_preserves_aspect_ratio() {
@@ -60,4 +62,28 @@ fn composed_shader_source_contains_split_stage_modules_once() {
     assert_eq!(source.matches("fn palette_rgb_for_output").count(), 1);
     assert_eq!(source.matches("fn ntsc_rgb_for_output").count(), 1);
     assert_eq!(source.matches("fn fs_palette_linear").count(), 1);
+}
+
+#[test]
+fn direct_color_upload_uses_logical_frame_size() {
+    let presentation = VideoPresentation::new(VideoFrameSpec::new(
+        VideoFrameFormat::Rgba,
+        LogicalSize {
+            width: 256,
+            height: 240,
+        },
+        LogicalSize {
+            width: 512,
+            height: 480,
+        },
+        PhysicalSize {
+            width: 512.0,
+            height: 480.0,
+        },
+    ));
+
+    let upload_size = frame_logical_size(&presentation, FramePipelineKind::DirectColor);
+
+    assert_eq!(upload_size.width, 512);
+    assert_eq!(upload_size.height, 480);
 }

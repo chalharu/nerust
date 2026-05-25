@@ -4,9 +4,11 @@ mod persistence;
 
 use self::persistence::PersistenceState;
 use nerust_gui_session::core::SessionCore;
+use nerust_input_schema::SystemId;
 
 #[derive(Debug)]
 pub struct GuiSession {
+    system_id: SystemId,
     core: SessionCore,
     persistence: PersistenceState,
 }

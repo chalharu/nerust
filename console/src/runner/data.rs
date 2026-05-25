@@ -25,7 +25,7 @@ pub(crate) enum ConsoleData {
         bytes: Vec<u8>,
         reply: Sender<ConsoleRequestResult>,
     },
-    PersistenceTarget(Sender<ConsoleRequestResult>),
+    CanonicalMediaIdentity(Sender<ConsoleRequestResult>),
     ExportState(Sender<ConsoleRequestResult>),
     CurrentControllerState(Sender<ConsoleRequestResult>),
     CurrentInputState(Sender<ConsoleRequestResult>),

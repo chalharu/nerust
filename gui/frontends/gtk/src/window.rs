@@ -227,7 +227,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = window.connect_is_active_notify(move |window| {
                 if !window.is_active() {
-                    result.state().borrow_mut().clear_controller_input();
+                    result.state().borrow_mut().clear_input();
                 }
             });
         }

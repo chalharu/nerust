@@ -4,9 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use nerust_screen_filter::presentation::ConsoleVideoAssets;
+use nerust_console::video::VideoRenderProfile;
 use nerust_screen_opengl::GlView;
-use nerust_screen_video::VideoPresentation;
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.
@@ -46,18 +45,11 @@ impl GlBackend {
         self.view.use_vao(value);
     }
 
-    /// Allocate GPU resources for the given presentation and console-family assets.
-    ///
-    /// Branches on the console variant; currently only NES is supported.
-    pub fn on_load(
-        &mut self,
-        presentation: &VideoPresentation,
-        assets: &ConsoleVideoAssets,
-    ) -> Result<(), String> {
-        let ConsoleVideoAssets::Nes(nes_assets) = assets;
-        self.view.on_load(presentation, nes_assets)?;
-        let source_logical_size = presentation.source_logical_size();
-        self.expected_frame_len = source_logical_size.width * source_logical_size.height;
+    /// Allocate GPU resources for the given RGBA render profile.
+    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
+        self.view.on_load(render_profile)?;
+        let logical_size = render_profile.logical_size;
+        self.expected_frame_len = logical_size.width * logical_size.height * 4;
         Ok(())
     }
 

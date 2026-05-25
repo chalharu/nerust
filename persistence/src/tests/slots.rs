@@ -1,15 +1,13 @@
 use super::{
-    prepare_test_dir, test_options_with_irq_variant, test_rom_identity,
+    prepare_test_dir, test_identity, test_identity_with_rom, test_rom_identity,
     test_rom_identity_with_battery, test_rom_identity_with_format,
-    test_rom_identity_with_prg_rom_crc64, test_rom_identity_with_save_prg_ram_len, test_target,
-    test_target_with, test_target_with_identity,
+    test_rom_identity_with_prg_rom_crc64, test_rom_identity_with_save_prg_ram_len,
 };
 use crate::slots::{
     allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots,
-    scan_state_slots_for_target, state_slot_path, write_state_slot,
+    scan_state_slots_for_identity, state_slot_path, write_state_slot,
 };
 use crate::thumbnail::ThumbnailSource;
-use nerust_contract_options::Mmc3IrqVariant;
 use std::fs;
 
 #[test]
@@ -17,8 +15,8 @@ fn slot_id_allocation_is_monotonic_across_deletions() {
     let dir = prepare_test_dir("slot-id-allocation");
 
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
-    write_state_slot(&dir, 1, b"a", test_target(), None).unwrap();
-    write_state_slot(&dir, 2, b"b", test_target(), None).unwrap();
+    write_state_slot(&dir, 1, b"a", test_identity(), None).unwrap();
+    write_state_slot(&dir, 2, b"b", test_identity(), None).unwrap();
     delete_state_slot(&state_slot_path(&dir, 1)).unwrap();
 
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 3);
@@ -36,7 +34,7 @@ fn slot_id_allocation_persists_without_writing_slot_files() {
 fn corrupt_slot_does_not_hide_valid_slots_or_block_allocation() {
     let dir = prepare_test_dir("corrupt-slot-scan");
 
-    write_state_slot(&dir, 1, b"ok", test_target(), None).unwrap();
+    write_state_slot(&dir, 1, b"ok", test_identity(), None).unwrap();
     fs::write(state_slot_path(&dir, 2), b"not-a-zip-archive").unwrap();
 
     let slots = scan_state_slots(&dir).unwrap();
@@ -46,8 +44,8 @@ fn corrupt_slot_does_not_hide_valid_slots_or_block_allocation() {
 }
 
 #[test]
-fn scan_state_slots_for_target_filters_incompatible_slots() {
-    let dir = prepare_test_dir("target-filtered-slots");
+fn scan_state_slots_for_identity_filters_different_roms() {
+    let dir = prepare_test_dir("identity-filtered-slots");
     let matching_identity = test_rom_identity();
     let mismatched_identity = test_rom_identity_with_prg_rom_crc64(100);
     let header_corrected_identity =
@@ -57,7 +55,7 @@ fn scan_state_slots_for_target_filters_incompatible_slots() {
         &dir,
         1,
         b"matching",
-        test_target_with_identity(matching_identity),
+        test_identity_with_rom(matching_identity),
         None,
     )
     .unwrap();
@@ -65,46 +63,35 @@ fn scan_state_slots_for_target_filters_incompatible_slots() {
         &dir,
         2,
         b"mismatched-rom",
-        test_target_with_identity(mismatched_identity),
+        test_identity_with_rom(mismatched_identity),
         None,
     )
     .unwrap();
     write_state_slot(
         &dir,
         3,
-        b"mismatched-options",
-        test_target_with(
-            matching_identity,
-            test_options_with_irq_variant(Mmc3IrqVariant::Sharp),
-        ),
-        None,
-    )
-    .unwrap();
-    write_state_slot(
-        &dir,
-        4,
         b"header-corrected",
-        test_target_with_identity(header_corrected_identity),
+        test_identity_with_rom(header_corrected_identity),
         None,
     )
     .unwrap();
 
     let slots =
-        scan_state_slots_for_target(&dir, test_target_with_identity(matching_identity)).unwrap();
+        scan_state_slots_for_identity(&dir, test_identity_with_rom(matching_identity)).unwrap();
     let slot_ids = slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>();
 
     assert_eq!(slot_ids, vec![1]);
 }
 
 #[test]
-fn strict_target_filtering_requires_all_identity_and_option_fields() {
-    let dir = prepare_test_dir("strict-target-filtering");
+fn identity_filtering_keeps_canonical_matches_across_runtime_options() {
+    let dir = prepare_test_dir("canonical-identity-filtering");
     let matching_identity = test_rom_identity();
     write_state_slot(
         &dir,
         1,
         b"matching",
-        test_target_with_identity(matching_identity),
+        test_identity_with_rom(matching_identity),
         None,
     )
     .unwrap();
@@ -112,7 +99,7 @@ fn strict_target_filtering_requires_all_identity_and_option_fields() {
         &dir,
         2,
         b"battery-mismatch",
-        test_target_with_identity(test_rom_identity_with_battery(false)),
+        test_identity_with_rom(test_rom_identity_with_battery(false)),
         None,
     )
     .unwrap();
@@ -120,7 +107,7 @@ fn strict_target_filtering_requires_all_identity_and_option_fields() {
         &dir,
         3,
         b"save-ram-mismatch",
-        test_target_with_identity(test_rom_identity_with_save_prg_ram_len(
+        test_identity_with_rom(test_rom_identity_with_save_prg_ram_len(
             matching_identity.save_prg_ram_len + 1,
         )),
         None,
@@ -129,20 +116,17 @@ fn strict_target_filtering_requires_all_identity_and_option_fields() {
     write_state_slot(
         &dir,
         4,
-        b"option-mismatch",
-        test_target_with(
-            matching_identity,
-            test_options_with_irq_variant(Mmc3IrqVariant::Nec),
-        ),
+        b"same-identity-different-state-compatibility",
+        test_identity_with_rom(matching_identity),
         None,
     )
     .unwrap();
 
     let slots =
-        scan_state_slots_for_target(&dir, test_target_with_identity(matching_identity)).unwrap();
+        scan_state_slots_for_identity(&dir, test_identity_with_rom(matching_identity)).unwrap();
     assert_eq!(
         slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>(),
-        vec![1]
+        vec![1, 4]
     );
 }
 
@@ -153,7 +137,7 @@ fn save_slot_summary_matches_loaded_summary() {
         &dir,
         11,
         b"state",
-        test_target(),
+        test_identity(),
         Some(&ThumbnailSource {
             width: 1,
             height: 1,

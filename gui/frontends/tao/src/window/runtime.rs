@@ -5,7 +5,7 @@ use self::host::{HostAction, HostState};
 use self::renderer::WgpuRenderer;
 use crate::app_menu::{UserEvent, imp::AppMenu};
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::load::NesLoadOptions;
+use nerust_gui_shell::load::LoadRequest;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -21,7 +21,7 @@ pub(crate) struct WindowRuntime {
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(default_load_options: NesLoadOptions) -> Self {
+    pub(crate) fn new(default_load_request: LoadRequest) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -34,7 +34,7 @@ impl WindowRuntime {
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_options),
+            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_request),
             renderer: None,
         }
     }
@@ -49,9 +49,9 @@ impl WindowRuntime {
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        options: NesLoadOptions,
+        request: LoadRequest,
     ) {
-        if self.host.load_with_options(rom_path, data, options) {
+        if self.host.load_with_options(rom_path, data, request) {
             self.recreate_renderer();
         }
     }

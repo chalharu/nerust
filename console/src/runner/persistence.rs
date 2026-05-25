@@ -1,6 +1,6 @@
 use super::ConsoleRunner;
 use crate::{ConsoleError, ConsoleReply, state};
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_core::Core;
 
 impl ConsoleRunner {
@@ -27,15 +27,12 @@ impl ConsoleRunner {
         })
     }
 
-    pub(super) fn persistence_target_reply(
+    pub(super) fn canonical_media_identity_reply(
         &self,
         core: Option<&Core>,
     ) -> Result<ConsoleReply, ConsoleError> {
         core.ok_or_else(Self::core_not_loaded).map(|core| {
-            ConsoleReply::PersistenceTarget(PersistenceTarget {
-                rom_identity: core.rom_identity(),
-                options: core.options(),
-            })
+            ConsoleReply::CanonicalMediaIdentity(CanonicalMediaIdentity::rom(core.rom_identity()))
         })
     }
 

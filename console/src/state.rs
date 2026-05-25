@@ -3,7 +3,6 @@ use crate::controller::{
     ControllerRuntime, StandardControllerState, encode_standard_controller_state,
 };
 use nerust_contract_options::CoreOptions;
-use nerust_contract_persistence::PersistenceTarget;
 use nerust_contract_rom::RomIdentity;
 use nerust_core::Core;
 use nerust_input_nes::frame::Buttons;
@@ -27,10 +26,9 @@ pub struct PreviewFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StateExport {
-    pub machine_state: Vec<u8>,
+pub struct RuntimeStateExport {
+    pub state_blob: Vec<u8>,
     pub preview: Option<PreviewFrame>,
-    pub target: PersistenceTarget,
 }
 
 #[derive(serde_derive::Deserialize)]
@@ -236,21 +234,12 @@ fn validate_console_state_target(
 }
 
 fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
-    let palette = screen
-        .console_video_assets()
-        .map(|assets| assets.palette_rgba8())?;
-    let source_size = screen.source_logical_size();
-    let mut indices = vec![0; screen.source_frame_len()];
-    screen.copy_source_buffer(&mut indices);
-    let mut rgba = Vec::with_capacity(indices.len() * 4);
-    for index in indices {
-        let palette_index = usize::from(index) * 4;
-        let pixel = palette.get(palette_index..palette_index + 4)?;
-        rgba.extend_from_slice(pixel);
-    }
+    let logical_size = screen.logical_size();
+    let mut rgba = vec![0; screen.frame_len()];
+    screen.copy_frame_buffer(&mut rgba);
     Some(PreviewFrame {
-        width: source_size.width as u32,
-        height: source_size.height as u32,
+        width: logical_size.width as u32,
+        height: logical_size.height as u32,
         rgba,
     })
 }
@@ -261,7 +250,7 @@ pub(crate) fn build_state_export(
     controller_state: Vec<u8>,
     frame_counter: u64,
     paused: bool,
-) -> Result<StateExport, ConsoleError> {
+) -> Result<RuntimeStateExport, ConsoleError> {
     let preview = export_preview_frame(screen);
     let machine_state = core
         .export_machine_state()
@@ -273,24 +262,19 @@ pub(crate) fn build_state_export(
     } else {
         Vec::new()
     };
-    let target = PersistenceTarget {
-        rom_identity: core.rom_identity(),
-        options: core.options(),
-    };
     let state = ConsoleStatePayload {
         schema_version: CONSOLE_STATE_SCHEMA_VERSION,
         core_state: machine_state,
         frame_counter,
         paused,
         controller_state,
-        rom_identity: target.rom_identity,
-        options: target.options,
+        rom_identity: core.rom_identity(),
+        options: core.options(),
         source_frame,
     };
-    Ok(StateExport {
-        machine_state: encode_console_state_payload(&state)?,
+    Ok(RuntimeStateExport {
+        state_blob: encode_console_state_payload(&state)?,
         preview,
-        target,
     })
 }
 

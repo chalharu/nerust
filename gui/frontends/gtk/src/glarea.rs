@@ -121,9 +121,9 @@ fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc
         }
     }
     if let Ok(state) = state.try_borrow() {
-        state.with_frame_buffer(|frame_buffer| {
-            renderer.borrow().render(frame_buffer);
-        });
+        if let Some(frame) = state.snapshot().video_frame {
+            renderer.borrow().render(frame.bytes());
+        }
     }
     unsafe {
         epoxy::Flush();
