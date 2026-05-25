@@ -17,11 +17,10 @@ members = [
   "persistence",
   "rom_test",
   "gui/frontends/gtk",
-  "gui/frontends/glutin",
+  "gui/frontends/tao",
   "gui/shared/runtime",
   "gui/shared/shell",
   "gui/shared/session",
-  "gui/frontends/wgpu",
   "nes_ntsc",
   "screen/buffer",
   "screen/filter",
@@ -64,8 +63,6 @@ fs2 = { version = "=0.4.3" }
 gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }
 gl = { version = "=0.14.0" }
-glutin = { version = "=0.32.3" }
-glutin-winit = { version = "=0.5.0" }
 gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
 lazy_static = { version = "=1.5.0" }
@@ -109,6 +106,7 @@ pollster = { version = "=0.4.0" }
 png = { version = "=0.18.1" }
 rmp-serde = { version = "=1.3.1" }
 raw-window-handle = { version = "=0.6.2" }
+rfd = { version = "=0.15.4" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
 serde_derive = { version = "=1.0.228", default-features = false }

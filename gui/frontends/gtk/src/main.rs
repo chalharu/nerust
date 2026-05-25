@@ -1,13 +1,13 @@
 mod crash_handler;
 mod glarea;
 mod preferences;
+mod renderer;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_backend_opengl::GlBackend;
 use nerust_console::video::ConsoleVideo;
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
@@ -27,15 +27,15 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) struct State {
-    view: Option<GlBackend>,
     session: NesSession,
+    renderer_reload_pending: bool,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
-            view: None,
             session: NesSession::new_for_host(HostBackendIdentity::gtk_opengl()),
+            renderer_reload_pending: false,
         }
     }
 
@@ -118,12 +118,14 @@ impl State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsApplyPlan, String> {
         let plan = self.session.apply_settings(settings)?;
-        if (plan.session_rebuild_required || plan.scaling_changed)
-            && let Some(mut view) = self.view.take()
-        {
-            view.on_close();
+        if plan.session_rebuild_required || plan.scaling_changed {
+            self.renderer_reload_pending = true;
         }
         Ok(plan)
+    }
+
+    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
+        std::mem::take(&mut self.renderer_reload_pending)
     }
 }
 

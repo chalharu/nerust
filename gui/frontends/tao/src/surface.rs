@@ -29,7 +29,7 @@ use {
     gtk::{
         EventBox,
         gdk::prelude::DisplayExtManual,
-        prelude::{BoxExt, ObjectType, WidgetExt},
+        prelude::{BoxExt, ObjectType, WidgetExt, WidgetExtManual},
     },
     raw_window_handle::{
         WaylandDisplayHandle, WaylandWindowHandle, XlibDisplayHandle, XlibWindowHandle,
@@ -225,6 +225,7 @@ impl GtkRenderTarget {
             .default_vbox()
             .expect("tao default_vbox must exist for Linux menu integration")
             .pack_start(&widget, true, true, 0);
+        widget.show_all();
 
         Self {
             _window: window,
@@ -295,6 +296,21 @@ impl GtkRenderTarget {
                 Some(display),
                 screen,
             )))
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+impl Drop for GtkRenderTarget {
+    fn drop(&mut self) {
+        unsafe {
+            self.widget.destroy();
         }
     }
 }

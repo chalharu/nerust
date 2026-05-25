@@ -11,6 +11,7 @@ use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum MenuCommand {
+    Open,
     Session(SessionCommand),
     Quit,
 }
@@ -99,6 +100,7 @@ pub(crate) mod imp {
                 menu_bar.append(&app_menu).unwrap();
             }
 
+            let open = MenuItem::new("Open ROM...", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -107,6 +109,7 @@ pub(crate) mod imp {
             let save_active = MenuItem::new("Save Active Slot (F5)", true, None);
             let load_active = MenuItem::new("Load Active Slot (F8)", false, None);
 
+            let open_id = open.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -117,6 +120,7 @@ pub(crate) mod imp {
             let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
             let dynamic_commands_handler = dynamic_commands.clone();
 
+            file_menu.append(&open).unwrap();
             file_menu.append(&quit).unwrap();
             state_menu.append(&create_slot).unwrap();
             state_menu.append(&save_active).unwrap();
@@ -134,7 +138,9 @@ pub(crate) mod imp {
             menu_bar.append(&emulation_menu).unwrap();
 
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                let command = if event.id() == &pause_id {
+                let command = if event.id() == &open_id {
+                    Some(MenuCommand::Open)
+                } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
                     Some(MenuCommand::Session(SessionCommand::Resume))

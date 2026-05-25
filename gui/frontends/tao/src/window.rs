@@ -8,7 +8,7 @@ mod runtime;
 
 use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant as ShellMmc3IrqVariant};
 use runtime::WindowRuntime;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WindowLoadOptions {
@@ -41,7 +41,15 @@ pub struct Window {
 impl Window {
     pub fn new() -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new()),
+            runtime: Box::new(WindowRuntime::new(NesLoadOptions::default())),
+        }
+    }
+
+    pub fn with_load_options(options: WindowLoadOptions) -> Self {
+        Self {
+            runtime: Box::new(WindowRuntime::new(nes_load_options_from_window_options(
+                options,
+            ))),
         }
     }
 
@@ -62,6 +70,10 @@ impl Window {
         );
     }
 
+    pub fn load_path(&mut self, path: &Path) -> bool {
+        self.runtime.load_path(path)
+    }
+
     pub fn run(self) {
         let runtime = self.runtime;
         (*runtime).run();
@@ -71,5 +83,23 @@ impl Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WindowLoadOptions, WindowMmc3IrqVariant, nes_load_options_from_window_options};
+    use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant};
+
+    #[test]
+    fn window_load_options_translate_to_shell_load_options() {
+        assert_eq!(
+            nes_load_options_from_window_options(WindowLoadOptions {
+                mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
+            }),
+            NesLoadOptions {
+                mmc3_irq_variant: Some(NesMmc3IrqVariant::Sharp),
+            }
+        );
     }
 }
