@@ -49,6 +49,8 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
+    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_shell::settings::i18n::{UiText, text};
     use std::sync::{Arc, RwLock};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
@@ -66,10 +68,15 @@ pub(crate) mod imp {
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
+        file_menu: Submenu,
+        emulation_menu: Submenu,
+        state_menu: Submenu,
         open: MenuItem,
         settings: MenuItem,
         pause: MenuItem,
         resume: MenuItem,
+        reset: MenuItem,
+        quit: MenuItem,
         create_slot: MenuItem,
         save_active: MenuItem,
         load_active: MenuItem,
@@ -185,10 +192,15 @@ pub(crate) mod imp {
 
             Self {
                 menu_bar,
+                file_menu,
+                emulation_menu,
+                state_menu,
                 open,
                 settings,
                 pause,
                 resume,
+                reset,
+                quit,
                 create_slot,
                 save_active,
                 load_active,
@@ -234,7 +246,9 @@ pub(crate) mod imp {
             slots: &[StateSlotSummary],
             active_slot: Option<u64>,
             settings_open: bool,
+            language: AppLanguage,
         ) {
+            self.update_labels(language);
             self.open.set_enabled(!settings_open);
             self.settings.set_enabled(!settings_open);
             self.pause.set_enabled(!settings_open && loaded && !paused);
@@ -294,12 +308,50 @@ pub(crate) mod imp {
                 .write()
                 .unwrap_or_else(|err| err.into_inner()) = commands;
         }
+
+        fn update_labels(&self, language: AppLanguage) {
+            self.file_menu.set_text(text(language, UiText::File));
+            self.emulation_menu
+                .set_text(text(language, UiText::Emulation));
+            self.state_menu.set_text(text(language, UiText::SaveStates));
+            self.active_slot_menu
+                .set_text(text(language, UiText::SelectActiveSlot));
+            self.save_slot_menu
+                .set_text(text(language, UiText::SaveSlot));
+            self.load_slot_menu
+                .set_text(text(language, UiText::LoadSlot));
+            self.delete_slot_menu
+                .set_text(text(language, UiText::DeleteSlot));
+
+            self.open
+                .set_text(format!("{}...", text(language, UiText::Open)));
+            self.settings
+                .set_text(format!("{}...", text(language, UiText::Settings)));
+            self.pause.set_text(text(language, UiText::Pause));
+            self.resume.set_text(text(language, UiText::Resume));
+            self.reset.set_text(text(language, UiText::Reset));
+            self.quit.set_text(text(language, UiText::Quit));
+            self.create_slot
+                .set_text(text(language, UiText::CreateSaveSlot));
+            self.save_active.set_text(menu_label_with_shortcut(
+                text(language, UiText::SaveActiveSlot),
+                "F5",
+            ));
+            self.load_active.set_text(menu_label_with_shortcut(
+                text(language, UiText::LoadActiveSlot),
+                "F8",
+            ));
+        }
     }
 
     fn clear_submenu(menu: &Submenu) {
         while !menu.items().is_empty() {
             let _ = menu.remove_at(0);
         }
+    }
+
+    fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
+        format!("{label} ({shortcut})")
     }
 }
 
@@ -314,6 +366,7 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::{StateSlotSummary, TaoWindow, UserEvent};
+    use nerust_contract_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
     pub(crate) struct AppMenu;
@@ -332,6 +385,7 @@ pub(crate) mod imp {
             _slots: &[StateSlotSummary],
             _active_slot: Option<u64>,
             _settings_open: bool,
+            _language: AppLanguage,
         ) {
         }
 

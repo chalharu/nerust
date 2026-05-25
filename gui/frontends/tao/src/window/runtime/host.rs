@@ -10,6 +10,7 @@ use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::load::NesLoadOptions;
 use nerust_gui_shell::session::{KeyboardShortcut, NesSession};
+use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_gui_shell::settings::nes::scaling_factor;
 use nerust_screen_wgpu::surface::SurfaceSize;
 use rfd::FileDialog;
@@ -289,7 +290,10 @@ impl HostState {
 
     fn open_rom_dialog(&mut self) -> bool {
         FileDialog::new()
-            .set_title("Open ROM")
+            .set_title(text(
+                self.session.settings_snapshot().shared.general.language,
+                UiText::Open,
+            ))
             .add_filter("NES ROM", &["nes", "zip"])
             .pick_file()
             .is_some_and(|path| self.load_path(&path))
@@ -308,6 +312,7 @@ impl HostState {
             self.session.slots(),
             self.session.active_slot_id(),
             self.settings_open,
+            self.session.settings_snapshot().shared.general.language,
         );
     }
 

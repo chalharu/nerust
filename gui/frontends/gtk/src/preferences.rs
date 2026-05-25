@@ -51,6 +51,13 @@ pub(crate) fn present_preferences_dialog(
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
+    if let Some(action_box) = ok_button
+        .parent()
+        .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+    {
+        action_box.set_spacing(12);
+        action_box.set_margin_top(12);
+    }
 
     let content = dialog.content_area();
     content.set_spacing(12);
