@@ -1,49 +1,9 @@
-use crate::session::NesSession;
+use crate::session::{KeyboardShortcut, NesSession};
+use crate::settings::bindings::events::controller::controller_event_for_key;
+use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
+use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
-use nerust_input_nes::topology::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
-use nerust_input_schema::{DigitalControlId, DigitalInputEvent, DigitalInputState};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NesButton {
-    A,
-    B,
-    Select,
-    Start,
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl NesButton {
-    fn control_id(self) -> DigitalControlId {
-        match self {
-            Self::A => NES_CONTROL_A,
-            Self::B => NES_CONTROL_B,
-            Self::Select => NES_CONTROL_SELECT,
-            Self::Start => NES_CONTROL_START,
-            Self::Up => NES_CONTROL_UP,
-            Self::Down => NES_CONTROL_DOWN,
-            Self::Left => NES_CONTROL_LEFT,
-            Self::Right => NES_CONTROL_RIGHT,
-        }
-    }
-
-    fn player_one_event(self, pressed: bool) -> DigitalInputEvent {
-        DigitalInputEvent::new(
-            NES_ATTACHMENT_PLAYER_ONE,
-            self.control_id(),
-            if pressed {
-                DigitalInputState::Pressed
-            } else {
-                DigitalInputState::Released
-            },
-        )
-    }
-}
+use nerust_input_schema::DigitalInputEvent;
 
 impl NesSession {
     pub fn handle_controller_input(&mut self, event: DigitalInputEvent) {
@@ -51,11 +11,38 @@ impl NesSession {
         self.apply_current_input_state();
     }
 
-    pub fn handle_player_one_button(&mut self, button: NesButton, pressed: bool) {
-        self.handle_controller_input(button.player_one_event(pressed));
+    pub fn handle_keyboard_key(
+        &mut self,
+        key: KeyboardKey,
+        pressed: bool,
+    ) -> Option<KeyboardShortcut> {
+        let first_press = if pressed {
+            self.pressed_keys.insert(key)
+        } else {
+            self.pressed_keys.remove(&key);
+            false
+        };
+
+        if let Some(controller_input) =
+            controller_event_for_key(&self.settings_snapshot.shared, key, pressed)
+        {
+            self.handle_controller_input(controller_input);
+        }
+
+        if first_press {
+            return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
+                if matches!(action, ShortcutAction::ToggleFullscreen) {
+                    KeyboardShortcut::ToggleFullscreen
+                } else {
+                    KeyboardShortcut::Session(action)
+                }
+            });
+        }
+        None
     }
 
     pub fn clear_controller_input(&mut self) {
+        self.pressed_keys.clear();
         let _ = self.input.clear_current_frame();
         self.apply_current_input_state();
     }

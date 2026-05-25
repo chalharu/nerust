@@ -7,12 +7,14 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
+use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::load::NesLoadOptions;
-use nerust_gui_shell::session::NesSession;
-use nerust_gui_shell::session::input::NesButton;
+use nerust_gui_shell::session::{KeyboardShortcut, NesSession};
+use nerust_gui_shell::settings::nes::scaling_factor;
 use nerust_screen_wgpu::surface::SurfaceSize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,19 +26,67 @@ use tao::{
     event::{ElementState, Event, KeyEvent, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
     keyboard::KeyCode,
-    window::{Window as TaoWindow, WindowBuilder},
+    window::{Fullscreen, Window as TaoWindow, WindowBuilder},
 };
 
-fn keycode_controller_input(code: KeyCode) -> Option<NesButton> {
+fn keycode_controller_input(code: KeyCode) -> Option<KeyboardKey> {
     Some(match code {
-        KeyCode::KeyZ => NesButton::A,
-        KeyCode::KeyX => NesButton::B,
-        KeyCode::KeyC => NesButton::Select,
-        KeyCode::KeyV => NesButton::Start,
-        KeyCode::ArrowUp => NesButton::Up,
-        KeyCode::ArrowDown => NesButton::Down,
-        KeyCode::ArrowLeft => NesButton::Left,
-        KeyCode::ArrowRight => NesButton::Right,
+        KeyCode::Digit0 => KeyboardKey::Digit0,
+        KeyCode::Digit1 => KeyboardKey::Digit1,
+        KeyCode::Digit2 => KeyboardKey::Digit2,
+        KeyCode::Digit3 => KeyboardKey::Digit3,
+        KeyCode::Digit4 => KeyboardKey::Digit4,
+        KeyCode::Digit5 => KeyboardKey::Digit5,
+        KeyCode::Digit6 => KeyboardKey::Digit6,
+        KeyCode::Digit7 => KeyboardKey::Digit7,
+        KeyCode::Digit8 => KeyboardKey::Digit8,
+        KeyCode::Digit9 => KeyboardKey::Digit9,
+        KeyCode::KeyA => KeyboardKey::KeyA,
+        KeyCode::KeyB => KeyboardKey::KeyB,
+        KeyCode::KeyC => KeyboardKey::KeyC,
+        KeyCode::KeyD => KeyboardKey::KeyD,
+        KeyCode::KeyE => KeyboardKey::KeyE,
+        KeyCode::KeyF => KeyboardKey::KeyF,
+        KeyCode::KeyG => KeyboardKey::KeyG,
+        KeyCode::KeyH => KeyboardKey::KeyH,
+        KeyCode::KeyI => KeyboardKey::KeyI,
+        KeyCode::KeyJ => KeyboardKey::KeyJ,
+        KeyCode::KeyK => KeyboardKey::KeyK,
+        KeyCode::KeyL => KeyboardKey::KeyL,
+        KeyCode::KeyM => KeyboardKey::KeyM,
+        KeyCode::KeyN => KeyboardKey::KeyN,
+        KeyCode::KeyO => KeyboardKey::KeyO,
+        KeyCode::KeyP => KeyboardKey::KeyP,
+        KeyCode::KeyQ => KeyboardKey::KeyQ,
+        KeyCode::KeyR => KeyboardKey::KeyR,
+        KeyCode::KeyS => KeyboardKey::KeyS,
+        KeyCode::KeyT => KeyboardKey::KeyT,
+        KeyCode::KeyU => KeyboardKey::KeyU,
+        KeyCode::KeyV => KeyboardKey::KeyV,
+        KeyCode::KeyW => KeyboardKey::KeyW,
+        KeyCode::KeyZ => KeyboardKey::KeyZ,
+        KeyCode::KeyX => KeyboardKey::KeyX,
+        KeyCode::KeyY => KeyboardKey::KeyY,
+        KeyCode::ArrowUp => KeyboardKey::ArrowUp,
+        KeyCode::ArrowDown => KeyboardKey::ArrowDown,
+        KeyCode::ArrowLeft => KeyboardKey::ArrowLeft,
+        KeyCode::ArrowRight => KeyboardKey::ArrowRight,
+        KeyCode::Enter => KeyboardKey::Enter,
+        KeyCode::Escape => KeyboardKey::Escape,
+        KeyCode::Space => KeyboardKey::Space,
+        KeyCode::Tab => KeyboardKey::Tab,
+        KeyCode::F1 => KeyboardKey::F1,
+        KeyCode::F2 => KeyboardKey::F2,
+        KeyCode::F3 => KeyboardKey::F3,
+        KeyCode::F4 => KeyboardKey::F4,
+        KeyCode::F5 => KeyboardKey::F5,
+        KeyCode::F6 => KeyboardKey::F6,
+        KeyCode::F7 => KeyboardKey::F7,
+        KeyCode::F8 => KeyboardKey::F8,
+        KeyCode::F9 => KeyboardKey::F9,
+        KeyCode::F10 => KeyboardKey::F10,
+        KeyCode::F11 => KeyboardKey::F11,
+        KeyCode::F12 => KeyboardKey::F12,
         _ => return None,
     })
 }
@@ -49,13 +99,18 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
     })
 }
 
-fn create_window_builder(size: WindowSize, title: String) -> WindowBuilder {
+fn create_window_builder(size: WindowSize, title: String, scaling: Option<u32>) -> WindowBuilder {
+    let (width, height) = scaling
+        .map(|scale| {
+            (
+                f64::from(size.width) * f64::from(scale),
+                f64::from(size.height) * f64::from(scale),
+            )
+        })
+        .unwrap_or((f64::from(size.width), f64::from(size.height)));
     WindowBuilder::new()
         .with_title(title)
-        .with_inner_size(TaoLogicalSize::new(
-            f64::from(size.width),
-            f64::from(size.height),
-        ))
+        .with_inner_size(TaoLogicalSize::new(width, height))
 }
 
 fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
@@ -88,7 +143,7 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             window: None,
             backend: None,
-            session: NesSession::new(),
+            session: NesSession::new_for_host(HostBackendIdentity::tao_wgpu()),
             app_menu,
             shell: NativeShellState::new(),
         }
@@ -186,9 +241,13 @@ impl WindowRuntime {
         }
 
         let window = Arc::new(
-            create_window_builder(self.session.window_size(), self.current_window_title())
-                .build(event_loop)
-                .unwrap(),
+            create_window_builder(
+                self.session.window_size(),
+                self.current_window_title(),
+                scaling_factor(self.session.settings_snapshot().local.video.scaling),
+            )
+            .build(event_loop)
+            .unwrap(),
         );
         let surface_target = SurfaceTarget::new(window.clone(), self.session.window_size());
         self.app_menu.init_for_window(&window);
@@ -204,6 +263,15 @@ impl WindowRuntime {
                 .expect("NES session always has video assets"),
         )
         .unwrap();
+        if self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .fullscreen_default
+        {
+            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         self.window = Some(window);
         self.backend = Some(backend);
         self.shell.needs_redraw = true;
@@ -307,31 +375,47 @@ impl WindowRuntime {
     }
 
     fn on_keyboard_input(&mut self, input: KeyEvent) {
-        let code = match input.physical_key {
-            KeyCode::Space if input.state == ElementState::Pressed && !input.repeat => {
-                self.apply_session_command(SessionCommand::TogglePause);
-                None
-            }
-            KeyCode::Escape if input.state == ElementState::Released => {
-                self.apply_session_command(SessionCommand::Reset);
-                None
-            }
-            KeyCode::F5 if input.state == ElementState::Released && !input.repeat => {
-                self.apply_session_command(SessionCommand::SaveActiveSlotOrNew);
-                None
-            }
-            KeyCode::F8 if input.state == ElementState::Released && !input.repeat => {
-                self.apply_session_command(SessionCommand::LoadActiveSlot);
-                None
-            }
-            code => keycode_controller_input(code),
-        };
-
         if let Some(pressed) = element_state_to_pressed(input.state)
-            && let Some(controller_input) = code
+            && let Some(key) = keycode_controller_input(input.physical_key)
+            && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
-            self.session
-                .handle_player_one_button(controller_input, pressed);
+            self.apply_keyboard_shortcut(shortcut);
+        }
+    }
+
+    fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
+        match shortcut {
+            KeyboardShortcut::Session(action) => match action {
+                ShortcutAction::TogglePause => {
+                    self.apply_session_command(SessionCommand::TogglePause)
+                }
+                ShortcutAction::SaveActiveSlot => {
+                    self.apply_session_command(SessionCommand::SaveActiveSlotOrNew)
+                }
+                ShortcutAction::SelectNextSlot => {
+                    self.apply_session_command(SessionCommand::SelectNextSlot)
+                }
+                ShortcutAction::SelectPreviousSlot => {
+                    self.apply_session_command(SessionCommand::SelectPreviousSlot)
+                }
+                ShortcutAction::LoadActiveSlot => {
+                    self.apply_session_command(SessionCommand::LoadActiveSlot)
+                }
+                ShortcutAction::Reset => self.apply_session_command(SessionCommand::Reset),
+                ShortcutAction::ToggleFullscreen => self.toggle_fullscreen(),
+            },
+            KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
+        }
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window.fullscreen().is_some() {
+            window.set_fullscreen(None);
+        } else {
+            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
         }
     }
 
@@ -355,21 +439,34 @@ impl Drop for WindowRuntime {
 #[cfg(test)]
 mod tests {
     use super::keycode_controller_input;
-    use nerust_gui_shell::session::input::NesButton;
+    use nerust_contract_settings::input::KeyboardKey;
     use tao::keyboard::KeyCode;
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(NesButton::A));
-        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(NesButton::B));
+        assert_eq!(
+            keycode_controller_input(KeyCode::KeyZ),
+            Some(KeyboardKey::KeyZ)
+        );
+        assert_eq!(
+            keycode_controller_input(KeyCode::KeyX),
+            Some(KeyboardKey::KeyX)
+        );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),
-            Some(NesButton::Up)
+            Some(KeyboardKey::ArrowUp)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowRight),
-            Some(NesButton::Right)
+            Some(KeyboardKey::ArrowRight)
         );
-        assert_eq!(keycode_controller_input(KeyCode::Enter), None);
+        assert_eq!(
+            keycode_controller_input(KeyCode::Enter),
+            Some(KeyboardKey::Enter)
+        );
+        assert_eq!(
+            keycode_controller_input(KeyCode::Digit1),
+            Some(KeyboardKey::Digit1)
+        );
     }
 }

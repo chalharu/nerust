@@ -1,0 +1,531 @@
+use nerust_contract_options::Mmc3IrqVariant;
+use nerust_input_schema::SystemId;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+pub mod language {
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum AppLanguage {
+        #[default]
+        SystemDefault,
+        Japanese,
+        English,
+    }
+}
+
+pub mod input {
+    use super::{BTreeMap, SystemId};
+
+    pub const IMPLICIT_PROFILE_ID: &str = "default";
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct InputSettings {
+        pub systems: BTreeMap<SystemId, SystemInputSettings>,
+        pub shortcuts: ShortcutSettings,
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct SystemInputSettings {
+        pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
+    }
+
+    impl SystemInputSettings {
+        pub fn implicit_keyboard_profile(&self) -> Option<&KeyboardProfile> {
+            self.keyboard_profiles.get(IMPLICIT_PROFILE_ID)
+        }
+
+        pub fn implicit_keyboard_profile_mut(&mut self) -> &mut KeyboardProfile {
+            self.keyboard_profiles
+                .entry(IMPLICIT_PROFILE_ID.to_string())
+                .or_default()
+        }
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct KeyboardProfile {
+        pub bindings: Vec<KeyboardBinding>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    pub struct KeyboardBinding {
+        pub attachment: PersistedAttachmentId,
+        pub control: PersistedControlId,
+        pub key: KeyboardKey,
+    }
+
+    impl KeyboardBinding {
+        pub fn new(
+            attachment: impl Into<String>,
+            control: PersistedControlId,
+            key: KeyboardKey,
+        ) -> Self {
+            Self {
+                attachment: PersistedAttachmentId::new(attachment),
+                control,
+                key,
+            }
+        }
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct ShortcutSettings {
+        pub keyboard: Vec<ShortcutBinding>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    pub struct ShortcutBinding {
+        pub action: ShortcutAction,
+        pub key: Option<KeyboardKey>,
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum ShortcutAction {
+        TogglePause,
+        SaveActiveSlot,
+        SelectNextSlot,
+        SelectPreviousSlot,
+        LoadActiveSlot,
+        ToggleFullscreen,
+        Reset,
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    pub struct PersistedAttachmentId(String);
+
+    impl PersistedAttachmentId {
+        pub fn new(value: impl Into<String>) -> Self {
+            Self(value.into())
+        }
+
+        pub fn as_str(&self) -> &str {
+            self.0.as_str()
+        }
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+    pub enum PersistedControlId {
+        Digital(String),
+        Analog(String),
+    }
+
+    impl PersistedControlId {
+        pub fn digital(value: impl Into<String>) -> Self {
+            Self::Digital(value.into())
+        }
+
+        pub fn analog(value: impl Into<String>) -> Self {
+            Self::Analog(value.into())
+        }
+
+        pub fn as_str(&self) -> &str {
+            match self {
+                Self::Digital(value) | Self::Analog(value) => value.as_str(),
+            }
+        }
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum KeyboardKey {
+        KeyA,
+        KeyB,
+        KeyC,
+        KeyD,
+        KeyE,
+        KeyF,
+        KeyG,
+        KeyH,
+        KeyI,
+        KeyJ,
+        KeyK,
+        KeyL,
+        KeyM,
+        KeyN,
+        KeyO,
+        KeyP,
+        KeyQ,
+        KeyR,
+        KeyS,
+        KeyT,
+        KeyU,
+        KeyV,
+        KeyW,
+        KeyX,
+        KeyY,
+        KeyZ,
+        Digit0,
+        Digit1,
+        Digit2,
+        Digit3,
+        Digit4,
+        Digit5,
+        Digit6,
+        Digit7,
+        Digit8,
+        Digit9,
+        ArrowUp,
+        ArrowDown,
+        ArrowLeft,
+        ArrowRight,
+        Enter,
+        Escape,
+        Space,
+        Tab,
+        F1,
+        F2,
+        F3,
+        F4,
+        F5,
+        F6,
+        F7,
+        F8,
+        F9,
+        F10,
+        F11,
+        F12,
+    }
+}
+
+pub mod nes {
+    use super::Mmc3IrqVariant;
+
+    #[derive(
+        Debug, Clone, PartialEq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct NesSettings {
+        pub video: NesVideoSettings,
+        pub core: NesCoreSettings,
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct NesVideoSettings {
+        pub filter: NesVideoFilter,
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct NesCoreSettings {
+        pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum NesVideoFilter {
+        None,
+        #[default]
+        NtscComposite,
+        NtscSVideo,
+        NtscRgb,
+    }
+}
+
+pub mod shared {
+    use super::input::InputSettings;
+    use super::language::AppLanguage;
+    use super::nes::NesSettings;
+    use super::{BTreeMap, PathBuf, SystemId};
+
+    pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct DesktopSharedSettings {
+        pub schema_version: u32,
+        pub general: GeneralSettings,
+        pub persistence: PersistenceSettings,
+        pub input: InputSettings,
+        pub systems: BTreeMap<SystemId, SystemSettings>,
+    }
+
+    impl Default for DesktopSharedSettings {
+        fn default() -> Self {
+            Self {
+                schema_version: DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION,
+                general: GeneralSettings::default(),
+                persistence: PersistenceSettings::default(),
+                input: InputSettings::default(),
+                systems: BTreeMap::new(),
+            }
+        }
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct GeneralSettings {
+        pub language: AppLanguage,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct PersistenceSettings {
+        pub storage_policy: StoragePolicy,
+        pub storage_directory: Option<PathBuf>,
+    }
+
+    impl Default for PersistenceSettings {
+        fn default() -> Self {
+            Self {
+                storage_policy: StoragePolicy::Sidecar,
+                storage_directory: None,
+            }
+        }
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum StoragePolicy {
+        #[default]
+        Sidecar,
+        AppSharedData,
+        CustomDirectory,
+    }
+
+    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(tag = "system", content = "settings", rename_all = "snake_case")]
+    pub enum SystemSettings {
+        Nes(NesSettings),
+    }
+}
+
+pub mod local {
+    pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct HostBackendLocalSettings {
+        pub schema_version: u32,
+        pub video: VideoSettings,
+        pub audio: AudioSettings,
+    }
+
+    impl Default for HostBackendLocalSettings {
+        fn default() -> Self {
+            Self {
+                schema_version: HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION,
+                video: VideoSettings::default(),
+                audio: AudioSettings::default(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct VideoSettings {
+        pub fullscreen_default: bool,
+        pub scaling: ScalingMode,
+        pub vsync: bool,
+    }
+
+    impl Default for VideoSettings {
+        fn default() -> Self {
+            Self {
+                fullscreen_default: false,
+                scaling: ScalingMode::FitToWindow,
+                vsync: true,
+            }
+        }
+    }
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum ScalingMode {
+        #[default]
+        FitToWindow,
+        X1,
+        X2,
+        X3,
+        X4,
+        X5,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct AudioSettings {
+        pub muted: bool,
+        pub master_volume_percent: u8,
+        pub sample_rate: u32,
+        pub latency_ms: u16,
+    }
+
+    impl Default for AudioSettings {
+        fn default() -> Self {
+            Self {
+                muted: false,
+                master_volume_percent: 100,
+                sample_rate: 48_000,
+                latency_ms: 50,
+            }
+        }
+    }
+}
+
+pub mod app_state {
+    use super::PathBuf;
+
+    pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 1;
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct DesktopAppState {
+        pub schema_version: u32,
+        pub last_successful_rom_directory: Option<PathBuf>,
+    }
+
+    impl Default for DesktopAppState {
+        fn default() -> Self {
+            Self {
+                schema_version: DESKTOP_APP_STATE_SCHEMA_VERSION,
+                last_successful_rom_directory: None,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
+    use super::input::{KeyboardKey, ShortcutAction, ShortcutBinding};
+    use super::local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings};
+    use super::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
+
+    #[test]
+    fn defaults_track_current_schema_versions() {
+        assert_eq!(
+            DesktopSharedSettings::default().schema_version,
+            DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION
+        );
+        assert_eq!(
+            HostBackendLocalSettings::default().schema_version,
+            HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION
+        );
+        assert_eq!(
+            DesktopAppState::default().schema_version,
+            DESKTOP_APP_STATE_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn unbound_shortcut_serializes_stably() {
+        let encoded = serde_yaml::to_string(&ShortcutBinding {
+            action: ShortcutAction::Reset,
+            key: None,
+        })
+        .unwrap();
+
+        assert!(encoded.contains("reset"));
+        assert!(encoded.contains("null"));
+    }
+
+    #[test]
+    fn bound_shortcut_serializes_key_name() {
+        let encoded = serde_yaml::to_string(&ShortcutBinding {
+            action: ShortcutAction::TogglePause,
+            key: Some(KeyboardKey::Space),
+        })
+        .unwrap();
+
+        assert!(encoded.contains("toggle_pause"));
+        assert!(encoded.contains("space"));
+    }
+}
