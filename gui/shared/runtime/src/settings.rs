@@ -101,7 +101,7 @@ pub struct SettingsPaths {
     pub central_storage_root: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
 pub struct SettingsSnapshot {
     pub shared: DesktopSharedSettings,
     pub local: HostBackendLocalSettings,

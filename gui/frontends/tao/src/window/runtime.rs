@@ -4,6 +4,7 @@ mod renderer;
 use self::host::{HostAction, HostState};
 use self::renderer::WgpuRenderer;
 use crate::app_menu::{UserEvent, imp::AppMenu};
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::load::NesLoadOptions;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -33,7 +34,7 @@ impl WindowRuntime {
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy), default_load_options),
+            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_options),
             renderer: None,
         }
     }
@@ -93,10 +94,16 @@ impl WindowRuntime {
             },
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
-            Event::UserEvent(command) => match self.host.on_menu_command(command) {
-                HostAction::None => (),
-                HostAction::RomLoaded => self.recreate_renderer(),
-                HostAction::Exit => *control_flow = ControlFlow::Exit,
+            Event::UserEvent(command) => match command {
+                UserEvent::Menu(command) => match self.host.on_menu_command(command) {
+                    HostAction::None => (),
+                    HostAction::RomLoaded => self.recreate_renderer(),
+                    HostAction::Exit => *control_flow = ControlFlow::Exit,
+                },
+                UserEvent::ApplySettings { snapshot, reply } => {
+                    let _ = reply.send(self.apply_settings(snapshot));
+                }
+                UserEvent::SettingsClosed => self.host.on_settings_closed(),
             },
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
@@ -122,6 +129,14 @@ impl WindowRuntime {
             .window()
             .cloned()
             .map(|window| WgpuRenderer::new(window, self.host.session()));
+    }
+
+    fn apply_settings(&mut self, settings: SettingsSnapshot) -> Result<(), String> {
+        let plan = self.host.apply_settings(settings)?;
+        if plan.session_rebuild_required || plan.vsync_changed {
+            self.recreate_renderer();
+        }
+        Ok(())
     }
 }
 
