@@ -6,7 +6,7 @@ use iced::widget::{
     button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
     text_input,
 };
-use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::{Element, Event, Font, Length, Subscription, Task, Theme};
 use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
@@ -49,9 +49,17 @@ enum SettingsPage {
     System,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputPageSection {
+    PlayerOne,
+    PlayerTwo,
+    Shortcuts,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     SelectPage(SettingsPage),
+    SelectInputSection(InputPageSection),
     SetLanguage(Choice<AppLanguage>),
     SetStoragePolicy(Choice<StoragePolicy>),
     SetStorageDirectory(String),
@@ -84,6 +92,7 @@ struct SettingsApp {
     >,
     draft: SettingsSnapshot,
     page: SettingsPage,
+    input_section: InputPageSection,
     capture_target: Option<CaptureTarget>,
     storage_directory_input: String,
     error_message: Option<String>,
@@ -105,6 +114,7 @@ pub(super) fn run(
     )
     .title(title)
     .theme(theme)
+    .default_font(default_font())
     .subscription(subscription)
     .window(iced::window::Settings {
         size: iced::Size::new(960.0, 720.0),
@@ -146,6 +156,7 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
     state.error_message = None;
     match message {
         Message::SelectPage(page) => state.page = page,
+        Message::SelectInputSection(section) => state.input_section = section,
         Message::SetLanguage(choice) => state.draft.shared.general.language = choice.value,
         Message::SetStoragePolicy(choice) => {
             state.draft.shared.persistence.storage_policy = choice.value;
@@ -235,15 +246,22 @@ fn view(state: &SettingsApp) -> Element<'_, Message> {
     .spacing(10)
     .width(Length::Shrink);
 
+    let content = scrollable(
+        container(state.page_content())
+            .padding(12)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill);
+
     let mut root = column![
         row![
-            container(sidebar).padding(12).width(Length::Shrink),
-            container(scrollable(state.page_content()))
-                .padding(12)
-                .width(Length::Fill)
+            container(sidebar).padding(12).width(Length::Fixed(180.0)),
+            content
         ]
         .spacing(16)
-        .height(Length::Fill),
+        .width(Length::Fill)
+        .height(Length::Fill)
     ]
     .spacing(12)
     .padding(16)
@@ -288,6 +306,7 @@ impl SettingsApp {
             bridge,
             draft: snapshot,
             page: SettingsPage::General,
+            input_section: InputPageSection::PlayerOne,
             capture_target: None,
             storage_directory_input,
             error_message: None,
@@ -372,7 +391,7 @@ impl SettingsApp {
                 text_input("", &self.storage_directory_input)
                     .on_input(Message::SetStorageDirectory)
                     .width(Length::Fill),
-                button("Browse").on_press(Message::BrowseStorageDirectory),
+                button(ui_text(language, UiText::Browse)).on_press(Message::BrowseStorageDirectory),
             ]
             .spacing(12)
             .align_y(Alignment::Center);
@@ -392,49 +411,69 @@ impl SettingsApp {
             content = content.push(text(conflict));
         }
 
-        content
-            .push(
-                self.input_section(
-                    ui_text(language, UiText::PlayerOne),
-                    keyboard_binding_descriptors()
-                        .iter()
-                        .filter(|descriptor| descriptor.attachment_label == "Player 1")
-                        .map(|descriptor| {
-                            (
-                                descriptor.control_label,
-                                CaptureTarget::Binding {
-                                    attachment: descriptor.attachment.as_str().to_string(),
-                                    control: descriptor.control.as_str().to_string(),
-                                },
-                            )
-                        }),
-                ),
-            )
-            .push(
-                self.input_section(
-                    ui_text(language, UiText::PlayerTwo),
-                    keyboard_binding_descriptors()
-                        .iter()
-                        .filter(|descriptor| descriptor.attachment_label == "Player 2")
-                        .map(|descriptor| {
-                            (
-                                descriptor.control_label,
-                                CaptureTarget::Binding {
-                                    attachment: descriptor.attachment.as_str().to_string(),
-                                    control: descriptor.control.as_str().to_string(),
-                                },
-                            )
-                        }),
-                ),
-            )
-            .push(self.input_section(
+        let navigation = row![
+            input_section_radio(
+                language,
+                UiText::PlayerOne,
+                InputPageSection::PlayerOne,
+                self.input_section
+            ),
+            input_section_radio(
+                language,
+                UiText::PlayerTwo,
+                InputPageSection::PlayerTwo,
+                self.input_section
+            ),
+            input_section_radio(
+                language,
+                UiText::Shortcuts,
+                InputPageSection::Shortcuts,
+                self.input_section
+            ),
+        ]
+        .spacing(16)
+        .align_y(Alignment::Center);
+
+        let section = match self.input_section {
+            InputPageSection::PlayerOne => self.input_section(
+                ui_text(language, UiText::PlayerOne),
+                keyboard_binding_descriptors()
+                    .iter()
+                    .filter(|descriptor| descriptor.attachment_label == "Player 1")
+                    .map(|descriptor| {
+                        (
+                            descriptor.control_label,
+                            CaptureTarget::Binding {
+                                attachment: descriptor.attachment.as_str().to_string(),
+                                control: descriptor.control.as_str().to_string(),
+                            },
+                        )
+                    }),
+            ),
+            InputPageSection::PlayerTwo => self.input_section(
+                ui_text(language, UiText::PlayerTwo),
+                keyboard_binding_descriptors()
+                    .iter()
+                    .filter(|descriptor| descriptor.attachment_label == "Player 2")
+                    .map(|descriptor| {
+                        (
+                            descriptor.control_label,
+                            CaptureTarget::Binding {
+                                attachment: descriptor.attachment.as_str().to_string(),
+                                control: descriptor.control.as_str().to_string(),
+                            },
+                        )
+                    }),
+            ),
+            InputPageSection::Shortcuts => self.input_section(
                 ui_text(language, UiText::Shortcuts),
                 shortcut_descriptors().iter().map(|descriptor| {
                     (descriptor.label, CaptureTarget::Shortcut(descriptor.action))
                 }),
-            ))
-            .spacing(24)
-            .into()
+            ),
+        };
+
+        content.push(navigation).push(section).spacing(16).into()
     }
 
     fn input_section<'a>(
@@ -454,13 +493,14 @@ impl SettingsApp {
             content = content.push(
                 row![
                     text(label).width(Length::Fixed(180.0)),
-                    text(binding_label).width(Length::Fixed(120.0)),
+                    text(binding_label).width(Length::Fill),
                     button(ui_text(language, UiText::Change))
                         .on_press(Message::StartCapture(target.clone())),
                     button(ui_text(language, UiText::Clear))
                         .on_press(Message::ClearCapture(target)),
                 ]
                 .spacing(12)
+                .width(Length::Fill)
                 .align_y(Alignment::Center),
             );
         }
@@ -559,6 +599,21 @@ fn page_radio(
     .into()
 }
 
+fn input_section_radio(
+    language: AppLanguage,
+    label: UiText,
+    value: InputPageSection,
+    selected: InputPageSection,
+) -> Element<'static, Message> {
+    radio(
+        ui_text(language, label),
+        value,
+        Some(selected),
+        Message::SelectInputSection,
+    )
+    .into()
+}
+
 fn labeled_pick_list<T: Copy + Eq + 'static>(
     label: &'static str,
     options: impl Into<Vec<Choice<T>>>,
@@ -596,6 +651,16 @@ fn selected_choice<T: Copy + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) -
         .into_iter()
         .find(|choice| choice.value == value)
         .unwrap()
+}
+
+#[cfg(target_os = "windows")]
+fn default_font() -> Font {
+    Font::with_name("Yu Gothic UI")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_font() -> Font {
+    Font::DEFAULT
 }
 
 fn language_options(language: AppLanguage) -> Vec<Choice<AppLanguage>> {
