@@ -1,12 +1,33 @@
 use crate::settings::nes::{build_screen_buffer, build_speaker};
+use crate::{load::NesLoadOptions, settings::nes::effective_load_options};
 use nerust_console::Console;
+use nerust_contract_options::CoreOptions;
 use nerust_gui_runtime::session::GuiSession;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::topology::input_topology_descriptor;
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_input_schema::{InputTopologyDescriptor, SystemId};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
+
+pub trait SystemSessionProfile: Copy + Default {
+    type LoadOptions: Clone + Default;
+
+    fn build_gui_session(self, settings: &SettingsSnapshot) -> GuiSession;
+    fn input_topology_descriptor(&self) -> InputTopologyDescriptor;
+    fn system_id(self) -> SystemId;
+    fn effective_load_options(
+        self,
+        settings: &SettingsSnapshot,
+        explicit: Self::LoadOptions,
+    ) -> CoreOptions;
+    fn effective_rebuild_load_options(
+        self,
+        current_settings: &SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
+        explicit: Self::LoadOptions,
+    ) -> CoreOptions;
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NesConsoleProfile;
@@ -24,7 +45,11 @@ impl NesConsoleProfile {
         speaker: S,
         screen_buffer: ScreenBuffer,
     ) -> Console {
-        Console::new(speaker, screen_buffer)
+        Console::new(
+            speaker,
+            screen_buffer,
+            nerust_input_nes_runtime::standard_controller_runtime(),
+        )
     }
 
     pub fn build_gui_session(self, settings: &SettingsSnapshot) -> GuiSession {
@@ -33,6 +58,41 @@ impl NesConsoleProfile {
 
     pub fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
         input_topology_descriptor()
+    }
+}
+
+impl SystemSessionProfile for NesConsoleProfile {
+    type LoadOptions = NesLoadOptions;
+
+    fn build_gui_session(self, settings: &SettingsSnapshot) -> GuiSession {
+        Self::build_gui_session(self, settings)
+    }
+
+    fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
+        Self::input_topology_descriptor(self)
+    }
+
+    fn system_id(self) -> SystemId {
+        SystemId::Nes
+    }
+
+    fn effective_load_options(
+        self,
+        settings: &SettingsSnapshot,
+        explicit: Self::LoadOptions,
+    ) -> CoreOptions {
+        effective_load_options(&settings.shared, explicit).into_core_options()
+    }
+
+    fn effective_rebuild_load_options(
+        self,
+        current_settings: &SettingsSnapshot,
+        _next_settings: &SettingsSnapshot,
+        explicit: Self::LoadOptions,
+    ) -> CoreOptions {
+        // Rebuilds refresh immediate host/runtime changes while preserving the
+        // load-time core behavior of the currently running ROM.
+        effective_load_options(&current_settings.shared, explicit).into_core_options()
     }
 }
 

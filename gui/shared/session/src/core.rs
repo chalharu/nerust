@@ -157,6 +157,7 @@ mod tests {
         SessionCore::from_console(Console::new(
             TestSpeaker,
             ScreenBuffer::new_nes_gpu_default(),
+            nerust_input_nes_runtime::standard_controller_runtime(),
         ))
     }
 

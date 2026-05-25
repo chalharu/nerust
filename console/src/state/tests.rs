@@ -1,10 +1,12 @@
 use super::*;
 use crate::Console;
+use crate::controller::{
+    ControllerRuntime, StandardControllerState, apply_standard_input_state,
+    decode_standard_controller_state, encode_standard_controller_state,
+    encode_standard_input_state, read_standard_controller_port, write_standard_controller_port,
+};
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_input_nes::frame::Buttons;
-use nerust_input_nes_runtime::{
-    StandardControllerSnapshot, decode_controller_state, encode_controller_state,
-};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
@@ -33,6 +35,92 @@ impl MixerInput for TestSpeaker {
     fn push(&mut self, _data: f32) {}
 }
 
+#[derive(Debug, Default)]
+struct TestControllerRuntime {
+    state: StandardControllerState,
+}
+
+impl nerust_core::controller::Controller for TestControllerRuntime {
+    fn read(&mut self, address: usize) -> nerust_core::OpenBusReadResult {
+        read_standard_controller_port(&mut self.state, address)
+    }
+
+    fn write(&mut self, value: u8) {
+        write_standard_controller_port(&mut self.state, value);
+    }
+}
+
+impl ControllerRuntime for TestControllerRuntime {
+    fn reset_runtime(&mut self) {
+        self.state = StandardControllerState::default();
+    }
+
+    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.state = apply_standard_input_state(self.state, bytes)?;
+        Ok(())
+    }
+
+    fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
+        decode_standard_controller_state(bytes).map(|_| ())
+    }
+
+    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.state = decode_standard_controller_state(bytes)?;
+        Ok(())
+    }
+
+    fn current_controller_state(&self) -> Result<Vec<u8>, String> {
+        encode_standard_controller_state(self.state)
+    }
+
+    fn current_input_state(&self) -> Result<Vec<u8>, String> {
+        encode_standard_input_state(self.state)
+    }
+}
+
+#[derive(Debug, Default)]
+struct OpaqueControllerRuntime {
+    controller_state: Vec<u8>,
+    input_state: Vec<u8>,
+}
+
+impl nerust_core::controller::Controller for OpaqueControllerRuntime {
+    fn read(&mut self, _address: usize) -> nerust_core::OpenBusReadResult {
+        nerust_core::OpenBusReadResult::new(0, 0)
+    }
+
+    fn write(&mut self, _value: u8) {}
+}
+
+impl ControllerRuntime for OpaqueControllerRuntime {
+    fn reset_runtime(&mut self) {
+        self.controller_state.clear();
+        self.input_state.clear();
+    }
+
+    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.input_state = bytes.to_vec();
+        Ok(())
+    }
+
+    fn validate_controller_state(&self, _bytes: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.controller_state = bytes.to_vec();
+        Ok(())
+    }
+
+    fn current_controller_state(&self) -> Result<Vec<u8>, String> {
+        Ok(self.controller_state.clone())
+    }
+
+    fn current_input_state(&self) -> Result<Vec<u8>, String> {
+        Ok(self.input_state.clone())
+    }
+}
+
 fn fixture_bytes(hex: &str) -> Vec<u8> {
     assert!(
         !hex.trim().is_empty(),
@@ -53,8 +141,8 @@ fn decode_console_state(bytes: &[u8]) -> ConsoleStatePayload {
     rmp_serde::from_slice(bytes).expect("console state should decode")
 }
 
-fn decode_controller_snapshot(bytes: &[u8]) -> StandardControllerSnapshot {
-    decode_controller_state(bytes).expect("controller state should decode")
+fn decode_controller_snapshot(bytes: &[u8]) -> StandardControllerState {
+    decode_standard_controller_state(bytes).expect("controller state should decode")
 }
 
 fn decode_legacy_console_state(bytes: &[u8]) -> LegacyConsoleStatePayload {
@@ -71,6 +159,10 @@ fn test_rom_bytes() -> Vec<u8> {
 }
 
 fn test_console() -> Console {
+    test_console_with_controller(Box::new(TestControllerRuntime::default()))
+}
+
+fn test_console_with_controller(controller: Box<dyn ControllerRuntime>) -> Console {
     Console::new(
         TestSpeaker::default(),
         ScreenBuffer::new_gpu(
@@ -80,11 +172,21 @@ fn test_console() -> Console {
                 height: 1,
             },
         ),
+        controller,
     )
 }
 
 fn loaded_console() -> Console {
     let console = test_console();
+    console
+        .load(test_rom_bytes())
+        .expect("test ROM should load into console");
+    std::thread::sleep(Duration::from_millis(20));
+    console
+}
+
+fn loaded_console_with_controller(controller: Box<dyn ControllerRuntime>) -> Console {
+    let console = test_console_with_controller(controller);
     console
         .load(test_rom_bytes())
         .expect("test ROM should load into console");
@@ -121,7 +223,7 @@ fn console_state_fixture_import_restores_wrapper_state() {
     assert_eq!(exported.paused, fixture.paused);
     assert_eq!(
         decode_controller_snapshot(&exported.controller_state),
-        StandardControllerSnapshot {
+        StandardControllerState {
             buttons: [
                 Buttons::from_bits_retain(fixture.controller.pad1_bits as u8),
                 Buttons::from_bits_retain(fixture.controller.pad2_bits as u8),
@@ -206,13 +308,32 @@ fn console_state_export_import_round_trip_preserves_wrapper_fields() {
 }
 
 #[test]
+fn console_state_import_accepts_runtime_owned_controller_payloads() {
+    let template = loaded_console();
+    let export = template
+        .export_state()
+        .expect("console state should export");
+    let mut payload = decode_console_state(&export.machine_state);
+    payload.controller_state = vec![0xDE, 0xAD, 0xBE, 0xEF];
+    let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
+
+    let console = loaded_console_with_controller(Box::new(OpaqueControllerRuntime::default()));
+    console
+        .import_state(bytes)
+        .expect("opaque controller payload should import");
+
+    let exported = export_console_state(&console);
+    assert_eq!(exported.controller_state, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+}
+
+#[test]
 fn console_state_import_restores_paused_frame_counter_controller_and_source_frame() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
     let mut payload = decode_console_state(&export.machine_state);
     payload.frame_counter = 42;
     payload.paused = true;
-    payload.controller_state = encode_controller_state(StandardControllerSnapshot {
+    payload.controller_state = encode_standard_controller_state(StandardControllerState {
         buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
         microphone: true,
         index1: 3,
@@ -232,7 +353,7 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
     assert!(exported.paused);
     assert_eq!(
         decode_controller_snapshot(&exported.controller_state),
-        StandardControllerSnapshot {
+        StandardControllerState {
             buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
             microphone: true,
             index1: 3,

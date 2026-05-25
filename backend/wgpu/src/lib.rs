@@ -6,7 +6,7 @@
 
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_video::VideoPresentation;
-use nerust_screen_wgpu::renderer::{RenderOutcome, Renderer};
+use nerust_screen_wgpu::renderer::{PresentationOptions, RenderOutcome, Renderer};
 use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 
@@ -81,22 +81,21 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
     /// `initial_size` is used as a fallback when the surface target cannot
     /// determine its own size (e.g. before the first layout pass). The backend
     /// calls [`Renderer::new`] synchronously via `pollster::block_on`.
-    ///
-    /// Branches on the console variant; currently only NES is supported.
     pub fn new(
         target: T,
         initial_size: SurfaceSize,
         presentation: &VideoPresentation,
-        assets: &ConsoleVideoAssets,
+        assets: Option<&ConsoleVideoAssets>,
+        presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
-        let ConsoleVideoAssets::Nes(nes_assets) = assets;
         let render_surface = RenderSurface::new(ShellSurfaceTarget(target))?;
         let surface_size = render_surface.surface_size(initial_size);
         let renderer = pollster::block_on(Renderer::new(
             &render_surface,
             surface_size,
             presentation,
-            nes_assets,
+            assets,
+            presentation_options,
         ))?;
         Ok(Self {
             renderer,

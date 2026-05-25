@@ -377,10 +377,18 @@ pub mod shared {
     pub enum SystemSettings {
         Nes(NesSettings),
     }
+
+    impl SystemSettings {
+        pub fn requires_live_session_rebuild(&self, next: &Self) -> bool {
+            match (self, next) {
+                (Self::Nes(before), Self::Nes(after)) => before.video.filter != after.video.filter,
+            }
+        }
+    }
 }
 
 pub mod local {
-    pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 1;
+    pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
     #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
     #[serde(default)]
@@ -402,19 +410,92 @@ pub mod local {
 
     #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
     #[serde(default)]
-    pub struct VideoSettings {
+    pub struct WindowVideoSettings {
         pub fullscreen_default: bool,
         pub scaling: ScalingMode,
-        pub vsync: bool,
     }
 
-    impl Default for VideoSettings {
+    impl Default for WindowVideoSettings {
         fn default() -> Self {
             Self {
                 fullscreen_default: false,
                 scaling: ScalingMode::FitToWindow,
-                vsync: true,
             }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    pub struct BackendPresentationSettings {
+        pub vsync: bool,
+    }
+
+    impl Default for BackendPresentationSettings {
+        fn default() -> Self {
+            Self { vsync: true }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Default)]
+    pub struct VideoSettings {
+        pub window: WindowVideoSettings,
+        pub presentation: BackendPresentationSettings,
+    }
+
+    #[derive(Default, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[serde(default)]
+    struct VideoSettingsDocument {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        window: Option<WindowVideoSettings>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        presentation: Option<BackendPresentationSettings>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fullscreen_default: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scaling: Option<ScalingMode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        vsync: Option<bool>,
+    }
+
+    impl serde::Serialize for VideoSettings {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            VideoSettingsDocument {
+                window: Some(self.window.clone()),
+                presentation: Some(self.presentation.clone()),
+                fullscreen_default: None,
+                scaling: None,
+                vsync: None,
+            }
+            .serialize(serializer)
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for VideoSettings {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let document = VideoSettingsDocument::deserialize(deserializer)?;
+            let mut settings = VideoSettings::default();
+            if let Some(fullscreen_default) = document.fullscreen_default {
+                settings.window.fullscreen_default = fullscreen_default;
+            }
+            if let Some(scaling) = document.scaling {
+                settings.window.scaling = scaling;
+            }
+            if let Some(vsync) = document.vsync {
+                settings.presentation.vsync = vsync;
+            }
+            if let Some(window) = document.window {
+                settings.window = window;
+            }
+            if let Some(presentation) = document.presentation {
+                settings.presentation = presentation;
+            }
+            Ok(settings)
         }
     }
 
@@ -520,7 +601,9 @@ mod tests {
         DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
     };
     use super::input::{KeyboardKey, ShortcutAction, ShortcutBinding};
-    use super::local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings};
+    use super::local::{
+        HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
+    };
     use super::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
 
     #[test]
@@ -583,5 +666,46 @@ mod tests {
 
         assert!(encoded.contains("toggle_pause"));
         assert!(encoded.contains("space"));
+    }
+
+    #[test]
+    fn local_video_settings_decode_legacy_flat_fields() {
+        let decoded: HostBackendLocalSettings = serde_yaml::from_str(
+            r#"
+schema_version: 1
+video:
+  fullscreen_default: true
+  scaling: x3
+  vsync: false
+"#,
+        )
+        .unwrap();
+
+        assert!(decoded.video.window.fullscreen_default);
+        assert_eq!(decoded.video.window.scaling, ScalingMode::X3);
+        assert!(!decoded.video.presentation.vsync);
+    }
+
+    #[test]
+    fn local_video_settings_prefer_nested_fields_over_legacy_flat_fields() {
+        let decoded: HostBackendLocalSettings = serde_yaml::from_str(
+            r#"
+schema_version: 2
+video:
+  fullscreen_default: true
+  scaling: x3
+  vsync: false
+  window:
+    fullscreen_default: false
+    scaling: fit_to_window
+  presentation:
+    vsync: true
+"#,
+        )
+        .unwrap();
+
+        assert!(!decoded.video.window.fullscreen_default);
+        assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
+        assert!(decoded.video.presentation.vsync);
     }
 }

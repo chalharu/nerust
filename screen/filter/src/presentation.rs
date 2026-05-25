@@ -109,6 +109,13 @@ impl ConsoleVideoAssets {
             Self::Nes(assets) => assets.palette_rgba8(),
         }
     }
+
+    /// Convenience delegate: packed NTSC texture data when the active pipeline needs it.
+    pub fn packed_ntsc_rgba8(&self) -> Option<&[u8]> {
+        match self {
+            Self::Nes(assets) => assets.packed_ntsc_rgba8(),
+        }
+    }
 }
 
 impl NesVideoAssets {

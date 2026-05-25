@@ -1,3 +1,4 @@
+use crate::descriptor::SystemSessionProfile;
 use crate::session::{KeyboardShortcut, NesSession};
 use crate::settings::bindings::events::controller::controller_event_for_key;
 use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
@@ -23,20 +24,26 @@ impl NesSession {
             false
         };
 
-        if let Some(controller_input) =
-            controller_event_for_key(&self.settings_snapshot.shared, key, pressed)
-        {
+        if let Some(controller_input) = controller_event_for_key(
+            &self.system.settings_snapshot.shared,
+            self.system.profile.system_id(),
+            key,
+            pressed,
+            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+        ) {
             self.handle_controller_input(controller_input);
         }
 
         if first_press {
-            return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
-                if matches!(action, ShortcutAction::ToggleFullscreen) {
-                    KeyboardShortcut::ToggleFullscreen
-                } else {
-                    KeyboardShortcut::Session(action)
-                }
-            });
+            return shortcut_action_for_key(&self.system.settings_snapshot.shared, key).map(
+                |action| {
+                    if matches!(action, ShortcutAction::ToggleFullscreen) {
+                        KeyboardShortcut::ToggleFullscreen
+                    } else {
+                        KeyboardShortcut::Session(action)
+                    }
+                },
+            );
         }
         None
     }
@@ -48,7 +55,7 @@ impl NesSession {
     }
 
     fn current_input_frame(&self) -> Option<nerust_input_nes::frame::NesInputFrame> {
-        let bytes = self.session.current_input_state().ok()?;
+        let bytes = self.system.session.current_input_state().ok()?;
         match decode_input_state(&bytes) {
             Ok(frame) => Some(frame),
             Err(error) => {
@@ -66,7 +73,7 @@ impl NesSession {
                 return;
             }
         };
-        self.session.apply_input_state(bytes);
+        self.system.session.apply_input_state(bytes);
     }
 
     pub(super) fn sync_input_from_session(&mut self) {

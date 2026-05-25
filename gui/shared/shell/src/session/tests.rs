@@ -22,7 +22,11 @@ impl MixerInput for TestSpeaker {
 
 fn test_session() -> NesSession {
     NesSession::from_gui_session(GuiSession::from_session_core(SessionCore::from_console(
-        nerust_console::Console::new(TestSpeaker, ScreenBuffer::new_nes_gpu_default()),
+        nerust_console::Console::new(
+            TestSpeaker,
+            ScreenBuffer::new_nes_gpu_default(),
+            nerust_input_nes_runtime::standard_controller_runtime(),
+        ),
     )))
 }
 
@@ -37,6 +41,7 @@ fn nes_session_flushes_keyboard_input_into_controller_state() {
 
     let frame = decode_input_state(
         &session
+            .system
             .session
             .current_input_state()
             .expect("input state should export"),
