@@ -1,5 +1,5 @@
 [package]
-name = "nerust_wgpu"
+name = "nerust_tao"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -11,13 +11,14 @@ clap.workspace = true
 log.workspace = true
 muda.workspace = true
 nerust_backend_wgpu.workspace = true
-nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
 nerust_gui_session.workspace = true
 nerust_persistence.workspace = true
 nerust_screen_wgpu.workspace = true
 nerust_sound_openal.workspace = true
 raw-window-handle.workspace = true
+rfd.workspace = true
 simple_logger.workspace = true
 tao.workspace = true
 

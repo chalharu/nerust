@@ -1,12 +1,12 @@
 mod crash_handler;
 mod glarea;
+mod renderer;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_backend_opengl::GlBackend;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
@@ -23,14 +23,12 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) struct State {
-    view: Option<GlBackend>,
     session: NesSession,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
         Self {
-            view: None,
             session: NesSession::new(),
         }
     }

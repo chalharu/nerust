@@ -7,10 +7,8 @@
 use clap::{Arg, Command};
 use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
-use nerust_wgpu::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
+use nerust_tao::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
 use simple_logger::SimpleLogger;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 fn main() {
@@ -25,7 +23,7 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::new("filename").help("Rom file name").required(true))
+        .arg(Arg::new("filename").help("Rom file name"))
         .arg(
             Arg::new("mmc3-irq-variant")
                 .long("mmc3-irq-variant")
@@ -44,13 +42,9 @@ fn main() {
         ),
     };
 
-    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from)
-        && let Some(mut f) = File::open(&filename).ok().map(BufReader::new)
-    {
-        let mut buf = Vec::new();
-        let _ = f.read_to_end(&mut buf).unwrap();
-        let mut window = Window::new();
-        window.load_with_options(Some(filename), buf, window_options);
-        window.run();
+    let mut window = Window::with_load_options(window_options);
+    if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from) {
+        let _ = window.load_path(&filename);
     }
+    window.run();
 }
