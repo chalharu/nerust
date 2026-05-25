@@ -461,15 +461,46 @@ pub mod local {
 }
 
 pub mod app_state {
-    use super::PathBuf;
+    use super::{BTreeMap, PathBuf};
 
-    pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 1;
+    pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 2;
+
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde_derive::Serialize,
+        serde_derive::Deserialize,
+    )]
+    #[serde(default)]
+    pub struct RememberedWindowSize {
+        pub width: u32,
+        pub height: u32,
+    }
 
     #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
     #[serde(default)]
     pub struct DesktopAppState {
         pub schema_version: u32,
         pub last_successful_rom_directory: Option<PathBuf>,
+        pub window_sizes: BTreeMap<String, RememberedWindowSize>,
+    }
+
+    impl DesktopAppState {
+        pub fn window_size(&self, host_backend: &str) -> Option<RememberedWindowSize> {
+            self.window_sizes.get(host_backend).copied()
+        }
+
+        pub fn set_window_size(
+            &mut self,
+            host_backend: impl Into<String>,
+            size: RememberedWindowSize,
+        ) {
+            self.window_sizes.insert(host_backend.into(), size);
+        }
     }
 
     impl Default for DesktopAppState {
@@ -477,6 +508,7 @@ pub mod app_state {
             Self {
                 schema_version: DESKTOP_APP_STATE_SCHEMA_VERSION,
                 last_successful_rom_directory: None,
+                window_sizes: BTreeMap::new(),
             }
         }
     }
@@ -484,7 +516,9 @@ pub mod app_state {
 
 #[cfg(test)]
 mod tests {
-    use super::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
+    use super::app_state::{
+        DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
+    };
     use super::input::{KeyboardKey, ShortcutAction, ShortcutBinding};
     use super::local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings};
     use super::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
@@ -503,6 +537,28 @@ mod tests {
             DesktopAppState::default().schema_version,
             DESKTOP_APP_STATE_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn app_state_tracks_window_sizes_per_host_backend() {
+        let mut state = DesktopAppState::default();
+
+        state.set_window_size(
+            "tao+wgpu",
+            RememberedWindowSize {
+                width: 960,
+                height: 720,
+            },
+        );
+
+        assert_eq!(
+            state.window_size("tao+wgpu"),
+            Some(RememberedWindowSize {
+                width: 960,
+                height: 720,
+            })
+        );
+        assert_eq!(state.window_size("gtk+opengl"), None);
     }
 
     #[test]

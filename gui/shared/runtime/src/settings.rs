@@ -372,6 +372,20 @@ impl SettingsManager {
         self.save_snapshot(snapshot)
     }
 
+    pub fn update_window_size(
+        &self,
+        identity: &HostBackendIdentity,
+        width: u32,
+        height: u32,
+    ) -> Result<(), SettingsError> {
+        let mut snapshot = self.snapshot()?;
+        snapshot.app_state.set_window_size(
+            identity.to_string(),
+            nerust_contract_settings::app_state::RememberedWindowSize { width, height },
+        );
+        self.save_snapshot(snapshot)
+    }
+
     pub fn resolve_persistence_paths(
         &self,
         system: SystemId,
@@ -979,7 +993,7 @@ mod tests {
     use nerust_contract_mirror::MirrorMode;
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_rom::{RomFormat, RomIdentity};
-    use nerust_contract_settings::app_state::DesktopAppState;
+    use nerust_contract_settings::app_state::{DesktopAppState, RememberedWindowSize};
     use nerust_contract_settings::input::{
         IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
         ShortcutAction, ShortcutBinding, SystemInputSettings,
@@ -1392,6 +1406,39 @@ input:
         manager.save_snapshot(snapshot.clone()).unwrap();
 
         assert_eq!(manager.snapshot().unwrap(), snapshot);
+    }
+
+    #[test]
+    fn update_window_size_records_host_specific_app_state() {
+        let manager = SettingsManager::ephemeral(
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        );
+
+        manager
+            .update_window_size(&HostBackendIdentity::tao_wgpu(), 960, 720)
+            .unwrap();
+        manager
+            .update_window_size(&HostBackendIdentity::gtk_opengl(), 800, 600)
+            .unwrap();
+
+        let app_state = manager.app_state().unwrap();
+
+        assert_eq!(
+            app_state.window_size("tao+wgpu"),
+            Some(RememberedWindowSize {
+                width: 960,
+                height: 720,
+            })
+        );
+        assert_eq!(
+            app_state.window_size("gtk+opengl"),
+            Some(RememberedWindowSize {
+                width: 800,
+                height: 600,
+            })
+        );
     }
 
     #[test]

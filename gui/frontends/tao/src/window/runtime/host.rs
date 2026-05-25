@@ -1,6 +1,7 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::settings;
 use nerust_backend_wgpu::RenderResult;
+use nerust_contract_settings::app_state::RememberedWindowSize;
 use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -29,6 +30,9 @@ pub(crate) enum HostAction {
     RomLoaded,
     Exit,
 }
+
+const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
+const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
@@ -79,13 +83,9 @@ impl HostState {
         }
 
         let window = Arc::new(
-            create_window_builder(
-                self.session.window_size(),
-                self.session.window_title(),
-                scaling_factor(self.session.settings_snapshot().local.video.scaling),
-            )
-            .build(event_loop)
-            .unwrap(),
+            create_window_builder(self.startup_window_size(), self.session.window_title())
+                .build(event_loop)
+                .unwrap(),
         );
         self.app_menu.init_for_window(&window);
         if self
@@ -248,6 +248,7 @@ impl HostState {
     }
 
     pub(crate) fn prepare_close(&mut self) -> bool {
+        self.remember_fit_window_size();
         self.settings_open = false;
         self.resume_after_settings = false;
         if let Some(helper) = self.settings_helper.take() {
@@ -404,21 +405,60 @@ impl HostState {
         }
     }
 
+    fn startup_window_size(&self) -> TaoLogicalSize<f64> {
+        match scaling_factor(self.session.settings_snapshot().local.video.scaling) {
+            Some(scale) => logical_window_size(self.session.window_size(), Some(scale)),
+            None => self
+                .remembered_fit_window_size()
+                .map(logical_size_from_remembered)
+                .unwrap_or_else(default_fit_window_size),
+        }
+    }
+
     fn update_window_size_for_scaling(&self) {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        window.set_inner_size(logical_window_size(
-            self.session.window_size(),
-            scaling_factor(self.session.settings_snapshot().local.video.scaling),
-        ));
+        let Some(scale) = scaling_factor(self.session.settings_snapshot().local.video.scaling)
+        else {
+            return;
+        };
+        window.set_inner_size(logical_window_size(self.session.window_size(), Some(scale)));
+    }
+
+    fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
+        self.session
+            .settings_snapshot()
+            .app_state
+            .window_size(&HostBackendIdentity::tao_wgpu().to_string())
+    }
+
+    fn remember_fit_window_size(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window.fullscreen().is_some()
+            || scaling_factor(self.session.settings_snapshot().local.video.scaling).is_some()
+        {
+            return;
+        }
+
+        let logical_size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let width = logical_size.width.round().max(1.0) as u32;
+        let height = logical_size.height.round().max(1.0) as u32;
+
+        if let Err(error) = self.session.settings_manager().update_window_size(
+            &HostBackendIdentity::tao_wgpu(),
+            width,
+            height,
+        ) {
+            log::warn!("failed to remember tao window size: {error}");
+        }
     }
 }
 
-fn create_window_builder(size: WindowSize, title: String, scaling: Option<u32>) -> WindowBuilder {
-    WindowBuilder::new()
-        .with_title(title)
-        .with_inner_size(logical_window_size(size, scaling))
+fn create_window_builder(size: TaoLogicalSize<f64>, title: String) -> WindowBuilder {
+    WindowBuilder::new().with_title(title).with_inner_size(size)
 }
 
 fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
@@ -435,6 +475,14 @@ fn logical_window_size(size: WindowSize, scaling: Option<u32>) -> TaoLogicalSize
         })
         .unwrap_or((f64::from(size.width), f64::from(size.height)));
     TaoLogicalSize::new(width, height)
+}
+
+fn default_fit_window_size() -> TaoLogicalSize<f64> {
+    TaoLogicalSize::new(DEFAULT_FIT_WINDOW_WIDTH, DEFAULT_FIT_WINDOW_HEIGHT)
+}
+
+fn logical_size_from_remembered(size: RememberedWindowSize) -> TaoLogicalSize<f64> {
+    TaoLogicalSize::new(f64::from(size.width), f64::from(size.height))
 }
 
 fn keycode_controller_input(code: KeyCode) -> Option<KeyboardKey> {
