@@ -1,13 +1,12 @@
 use crate::ConsoleError;
+use crate::controller::{
+    ControllerRuntime, StandardControllerState, encode_standard_controller_state,
+};
 use nerust_contract_options::CoreOptions;
 use nerust_contract_persistence::PersistenceTarget;
 use nerust_contract_rom::RomIdentity;
 use nerust_core::Core;
 use nerust_input_nes::frame::Buttons;
-use nerust_input_nes_runtime::{
-    StandardController, StandardControllerSnapshot, decode_controller_state,
-    encode_controller_state,
-};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 
 /// Compatibility version for the console-owned wrapper around opaque core machine-state bytes.
@@ -129,8 +128,8 @@ fn legacy_index(value: u64, label: &str) -> Result<usize, ConsoleError> {
 
 fn legacy_controller_snapshot(
     payload: &LegacyControllerStatePayload,
-) -> Result<StandardControllerSnapshot, ConsoleError> {
-    Ok(StandardControllerSnapshot {
+) -> Result<StandardControllerState, ConsoleError> {
+    Ok(StandardControllerState {
         buttons: [
             legacy_buttons(payload.pad1_bits, "port1")?,
             legacy_buttons(payload.pad2_bits, "port2")?,
@@ -144,8 +143,8 @@ fn legacy_controller_snapshot(
 
 fn structured_controller_snapshot(
     payload: &StructuredControllerStatePayload,
-) -> Result<StandardControllerSnapshot, ConsoleError> {
-    Ok(StandardControllerSnapshot {
+) -> Result<StandardControllerState, ConsoleError> {
+    Ok(StandardControllerState {
         buttons: [
             legacy_buttons(payload.ports[0].input_bits, "port1")?,
             legacy_buttons(payload.ports[1].input_bits, "port2")?,
@@ -185,9 +184,9 @@ fn decode_console_state_payload(bytes: &[u8]) -> Result<ConsoleStatePayload, Con
                     core_state: structured.core_state,
                     frame_counter: structured.frame_counter,
                     paused: structured.paused,
-                    controller_state: encode_controller_state(structured_controller_snapshot(
-                        &structured.controller,
-                    )?)
+                    controller_state: encode_standard_controller_state(
+                        structured_controller_snapshot(&structured.controller)?,
+                    )
                     .map_err(ConsoleError::Core)?,
                     rom_identity: structured.rom_identity,
                     options: structured.options,
@@ -209,7 +208,7 @@ fn decode_console_state_payload(bytes: &[u8]) -> Result<ConsoleStatePayload, Con
                 core_state: legacy.core_state,
                 frame_counter: legacy.frame_counter,
                 paused: legacy.paused,
-                controller_state: encode_controller_state(legacy_controller_snapshot(
+                controller_state: encode_standard_controller_state(legacy_controller_snapshot(
                     &legacy.controller,
                 )?)
                 .map_err(ConsoleError::Core)?,
@@ -259,7 +258,7 @@ fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
 pub(crate) fn build_state_export(
     core: &Core,
     screen: &ScreenBuffer,
-    controller: &StandardController,
+    controller_state: Vec<u8>,
     frame_counter: u64,
     paused: bool,
 ) -> Result<StateExport, ConsoleError> {
@@ -283,8 +282,7 @@ pub(crate) fn build_state_export(
         core_state: machine_state,
         frame_counter,
         paused,
-        controller_state: encode_controller_state(controller.export_snapshot())
-            .map_err(ConsoleError::Core)?,
+        controller_state,
         rom_identity: target.rom_identity,
         options: target.options,
         source_frame,
@@ -299,15 +297,16 @@ pub(crate) fn build_state_export(
 pub(crate) fn restore_imported_state(
     core: &mut Core,
     screen: &mut ScreenBuffer,
-    controller: &mut StandardController,
+    controller: &mut dyn ControllerRuntime,
     frame_counter: &mut u64,
     paused: &mut bool,
     bytes: &[u8],
 ) -> Result<(), ConsoleError> {
     let payload = decode_console_state_payload(bytes)?;
     validate_console_state_target(core, &payload)?;
-    let controller_snapshot =
-        decode_controller_state(&payload.controller_state).map_err(ConsoleError::Core)?;
+    controller
+        .validate_controller_state(&payload.controller_state)
+        .map_err(ConsoleError::Core)?;
     if screen.publishes_palette_frame()
         && !payload.source_frame.is_empty()
         && payload.source_frame.len() != screen.source_frame_len()
@@ -321,7 +320,9 @@ pub(crate) fn restore_imported_state(
     if screen.publishes_palette_frame() && !payload.source_frame.is_empty() {
         screen.restore_source_buffer(&payload.source_frame);
     }
-    controller.import_snapshot(controller_snapshot);
+    controller
+        .apply_controller_state(&payload.controller_state)
+        .map_err(ConsoleError::Core)?;
     *frame_counter = payload.frame_counter;
     *paused = payload.paused;
     Ok(())

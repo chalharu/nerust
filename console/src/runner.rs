@@ -5,7 +5,7 @@ mod runtime;
 use data::ConsoleData;
 
 use super::ConsoleMetrics;
-use nerust_input_nes_runtime::StandardController;
+use crate::controller::ControllerRuntime;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;
@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 
 pub(super) struct ConsoleRunner {
     timer: Timer,
-    controller: StandardController,
+    controller: Box<dyn ControllerRuntime>,
     paused: bool,
     frame_counter: u64,
 
@@ -31,13 +31,14 @@ impl ConsoleRunner {
         screen: ScreenBuffer,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
         metrics: Arc<RwLock<ConsoleMetrics>>,
+        controller: Box<dyn ControllerRuntime>,
     ) -> Self {
         Self {
             data_receiver,
             stop_receiver,
 
             timer: Timer::new(),
-            controller: StandardController::new(),
+            controller,
             paused: true,
             frame_counter: 0,
             screen,

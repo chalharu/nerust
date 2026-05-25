@@ -86,7 +86,7 @@ impl GLAreaExtend for GLArea {
         self.borrow().renderer.borrow_mut().resize(
             &self.glarea(),
             state.window_size(),
-            scaling_factor(state.settings_snapshot().local.video.scaling),
+            scaling_factor(state.settings_snapshot().local.video.window.scaling),
             width,
             height,
         );

@@ -1,7 +1,6 @@
-use crate::descriptor::NesConsoleProfile;
+use crate::descriptor::SystemSessionProfile;
 use crate::load::NesLoadOptions;
 use crate::session::NesSession;
-use crate::settings::nes::effective_load_options;
 use nerust_console::ConsoleMetrics;
 use nerust_console::video::ConsoleVideo;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
@@ -11,51 +10,51 @@ use std::path::PathBuf;
 
 impl NesSession {
     pub fn video(&self) -> &ConsoleVideo {
-        self.session.video()
+        self.system.session.video()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.session.with_frame_buffer(f)
+        self.system.session.with_frame_buffer(f)
     }
 
     pub fn window_size(&self) -> WindowSize {
-        self.session.window_size()
+        self.system.session.window_size()
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.session.metrics()
+        self.system.session.metrics()
     }
 
     pub fn window_title(&self) -> String {
-        self.session.window_title()
+        self.system.session.window_title()
     }
 
     pub fn paused(&self) -> bool {
-        self.session.paused()
+        self.system.session.paused()
     }
 
     pub fn loaded(&self) -> bool {
-        self.session.loaded()
+        self.system.session.loaded()
     }
 
     pub fn can_pause(&self) -> bool {
-        self.session.can_pause()
+        self.system.session.can_pause()
     }
 
     pub fn can_resume(&self) -> bool {
-        self.session.can_resume()
+        self.system.session.can_resume()
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
-        self.session.slots()
+        self.system.session.slots()
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
-        self.session.active_slot_id()
+        self.system.session.active_slot_id()
     }
 
     pub fn resume(&mut self) {
-        self.session.resume();
+        self.system.session.resume();
     }
 
     pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
@@ -68,25 +67,28 @@ impl NesSession {
         data: Vec<u8>,
         explicit_options: NesLoadOptions,
     ) -> bool {
-        let core_options = effective_load_options(&self.settings_snapshot.shared, explicit_options)
-            .into_core_options();
+        let core_options = self
+            .system
+            .profile
+            .effective_load_options(&self.system.settings_snapshot, explicit_options);
         let loaded = self
+            .system
             .session
             .load_with_options(None, data.clone(), core_options);
         if !loaded {
             return false;
         }
 
-        self.loaded_rom = Some(super::LoadedRom {
+        self.system.loaded_rom = Some(super::LoadedRom {
             path: rom_path.clone(),
             data: data.clone(),
             explicit_options,
         });
         self.sync_input_from_session();
 
-        let persistence_paths = match self.session.persistence_target() {
-            Ok(target) => match self.settings.resolve_persistence_paths_with_import(
-                nerust_input_schema::SystemId::Nes,
+        let persistence_paths = match self.system.session.persistence_target() {
+            Ok(target) => match self.system.settings.resolve_persistence_paths_with_import(
+                self.system.profile.system_id(),
                 rom_path.as_deref(),
                 target.rom_identity,
             ) {
@@ -101,34 +103,39 @@ impl NesSession {
                 None
             }
         };
-        self.session.configure_persistence_paths(persistence_paths);
+        self.system
+            .session
+            .configure_persistence_paths(persistence_paths);
 
         if let Some(path) = rom_path.as_deref()
-            && let Err(error) = self.settings.update_last_successful_rom_directory(path)
+            && let Err(error) = self
+                .system
+                .settings
+                .update_last_successful_rom_directory(path)
         {
             log::warn!("failed to update app state: {error}");
         }
-        if let Ok(snapshot) = self.settings.snapshot() {
-            self.settings_snapshot = snapshot;
+        if let Ok(snapshot) = self.system.settings.snapshot() {
+            self.system.settings_snapshot = snapshot;
         }
         true
     }
 
     pub fn unload(&mut self) -> bool {
-        let unloaded = self.session.unload();
+        let unloaded = self.system.session.unload();
         if unloaded {
-            self.loaded_rom = None;
+            self.system.loaded_rom = None;
             self.sync_input_from_session();
         }
         unloaded
     }
 
     pub fn flush_before_exit(&mut self) {
-        self.session.flush_before_exit();
+        self.system.session.flush_before_exit();
     }
 
     pub fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        let outcome = self.session.run_command(command);
+        let outcome = self.system.session.run_command(command);
         if outcome.executed
             && matches!(
                 command,
@@ -148,7 +155,8 @@ impl NesSession {
         let was_paused = self.paused();
         let exported_state = if was_loaded {
             Some(
-                self.session
+                self.system
+                    .session
                     .export_state()
                     .map_err(|error| format!("state export failed: {error}"))?,
             )
@@ -156,14 +164,13 @@ impl NesSession {
             None
         };
 
-        let mut rebuilt = NesConsoleProfile.build_gui_session(next_settings);
-        if let Some(loaded_rom) = self.loaded_rom.clone() {
-            let effective_options = effective_rebuild_load_options(
-                &self.settings_snapshot,
+        let mut rebuilt = self.system.profile.build_gui_session(next_settings);
+        if let Some(loaded_rom) = self.system.loaded_rom.clone() {
+            let effective_options = self.system.profile.effective_rebuild_load_options(
+                &self.system.settings_snapshot,
                 next_settings,
                 loaded_rom.explicit_options,
-            )
-            .into_core_options();
+            );
             if !rebuilt.load_with_options(None, loaded_rom.data.clone(), effective_options) {
                 return Err("ROM reload failed during session rebuild".into());
             }
@@ -171,9 +178,10 @@ impl NesSession {
                 .persistence_target()
                 .map_err(|error| format!("persistence target failed: {error}"))?;
             let resolved = self
+                .system
                 .settings
                 .resolve_persistence_paths_with_import(
-                    nerust_input_schema::SystemId::Nes,
+                    self.system.profile.system_id(),
                     loaded_rom.path.as_deref(),
                     target.rom_identity,
                 )
@@ -189,29 +197,18 @@ impl NesSession {
             }
         }
 
-        self.session = rebuilt;
+        self.system.session = rebuilt;
         self.sync_input_from_session();
         if was_loaded && was_paused {
-            self.session.pause();
+            self.system.session.pause();
         }
         Ok(())
     }
 }
 
-fn effective_rebuild_load_options(
-    current_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
-    _next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
-    explicit_options: NesLoadOptions,
-) -> NesLoadOptions {
-    // Rebuilds exist to refresh immediate host/runtime changes while preserving the
-    // load-time core behavior of the currently running ROM. Deferred core settings
-    // apply on the next explicit ROM load instead.
-    effective_load_options(&current_settings.shared, explicit_options)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::effective_rebuild_load_options;
+    use crate::descriptor::{NesConsoleProfile, SystemSessionProfile};
     use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_settings::app_state::DesktopAppState;
@@ -249,7 +246,7 @@ mod tests {
         let current = snapshot(None, NesVideoFilter::NtscComposite);
         let next = snapshot(Some(Mmc3IrqVariant::Sharp), NesVideoFilter::NtscRgb);
 
-        let rebuilt = effective_rebuild_load_options(
+        let rebuilt = NesConsoleProfile.effective_rebuild_load_options(
             &current,
             &next,
             NesLoadOptions {
@@ -257,9 +254,13 @@ mod tests {
             },
         );
 
-        assert_eq!(rebuilt.mmc3_irq_variant, Some(NesMmc3IrqVariant::Nec));
+        assert_eq!(rebuilt.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
 
-        let rebuilt = effective_rebuild_load_options(&current, &next, NesLoadOptions::default());
+        let rebuilt = NesConsoleProfile.effective_rebuild_load_options(
+            &current,
+            &next,
+            NesLoadOptions::default(),
+        );
         assert_eq!(rebuilt.mmc3_irq_variant, None);
     }
 }

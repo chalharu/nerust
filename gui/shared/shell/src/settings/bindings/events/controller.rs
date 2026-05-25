@@ -1,24 +1,28 @@
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::shared::DesktopSharedSettings;
-use nerust_input_nes::input::persisted::digital_event_from_persisted_ids;
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 
-pub fn controller_event_for_key(
+pub fn controller_event_for_key<F>(
     settings: &DesktopSharedSettings,
+    system: SystemId,
     key: KeyboardKey,
     pressed: bool,
-) -> Option<DigitalInputEvent> {
+    resolve: F,
+) -> Option<DigitalInputEvent>
+where
+    F: Fn(&str, &str, bool) -> Option<DigitalInputEvent>,
+{
     let profile = settings
         .input
         .systems
-        .get(&SystemId::Nes)?
+        .get(&system)?
         .implicit_keyboard_profile()?;
     profile
         .bindings
         .iter()
         .find(|binding| binding.key == key)
         .and_then(|binding| {
-            digital_event_from_persisted_ids(
+            resolve(
                 binding.attachment.as_str(),
                 binding.control.as_str(),
                 pressed,
@@ -39,7 +43,14 @@ mod tests {
     #[test]
     fn keyboard_bindings_resolve_to_nes_input_events() {
         let settings = default_shared_settings();
-        let event = controller_event_for_key(&settings, KeyboardKey::KeyZ, true).unwrap();
+        let event = controller_event_for_key(
+            &settings,
+            nerust_input_schema::SystemId::Nes,
+            KeyboardKey::KeyZ,
+            true,
+            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+        )
+        .unwrap();
 
         assert_eq!(event.attachment, NES_ATTACHMENT_PLAYER_ONE);
         assert_eq!(event.control, NES_CONTROL_A);
@@ -62,7 +73,14 @@ mod tests {
                 control: PersistedControlId::digital(FAMICOM_P2_CONTROL_MICROPHONE.as_str()),
                 key: KeyboardKey::KeyM,
             });
-        let event = controller_event_for_key(&settings, KeyboardKey::KeyM, true).unwrap();
+        let event = controller_event_for_key(
+            &settings,
+            nerust_input_schema::SystemId::Nes,
+            KeyboardKey::KeyM,
+            true,
+            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+        )
+        .unwrap();
 
         assert_eq!(event.attachment, NES_ATTACHMENT_PLAYER_TWO);
         assert_eq!(event.control, FAMICOM_P2_CONTROL_MICROPHONE);

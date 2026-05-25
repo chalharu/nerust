@@ -1,0 +1,10 @@
+[package]
+name = "nerust_contract_controller_runtime"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_core.workspace = true

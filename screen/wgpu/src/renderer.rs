@@ -22,6 +22,17 @@ pub enum RenderOutcome {
     RecreateSurface,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentationOptions {
+    pub vsync: bool,
+}
+
+impl Default for PresentationOptions {
+    fn default() -> Self {
+        Self { vsync: true }
+    }
+}
+
 pub struct Renderer {
     device: Device,
     queue: Queue,
