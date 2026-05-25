@@ -1,8 +1,9 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
+use crate::settings;
 use nerust_backend_wgpu::RenderResult;
 use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_runtime::rom::load_rom_path;
-use nerust_gui_runtime::settings::HostBackendIdentity;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
@@ -17,7 +18,7 @@ use std::time::Instant;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
-    event_loop::{ControlFlow, EventLoopWindowTarget},
+    event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
     keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
@@ -35,16 +36,28 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     default_load_options: NesLoadOptions,
+    user_event_proxy: EventLoopProxy<UserEvent>,
+    settings_helper: Option<settings::SettingsHelperHandle>,
+    settings_open: bool,
+    resume_after_settings: bool,
 }
 
 impl HostState {
-    pub(crate) fn new(app_menu: AppMenu, default_load_options: NesLoadOptions) -> Self {
+    pub(crate) fn new(
+        app_menu: AppMenu,
+        user_event_proxy: EventLoopProxy<UserEvent>,
+        default_load_options: NesLoadOptions,
+    ) -> Self {
         Self {
             window: None,
             session: NesSession::new_for_host(HostBackendIdentity::tao_wgpu()),
             app_menu,
             shell: NativeShellState::new(),
             default_load_options,
+            user_event_proxy,
+            settings_helper: None,
+            settings_open: false,
+            resume_after_settings: false,
         }
     }
 
@@ -134,20 +147,36 @@ impl HostState {
         }
     }
 
-    pub(crate) fn on_menu_command(&mut self, command: UserEvent) -> HostAction {
+    pub(crate) fn on_menu_command(&mut self, command: MenuCommand) -> HostAction {
+        if self.settings_open {
+            return match command {
+                MenuCommand::Quit => {
+                    if self.prepare_close() {
+                        HostAction::Exit
+                    } else {
+                        HostAction::None
+                    }
+                }
+                _ => HostAction::None,
+            };
+        }
         match command {
-            UserEvent::Menu(MenuCommand::Open) => {
+            MenuCommand::Open => {
                 if self.open_rom_dialog() {
                     HostAction::RomLoaded
                 } else {
                     HostAction::None
                 }
             }
-            UserEvent::Menu(MenuCommand::Session(command)) => {
+            MenuCommand::Settings => {
+                self.open_settings_window();
+                HostAction::None
+            }
+            MenuCommand::Session(command) => {
                 self.apply_session_command(command);
                 HostAction::None
             }
-            UserEvent::Menu(MenuCommand::Quit) => {
+            MenuCommand::Quit => {
                 if self.prepare_close() {
                     HostAction::Exit
                 } else {
@@ -158,6 +187,9 @@ impl HostState {
     }
 
     pub(crate) fn on_keyboard_input(&mut self, input: KeyEvent) {
+        if self.settings_open {
+            return;
+        }
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = keycode_controller_input(input.physical_key)
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
@@ -216,8 +248,42 @@ impl HostState {
     }
 
     pub(crate) fn prepare_close(&mut self) -> bool {
+        self.settings_open = false;
+        self.resume_after_settings = false;
+        if let Some(helper) = self.settings_helper.take() {
+            helper.terminate();
+        }
         self.session.flush_before_exit();
         true
+    }
+
+    pub(crate) fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsApplyPlan, String> {
+        let plan = self.session.apply_settings(settings)?;
+        if plan.scaling_changed {
+            self.update_window_size_for_scaling();
+        }
+        self.sync_menu_state();
+        self.refresh_window_title();
+        self.request_redraw();
+        Ok(plan)
+    }
+
+    pub(crate) fn on_settings_closed(&mut self) {
+        self.settings_helper = None;
+        if !self.settings_open {
+            return;
+        }
+        self.settings_open = false;
+        let should_resume = std::mem::take(&mut self.resume_after_settings);
+        if should_resume {
+            self.apply_session_command(SessionCommand::Resume);
+        } else {
+            self.sync_menu_state();
+            self.refresh_window_title();
+        }
     }
 
     fn open_rom_dialog(&mut self) -> bool {
@@ -240,6 +306,7 @@ impl HostState {
             self.session.paused(),
             self.session.slots(),
             self.session.active_slot_id(),
+            self.settings_open,
         );
     }
 
@@ -303,9 +370,62 @@ impl HostState {
             window.set_fullscreen(Some(Fullscreen::Borderless(None)));
         }
     }
+
+    fn open_settings_window(&mut self) {
+        if self.settings_open {
+            return;
+        }
+        self.settings_open = true;
+        self.resume_after_settings = self.session.loaded() && !self.session.paused();
+        if self.resume_after_settings {
+            self.apply_session_command(SessionCommand::Pause);
+        } else {
+            self.sync_menu_state();
+        }
+
+        match settings::spawn_settings_helper(
+            self.session.settings_snapshot().clone(),
+            self.user_event_proxy.clone(),
+        ) {
+            Ok(helper) => {
+                self.settings_helper = Some(helper);
+            }
+            Err(error) => {
+                log::warn!("failed to open settings helper: {error}");
+                self.settings_open = false;
+                let should_resume = std::mem::take(&mut self.resume_after_settings);
+                if should_resume {
+                    self.apply_session_command(SessionCommand::Resume);
+                } else {
+                    self.sync_menu_state();
+                    self.refresh_window_title();
+                }
+            }
+        }
+    }
+
+    fn update_window_size_for_scaling(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        window.set_inner_size(logical_window_size(
+            self.session.window_size(),
+            scaling_factor(self.session.settings_snapshot().local.video.scaling),
+        ));
+    }
 }
 
 fn create_window_builder(size: WindowSize, title: String, scaling: Option<u32>) -> WindowBuilder {
+    WindowBuilder::new()
+        .with_title(title)
+        .with_inner_size(logical_window_size(size, scaling))
+}
+
+fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
+    SurfaceSize::new(size.width, size.height)
+}
+
+fn logical_window_size(size: WindowSize, scaling: Option<u32>) -> TaoLogicalSize<f64> {
     let (width, height) = scaling
         .map(|scale| {
             (
@@ -314,13 +434,7 @@ fn create_window_builder(size: WindowSize, title: String, scaling: Option<u32>) 
             )
         })
         .unwrap_or((f64::from(size.width), f64::from(size.height)));
-    WindowBuilder::new()
-        .with_title(title)
-        .with_inner_size(TaoLogicalSize::new(width, height))
-}
-
-fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
-    SurfaceSize::new(size.width, size.height)
+    TaoLogicalSize::new(width, height)
 }
 
 fn keycode_controller_input(code: KeyCode) -> Option<KeyboardKey> {

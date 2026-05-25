@@ -2,9 +2,7 @@ use crate::State;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_contract_options::Mmc3IrqVariant;
-use nerust_contract_settings::input::{
-    KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
-};
+use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::nes::NesVideoFilter;
@@ -15,16 +13,13 @@ use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_descriptors, shortcut_descriptors,
 };
 use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
+use nerust_gui_shell::settings::editor::{
+    CaptureTarget, apply_capture_target, current_binding_label,
+};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_input_schema::SystemId;
 use std::cell::RefCell;
 use std::rc::Rc;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CaptureTarget {
-    Binding { attachment: String, control: String },
-    Shortcut(ShortcutAction),
-}
 
 #[derive(Clone)]
 struct InputRow {
@@ -336,7 +331,7 @@ pub(crate) fn present_preferences_dialog(
             let Some(mapped_key) = gdk_key_to_keyboard_key(key) else {
                 return glib::Propagation::Stop;
             };
-            apply_capture_target(&mut draft.borrow_mut(), target, Some(mapped_key));
+            apply_capture_target(&mut draft.borrow_mut(), &target, Some(mapped_key));
             *capture_target.borrow_mut() = None;
             refresh_all_from_draft(&draft.borrow(), &widgets);
             glib::Propagation::Stop
@@ -400,7 +395,7 @@ pub(crate) fn present_preferences_dialog(
         );
         let target = row.target.clone();
         let _ = row.clear_button.connect_clicked(move |_| {
-            apply_capture_target(&mut draft.borrow_mut(), target.clone(), None);
+            apply_capture_target(&mut draft.borrow_mut(), &target, None);
             *capture_target.borrow_mut() = None;
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
@@ -833,80 +828,6 @@ fn apply_snapshot_to_widgets(
             } else {
                 current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
             });
-    }
-}
-
-fn current_binding_label<'a>(
-    snapshot: &'a SettingsSnapshot,
-    target: &CaptureTarget,
-) -> Option<&'a str> {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-        } => snapshot
-            .shared
-            .input
-            .systems
-            .get(&SystemId::Nes)?
-            .implicit_keyboard_profile()?
-            .bindings
-            .iter()
-            .find(|binding| {
-                binding.attachment.as_str() == attachment && binding.control.as_str() == control
-            })
-            .map(|binding| keyboard_key_label(binding.key)),
-        CaptureTarget::Shortcut(action) => snapshot
-            .shared
-            .input
-            .shortcuts
-            .keyboard
-            .iter()
-            .find(|binding| &binding.action == action)
-            .and_then(|binding| binding.key.map(keyboard_key_label)),
-    }
-}
-
-fn apply_capture_target(
-    snapshot: &mut SettingsSnapshot,
-    target: CaptureTarget,
-    key: Option<KeyboardKey>,
-) {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-        } => {
-            let profile = snapshot
-                .shared
-                .input
-                .systems
-                .entry(SystemId::Nes)
-                .or_default()
-                .implicit_keyboard_profile_mut();
-            profile.bindings.retain(|binding| {
-                !(binding.attachment.as_str() == attachment && binding.control.as_str() == control)
-            });
-            if let Some(key) = key {
-                profile.bindings.push(KeyboardBinding {
-                    attachment: PersistedAttachmentId::new(attachment),
-                    control: PersistedControlId::digital(control),
-                    key,
-                });
-            }
-        }
-        CaptureTarget::Shortcut(action) => {
-            if let Some(binding) = snapshot
-                .shared
-                .input
-                .shortcuts
-                .keyboard
-                .iter_mut()
-                .find(|binding| binding.action == action)
-            {
-                binding.key = key;
-            }
-        }
     }
 }
 

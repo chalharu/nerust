@@ -4,21 +4,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
+use std::sync::mpsc;
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum MenuCommand {
     Open,
+    Settings,
     Session(SessionCommand),
     Quit,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
+    ApplySettings {
+        snapshot: SettingsSnapshot,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    SettingsClosed,
 }
 
 #[cfg(any(
@@ -58,6 +66,8 @@ pub(crate) mod imp {
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
+        open: MenuItem,
+        settings: MenuItem,
         pause: MenuItem,
         resume: MenuItem,
         create_slot: MenuItem,
@@ -101,6 +111,7 @@ pub(crate) mod imp {
             }
 
             let open = MenuItem::new("Open ROM...", true, None);
+            let settings = MenuItem::new("Settings...", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -110,6 +121,7 @@ pub(crate) mod imp {
             let load_active = MenuItem::new("Load Active Slot (F8)", false, None);
 
             let open_id = open.id().clone();
+            let settings_id = settings.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -121,6 +133,7 @@ pub(crate) mod imp {
             let dynamic_commands_handler = dynamic_commands.clone();
 
             file_menu.append(&open).unwrap();
+            file_menu.append(&settings).unwrap();
             file_menu.append(&quit).unwrap();
             state_menu.append(&create_slot).unwrap();
             state_menu.append(&save_active).unwrap();
@@ -140,6 +153,8 @@ pub(crate) mod imp {
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &open_id {
                     Some(MenuCommand::Open)
+                } else if event.id() == &settings_id {
+                    Some(MenuCommand::Settings)
                 } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
@@ -170,6 +185,8 @@ pub(crate) mod imp {
 
             Self {
                 menu_bar,
+                open,
+                settings,
                 pause,
                 resume,
                 create_slot,
@@ -216,13 +233,16 @@ pub(crate) mod imp {
             paused: bool,
             slots: &[StateSlotSummary],
             active_slot: Option<u64>,
+            settings_open: bool,
         ) {
-            self.pause.set_enabled(loaded && !paused);
-            self.resume.set_enabled(loaded && paused);
-            self.create_slot.set_enabled(loaded);
-            self.save_active.set_enabled(loaded);
+            self.open.set_enabled(!settings_open);
+            self.settings.set_enabled(!settings_open);
+            self.pause.set_enabled(!settings_open && loaded && !paused);
+            self.resume.set_enabled(!settings_open && loaded && paused);
+            self.create_slot.set_enabled(!settings_open && loaded);
+            self.save_active.set_enabled(!settings_open && loaded);
             self.load_active
-                .set_enabled(loaded && active_slot.is_some());
+                .set_enabled(!settings_open && loaded && active_slot.is_some());
             self.rebuild_dynamic_slot_menus(slots, active_slot);
         }
 
@@ -311,6 +331,7 @@ pub(crate) mod imp {
             _paused: bool,
             _slots: &[StateSlotSummary],
             _active_slot: Option<u64>,
+            _settings_open: bool,
         ) {
         }
 

@@ -19,6 +19,7 @@ nerust_gui_session.workspace = true
 nerust_input_schema.workspace = true
 nerust_persistence.workspace = true
 serde.workspace = true
+serde_derive.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 
