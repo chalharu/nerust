@@ -54,6 +54,8 @@ fn ntsc_texture_is_prepacked_for_r32uint_upload() {
 #[test]
 fn composed_shader_source_contains_split_stage_modules_once() {
     let source = composed_shader_source();
+    assert_eq!(source.matches("fn fs_direct_linear").count(), 1);
+    assert_eq!(source.matches("fn fs_direct_srgb").count(), 1);
     assert_eq!(source.matches("fn output_coords").count(), 1);
     assert_eq!(source.matches("fn palette_rgb_for_output").count(), 1);
     assert_eq!(source.matches("fn ntsc_rgb_for_output").count(), 1);

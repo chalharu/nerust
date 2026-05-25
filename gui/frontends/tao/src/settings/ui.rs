@@ -14,16 +14,17 @@ use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::nes::NesVideoFilter;
 use nerust_contract_settings::shared::{StoragePolicy, SystemSettings};
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
+use nerust_gui_shell::descriptor::NesConsoleProfile;
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
-    keyboard_binding_descriptors, shortcut_descriptors,
+    keyboard_binding_sections, shortcut_descriptors,
 };
 use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
 use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
-use nerust_input_schema::SystemId;
+use nerust_input_schema::{InputTopologyDescriptor, SystemId};
 use rfd::FileDialog;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -51,8 +52,7 @@ enum SettingsPage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputPageSection {
-    PlayerOne,
-    PlayerTwo,
+    Attachment(usize),
     Shortcuts,
 }
 
@@ -178,10 +178,10 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleFullscreenDefault(value) => {
-            state.draft.local.video.fullscreen_default = value;
+            state.draft.local.video.window.fullscreen_default = value;
         }
-        Message::SetScaling(choice) => state.draft.local.video.scaling = choice.value,
-        Message::ToggleVsync(value) => state.draft.local.video.vsync = value,
+        Message::SetScaling(choice) => state.draft.local.video.window.scaling = choice.value,
+        Message::ToggleVsync(value) => state.draft.local.video.presentation.vsync = value,
         Message::ToggleMute(value) => state.draft.local.audio.muted = value,
         Message::SetVolume(value) => state.draft.local.audio.master_volume_percent = value,
         Message::SetSampleRate(choice) => state.draft.local.audio.sample_rate = choice.value,
@@ -306,7 +306,7 @@ impl SettingsApp {
             bridge,
             draft: snapshot,
             page: SettingsPage::General,
-            input_section: InputPageSection::PlayerOne,
+            input_section: InputPageSection::Attachment(0),
             capture_target: None,
             storage_directory_input,
             error_message: None,
@@ -323,7 +323,7 @@ impl SettingsApp {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        for (key, labels) in conflicting_keys(&self.draft.shared) {
+        for (key, labels) in conflicting_keys(&self.draft.shared, &input_topology()) {
             errors.push(format!(
                 "{}: {}",
                 keyboard_key_label(key),
@@ -340,7 +340,9 @@ impl SettingsApp {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(&self.draft.shared).into_iter().next()?;
+        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology())
+            .into_iter()
+            .next()?;
         Some(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -411,60 +413,44 @@ impl SettingsApp {
             content = content.push(text(conflict));
         }
 
-        let navigation = row![
-            input_section_radio(
-                language,
-                UiText::PlayerOne,
-                InputPageSection::PlayerOne,
-                self.input_section
-            ),
-            input_section_radio(
-                language,
-                UiText::PlayerTwo,
-                InputPageSection::PlayerTwo,
-                self.input_section
-            ),
-            input_section_radio(
-                language,
-                UiText::Shortcuts,
-                InputPageSection::Shortcuts,
-                self.input_section
-            ),
-        ]
-        .spacing(16)
-        .align_y(Alignment::Center);
+        let sections = keyboard_binding_sections(&input_topology());
+        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
+        for (index, section) in sections.iter().enumerate() {
+            navigation = navigation.push(input_section_radio_label(
+                section.attachment_label,
+                InputPageSection::Attachment(index),
+                self.input_section,
+            ));
+        }
+        navigation = navigation.push(input_section_radio(
+            language,
+            UiText::Shortcuts,
+            InputPageSection::Shortcuts,
+            self.input_section,
+        ));
 
         let section = match self.input_section {
-            InputPageSection::PlayerOne => self.input_section(
-                ui_text(language, UiText::PlayerOne),
-                keyboard_binding_descriptors()
-                    .iter()
-                    .filter(|descriptor| descriptor.attachment_label == "Player 1")
-                    .map(|descriptor| {
-                        (
-                            descriptor.control_label,
-                            CaptureTarget::Binding {
-                                attachment: descriptor.attachment.as_str().to_string(),
-                                control: descriptor.control.as_str().to_string(),
-                            },
-                        )
-                    }),
-            ),
-            InputPageSection::PlayerTwo => self.input_section(
-                ui_text(language, UiText::PlayerTwo),
-                keyboard_binding_descriptors()
-                    .iter()
-                    .filter(|descriptor| descriptor.attachment_label == "Player 2")
-                    .map(|descriptor| {
-                        (
-                            descriptor.control_label,
-                            CaptureTarget::Binding {
-                                attachment: descriptor.attachment.as_str().to_string(),
-                                control: descriptor.control.as_str().to_string(),
-                            },
-                        )
-                    }),
-            ),
+            InputPageSection::Attachment(index) => sections
+                .get(index)
+                .map(|section| {
+                    let rows = section
+                        .bindings
+                        .clone()
+                        .into_iter()
+                        .map(|descriptor| {
+                            (
+                                descriptor.control_label,
+                                CaptureTarget::Binding {
+                                    system: descriptor.system,
+                                    attachment: descriptor.attachment.as_str().to_string(),
+                                    control: descriptor.control.as_str().to_string(),
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    self.input_section(section.attachment_label, rows.into_iter())
+                })
+                .unwrap_or_else(|| self.input_section("", std::iter::empty())),
             InputPageSection::Shortcuts => self.input_section(
                 ui_text(language, UiText::Shortcuts),
                 shortcut_descriptors().iter().map(|descriptor| {
@@ -510,16 +496,19 @@ impl SettingsApp {
     fn video_page(&self) -> Element<'_, Message> {
         let language = self.language();
         column![
-            checkbox(self.draft.local.video.fullscreen_default)
+            checkbox(self.draft.local.video.window.fullscreen_default)
                 .label(ui_text(language, UiText::FullscreenDefault))
                 .on_toggle(Message::ToggleFullscreenDefault),
             labeled_pick_list(
                 ui_text(language, UiText::Scaling),
                 scaling_options(language),
-                selected_choice(self.draft.local.video.scaling, scaling_options(language)),
+                selected_choice(
+                    self.draft.local.video.window.scaling,
+                    scaling_options(language)
+                ),
                 Message::SetScaling
             ),
-            checkbox(self.draft.local.video.vsync)
+            checkbox(self.draft.local.video.presentation.vsync)
                 .label(ui_text(language, UiText::Vsync))
                 .on_toggle(Message::ToggleVsync),
         ]
@@ -605,13 +594,15 @@ fn input_section_radio(
     value: InputPageSection,
     selected: InputPageSection,
 ) -> Element<'static, Message> {
-    radio(
-        ui_text(language, label),
-        value,
-        Some(selected),
-        Message::SelectInputSection,
-    )
-    .into()
+    input_section_radio_label(ui_text(language, label), value, selected)
+}
+
+fn input_section_radio_label(
+    label: &'static str,
+    value: InputPageSection,
+    selected: InputPageSection,
+) -> Element<'static, Message> {
+    radio(label, value, Some(selected), Message::SelectInputSection).into()
 }
 
 fn labeled_pick_list<T: Copy + Eq + 'static>(
@@ -791,6 +782,10 @@ fn nes_settings_mut(
 ) -> &mut nerust_contract_settings::nes::NesSettings {
     let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
     nes
+}
+
+fn input_topology() -> InputTopologyDescriptor {
+    NesConsoleProfile.input_topology_descriptor()
 }
 
 fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {

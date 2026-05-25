@@ -1,34 +1,33 @@
 use super::{ConsoleData, ConsoleRunner};
 use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher};
 use nerust_core::Core;
-use nerust_input_nes_runtime::{
-    apply_input_state as apply_runtime_input_state, decode_controller_state,
-    encode_controller_state, encode_input_state,
-};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
 
 impl ConsoleRunner {
     fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), ConsoleError> {
-        let snapshot = apply_runtime_input_state(self.controller.export_snapshot(), bytes)
-            .map_err(ConsoleError::Core)?;
-        self.controller.import_snapshot(snapshot);
-        Ok(())
+        self.controller
+            .apply_input_state(bytes)
+            .map_err(ConsoleError::Core)
     }
 
     fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), ConsoleError> {
-        let snapshot = decode_controller_state(bytes).map_err(ConsoleError::Core)?;
-        self.controller.import_snapshot(snapshot);
-        Ok(())
+        self.controller
+            .apply_controller_state(bytes)
+            .map_err(ConsoleError::Core)
     }
 
     fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        encode_controller_state(self.controller.export_snapshot()).map_err(ConsoleError::Core)
+        self.controller
+            .current_controller_state()
+            .map_err(ConsoleError::Core)
     }
 
     fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        encode_input_state(self.controller.export_snapshot()).map_err(ConsoleError::Core)
+        self.controller
+            .current_input_state()
+            .map_err(ConsoleError::Core)
     }
 
     fn reply(reply: Sender<ConsoleRequestResult>, result: Result<ConsoleReply, ConsoleError>) {
@@ -47,7 +46,7 @@ impl ConsoleRunner {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.screen, &mut self.controller, &mut speaker);
+                core.run_frame(&mut self.screen, self.controller.as_mut(), &mut speaker);
                 self.frame_counter += 1;
                 self.publish_frame();
             }
@@ -64,7 +63,7 @@ impl ConsoleRunner {
                             .map_err(|error| ConsoleError::Core(error.to_string()));
                         match result {
                             Ok(new_core) => {
-                                self.controller.reset();
+                                self.controller.reset_runtime();
                                 self.screen.clear();
                                 self.publish_frame();
                                 self.frame_counter = 0;
@@ -114,7 +113,7 @@ impl ConsoleRunner {
                         let result = if core.is_some() {
                             self.paused = false;
                             self.frame_counter = 0;
-                            self.controller.reset();
+                            self.controller.reset_runtime();
                             core = None;
                             self.screen.clear();
                             self.publish_frame();

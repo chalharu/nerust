@@ -4,15 +4,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::Renderer;
+use super::{PresentationOptions, Renderer};
 use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::FrameUploadLayout,
 };
-use nerust_screen_filter::presentation::NesVideoAssets;
+use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_video::VideoPresentation;
+use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,
@@ -32,19 +32,24 @@ struct FilterUniforms {
     output_height: u32,
 }
 
+const BLACK_RGBA8_TEXEL: [u8; 4] = [0, 0, 0, 0xFF];
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum FramePipelineKind {
+    DirectColor,
+    Palette,
+    Ntsc,
+}
+
 impl Renderer {
     pub async fn new<T: SurfaceTargetSource>(
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
-        assets: &NesVideoAssets,
+        assets: Option<&ConsoleVideoAssets>,
+        presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
-        if !presentation.is_palette_frame() {
-            return Err(
-                "nerust_screen_wgpu does not yet support non-palette video presentations"
-                    .to_string(),
-            );
-        }
+        let pipeline_kind = frame_pipeline_kind(presentation, assets)?;
 
         let instance = render_surface.instance();
         let surface = render_surface.surface();
@@ -71,9 +76,8 @@ impl Renderer {
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
         }
-        if caps.present_modes.contains(&PresentMode::AutoVsync) {
-            config.present_mode = PresentMode::AutoVsync;
-        }
+        config.present_mode =
+            Self::select_present_mode(&caps.present_modes, presentation_options.vsync);
         if caps.alpha_modes.contains(&CompositeAlphaMode::Opaque) {
             config.alpha_mode = CompositeAlphaMode::Opaque;
         }
@@ -81,7 +85,10 @@ impl Renderer {
         let source_logical_size = presentation.source_logical_size();
         let logical_size = presentation.logical_size();
         let content_size = presentation.physical_size();
-        let frame_upload_layout = FrameUploadLayout::for_logical_size(source_logical_size, 1)?;
+        let frame_upload_layout = FrameUploadLayout::for_logical_size(
+            source_logical_size,
+            frame_bytes_per_pixel(pipeline_kind),
+        )?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
             label: Some("nerust_frame_texture"),
@@ -93,23 +100,38 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::R8Uint,
+            format: frame_texture_format(pipeline_kind),
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
+        let (palette_rgba8, palette_size) = match assets {
+            Some(assets) => (
+                assets.palette_rgba8(),
+                Extent3d {
+                    width: PALETTE_TEXTURE_WIDTH,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            ),
+            None => (
+                BLACK_RGBA8_TEXEL.as_slice(),
+                Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            ),
+        };
         let palette_texture = create_texture_from_bytes(
             &device,
             &queue,
             "nerust_palette_texture",
             TextureFormat::Rgba8Uint,
-            Extent3d {
-                width: PALETTE_TEXTURE_WIDTH,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            assets.palette_rgba8(),
+            palette_size,
+            palette_rgba8,
         );
-        let (ntsc_data, ntsc_size) = encode_ntsc_texture(assets.packed_ntsc_rgba8());
+        let (ntsc_data, ntsc_size) =
+            encode_ntsc_texture(assets.and_then(|assets| assets.packed_ntsc_rgba8()));
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -248,7 +270,7 @@ impl Renderer {
             &pipeline_layout,
             &shader,
             config.format,
-            fragment_entry_point(assets.uses_ntsc_pipeline(), config.format.is_srgb()),
+            fragment_entry_point(pipeline_kind, config.format.is_srgb()),
         );
 
         Ok(Self {
@@ -269,6 +291,26 @@ impl Renderer {
             source_logical_size,
             content_size,
         })
+    }
+
+    fn select_present_mode(modes: &[PresentMode], vsync: bool) -> PresentMode {
+        let preferred = if vsync {
+            [
+                PresentMode::AutoVsync,
+                PresentMode::Fifo,
+                PresentMode::Mailbox,
+            ]
+        } else {
+            [
+                PresentMode::AutoNoVsync,
+                PresentMode::Immediate,
+                PresentMode::Mailbox,
+            ]
+        };
+        preferred
+            .into_iter()
+            .find(|mode| modes.contains(mode))
+            .unwrap_or(PresentMode::Fifo)
     }
 
     fn surface_config(
@@ -418,12 +460,47 @@ pub(super) fn composed_shader_source() -> String {
     .join("\n\n")
 }
 
-fn fragment_entry_point(uses_ntsc_pipeline: bool, surface_is_srgb: bool) -> &'static str {
-    match (uses_ntsc_pipeline, surface_is_srgb) {
-        (false, true) => "fs_palette_srgb",
-        (false, false) => "fs_palette_linear",
-        (true, true) => "fs_ntsc_srgb",
-        (true, false) => "fs_ntsc_linear",
+fn frame_pipeline_kind(
+    presentation: &VideoPresentation,
+    assets: Option<&ConsoleVideoAssets>,
+) -> Result<FramePipelineKind, String> {
+    match presentation.frame_format() {
+        VideoFrameFormat::Rgba => Ok(FramePipelineKind::DirectColor),
+        VideoFrameFormat::Palette => {
+            let Some(assets) = assets else {
+                return Err("palette video presentations require console video assets".into());
+            };
+            Ok(if assets.packed_ntsc_rgba8().is_some() {
+                FramePipelineKind::Ntsc
+            } else {
+                FramePipelineKind::Palette
+            })
+        }
+    }
+}
+
+fn frame_bytes_per_pixel(kind: FramePipelineKind) -> u32 {
+    match kind {
+        FramePipelineKind::DirectColor => 4,
+        FramePipelineKind::Palette | FramePipelineKind::Ntsc => 1,
+    }
+}
+
+fn frame_texture_format(kind: FramePipelineKind) -> TextureFormat {
+    match kind {
+        FramePipelineKind::DirectColor => TextureFormat::Rgba8Uint,
+        FramePipelineKind::Palette | FramePipelineKind::Ntsc => TextureFormat::R8Uint,
+    }
+}
+
+fn fragment_entry_point(kind: FramePipelineKind, surface_is_srgb: bool) -> &'static str {
+    match (kind, surface_is_srgb) {
+        (FramePipelineKind::DirectColor, true) => "fs_direct_srgb",
+        (FramePipelineKind::DirectColor, false) => "fs_direct_linear",
+        (FramePipelineKind::Palette, true) => "fs_palette_srgb",
+        (FramePipelineKind::Palette, false) => "fs_palette_linear",
+        (FramePipelineKind::Ntsc, true) => "fs_ntsc_srgb",
+        (FramePipelineKind::Ntsc, false) => "fs_ntsc_linear",
     }
 }
 

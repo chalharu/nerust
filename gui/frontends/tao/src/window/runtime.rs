@@ -133,7 +133,7 @@ impl WindowRuntime {
 
     fn apply_settings(&mut self, settings: SettingsSnapshot) -> Result<(), String> {
         let plan = self.host.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.vsync_changed {
+        if plan.renderer_rebuild_required {
             self.recreate_renderer();
         }
         Ok(())
