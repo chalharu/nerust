@@ -953,7 +953,12 @@ impl Cpu {
                 pointer_addr,
                 low,
             } => {
-                let high = bus.read(u32::from(pointer_addr.wrapping_add(1)));
+                let high_addr = if self.registers.e {
+                    Self::page_wrapped_next(pointer_addr)
+                } else {
+                    pointer_addr.wrapping_add(1)
+                };
+                let high = bus.read(u32::from(high_addr));
                 let target = u16::from_le_bytes([low, high]);
                 let address = self.full_data_address(target);
                 if matches!(op, DirectIndexedIndirectOp::Sta) {
@@ -1814,11 +1819,7 @@ impl Cpu {
     ) {
         let offset = bus.read(self.full_pc());
         self.registers.pc = self.registers.pc.wrapping_add(1);
-        let pointer_addr = self
-            .registers
-            .d
-            .wrapping_add(u16::from(offset))
-            .wrapping_add(self.registers.x);
+        let pointer_addr = self.direct_indexed_indirect_pointer_addr(offset);
         let low = bus.read(u32::from(pointer_addr));
         self.micro_state = MicroState::DirectIndexedIndirectPointerHigh {
             op,
@@ -3324,6 +3325,21 @@ impl Cpu {
         } else {
             self.registers.y = value;
             self.update_nz16(value);
+        }
+    }
+
+    fn page_wrapped_next(address: u16) -> u16 {
+        (address & 0xFF00) | u16::from((address as u8).wrapping_add(1))
+    }
+
+    fn direct_indexed_indirect_pointer_addr(&self, offset: u8) -> u16 {
+        if self.registers.e && (self.registers.d & 0x00FF) == 0 {
+            (self.registers.d & 0xFF00) | u16::from(offset.wrapping_add(self.registers.x as u8))
+        } else {
+            self.registers
+                .d
+                .wrapping_add(u16::from(offset))
+                .wrapping_add(self.registers.x)
         }
     }
 
@@ -5471,6 +5487,89 @@ mod tests {
         assert_eq!(cpu.registers().a(), 0x1100);
         assert_eq!(cpu.registers().db(), 0x7F);
         assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn adc_direct_indexed_indirect_emulation_wraps_pointer_high_within_page() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x0001FF, &[0x34]);
+        system.load(0x000100, &[0x12]);
+        system.load(0x7F1234, &[0xED]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xA2, 0xEF, 0x9A, 0xA9, 0x7F, 0x48, 0xAB, 0xC2, 0x30, 0xA9, 0x00, 0x01,
+                0x5B, 0xA9, 0x12, 0x11, 0xA2, 0x10, 0x00, 0xA0, 0x78, 0x56, 0x38, 0xFB, 0xC2, 0xDE,
+                0xE2, 0x21, 0x61, 0xEF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 192);
+
+        assert_eq!(cpu.registers().a(), 0x1100);
+        assert_eq!(cpu.registers().x(), 0x0010);
+        assert_eq!(cpu.registers().y(), 0x0078);
+        assert_eq!(cpu.registers().d(), 0x0100);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn adc_direct_indexed_indirect_emulation_wraps_low_pointer_with_zero_direct_page_low() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0x34, 0x12]);
+        system.load(0x7F1234, &[0xED]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xA2, 0xEF, 0x9A, 0xA9, 0x7F, 0x48, 0xAB, 0xC2, 0x30, 0xA9, 0x00, 0x01,
+                0x5B, 0xA9, 0x12, 0x11, 0xA2, 0x10, 0x00, 0xA0, 0x78, 0x56, 0x38, 0xFB, 0xC2, 0xDE,
+                0xE2, 0x21, 0x61, 0xF0, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 192);
+
+        assert_eq!(cpu.registers().a(), 0x1100);
+        assert_eq!(cpu.registers().x(), 0x0010);
+        assert_eq!(cpu.registers().y(), 0x0078);
+        assert_eq!(cpu.registers().d(), 0x0100);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn adc_direct_indexed_indirect_emulation_wraps_pointer_high_for_nonzero_direct_page_low() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x0002FF, &[0x34]);
+        system.load(0x000200, &[0x12]);
+        system.load(0x7F1234, &[0xED]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xA9, 0x7F, 0x48, 0xAB, 0xC2, 0x30, 0xA9, 0x1A, 0x01, 0x5B, 0xA9, 0x12,
+                0x11, 0xA2, 0xEE, 0x00, 0xA0, 0x78, 0x56, 0x38, 0xFB, 0xC2, 0xDE, 0xE2, 0x21, 0x61,
+                0xF7, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 192);
+
+        assert_eq!(cpu.registers().a(), 0x1100);
+        assert_eq!(cpu.registers().x(), 0x00EE);
+        assert_eq!(cpu.registers().y(), 0x0078);
+        assert_eq!(cpu.registers().d(), 0x011A);
+        assert_eq!(cpu.registers().db(), 0x7F);
         assert!(cpu.registers().status().contains(CpuStatus::CARRY));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
         assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
