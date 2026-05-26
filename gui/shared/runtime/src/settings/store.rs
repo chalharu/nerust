@@ -1,6 +1,5 @@
-use super::{
-    HostBackendIdentity, LoadedSettingsDocument, SettingsError, SettingsPaths, SettingsStore,
-};
+use super::manager::{LoadedSettingsDocument, SettingsStore};
+use super::{HostBackendIdentity, SettingsError, SettingsPaths};
 use directories::ProjectDirs;
 use nerust_contract_settings::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
 use nerust_contract_settings::local::{
