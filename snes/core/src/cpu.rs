@@ -119,6 +119,7 @@ enum ImpliedOp {
     Dex,
     Dey,
     AslAcc,
+    RolAcc,
     LsrAcc,
     Tcd,
     Tsc,
@@ -162,6 +163,7 @@ enum ImmediateMathOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShiftOp {
     Asl,
+    Rol,
     Lsr,
 }
 
@@ -1211,6 +1213,7 @@ impl Cpu {
                 }
             }
             ImpliedOp::AslAcc => self.shift_accumulator(ShiftOp::Asl),
+            ImpliedOp::RolAcc => self.shift_accumulator(ShiftOp::Rol),
             ImpliedOp::LsrAcc => self.shift_accumulator(ShiftOp::Lsr),
             ImpliedOp::Tcd => {
                 self.registers.d = self.registers.a;
@@ -3021,6 +3024,7 @@ impl Cpu {
             0xF8 => MicroState::Implied(ImpliedOp::Sed),
             0x78 => MicroState::Implied(ImpliedOp::Sei),
             0x0A => MicroState::Implied(ImpliedOp::AslAcc),
+            0x2A => MicroState::Implied(ImpliedOp::RolAcc),
             0x1A => MicroState::Implied(ImpliedOp::IncA),
             0x3A => MicroState::Implied(ImpliedOp::DecA),
             0xE8 => MicroState::Implied(ImpliedOp::Inx),
@@ -3065,6 +3069,11 @@ impl Cpu {
             }),
             0x06 => MicroState::Direct(DirectOp::Shift {
                 op: ShiftOp::Asl,
+                indexed_x: false,
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x26 => MicroState::Direct(DirectOp::Shift {
+                op: ShiftOp::Rol,
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3140,6 +3149,11 @@ impl Cpu {
             }),
             0x16 => MicroState::Direct(DirectOp::Shift {
                 op: ShiftOp::Asl,
+                indexed_x: true,
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x36 => MicroState::Direct(DirectOp::Shift {
+                op: ShiftOp::Rol,
                 indexed_x: true,
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3330,6 +3344,11 @@ impl Cpu {
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x2E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
+                op: ShiftOp::Rol,
+                indexed_x: false,
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x4E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
                 op: ShiftOp::Lsr,
                 indexed_x: false,
@@ -3338,6 +3357,11 @@ impl Cpu {
             0x6C => MicroState::AbsoluteLow(AbsoluteOp::JmpIndirect),
             0x1E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
                 op: ShiftOp::Asl,
+                indexed_x: true,
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x3E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
+                op: ShiftOp::Rol,
                 indexed_x: true,
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3536,6 +3560,13 @@ impl Cpu {
                 self.update_nz8(result);
                 result
             }
+            ShiftOp::Rol => {
+                let carry_in = u8::from(self.registers.p.contains(CpuStatus::CARRY));
+                self.registers.p.set(CpuStatus::CARRY, value & 0x80 != 0);
+                let result = (value << 1) | carry_in;
+                self.update_nz8(result);
+                result
+            }
             ShiftOp::Lsr => {
                 self.registers.p.set(CpuStatus::CARRY, value & 0x01 != 0);
                 let result = value >> 1;
@@ -3550,6 +3581,13 @@ impl Cpu {
             ShiftOp::Asl => {
                 self.registers.p.set(CpuStatus::CARRY, value & 0x8000 != 0);
                 let result = value << 1;
+                self.update_nz16(result);
+                result
+            }
+            ShiftOp::Rol => {
+                let carry_in = u16::from(self.registers.p.contains(CpuStatus::CARRY));
+                self.registers.p.set(CpuStatus::CARRY, value & 0x8000 != 0);
+                let result = (value << 1) | carry_in;
                 self.update_nz16(result);
                 result
             }
@@ -6042,6 +6080,133 @@ mod tests {
         assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x00));
         assert_eq!(system.memory.get(&0x7F0000), Some(&0x00));
         assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn rol_accumulator_16bit_rotates_carry_in_and_out() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x00, 0x80, 0x38, 0x2A, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0001);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn rol_accumulator_8bit_preserves_high_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x34, 0x12, 0xE2, 0x20, 0xA9, 0x80, 0x18, 0x2A, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().a(), 0x1200);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn rol_direct_16bit_wraps_direct_page() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x11, 0x41]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0xFF, 0xFF, 0x5B, 0x38, 0x26, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(system.memory.get(&0x000033), Some(&0x23));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x82));
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn rol_direct_indexed_x_uses_wrapped_direct_page_address() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA2, 0x33, 0x01, 0x38, 0x36, 0x02,
+                0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(system.memory.get(&0x000134), Some(&0x01));
+        assert_eq!(system.memory.get(&0x000135), Some(&0x00));
+        assert_eq!(cpu.registers().x(), 0x0133);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn rol_absolute_carries_into_next_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x11]);
+        system.load(0x7F0000, &[0x41]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x30, 0x38,
+                0x2E, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x23));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x82));
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn rol_absolute_indexed_x_carries_into_next_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x00]);
+        system.load(0x7F0300, &[0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x30, 0xA2,
+                0x00, 0x03, 0x18, 0x3E, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 144);
+
+        assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0300), Some(&0x00));
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().x(), 0x0300);
         assert!(cpu.registers().status().contains(CpuStatus::CARRY));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
     }
