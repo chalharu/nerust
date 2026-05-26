@@ -106,7 +106,11 @@ pub enum CpuState {
 enum ImpliedOp {
     Nop,
     Clc,
+    Cld,
+    Cli,
+    Clv,
     Sec,
+    Sed,
     Sei,
     IncA,
     Inx,
@@ -349,6 +353,8 @@ enum MicroState {
     ImmediateLoadHigh(ImmediateLoadTarget, u8),
     ImmediateMathLow(ImmediateMathOp),
     ImmediateMathHigh(ImmediateMathOp, u8),
+    BranchLongLow,
+    BranchLongHigh(u8),
     Direct(DirectOp),
     DirectMathHigh {
         op: ImmediateMathOp,
@@ -566,6 +572,8 @@ impl Cpu {
             MicroState::ImmediateMathHigh(op, low) => {
                 self.execute_immediate_math_high(bus, op, low)
             }
+            MicroState::BranchLongLow => self.execute_branch_long_low(bus),
+            MicroState::BranchLongHigh(low) => self.execute_branch_long_high(bus, low),
             MicroState::Direct(op) => self.execute_direct(bus, op),
             MicroState::DirectMathHigh { op, address, low } => {
                 let high = bus.read(u32::from(address.wrapping_add(1)));
@@ -878,7 +886,11 @@ impl Cpu {
         match op {
             ImpliedOp::Nop => {}
             ImpliedOp::Clc => self.registers.p.remove(CpuStatus::CARRY),
+            ImpliedOp::Cld => self.registers.p.remove(CpuStatus::DECIMAL),
+            ImpliedOp::Cli => self.registers.p.remove(CpuStatus::IRQ_DISABLE),
+            ImpliedOp::Clv => self.registers.p.remove(CpuStatus::OVERFLOW),
             ImpliedOp::Sec => self.registers.p.insert(CpuStatus::CARRY),
+            ImpliedOp::Sed => self.registers.p.insert(CpuStatus::DECIMAL),
             ImpliedOp::Sei => self.registers.p.insert(CpuStatus::IRQ_DISABLE),
             ImpliedOp::IncA => {
                 if self.accumulator_is_8bit() {
@@ -1324,6 +1336,20 @@ impl Cpu {
         } else {
             self.micro_state = MicroState::ExceptionPushBank { kind, return_addr };
         }
+    }
+
+    fn execute_branch_long_low(&mut self, bus: &mut dyn CpuBus) {
+        let low = bus.read(self.full_pc());
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        self.micro_state = MicroState::BranchLongHigh(low);
+    }
+
+    fn execute_branch_long_high(&mut self, bus: &mut dyn CpuBus, low: u8) {
+        let high = bus.read(self.full_pc());
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        let offset = i16::from_le_bytes([low, high]);
+        self.registers.pc = self.registers.pc.wrapping_add_signed(offset);
+        self.micro_state = MicroState::Fetch;
     }
 
     fn execute_immediate8(&mut self, bus: &mut dyn CpuBus, op: Immediate8Op) {
@@ -1909,7 +1935,11 @@ impl Cpu {
             0x02 => MicroState::Exception(ExceptionKind::Cop),
             0xEA => MicroState::Implied(ImpliedOp::Nop),
             0x18 => MicroState::Implied(ImpliedOp::Clc),
+            0xD8 => MicroState::Implied(ImpliedOp::Cld),
+            0x58 => MicroState::Implied(ImpliedOp::Cli),
+            0xB8 => MicroState::Implied(ImpliedOp::Clv),
             0x38 => MicroState::Implied(ImpliedOp::Sec),
+            0xF8 => MicroState::Implied(ImpliedOp::Sed),
             0x78 => MicroState::Implied(ImpliedOp::Sei),
             0x0A => MicroState::Implied(ImpliedOp::AslAcc),
             0x1A => MicroState::Implied(ImpliedOp::IncA),
@@ -1933,6 +1963,7 @@ impl Cpu {
             0x70 => MicroState::Branch(BranchKind::OverflowSet),
             0xC2 => MicroState::Immediate8(Immediate8Op::Rep),
             0xE2 => MicroState::Immediate8(Immediate8Op::Sep),
+            0x82 => MicroState::BranchLongLow,
             0xA9 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::A),
             0xA2 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::X),
             0xA0 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::Y),
@@ -2590,6 +2621,34 @@ mod tests {
         assert_eq!(system.memory.get(&0x0001FE), Some(&0x80));
         assert_eq!(system.memory.get(&0x0001FD), Some(&0x02));
         assert_eq!(system.memory.get(&0x0001FC), Some(&0x0B));
+    }
+
+    #[test]
+    fn brl_applies_a_signed_16bit_offset() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x82, 0x03, 0x00, 0xDB, 0xDB, 0xDB, 0xA9, 0x7F, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x007F);
+    }
+
+    #[test]
+    fn cld_cli_clv_and_sed_update_only_their_target_flags() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x18, 0xFB, 0xE2, 0xFF, 0xD8, 0x58, 0xB8, 0xF8, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().status().bits() & 0xFF, 0xBB);
     }
 
     #[test]
