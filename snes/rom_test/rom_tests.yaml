@@ -103,7 +103,7 @@ cases:
     description: >
       The undisbeliever VMAIN 2bpp remapping ROM eventually reaches its steady
       display loop with the remapped tile buffer written into VRAM.
-    rom: >
+    rom: >-
       snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 4096
