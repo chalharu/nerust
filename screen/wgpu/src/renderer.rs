@@ -48,7 +48,7 @@ pub struct Renderer {
     _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
     pipeline: RenderPipeline,
-    source_logical_size: LogicalSize,
+    frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
 }
 

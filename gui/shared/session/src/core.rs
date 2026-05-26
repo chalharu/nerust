@@ -1,8 +1,8 @@
-use nerust_console::state::StateExport;
-use nerust_console::video::ConsoleVideo;
+use nerust_console::state::RuntimeStateExport;
+use nerust_console::video::{ConsoleVideo, VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleError, ConsoleMetrics};
 use nerust_contract_options::CoreOptions;
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::CanonicalMediaIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -21,7 +21,7 @@ pub struct SessionCore {
 impl SessionCore {
     pub fn from_console(console: Console) -> Self {
         let metrics = console.metrics();
-        let physical_size = console.video().presentation().physical_size();
+        let physical_size = console.video().render_profile().physical_size;
         let window_size = WindowSize {
             width: physical_size.width,
             height: physical_size.height,
@@ -44,6 +44,14 @@ impl SessionCore {
 
     pub fn window_size(&self) -> WindowSize {
         self.window_size
+    }
+
+    pub fn video_frame_handle(&self) -> VideoFrameHandle {
+        self.console.video().frame_handle()
+    }
+
+    pub fn video_render_profile(&self) -> VideoRenderProfile {
+        self.console.video().render_profile()
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
@@ -108,7 +116,7 @@ impl SessionCore {
         result
     }
 
-    pub fn export_state(&self) -> Result<StateExport, ConsoleError> {
+    pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
         self.console.export_state()
     }
 
@@ -124,8 +132,8 @@ impl SessionCore {
         self.console.import_mapper_save(bytes)
     }
 
-    pub fn persistence_target(&self) -> Result<PersistenceTarget, ConsoleError> {
-        self.console.persistence_target()
+    pub fn canonical_media_identity(&self) -> Result<CanonicalMediaIdentity, ConsoleError> {
+        self.console.canonical_media_identity()
     }
 
     pub fn sync_paused_from_console(&mut self) {
@@ -170,9 +178,9 @@ mod tests {
         assert!(!core.can_pause());
         assert!(!core.can_resume());
         assert_eq!(
-            core.video().presentation().physical_size().width,
+            core.video().render_profile().physical_size.width,
             core.window_size().width
         );
-        assert!(core.with_frame_buffer(|buffer| !buffer.is_empty()));
+        assert!(!core.video_frame_handle().bytes().is_empty());
     }
 }

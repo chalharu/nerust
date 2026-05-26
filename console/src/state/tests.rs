@@ -199,7 +199,7 @@ fn export_console_state(console: &Console) -> ConsoleStatePayload {
         &console
             .export_state()
             .expect("console state should export")
-            .machine_state,
+            .state_blob,
     )
 }
 
@@ -287,14 +287,14 @@ fn console_state_export_import_round_trip_preserves_wrapper_fields() {
     let original = console.export_state().expect("console state should export");
 
     console
-        .import_state(original.machine_state.clone())
+        .import_state(original.state_blob.clone())
         .expect("console state should import");
 
     let exported = console
         .export_state()
         .expect("console state should re-export");
-    let original_payload = decode_console_state(&original.machine_state);
-    let exported_payload = decode_console_state(&exported.machine_state);
+    let original_payload = decode_console_state(&original.state_blob);
+    let exported_payload = decode_console_state(&exported.state_blob);
     assert_eq!(
         exported_payload.frame_counter,
         original_payload.frame_counter
@@ -313,7 +313,7 @@ fn console_state_import_accepts_runtime_owned_controller_payloads() {
     let export = template
         .export_state()
         .expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.controller_state = vec![0xDE, 0xAD, 0xBE, 0xEF];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -330,7 +330,7 @@ fn console_state_import_accepts_runtime_owned_controller_payloads() {
 fn console_state_import_restores_paused_frame_counter_controller_and_source_frame() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.frame_counter = 42;
     payload.paused = true;
     payload.controller_state = encode_standard_controller_state(StandardControllerState {
@@ -369,7 +369,7 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
 fn console_state_rejects_schema_mismatch() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.schema_version += 1;
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -387,7 +387,7 @@ fn console_state_rejects_schema_mismatch() {
 fn console_state_rejects_invalid_controller_payload() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.controller_state = vec![0x01, 0x02, 0x03];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -401,7 +401,7 @@ fn console_state_rejects_invalid_controller_payload() {
 fn console_state_rejects_wrapper_rom_identity_mismatch() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.rom_identity.prg_rom_crc64 ^= 1;
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -415,7 +415,7 @@ fn console_state_rejects_wrapper_rom_identity_mismatch() {
 fn console_state_rejects_wrapper_option_mismatch() {
     let console = loaded_console();
     let export = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&export.machine_state);
+    let mut payload = decode_console_state(&export.state_blob);
     payload.options = CoreOptions {
         mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
     };
@@ -435,7 +435,7 @@ fn console_state_rejects_wrapper_option_mismatch() {
 fn console_state_failed_import_does_not_mutate_existing_state() {
     let console = loaded_console();
     let before = console.export_state().expect("console state should export");
-    let mut payload = decode_console_state(&before.machine_state);
+    let mut payload = decode_console_state(&before.state_blob);
     payload.controller_state = vec![0x01, 0x02, 0x03];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
@@ -446,8 +446,8 @@ fn console_state_failed_import_does_not_mutate_existing_state() {
     let after = console
         .export_state()
         .expect("console state should still export");
-    let before_payload = decode_console_state(&before.machine_state);
-    let after_payload = decode_console_state(&after.machine_state);
+    let before_payload = decode_console_state(&before.state_blob);
+    let after_payload = decode_console_state(&after.state_blob);
     assert_eq!(after_payload.frame_counter, before_payload.frame_counter);
     assert_eq!(after_payload.paused, before_payload.paused);
     assert_eq!(

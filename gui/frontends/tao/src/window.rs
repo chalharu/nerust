@@ -6,7 +6,8 @@
 
 mod runtime;
 
-use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant as ShellMmc3IrqVariant};
+use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
+use nerust_input_schema::SystemId;
 use runtime::WindowRuntime;
 use std::path::{Path, PathBuf};
 
@@ -21,16 +22,21 @@ pub enum WindowMmc3IrqVariant {
     Nec,
 }
 
-fn nes_load_options_from_window_options(options: WindowLoadOptions) -> NesLoadOptions {
-    NesLoadOptions {
-        mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
+fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRequest {
+    LoadRequest::Explicit {
+        system_id: SystemId::Nes,
+        options: SystemLoadOptions {
+            mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
+        },
     }
 }
 
-fn shell_mmc3_irq_variant(variant: WindowMmc3IrqVariant) -> ShellMmc3IrqVariant {
+fn shell_mmc3_irq_variant(
+    variant: WindowMmc3IrqVariant,
+) -> nerust_contract_options::Mmc3IrqVariant {
     match variant {
-        WindowMmc3IrqVariant::Sharp => ShellMmc3IrqVariant::Sharp,
-        WindowMmc3IrqVariant::Nec => ShellMmc3IrqVariant::Nec,
+        WindowMmc3IrqVariant::Sharp => nerust_contract_options::Mmc3IrqVariant::Sharp,
+        WindowMmc3IrqVariant::Nec => nerust_contract_options::Mmc3IrqVariant::Nec,
     }
 }
 
@@ -41,13 +47,13 @@ pub struct Window {
 impl Window {
     pub fn new() -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new(NesLoadOptions::default())),
+            runtime: Box::new(WindowRuntime::new(LoadRequest::Auto)),
         }
     }
 
     pub fn with_load_options(options: WindowLoadOptions) -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new(nes_load_options_from_window_options(
+            runtime: Box::new(WindowRuntime::new(system_load_request_from_window_options(
                 options,
             ))),
         }
@@ -66,7 +72,7 @@ impl Window {
         self.runtime.load_with_options(
             rom_path,
             data,
-            nes_load_options_from_window_options(options),
+            system_load_request_from_window_options(options),
         );
     }
 
@@ -88,17 +94,22 @@ impl Default for Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{WindowLoadOptions, WindowMmc3IrqVariant, nes_load_options_from_window_options};
-    use nerust_gui_shell::load::{NesLoadOptions, NesMmc3IrqVariant};
+    use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
+    use nerust_contract_options::Mmc3IrqVariant;
+    use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
+    use nerust_input_schema::SystemId;
 
     #[test]
-    fn window_load_options_translate_to_shell_load_options() {
+    fn window_load_options_translate_to_system_load_request() {
         assert_eq!(
-            nes_load_options_from_window_options(WindowLoadOptions {
+            system_load_request_from_window_options(WindowLoadOptions {
                 mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
             }),
-            NesLoadOptions {
-                mmc3_irq_variant: Some(NesMmc3IrqVariant::Sharp),
+            LoadRequest::Explicit {
+                system_id: SystemId::Nes,
+                options: SystemLoadOptions {
+                    mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+                },
             }
         );
     }

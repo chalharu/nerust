@@ -7,14 +7,15 @@ use iced::widget::{
     text_input,
 };
 use iced::{Element, Event, Font, Length, Subscription, Task, Theme};
-use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_contract_settings::local::ScalingMode;
-use nerust_contract_settings::nes::NesVideoFilter;
-use nerust_contract_settings::shared::{StoragePolicy, SystemSettings};
+use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
-use nerust_gui_shell::descriptor::NesConsoleProfile;
+use nerust_gui_shell::descriptor::{
+    SystemSettingsChoiceId, SystemSettingsFieldModel, apply_default_system_settings_choice,
+    default_input_topology_descriptor, default_system_settings_page_model,
+};
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_sections, shortcut_descriptors,
@@ -24,18 +25,18 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
-use nerust_input_schema::{InputTopologyDescriptor, SystemId};
+use nerust_input_schema::InputTopologyDescriptor;
 use rfd::FileDialog;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Choice<T: Copy + Eq> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Choice<T: Clone + Eq> {
     value: T,
-    label: &'static str,
+    label: String,
 }
 
-impl<T: Copy + Eq> fmt::Display for Choice<T> {
+impl<T: Clone + Eq> fmt::Display for Choice<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.label)
     }
@@ -71,8 +72,7 @@ enum Message {
     SetVolume(u8),
     SetSampleRate(Choice<u32>),
     SetLatency(u16),
-    SetFilter(Choice<NesVideoFilter>),
-    SetMmc3IrqVariant(Choice<Option<Mmc3IrqVariant>>),
+    SetSystemChoice(String, Choice<String>),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
@@ -186,11 +186,12 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
         Message::SetVolume(value) => state.draft.local.audio.master_volume_percent = value,
         Message::SetSampleRate(choice) => state.draft.local.audio.sample_rate = choice.value,
         Message::SetLatency(value) => state.draft.local.audio.latency_ms = value,
-        Message::SetFilter(choice) => {
-            nes_settings_mut(&mut state.draft).video.filter = choice.value
-        }
-        Message::SetMmc3IrqVariant(choice) => {
-            nes_settings_mut(&mut state.draft).core.mmc3_irq_variant = choice.value;
+        Message::SetSystemChoice(field, choice) => {
+            let _ = apply_default_system_settings_choice(
+                &mut state.draft,
+                &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
+                &SystemSettingsChoiceId(choice.value.into()),
+            );
         }
         Message::StartCapture(target) => state.capture_target = Some(target),
         Message::ClearCapture(target) => {
@@ -552,24 +553,12 @@ impl SettingsApp {
     }
 
     fn system_page(&self) -> Element<'_, Message> {
-        let language = self.language();
-        let nes = nes_settings(&self.draft);
-        column![
-            labeled_pick_list(
-                ui_text(language, UiText::Filter),
-                filter_options(language),
-                selected_choice(nes.video.filter, filter_options(language)),
-                Message::SetFilter
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::Mmc3IrqVariant),
-                mmc3_irq_options(language),
-                selected_choice(nes.core.mmc3_irq_variant, mmc3_irq_options(language)),
-                Message::SetMmc3IrqVariant
-            ),
-        ]
-        .spacing(16)
-        .into()
+        let model = default_system_settings_page_model(&self.draft);
+        let mut content = column![];
+        for field in model.fields.iter() {
+            content = content.push(system_choice_row(field));
+        }
+        content.spacing(16).into()
     }
 }
 
@@ -605,7 +594,7 @@ fn input_section_radio_label(
     radio(label, value, Some(selected), Message::SelectInputSection).into()
 }
 
-fn labeled_pick_list<T: Copy + Eq + 'static>(
+fn labeled_pick_list<T: Clone + Eq + 'static>(
     label: &'static str,
     options: impl Into<Vec<Choice<T>>>,
     selected: Choice<T>,
@@ -636,12 +625,44 @@ fn labeled_slider<'a>(
     .into()
 }
 
-fn selected_choice<T: Copy + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) -> Choice<T> {
+fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) -> Choice<T> {
     options
         .into()
         .into_iter()
         .find(|choice| choice.value == value)
         .unwrap()
+}
+
+fn system_choice_row(field: &SystemSettingsFieldModel) -> Element<'static, Message> {
+    let nerust_gui_shell::descriptor::SystemSettingsFieldKind::Choice { selected, options } =
+        &field.kind;
+    let choices = options
+        .iter()
+        .map(|option| Choice {
+            value: option.id.as_str().to_string(),
+            label: option.label.clone(),
+        })
+        .collect::<Vec<_>>();
+    let selected = choices
+        .iter()
+        .find(|choice| choice.value == selected.as_str())
+        .cloned()
+        .or_else(|| choices.first().cloned())
+        .unwrap_or(Choice {
+            value: String::new(),
+            label: String::new(),
+        });
+    let field_id = field.id.as_str().to_string();
+    row![
+        text(field.label.clone()).width(Length::Fixed(220.0)),
+        pick_list(choices, Some(selected), move |choice| {
+            Message::SetSystemChoice(field_id.clone(), choice)
+        })
+        .width(Length::Shrink)
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 #[cfg(target_os = "windows")]
@@ -658,15 +679,15 @@ fn language_options(language: AppLanguage) -> Vec<Choice<AppLanguage>> {
     vec![
         Choice {
             value: AppLanguage::SystemDefault,
-            label: ui_text(language, UiText::SystemDefault),
+            label: ui_text(language, UiText::SystemDefault).to_string(),
         },
         Choice {
             value: AppLanguage::Japanese,
-            label: ui_text(language, UiText::Japanese),
+            label: ui_text(language, UiText::Japanese).to_string(),
         },
         Choice {
             value: AppLanguage::English,
-            label: ui_text(language, UiText::English),
+            label: ui_text(language, UiText::English).to_string(),
         },
     ]
 }
@@ -675,15 +696,15 @@ fn storage_policy_options(language: AppLanguage) -> Vec<Choice<StoragePolicy>> {
     vec![
         Choice {
             value: StoragePolicy::Sidecar,
-            label: ui_text(language, UiText::Sidecar),
+            label: ui_text(language, UiText::Sidecar).to_string(),
         },
         Choice {
             value: StoragePolicy::AppSharedData,
-            label: ui_text(language, UiText::AppSharedData),
+            label: ui_text(language, UiText::AppSharedData).to_string(),
         },
         Choice {
             value: StoragePolicy::CustomDirectory,
-            label: ui_text(language, UiText::CustomDirectory),
+            label: ui_text(language, UiText::CustomDirectory).to_string(),
         },
     ]
 }
@@ -692,27 +713,27 @@ fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
     vec![
         Choice {
             value: ScalingMode::FitToWindow,
-            label: ui_text(language, UiText::FitToWindow),
+            label: ui_text(language, UiText::FitToWindow).to_string(),
         },
         Choice {
             value: ScalingMode::X1,
-            label: "1x",
+            label: "1x".to_string(),
         },
         Choice {
             value: ScalingMode::X2,
-            label: "2x",
+            label: "2x".to_string(),
         },
         Choice {
             value: ScalingMode::X3,
-            label: "3x",
+            label: "3x".to_string(),
         },
         Choice {
             value: ScalingMode::X4,
-            label: "4x",
+            label: "4x".to_string(),
         },
         Choice {
             value: ScalingMode::X5,
-            label: "5x",
+            label: "5x".to_string(),
         },
     ]
 }
@@ -721,71 +742,21 @@ fn sample_rate_options() -> Vec<Choice<u32>> {
     vec![
         Choice {
             value: 22_050,
-            label: "22050",
+            label: "22050".to_string(),
         },
         Choice {
             value: 44_100,
-            label: "44100",
+            label: "44100".to_string(),
         },
         Choice {
             value: 48_000,
-            label: "48000",
+            label: "48000".to_string(),
         },
     ]
-}
-
-fn filter_options(language: AppLanguage) -> Vec<Choice<NesVideoFilter>> {
-    vec![
-        Choice {
-            value: NesVideoFilter::None,
-            label: ui_text(language, UiText::None),
-        },
-        Choice {
-            value: NesVideoFilter::NtscComposite,
-            label: ui_text(language, UiText::NtscComposite),
-        },
-        Choice {
-            value: NesVideoFilter::NtscSVideo,
-            label: ui_text(language, UiText::NtscSVideo),
-        },
-        Choice {
-            value: NesVideoFilter::NtscRgb,
-            label: ui_text(language, UiText::NtscRgb),
-        },
-    ]
-}
-
-fn mmc3_irq_options(language: AppLanguage) -> Vec<Choice<Option<Mmc3IrqVariant>>> {
-    vec![
-        Choice {
-            value: None,
-            label: ui_text(language, UiText::Auto),
-        },
-        Choice {
-            value: Some(Mmc3IrqVariant::Sharp),
-            label: ui_text(language, UiText::Sharp),
-        },
-        Choice {
-            value: Some(Mmc3IrqVariant::Nec),
-            label: ui_text(language, UiText::Nec),
-        },
-    ]
-}
-
-fn nes_settings(snapshot: &SettingsSnapshot) -> &nerust_contract_settings::nes::NesSettings {
-    let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::Nes).unwrap();
-    nes
-}
-
-fn nes_settings_mut(
-    snapshot: &mut SettingsSnapshot,
-) -> &mut nerust_contract_settings::nes::NesSettings {
-    let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
-    nes
 }
 
 fn input_topology() -> InputTopologyDescriptor {
-    NesConsoleProfile.input_topology_descriptor()
+    default_input_topology_descriptor()
 }
 
 fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {

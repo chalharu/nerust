@@ -1,4 +1,4 @@
-use super::{prepare_test_dir, test_metadata, test_target_with_irq_variant, write_fixture_archive};
+use super::{prepare_test_dir, test_identity, test_metadata, write_fixture_archive};
 use crate::archive::build_state_archive;
 use crate::metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY};
 use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
@@ -56,7 +56,7 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
         &dir,
         7,
         b"machine-state",
-        test_target_with_irq_variant(nerust_contract_options::Mmc3IrqVariant::Sharp),
+        test_identity(),
         Some(&ThumbnailSource {
             width: 2,
             height: 1,

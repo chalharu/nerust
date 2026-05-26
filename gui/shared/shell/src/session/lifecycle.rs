@@ -1,266 +1,581 @@
-use crate::descriptor::SystemSessionProfile;
-use crate::load::NesLoadOptions;
-use crate::session::NesSession;
-use nerust_console::ConsoleMetrics;
-use nerust_console::video::ConsoleVideo;
+use crate::descriptor::{RuntimeHostServices, SystemSettingsPageModel};
+use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
+use crate::session::SessionHandle;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_persistence::model::StateSlotSummary;
-use std::path::PathBuf;
+use nerust_gui_session::title::window_title;
+use nerust_persistence::sidecar::{
+    load_mapper_save, write_mapper_save, write_recovery_mapper_save,
+};
+use nerust_persistence::slots::{
+    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots_for_identity,
+    state_slot_path, write_state_slot,
+};
+use nerust_persistence::thumbnail::ThumbnailSource;
+use nerust_persistence::time::latest_saved_slot_id;
+use std::path::Path;
 
-impl NesSession {
-    pub fn video(&self) -> &ConsoleVideo {
-        self.system.session.video()
-    }
-
-    pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.system.session.with_frame_buffer(f)
+impl SessionHandle {
+    pub fn metrics(&self) -> nerust_console::ConsoleMetrics {
+        self.runtime.snapshot().metrics
     }
 
     pub fn window_size(&self) -> WindowSize {
-        self.system.session.window_size()
-    }
-
-    pub fn metrics(&self) -> ConsoleMetrics {
-        self.system.session.metrics()
+        let profile = self
+            .runtime
+            .snapshot()
+            .video_profile
+            .expect("system runtime should publish a video profile");
+        WindowSize {
+            width: profile.physical_size.width,
+            height: profile.physical_size.height,
+        }
     }
 
     pub fn window_title(&self) -> String {
-        self.system.session.window_title()
-    }
-
-    pub fn paused(&self) -> bool {
-        self.system.session.paused()
+        let metrics = self.metrics();
+        window_title(metrics.paused, metrics)
     }
 
     pub fn loaded(&self) -> bool {
-        self.system.session.loaded()
+        self.metrics().loaded
+    }
+
+    pub fn paused(&self) -> bool {
+        self.metrics().paused
     }
 
     pub fn can_pause(&self) -> bool {
-        self.system.session.can_pause()
+        let metrics = self.metrics();
+        metrics.loaded && !metrics.paused
     }
 
     pub fn can_resume(&self) -> bool {
-        self.system.session.can_resume()
+        let metrics = self.metrics();
+        metrics.loaded && metrics.paused
     }
 
-    pub fn slots(&self) -> &[StateSlotSummary] {
-        self.system.session.slots()
+    pub fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
+        self.descriptor.input_topology.clone()
     }
 
-    pub fn active_slot_id(&self) -> Option<u64> {
-        self.system.session.active_slot_id()
+    pub fn system_settings_page_model(&self) -> SystemSettingsPageModel {
+        self.definition.settings_page(&self.settings_snapshot)
     }
 
-    pub fn resume(&mut self) {
-        self.system.session.resume();
+    pub fn apply_system_settings_choice(
+        &self,
+        settings: &mut nerust_gui_runtime::settings::SettingsSnapshot,
+        field: &crate::descriptor::SystemSettingsFieldId,
+        choice: &crate::descriptor::SystemSettingsChoiceId,
+    ) -> Result<(), String> {
+        self.definition
+            .apply_settings_choice(settings, field, choice)
     }
 
-    pub fn load(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
-        self.load_with_options(rom_path, data, NesLoadOptions::default())
-    }
-
-    pub fn load_with_options(
+    pub fn apply_settings(
         &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        explicit_options: NesLoadOptions,
-    ) -> bool {
-        let core_options = self
-            .system
-            .profile
-            .effective_load_options(&self.system.settings_snapshot, explicit_options);
-        let loaded = self
-            .system
-            .session
-            .load_with_options(None, data.clone(), core_options);
-        if !loaded {
-            return false;
+        next_settings: nerust_gui_runtime::settings::SettingsSnapshot,
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+        let previous = self.settings_snapshot.clone();
+        let plan = nerust_gui_runtime::settings::derive_apply_plan(
+            self.host_backend,
+            &previous,
+            &next_settings,
+        );
+
+        if plan.session_rebuild_required {
+            self.rebuild_for_settings(&next_settings)
+                .map_err(|error| format!("failed to apply settings: {error}"))?;
         }
 
-        self.system.loaded_rom = Some(super::LoadedRom {
-            path: rom_path.clone(),
-            data: data.clone(),
-            explicit_options,
-        });
-        self.sync_input_from_session();
-
-        let persistence_paths = match self.system.session.persistence_target() {
-            Ok(target) => match self.system.settings.resolve_persistence_paths_with_import(
-                self.system.profile.system_id(),
-                rom_path.as_deref(),
-                target.rom_identity,
-            ) {
-                Ok(paths) => Some(paths),
-                Err(error) => {
-                    log::warn!("failed to resolve persistence paths: {error}");
-                    None
-                }
-            },
-            Err(error) => {
-                log::warn!("failed to read persistence target: {error}");
-                None
+        if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
+            if plan.session_rebuild_required {
+                let _ = self.rebuild_for_settings(&previous);
             }
-        };
-        self.system
-            .session
-            .configure_persistence_paths(persistence_paths);
+            return Err(format!("failed to save settings: {error}"));
+        }
 
-        if let Some(path) = rom_path.as_deref()
-            && let Err(error) = self
-                .system
-                .settings
-                .update_last_successful_rom_directory(path)
-        {
-            log::warn!("failed to update app state: {error}");
-        }
-        if let Ok(snapshot) = self.system.settings.snapshot() {
-            self.system.settings_snapshot = snapshot;
-        }
-        true
+        self.settings_snapshot = next_settings;
+        self.pressed_keys.clear();
+        self.clear_input()?;
+        Ok(plan)
     }
 
-    pub fn unload(&mut self) -> bool {
-        let unloaded = self.system.session.unload();
+    pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
+        let resolved = self.resolve_load_request(request, &media)?;
+        self.flush_mapper_save()?;
+        self.runtime.load(&media, &resolved)?;
+        self.loaded_media = Some(super::LoadedMedia {
+            media: media.clone(),
+            request: resolved,
+        });
+        self.configure_persistence_for_loaded_media(true);
+        self.remember_last_successful_rom_directory(media.path.as_deref());
+        self.sync_input_from_runtime();
+        Ok(())
+    }
+
+    pub fn unload(&mut self) -> Result<bool, String> {
+        self.flush_mapper_save()?;
+        let unloaded = self.runtime.unload()?;
         if unloaded {
-            self.system.loaded_rom = None;
-            self.sync_input_from_session();
+            self.loaded_media = None;
+            self.persistence = Default::default();
+            self.sync_input_from_runtime();
         }
-        unloaded
+        Ok(unloaded)
     }
 
     pub fn flush_before_exit(&mut self) {
-        self.system.session.flush_before_exit();
-    }
-
-    pub fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        let outcome = self.system.session.run_command(command);
-        if outcome.executed
-            && matches!(
-                command,
-                SessionCommand::LoadActiveSlot | SessionCommand::LoadSlot(_)
-            )
-        {
-            self.sync_input_from_session();
+        if let Err(error) = self.flush_mapper_save() {
+            log::warn!("mapper save flush before close failed: {error}");
         }
-        outcome
     }
 
-    pub(super) fn rebuild_for_settings(
+    pub fn run_command(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<SessionCommandOutcome, String> {
+        match command {
+            SessionCommand::Pause => {
+                if self.paused() {
+                    Ok(SessionCommandOutcome::default())
+                } else {
+                    self.runtime.pause();
+                    Ok(SessionCommandOutcome {
+                        executed: true,
+                        needs_redraw: false,
+                    })
+                }
+            }
+            SessionCommand::Resume => {
+                if self.paused() {
+                    self.runtime.resume();
+                    Ok(SessionCommandOutcome {
+                        executed: true,
+                        needs_redraw: self.loaded(),
+                    })
+                } else {
+                    Ok(SessionCommandOutcome::default())
+                }
+            }
+            SessionCommand::TogglePause => {
+                if self.paused() {
+                    self.run_command(SessionCommand::Resume)
+                } else {
+                    self.run_command(SessionCommand::Pause)
+                }
+            }
+            SessionCommand::Reset => {
+                self.runtime.reset()?;
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::CreateSlot => {
+                self.create_slot();
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::SaveActiveSlotOrNew => {
+                self.save_active_slot_or_new();
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::LoadActiveSlot => {
+                let was_paused = self.paused();
+                let executed = self.load_active_slot();
+                Ok(SessionCommandOutcome {
+                    executed,
+                    needs_redraw: executed && was_paused && !self.paused(),
+                })
+            }
+            SessionCommand::SelectActiveSlot(slot_id) => {
+                self.persistence.active_slot_id = Some(slot_id);
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::SaveSlot(slot_id) => {
+                self.save_slot(slot_id, false);
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::LoadSlot(slot_id) => {
+                let was_paused = self.paused();
+                let executed = self.load_slot(slot_id);
+                Ok(SessionCommandOutcome {
+                    executed,
+                    needs_redraw: executed && was_paused && !self.paused(),
+                })
+            }
+            SessionCommand::DeleteSlot(slot_id) => {
+                self.delete_slot(slot_id);
+                Ok(SessionCommandOutcome {
+                    executed: true,
+                    needs_redraw: false,
+                })
+            }
+            SessionCommand::SelectNextSlot => Ok(SessionCommandOutcome {
+                executed: self.select_adjacent_slot(true).is_some(),
+                needs_redraw: false,
+            }),
+            SessionCommand::SelectPreviousSlot => Ok(SessionCommandOutcome {
+                executed: self.select_adjacent_slot(false).is_some(),
+                needs_redraw: false,
+            }),
+        }
+    }
+
+    pub fn slots(&self) -> &[nerust_persistence::model::StateSlotSummary] {
+        &self.persistence.slots
+    }
+
+    pub fn active_slot_id(&self) -> Option<u64> {
+        self.persistence.active_slot_id
+    }
+
+    pub fn persistence_identity(&self) -> Option<nerust_contract_persistence::PersistenceIdentity> {
+        let media = self.runtime.canonical_media_identity()?;
+        Some(nerust_contract_persistence::PersistenceIdentity {
+            system_id: self.descriptor.system_id,
+            media,
+        })
+    }
+
+    fn resolve_load_request(
+        &self,
+        request: LoadRequest,
+        media: &MediaObject,
+    ) -> Result<ResolvedLoadRequest, String> {
+        let (system_id, options) = match request {
+            LoadRequest::Auto => (
+                self.descriptor.system_id,
+                self.definition.default_load_options(),
+            ),
+            LoadRequest::Explicit { system_id, options } => (system_id, options),
+        };
+        if system_id != self.descriptor.system_id {
+            return Err(format!("unsupported system id: {system_id:?}"));
+        }
+        if !self.definition.probe_media(media) {
+            return Err("media probe failed for active system definition".into());
+        }
+        self.definition
+            .resolve_load_request(&self.settings_snapshot, options)
+    }
+
+    fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<(), String> {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_state = if was_loaded {
-            Some(
-                self.system
-                    .session
-                    .export_state()
-                    .map_err(|error| format!("state export failed: {error}"))?,
-            )
+            Some(self.runtime.export_state()?)
         } else {
             None
         };
+        let restored_runtime_state = exported_state.is_some();
 
-        let mut rebuilt = self.system.profile.build_gui_session(next_settings);
-        if let Some(loaded_rom) = self.system.loaded_rom.clone() {
-            let effective_options = self.system.profile.effective_rebuild_load_options(
-                &self.system.settings_snapshot,
-                next_settings,
-                loaded_rom.explicit_options,
-            );
-            if !rebuilt.load_with_options(None, loaded_rom.data.clone(), effective_options) {
-                return Err("ROM reload failed during session rebuild".into());
-            }
-            let target = rebuilt
-                .persistence_target()
-                .map_err(|error| format!("persistence target failed: {error}"))?;
-            let resolved = self
-                .system
-                .settings
-                .resolve_persistence_paths_with_import(
-                    self.system.profile.system_id(),
-                    loaded_rom.path.as_deref(),
-                    target.rom_identity,
-                )
-                .map_err(|error| format!("persistence path resolution failed: {error}"))?;
-            rebuilt.configure_persistence_paths(Some(resolved));
-            if let Some(exported_state) = exported_state {
-                rebuilt
-                    .import_state(exported_state.machine_state)
-                    .map_err(|error| format!("state import failed: {error}"))?;
+        let mut rebuilt_runtime = self.definition.create_runtime(
+            &RuntimeHostServices {
+                host_backend: self.host_backend,
+            },
+            next_settings,
+        )?;
+        let rebuilt_adapter = self.definition.create_input_adapter(next_settings);
+
+        if let Some(loaded_media) = self.loaded_media.clone() {
+            rebuilt_runtime.load(&loaded_media.media, &loaded_media.request)?;
+            if let Some(exported_state) = exported_state.as_ref() {
+                rebuilt_runtime.import_state(&exported_state.state_blob)?;
                 if !was_paused {
-                    rebuilt.resume();
+                    rebuilt_runtime.resume();
                 }
             }
         }
 
-        self.system.session = rebuilt;
-        self.sync_input_from_session();
-        if was_loaded && was_paused {
-            self.system.session.pause();
+        self.runtime = rebuilt_runtime;
+        self.input_adapter = rebuilt_adapter;
+        self.sync_input_from_runtime();
+        if was_loaded {
+            self.configure_persistence_for_loaded_media(!restored_runtime_state);
+            if was_paused {
+                self.runtime.pause();
+            }
         }
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use crate::descriptor::{NesConsoleProfile, SystemSessionProfile};
-    use crate::load::{NesLoadOptions, NesMmc3IrqVariant};
-    use nerust_contract_options::Mmc3IrqVariant;
-    use nerust_contract_settings::app_state::DesktopAppState;
-    use nerust_contract_settings::local::HostBackendLocalSettings;
-    use nerust_contract_settings::nes::{
-        NesCoreSettings, NesSettings, NesVideoFilter, NesVideoSettings,
-    };
-    use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
-    use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_input_schema::SystemId;
-    use std::collections::BTreeMap;
+    fn configure_persistence_for_loaded_media(&mut self, load_mapper_save: bool) {
+        let Some(loaded_media) = self.loaded_media.clone() else {
+            self.persistence = Default::default();
+            return;
+        };
+        let persistence_paths = self.persistence_identity().and_then(|identity| {
+            self.resolve_persistence_paths(loaded_media.media.path.as_deref(), identity)
+        });
+        self.configure_persistence_paths(persistence_paths, load_mapper_save);
+    }
 
-    fn snapshot(
-        mmc3_irq_variant: Option<Mmc3IrqVariant>,
-        filter: NesVideoFilter,
-    ) -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: DesktopSharedSettings {
-                systems: BTreeMap::from([(
-                    SystemId::Nes,
-                    SystemSettings::Nes(NesSettings {
-                        video: NesVideoSettings { filter },
-                        core: NesCoreSettings { mmc3_irq_variant },
-                    }),
-                )]),
-                ..DesktopSharedSettings::default()
-            },
-            local: HostBackendLocalSettings::default(),
-            app_state: DesktopAppState::default(),
+    fn resolve_persistence_paths(
+        &self,
+        rom_path: Option<&Path>,
+        identity: nerust_contract_persistence::PersistenceIdentity,
+    ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
+        match identity.media {
+            nerust_contract_persistence::CanonicalMediaIdentity::Rom(rom_identity) => self
+                .settings
+                .resolve_persistence_paths_with_import(identity.system_id, rom_path, rom_identity)
+                .map_err(|error| {
+                    log::warn!("failed to resolve persistence paths: {error}");
+                    error
+                })
+                .ok(),
         }
     }
 
-    #[test]
-    fn rebuild_load_options_preserve_current_mmc3_variant() {
-        let current = snapshot(None, NesVideoFilter::NtscComposite);
-        let next = snapshot(Some(Mmc3IrqVariant::Sharp), NesVideoFilter::NtscRgb);
-
-        let rebuilt = NesConsoleProfile.effective_rebuild_load_options(
-            &current,
-            &next,
-            NesLoadOptions {
-                mmc3_irq_variant: Some(NesMmc3IrqVariant::Nec),
-            },
-        );
-
-        assert_eq!(rebuilt.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
-
-        let rebuilt = NesConsoleProfile.effective_rebuild_load_options(
-            &current,
-            &next,
-            NesLoadOptions::default(),
-        );
-        assert_eq!(rebuilt.mmc3_irq_variant, None);
+    fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
+        if let Some(path) = path
+            && let Err(error) = self.settings.update_last_successful_rom_directory(path)
+        {
+            log::warn!("failed to update app state: {error}");
+        }
+        if let Ok(snapshot) = self.settings.snapshot() {
+            self.settings_snapshot = snapshot;
+        }
     }
+
+    fn load_mapper_save_if_available(&mut self) -> Result<(), String> {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return Ok(());
+        };
+        if let Some(bytes) =
+            load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
+        {
+            self.runtime.import_mapper_save(bytes)?;
+        }
+        Ok(())
+    }
+
+    fn flush_mapper_save(&mut self) -> Result<(), String> {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return Ok(());
+        };
+        if !self.persistence.mapper_save_flush_allowed {
+            if self.persistence.mapper_save_recovery_written {
+                return Ok(());
+            }
+            if let Some(bytes) = self.runtime.export_mapper_save()? {
+                let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
+                    .map_err(|error| error.to_string())?;
+                self.persistence.mapper_save_recovery_written = true;
+                log::warn!(
+                    "mapper save auto-load failed earlier; wrote recovery save to {}",
+                    path.display()
+                );
+            }
+            return Ok(());
+        }
+        match self.runtime.export_mapper_save()? {
+            Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    fn configure_persistence_paths(
+        &mut self,
+        persistence_paths: Option<nerust_persistence::sidecar::SidecarPaths>,
+        load_mapper_save: bool,
+    ) {
+        self.persistence.sidecars = persistence_paths;
+        self.persistence.mapper_save_flush_allowed = true;
+        self.persistence.mapper_save_recovery_written = false;
+        self.persistence.active_slot_id = None;
+        self.refresh_slots();
+        self.persistence.active_slot_id = latest_saved_slot_id(&self.persistence.slots);
+        if load_mapper_save && let Err(error) = self.load_mapper_save_if_available() {
+            self.persistence.mapper_save_flush_allowed = false;
+            log::warn!("mapper save auto-load failed: {error}");
+        }
+    }
+
+    fn refresh_slots(&mut self) {
+        self.persistence.slots = if let (Some(sidecars), Some(identity)) = (
+            self.persistence.sidecars.as_ref(),
+            self.persistence_identity(),
+        ) {
+            match scan_state_slots_for_identity(&sidecars.states_dir, identity) {
+                Ok(slots) => slots,
+                Err(error) => {
+                    log::warn!("slot scan failed: {error}");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        if self.persistence.active_slot_id.is_some_and(|slot_id| {
+            !self
+                .persistence
+                .slots
+                .iter()
+                .any(|slot| slot.slot_id == slot_id)
+        }) {
+            self.persistence.active_slot_id = None;
+        }
+    }
+
+    fn save_active_slot_or_new(&mut self) {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return;
+        };
+        let slot_id = self.persistence.active_slot_id.or_else(|| {
+            allocate_next_slot_id(&sidecars.states_dir)
+                .map_err(|error| {
+                    log::warn!("allocating state slot failed: {error}");
+                    error
+                })
+                .ok()
+        });
+        if let Some(slot_id) = slot_id {
+            self.save_slot(slot_id, true);
+        }
+    }
+
+    fn create_slot(&mut self) {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return;
+        };
+        match allocate_next_slot_id(&sidecars.states_dir) {
+            Ok(slot_id) => self.save_slot(slot_id, true),
+            Err(error) => log::warn!("allocating state slot failed: {error}"),
+        }
+    }
+
+    fn save_slot(&mut self, slot_id: u64, make_active: bool) {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return;
+        };
+        let Some(identity) = self.persistence_identity() else {
+            return;
+        };
+        match self.runtime.export_state() {
+            Ok(export) => {
+                let preview = export.preview.as_ref().map(|preview| ThumbnailSource {
+                    width: preview.width,
+                    height: preview.height,
+                    rgba: preview.rgba.clone(),
+                });
+                match write_state_slot(
+                    &sidecars.states_dir,
+                    slot_id,
+                    &export.state_blob,
+                    identity,
+                    preview.as_ref(),
+                ) {
+                    Ok(_) => {
+                        if make_active {
+                            self.persistence.active_slot_id = Some(slot_id);
+                        }
+                        self.refresh_slots();
+                    }
+                    Err(error) => log::warn!("saving state slot failed: {error}"),
+                }
+            }
+            Err(error) => log::warn!("state export failed: {error}"),
+        }
+    }
+
+    fn load_active_slot(&mut self) -> bool {
+        self.persistence
+            .active_slot_id
+            .is_some_and(|slot_id| self.load_slot(slot_id))
+    }
+
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return false;
+        };
+        match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
+            Ok(slot) => {
+                if let Err(error) = self.runtime.import_state(&slot.machine_state) {
+                    log::warn!("state import failed: {error}");
+                    false
+                } else {
+                    self.persistence.active_slot_id = Some(slot_id);
+                    self.sync_input_from_runtime();
+                    self.refresh_slots();
+                    true
+                }
+            }
+            Err(error) => {
+                log::warn!("loading state slot failed: {error}");
+                false
+            }
+        }
+    }
+
+    fn delete_slot(&mut self, slot_id: u64) {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return;
+        };
+        match delete_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
+            Ok(()) => {
+                if self.persistence.active_slot_id == Some(slot_id) {
+                    self.persistence.active_slot_id = None;
+                }
+                self.refresh_slots();
+            }
+            Err(error) => log::warn!("deleting state slot failed: {error}"),
+        }
+    }
+
+    fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
+        let next_slot_id = adjacent_slot_id(
+            &self.persistence.slots,
+            self.persistence.active_slot_id,
+            forward,
+        )?;
+        self.persistence.active_slot_id = Some(next_slot_id);
+        Some(next_slot_id)
+    }
+}
+
+fn adjacent_slot_id(
+    slots: &[nerust_persistence::model::StateSlotSummary],
+    active_slot_id: Option<u64>,
+    forward: bool,
+) -> Option<u64> {
+    if slots.is_empty() {
+        return None;
+    }
+    let current_index = active_slot_id
+        .and_then(|active| slots.iter().position(|slot| slot.slot_id == active))
+        .unwrap_or_else(|| {
+            if forward {
+                slots.len().saturating_sub(1)
+            } else {
+                0
+            }
+        });
+    let next_index = if forward {
+        (current_index + 1) % slots.len()
+    } else if current_index == 0 {
+        slots.len() - 1
+    } else {
+        current_index - 1
+    };
+    Some(slots[next_index].slot_id)
 }

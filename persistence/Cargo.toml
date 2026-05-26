@@ -13,6 +13,7 @@ nerust_contract_mirror.workspace = true
 nerust_contract_options.workspace = true
 nerust_contract_persistence.workspace = true
 nerust_contract_rom.workspace = true
+nerust_input_schema.workspace = true
 png.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
