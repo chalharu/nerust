@@ -14,6 +14,7 @@ const VBLANK_STUB_ACTIVE_START: u8 = 5;
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
     fn write(&mut self, addr: u32, data: u8);
+    fn tick(&mut self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +212,10 @@ impl CpuBus for Bus {
 
     fn write(&mut self, addr: u32, data: u8) {
         Bus::write(self, addr, data);
+    }
+
+    fn tick(&mut self) {
+        self.tick_video_stub();
     }
 }
 
