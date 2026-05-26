@@ -118,7 +118,7 @@ shared_library = { version = "=0.1.9" }
 simple_logger = { version = "=5.2.0" }
 strum = { version = "=0.28.0" }
 strum_macros = { version = "=0.28.0" }
-tao = { version = "=0.35.2" }
+tao = { version = "=0.35.3" }
 thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.22" }
 wgpu = { version = "=29.0.3" }
