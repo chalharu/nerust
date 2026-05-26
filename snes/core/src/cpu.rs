@@ -231,6 +231,9 @@ enum AbsoluteOp {
         wide: bool,
     },
     Jmp,
+    JmpIndirect,
+    JmpIndexedXIndirect,
+    JmlIndirect,
     Jsr,
 }
 
@@ -2059,6 +2062,21 @@ impl Cpu {
                 self.registers.pc = address;
                 self.micro_state = MicroState::Fetch;
             }
+            AbsoluteOp::JmpIndirect => {
+                self.registers.pc = self.read_zero_bank_u16(bus, address);
+                self.micro_state = MicroState::Fetch;
+            }
+            AbsoluteOp::JmpIndexedXIndirect => {
+                let pointer = address.wrapping_add(self.registers.x);
+                self.registers.pc = self.read_program_bank_u16(bus, pointer);
+                self.micro_state = MicroState::Fetch;
+            }
+            AbsoluteOp::JmlIndirect => {
+                let full = self.read_zero_bank_u24(bus, address);
+                self.registers.pb = (full >> 16) as u8;
+                self.registers.pc = full as u16;
+                self.micro_state = MicroState::Fetch;
+            }
             AbsoluteOp::Jsr => {
                 let return_addr = self.registers.pc.wrapping_sub(1);
                 self.micro_state = MicroState::JsrPushHigh {
@@ -2643,13 +2661,16 @@ impl Cpu {
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x6C => MicroState::AbsoluteLow(AbsoluteOp::JmpIndirect),
             0x1E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
                 op: ShiftOp::Asl,
                 indexed_x: true,
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x7C => MicroState::AbsoluteLow(AbsoluteOp::JmpIndexedXIndirect),
             0x4C => MicroState::AbsoluteLow(AbsoluteOp::Jmp),
             0x20 => MicroState::AbsoluteLow(AbsoluteOp::Jsr),
+            0xDC => MicroState::AbsoluteLow(AbsoluteOp::JmlIndirect),
             0x2F => MicroState::AbsoluteLongLow(AbsoluteLongOp::And {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -2722,6 +2743,13 @@ impl Cpu {
         let target = self.read_zero_bank_u16(bus, address);
         let bank = bus.read(u32::from(address.wrapping_add(2)));
         ((bank as u32) << 16) | u32::from(target)
+    }
+
+    fn read_program_bank_u16(&mut self, bus: &mut dyn CpuBus, address: u16) -> u16 {
+        let bank_base = (self.registers.pb as u32) << 16;
+        let low = bus.read(bank_base | u32::from(address));
+        let high = bus.read(bank_base | u32::from(address.wrapping_add(1)));
+        u16::from_le_bytes([low, high])
     }
 
     fn read_operand_value(&mut self, bus: &mut dyn CpuBus, address: u32, wide: bool) -> u16 {
@@ -3265,6 +3293,53 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x00);
         assert_eq!(cpu.registers().pc(), 0x800C);
         assert_eq!(cpu.registers().s(), 0x01FF);
+    }
+
+    #[test]
+    fn jmp_indirect_reads_zero_bank_target() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x00FFF0, &[0x10, 0x80]);
+        system.load(0x008000, &[0x6C, 0xF0, 0xFF, 0xDB]);
+        system.load(0x008010, &[0xA9, 0x42, 0xDB]);
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0042);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x8013);
+    }
+
+    #[test]
+    fn jml_indirect_reads_zero_bank_long_target() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x00FFF2, &[0x00, 0x80, 0x7E]);
+        system.load(0x008000, &[0xDC, 0xF2, 0xFF, 0xDB]);
+        system.load(0x7E8000, &[0xA9, 0x5A, 0xDB]);
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x005A);
+        assert_eq!(cpu.registers().pb(), 0x7E);
+        assert_eq!(cpu.registers().pc(), 0x8003);
+    }
+
+    #[test]
+    fn jmp_indexed_x_indirect_uses_program_bank_and_wraps() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x5C, 0x00, 0x70, 0x7E]);
+        system.load(0x7E7000, &[0xA2, 0x81, 0x7C, 0xFF, 0xFF, 0xDB]);
+        system.load(0x7E0080, &[0x00, 0x80]);
+        system.load(0x7E8000, &[0xA9, 0x99, 0xDB]);
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().a(), 0x0099);
+        assert_eq!(cpu.registers().x(), 0x0081);
+        assert_eq!(cpu.registers().pb(), 0x7E);
+        assert_eq!(cpu.registers().pc(), 0x8003);
     }
 
     #[test]
