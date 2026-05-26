@@ -285,6 +285,9 @@ enum AbsoluteOp {
     Stz {
         wide: bool,
     },
+    StzIndexedX {
+        wide: bool,
+    },
     Bit {
         indexed_x: bool,
         wide: bool,
@@ -372,6 +375,12 @@ enum DirectOp {
         wide: bool,
     },
     StyIndexedX {
+        wide: bool,
+    },
+    Stz {
+        wide: bool,
+    },
+    StzIndexedX {
         wide: bool,
     },
     Dec {
@@ -1606,6 +1615,17 @@ impl Cpu {
                     wide,
                 );
             }
+            DirectOp::Stz { wide } => {
+                self.write_operand_value_zero_bank(bus, base, 0, wide);
+            }
+            DirectOp::StzIndexedX { wide } => {
+                self.write_operand_value_zero_bank(
+                    bus,
+                    base.wrapping_add(self.registers.x),
+                    0,
+                    wide,
+                );
+            }
             DirectOp::LdaIndexedX { wide } => {
                 let address = base.wrapping_add(self.registers.x);
                 let low = bus.read(u32::from(address));
@@ -2728,15 +2748,16 @@ impl Cpu {
                 );
             }
             AbsoluteOp::Stz { wide } => {
-                self.write_bus(bus, address, 0);
-                if wide {
-                    self.micro_state = MicroState::WriteHigh {
-                        address: self.full_data_address(address).wrapping_add(1),
-                        value: 0,
-                    };
-                } else {
-                    self.micro_state = MicroState::Fetch;
-                }
+                self.write_operand_value(bus, self.full_data_address(address), 0, wide);
+            }
+            AbsoluteOp::StzIndexedX { wide } => {
+                self.write_operand_value(
+                    bus,
+                    self.full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x)),
+                    0,
+                    wide,
+                );
             }
             AbsoluteOp::Bit { indexed_x, wide } => {
                 let full = if indexed_x {
@@ -3419,6 +3440,9 @@ impl Cpu {
             0x84 => MicroState::Direct(DirectOp::Sty {
                 wide: !self.index_is_8bit(),
             }),
+            0x64 => MicroState::Direct(DirectOp::Stz {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0xA5 => MicroState::Direct(DirectOp::Lda {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3489,6 +3513,9 @@ impl Cpu {
             }),
             0x94 => MicroState::Direct(DirectOp::StyIndexedX {
                 wide: !self.index_is_8bit(),
+            }),
+            0x74 => MicroState::Direct(DirectOp::StzIndexedX {
+                wide: !self.accumulator_is_8bit(),
             }),
             0xA6 => MicroState::Direct(DirectOp::Ldx {
                 wide: !self.index_is_8bit(),
@@ -3687,6 +3714,9 @@ impl Cpu {
             0x9C => MicroState::AbsoluteLow(AbsoluteOp::Stz {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x9E => MicroState::AbsoluteLow(AbsoluteOp::StzIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x2C => MicroState::AbsoluteLow(AbsoluteOp::Bit {
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
@@ -3814,10 +3844,6 @@ impl Cpu {
 
     fn full_pc(&self) -> u32 {
         ((self.registers.pb as u32) << 16) | (self.registers.pc as u32)
-    }
-
-    fn write_bus(&mut self, bus: &mut dyn CpuBus, address: u16, value: u8) {
-        bus.write(self.full_data_address(address), value);
     }
 
     fn read_data_bank(&mut self, bus: &mut dyn CpuBus, address: u16) -> u8 {
@@ -6772,6 +6798,86 @@ mod tests {
         assert_eq!(cpu.registers().db(), 0x7E);
         assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x00));
         assert_eq!(system.memory.get(&0x7F0000), Some(&0x80));
+    }
+
+    #[test]
+    fn stz_direct_wraps_high_byte_at_zero_bank_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0x64, 0x00, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x00FFFF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000000), Some(&0x00));
+    }
+
+    #[test]
+    fn stz_direct_indexed_x_8bit_wraps_and_clears_one_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x12, 0x34]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA2, 0x32, 0x12, 0xE2, 0x30, 0x74,
+                0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().x(), 0x0032);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x000033), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x34));
+    }
+
+    #[test]
+    fn stz_absolute_writes_zero_across_bank_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0x9C,
+                0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 112);
+
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x00));
+    }
+
+    #[test]
+    fn stz_absolute_indexed_x_carries_into_next_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA2,
+                0x00, 0x03, 0x9E, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().x(), 0x0300);
+        assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0300), Some(&0x00));
     }
 
     #[test]
