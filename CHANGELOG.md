@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to Nerust will be documented here.
+All notable changes to Nerust are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-This file is updated automatically by
-[release-plz](https://release-plz.dev/) during the release process.
+The release-candidate workflow ensures that the target version section exists.
+Update the notes in that section before merging into `release`.
 
 <!-- next-header -->
 

@@ -28,6 +28,33 @@ bundle is ad-hoc signed and not notarized.
 The official frontend is **Tao** (`nerust_tao`). The GTK4 frontend
 (`nerust_gtk`) is maintained for build-health but is not a release artifact.
 
+## Release workflow
+
+Releases are prepared through the long-lived `release` branch.
+
+1. Create the `release` branch once before the first release candidate.
+2. Run the **Prepare release candidate** workflow from `master`.
+3. The workflow refreshes the `release-candidate` branch, updates the release
+   version in `Cargo.toml`, ensures the matching `CHANGELOG.md` section exists,
+   and opens or updates a PR into `release`.
+4. The PR to `release` publishes versioned workflow artifacts so the exact
+   binaries can be reviewed before release.
+5. Merging that PR into `release` creates the `vX.Y.Z` tag and GitHub Release.
+6. The automation then opens a follow-up PR from `release` back to `master` so
+   the released version and changelog stay in sync.
+7. Merge that sync PR before preparing the next release candidate.
+
+The automation reads the major version from `[workspace.package].version` in
+`Cargo.toml`. If there is already a `v<major>.*` tag, it bumps:
+
+- **patch** for workflow, packaging, docs, lockfile, and dependency-only
+  `Cargo.toml` updates
+- **minor** for everything else
+
+If there is no existing tag for the current major, the declared
+`[workspace.package].version` becomes the release version. The workflows use
+the `RELEASE_PLZ_TOKEN` repository secret as a PAT for branch and PR updates.
+
 ## Developer build/test paths
 
 - The default workspace developer path (`cargo build`, `cargo test`) now covers
