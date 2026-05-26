@@ -171,6 +171,12 @@ enum ShiftOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestModifyOp {
+    Trb,
+    Tsb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockMoveDirection {
     Increment,
     Decrement,
@@ -292,6 +298,12 @@ enum AbsoluteOp {
         indexed_x: bool,
         wide: bool,
     },
+    Trb {
+        wide: bool,
+    },
+    Tsb {
+        wide: bool,
+    },
     Shift {
         op: ShiftOp,
         indexed_x: bool,
@@ -349,6 +361,12 @@ enum DirectOp {
     },
     Bit {
         indexed_x: bool,
+        wide: bool,
+    },
+    Trb {
+        wide: bool,
+    },
+    Tsb {
         wide: bool,
     },
     Shift {
@@ -611,6 +629,11 @@ enum MicroState {
         address: u16,
         low: u8,
     },
+    DirectTestModifyHigh {
+        op: TestModifyOp,
+        address: u16,
+        low: u8,
+    },
     DirectShiftHigh {
         op: ShiftOp,
         address: u16,
@@ -671,6 +694,11 @@ enum MicroState {
         low: u8,
     },
     AbsoluteBitHigh {
+        address: u32,
+        low: u8,
+    },
+    AbsoluteTestModifyHigh {
+        op: TestModifyOp,
         address: u32,
         low: u8,
     },
@@ -890,6 +918,13 @@ impl Cpu {
                 self.apply_memory_bit(u16::from_le_bytes([low, high]));
                 self.micro_state = MicroState::Fetch;
             }
+            MicroState::DirectTestModifyHigh { op, address, low } => {
+                let high = bus.read(u32::from(address.wrapping_add(1)));
+                let value = self.apply_test_modify16(op, u16::from_le_bytes([low, high]));
+                bus.write(u32::from(address), value as u8);
+                bus.write(u32::from(address.wrapping_add(1)), (value >> 8) as u8);
+                self.micro_state = MicroState::Fetch;
+            }
             MicroState::DirectShiftHigh { op, address, low } => {
                 let high = bus.read(u32::from(address.wrapping_add(1)));
                 let value = self.apply_shift16(op, u16::from_le_bytes([low, high]));
@@ -1007,6 +1042,13 @@ impl Cpu {
             MicroState::AbsoluteBitHigh { address, low } => {
                 let high = bus.read(address.wrapping_add(1));
                 self.apply_memory_bit(u16::from_le_bytes([low, high]));
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteTestModifyHigh { op, address, low } => {
+                let high = bus.read(address.wrapping_add(1));
+                let value = self.apply_test_modify16(op, u16::from_le_bytes([low, high]));
+                bus.write(address, value as u8);
+                bus.write(address.wrapping_add(1), (value >> 8) as u8);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::AbsoluteIncHigh { address, low } => {
@@ -1534,6 +1576,34 @@ impl Cpu {
                     self.micro_state = MicroState::DirectBitHigh { address, low };
                 } else {
                     self.apply_memory_bit(u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::Trb { wide } => {
+                let low = bus.read(u32::from(base));
+                if wide {
+                    self.micro_state = MicroState::DirectTestModifyHigh {
+                        op: TestModifyOp::Trb,
+                        address: base,
+                        low,
+                    };
+                } else {
+                    let value = self.apply_test_modify8(TestModifyOp::Trb, low);
+                    bus.write(u32::from(base), value);
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::Tsb { wide } => {
+                let low = bus.read(u32::from(base));
+                if wide {
+                    self.micro_state = MicroState::DirectTestModifyHigh {
+                        op: TestModifyOp::Tsb,
+                        address: base,
+                        low,
+                    };
+                } else {
+                    let value = self.apply_test_modify8(TestModifyOp::Tsb, low);
+                    bus.write(u32::from(base), value);
                     self.micro_state = MicroState::Fetch;
                 }
             }
@@ -2777,6 +2847,36 @@ impl Cpu {
                     self.micro_state = MicroState::Fetch;
                 }
             }
+            AbsoluteOp::Trb { wide } => {
+                let full = self.full_data_address(address);
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteTestModifyHigh {
+                        op: TestModifyOp::Trb,
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    let result = self.apply_test_modify8(TestModifyOp::Trb, value);
+                    bus.write(full, result);
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::Tsb { wide } => {
+                let full = self.full_data_address(address);
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteTestModifyHigh {
+                        op: TestModifyOp::Tsb,
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    let result = self.apply_test_modify8(TestModifyOp::Tsb, value);
+                    bus.write(full, result);
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
             AbsoluteOp::Shift {
                 op,
                 indexed_x,
@@ -3443,6 +3543,12 @@ impl Cpu {
             0x64 => MicroState::Direct(DirectOp::Stz {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x14 => MicroState::Direct(DirectOp::Trb {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x04 => MicroState::Direct(DirectOp::Tsb {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0xA5 => MicroState::Direct(DirectOp::Lda {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3715,6 +3821,12 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x9E => MicroState::AbsoluteLow(AbsoluteOp::StzIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x1C => MicroState::AbsoluteLow(AbsoluteOp::Trb {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x0C => MicroState::AbsoluteLow(AbsoluteOp::Tsb {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x2C => MicroState::AbsoluteLow(AbsoluteOp::Bit {
@@ -4068,6 +4180,24 @@ impl Cpu {
             self.registers
                 .p
                 .set(CpuStatus::OVERFLOW, value & 0x4000 != 0);
+        }
+    }
+
+    fn apply_test_modify8(&mut self, op: TestModifyOp, value: u8) -> u8 {
+        let a = self.registers.a as u8;
+        self.registers.p.set(CpuStatus::ZERO, a & value == 0);
+        match op {
+            TestModifyOp::Trb => value & !a,
+            TestModifyOp::Tsb => value | a,
+        }
+    }
+
+    fn apply_test_modify16(&mut self, op: TestModifyOp, value: u16) -> u16 {
+        let a = self.registers.a;
+        self.registers.p.set(CpuStatus::ZERO, a & value == 0);
+        match op {
+            TestModifyOp::Trb => value & !a,
+            TestModifyOp::Tsb => value | a,
         }
     }
 
@@ -6878,6 +7008,130 @@ mod tests {
         assert_eq!(cpu.registers().x(), 0x0300);
         assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
         assert_eq!(system.memory.get(&0x7F0300), Some(&0x00));
+    }
+
+    #[test]
+    fn trb_direct_16bit_clears_bits_and_zero_clear() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x34, 0x92]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x30, 0x16, 0x14, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x1630);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x000033), Some(&0x04));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x80));
+    }
+
+    #[test]
+    fn trb_absolute_16bit_sets_zero_when_no_bits_overlap() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0xAA, 0xAA]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x55, 0x55, 0x1C, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 112);
+
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0xAA));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0xAA));
+    }
+
+    #[test]
+    fn trb_direct_8bit_clears_bits_and_zero_clear() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x92]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xE2, 0x20, 0xA9, 0x16, 0x14, 0x34,
+                0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x000033), Some(&0x80));
+    }
+
+    #[test]
+    fn tsb_direct_16bit_sets_bits_and_zero_clear() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x34, 0x92]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x30, 0x16, 0x04, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x1630);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x000033), Some(&0x34));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x96));
+    }
+
+    #[test]
+    fn tsb_absolute_16bit_sets_zero_when_no_bits_overlap_and_ors_bits() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0xAA, 0xAA]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x55, 0x55, 0x0C, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 112);
+
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0xFF));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0xFF));
+    }
+
+    #[test]
+    fn tsb_direct_8bit_sets_bits_and_zero_clear() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x92]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xE2, 0x20, 0xA9, 0x16, 0x04, 0x34,
+                0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert_eq!(system.memory.get(&0x000033), Some(&0x96));
     }
 
     #[test]
