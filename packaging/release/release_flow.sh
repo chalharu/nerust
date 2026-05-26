@@ -37,6 +37,219 @@ latest_tag_for_major() {
     git_root tag --list "v$1.*" --sort=-version:refname | head -n 1
 }
 
+normalize_dependency_manifest() {
+    local manifest_path="$1"
+
+    awk '
+        function trim(text) {
+            sub(/^[[:space:]]+/, "", text)
+            sub(/[[:space:]]+$/, "", text)
+            return text
+        }
+
+        function is_mutable_dependency_key(key) {
+            return key == "version" || key == "rev" || key == "tag" || key == "branch" || key == "registry"
+        }
+
+        function is_dependency_collection_section(section_name) {
+            return section_name ~ /^\[(workspace\.)?(dependencies|dev-dependencies|build-dependencies)\]$/ || section_name ~ /^\[target\..*\.(dependencies|dev-dependencies|build-dependencies)\]$/
+        }
+
+        function is_dependency_entry_section(section_name) {
+            return section_name ~ /^\[(workspace\.)?(dependencies|dev-dependencies|build-dependencies)\.[^]]+\]$/ || section_name ~ /^\[target\..*\.(dependencies|dev-dependencies|build-dependencies)\.[^]]+\]$/
+        }
+
+        function strip_inline_comment(text,    in_double, in_single, character, previous, position) {
+            in_double = 0
+            in_single = 0
+            previous = ""
+
+            for (position = 1; position <= length(text); position++) {
+                character = substr(text, position, 1)
+
+                if (character == "\"" && !in_single && previous != "\\") {
+                    in_double = !in_double
+                } else if (character == "'"'"'" && !in_double) {
+                    in_single = !in_single
+                } else if (character == "#" && !in_double && !in_single) {
+                    return trim(substr(text, 1, position - 1))
+                }
+
+                previous = character
+            }
+
+            return trim(text)
+        }
+
+        function normalize_inline_table_part(part,    separator, key, value) {
+            separator = index(part, "=")
+            if (!separator) {
+                return trim(part)
+            }
+
+            key = trim(substr(part, 1, separator - 1))
+            value = trim(substr(part, separator + 1))
+            if (is_mutable_dependency_key(key)) {
+                value = "\"__DEPENDENCY_VALUE__\""
+            }
+            return key " = " value
+        }
+
+        function normalize_inline_table(line,    open_brace, close_brace, prefix, body, in_string, bracket_depth, character, current, count, part, i, j, k, swap) {
+            open_brace = index(line, "{")
+            close_brace = 0
+            for (i = length(line); i > open_brace; i--) {
+                if (substr(line, i, 1) == "}") {
+                    close_brace = i
+                    break
+                }
+            }
+
+            if (!open_brace || !close_brace) {
+                return trim(line)
+            }
+
+            prefix = trim(substr(line, 1, open_brace - 1))
+            body = substr(line, open_brace + 1, close_brace - open_brace - 1)
+            current = ""
+            count = 0
+            in_string = 0
+            bracket_depth = 0
+
+            for (i = 1; i <= length(body); i++) {
+                character = substr(body, i, 1)
+                if (character == "\"" && substr(body, i - 1, 1) != "\\") {
+                    in_string = !in_string
+                }
+
+                if (!in_string) {
+                    if (character == "[") {
+                        bracket_depth++
+                    } else if (character == "]") {
+                        bracket_depth--
+                    } else if (character == "," && bracket_depth == 0) {
+                        part = trim(current)
+                        if (part != "") {
+                            parts[++count] = normalize_inline_table_part(part)
+                        }
+                        current = ""
+                        continue
+                    }
+                }
+
+                current = current character
+            }
+
+            part = trim(current)
+            if (part != "") {
+                parts[++count] = normalize_inline_table_part(part)
+            }
+
+            for (j = 1; j < count; j++) {
+                for (k = j + 1; k <= count; k++) {
+                    if (parts[j] > parts[k]) {
+                        swap = parts[j]
+                        parts[j] = parts[k]
+                        parts[k] = swap
+                    }
+                }
+            }
+
+            line = prefix " {"
+            for (j = 1; j <= count; j++) {
+                line = line (j == 1 ? " " : ", ") parts[j]
+            }
+            line = line " }"
+
+            delete parts
+            return line
+        }
+
+        function normalize_collection_line(line) {
+            line = strip_inline_comment(line)
+            if (line ~ /^[A-Za-z0-9_.-]+[[:space:]]*=[[:space:]]*["\047][^"\047]*["\047][[:space:]]*$/) {
+                sub(/=[[:space:]]*["\047][^"\047]*["\047]/, "= \"__DEPENDENCY_VALUE__\"", line)
+                return line
+            }
+
+            if (line ~ /^[A-Za-z0-9_.-]+[[:space:]]*=[[:space:]]*\{.*\}[[:space:]]*$/) {
+                return normalize_inline_table(line)
+            }
+
+            return line
+        }
+
+        function normalize_entry_line(line,    separator, key, value) {
+            line = strip_inline_comment(line)
+            separator = index(line, "=")
+            if (!separator) {
+                return line
+            }
+
+            key = trim(substr(line, 1, separator - 1))
+            value = trim(substr(line, separator + 1))
+            if (is_mutable_dependency_key(key)) {
+                value = "\"__DEPENDENCY_VALUE__\""
+            }
+            return key " = " value
+        }
+
+        BEGIN {
+            section = "__root__"
+            section_identity = "__root__"
+            section_mode = "other"
+        }
+
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ {
+            next
+        }
+
+        /^[[:space:]]*\[/ {
+            section = trim($0)
+            if (section ~ /^\[\[/) {
+                section_counts[section]++
+                section_identity = section "::" section_counts[section]
+            } else {
+                section_identity = section
+            }
+
+            if (is_dependency_collection_section(section)) {
+                section_mode = "collection"
+            } else if (is_dependency_entry_section(section)) {
+                section_mode = "entry"
+            } else {
+                section_mode = "other"
+            }
+
+            print section_identity "\t__section__"
+            next
+        }
+
+        {
+            if (section_mode == "collection") {
+                line = normalize_collection_line($0)
+            } else if (section_mode == "entry") {
+                line = normalize_entry_line($0)
+            } else {
+                line = strip_inline_comment($0)
+            }
+
+            if (line == "") {
+                next
+            }
+
+            print section_identity "\t" line
+        }
+    ' "${manifest_path}" | LC_ALL=C sort
+}
+
+cargo_manifest_patch_safe() {
+    local old_manifest="$1"
+    local new_manifest="$2"
+
+    cmp -s <(normalize_dependency_manifest "${old_manifest}") <(normalize_dependency_manifest "${new_manifest}")
+}
+
 git_ref_is_ancestor() {
     git_root merge-base --is-ancestor "$1" "$2"
 }
@@ -48,76 +261,30 @@ changed_files() {
 cargo_file_patch_safe() {
     local path="$1"
     local base_ref="$2"
+    local old_manifest new_manifest
 
-    python3 - "${WORKSPACE_ROOT}" "${path}" "${base_ref}" <<'PY'
-import pathlib
-import subprocess
-import sys
-import tomllib
-from typing import Any
+    old_manifest="$(mktemp)"
+    new_manifest="$(mktemp)"
 
-workspace_root = pathlib.Path(sys.argv[1])
-path = sys.argv[2]
-base_ref = sys.argv[3]
-dependency_table_keys = {"dependencies", "dev-dependencies", "build-dependencies"}
-dependency_value_keys = {"branch", "registry", "rev", "tag", "version"}
+    if ! git_root show "${base_ref}:${path}" > "${old_manifest}" 2>/dev/null; then
+        rm -f "${old_manifest}" "${new_manifest}"
+        return 1
+    fi
 
-def dependency_spec_patch_safe(old_value: Any, new_value: Any) -> bool:
-    if type(old_value) is not type(new_value):
-        return False
-    if isinstance(old_value, str):
-        return True
-    if isinstance(old_value, dict):
-        if set(old_value) != set(new_value):
-            return False
-        for key in old_value:
-            if old_value[key] != new_value[key] and key not in dependency_value_keys:
-                return False
-        return True
-    if isinstance(old_value, list):
-        return old_value == new_value
-    return old_value == new_value
+    if [[ ! -f "${WORKSPACE_ROOT}/${path}" ]]; then
+        rm -f "${old_manifest}" "${new_manifest}"
+        return 1
+    fi
 
-def dependency_table_patch_safe(old_table: dict[str, Any], new_table: dict[str, Any]) -> bool:
-    if set(old_table) != set(new_table):
-        return False
-    return all(
-        dependency_spec_patch_safe(old_table[name], new_table[name])
-        for name in old_table
-    )
+    cp "${WORKSPACE_ROOT}/${path}" "${new_manifest}"
 
-def cargo_toml_patch_safe(old_value: Any, new_value: Any) -> bool:
-    if type(old_value) is not type(new_value):
-        return False
-    if isinstance(old_value, dict):
-        all_keys = set(old_value) | set(new_value)
-        for key in all_keys:
-            if key not in old_value or key not in new_value:
-                return False
-            if key in dependency_table_keys:
-                if not isinstance(old_value[key], dict) or not isinstance(new_value[key], dict):
-                    return False
-                if not dependency_table_patch_safe(old_value[key], new_value[key]):
-                    return False
-                continue
-            if not cargo_toml_patch_safe(old_value[key], new_value[key]):
-                return False
-        return True
-    return old_value == new_value
+    if cargo_manifest_patch_safe "${old_manifest}" "${new_manifest}"; then
+        rm -f "${old_manifest}" "${new_manifest}"
+        return 0
+    fi
 
-try:
-    old_text = subprocess.run(
-        ["git", "-C", str(workspace_root), "show", f"{base_ref}:{path}"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    new_text = (workspace_root / path).read_text()
-except (subprocess.CalledProcessError, FileNotFoundError):
-    raise SystemExit(1)
-
-raise SystemExit(0 if cargo_toml_patch_safe(tomllib.loads(old_text), tomllib.loads(new_text)) else 1)
-PY
+    rm -f "${old_manifest}" "${new_manifest}"
+    return 1
 }
 
 patch_only_since() {
@@ -336,7 +503,22 @@ extract_release_notes() {
         exit 1
     fi
 
-    printf '%s\n' "${notes}" | perl -0pe 's/\A(?:\s*\n)+//; s/(?:\n\s*)+\z/\n/s'
+    printf '%s\n' "${notes}" | awk '
+        {
+            lines[++line_count] = $0
+            if ($0 ~ /[^[:space:]]/) {
+                if (!first_nonblank) {
+                    first_nonblank = line_count
+                }
+                last_nonblank = line_count
+            }
+        }
+        END {
+            for (line_number = first_nonblank; line_number <= last_nonblank; line_number++) {
+                print lines[line_number]
+            }
+        }
+    '
 }
 
 compute_next_version() {
@@ -434,45 +616,53 @@ Usage:
 EOF
 }
 
-if (($# == 0)); then
-    usage >&2
-    exit 1
-fi
+main() {
+    local command
 
-command="$1"
-shift
-
-case "${command}" in
-    workspace-metadata)
-        if (($# != 0)); then
-            usage >&2
-            exit 1
-        fi
-        command_workspace_metadata
-        ;;
-    next-version)
-        if (($# != 0)); then
-            usage >&2
-            exit 1
-        fi
-        command_next_version
-        ;;
-    prepare-candidate)
-        if (($# != 0)); then
-            usage >&2
-            exit 1
-        fi
-        command_prepare_candidate
-        ;;
-    release-notes)
-        if (($# < 1)); then
-            usage >&2
-            exit 1
-        fi
-        command_release_notes "$@"
-        ;;
-    *)
+    if (($# == 0)); then
         usage >&2
         exit 1
-        ;;
-esac
+    fi
+
+    command="$1"
+    shift
+
+    case "${command}" in
+        workspace-metadata)
+            if (($# != 0)); then
+                usage >&2
+                exit 1
+            fi
+            command_workspace_metadata
+            ;;
+        next-version)
+            if (($# != 0)); then
+                usage >&2
+                exit 1
+            fi
+            command_next_version
+            ;;
+        prepare-candidate)
+            if (($# != 0)); then
+                usage >&2
+                exit 1
+            fi
+            command_prepare_candidate
+            ;;
+        release-notes)
+            if (($# < 1)); then
+                usage >&2
+                exit 1
+            fi
+            command_release_notes "$@"
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
