@@ -4781,7 +4781,7 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x00);
         assert_eq!(cpu.registers().pc(), 0x9001);
         assert_eq!(cpu.registers().s(), 0x01FB);
-        assert_eq!(cpu.registers().status().bits() & 0xFF, 0x07);
+        assert_eq!(cpu.registers().status().bits(), 0x07);
         assert_eq!(system.memory.get(&0x0001FF), Some(&0x7E));
         assert_eq!(system.memory.get(&0x0001FE), Some(&0x80));
         assert_eq!(system.memory.get(&0x0001FD), Some(&0x02));
@@ -4811,7 +4811,7 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x00);
         assert_eq!(cpu.registers().pc(), 0x9005);
         assert_eq!(cpu.registers().s(), 0x01FB);
-        assert_eq!(cpu.registers().status().bits() & 0xFF, 0x07);
+        assert_eq!(cpu.registers().status().bits(), 0x07);
         assert_eq!(system.memory.get(&0x0001FF), Some(&0x7E));
         assert_eq!(system.memory.get(&0x0001FE), Some(&0x80));
         assert_eq!(system.memory.get(&0x0001FD), Some(&0x02));
@@ -4843,7 +4843,7 @@ mod tests {
 
         run_until_stopped(&mut cpu, &mut system, 80);
 
-        assert_eq!(cpu.registers().status().bits() & 0xFF, 0xBB);
+        assert_eq!(cpu.registers().status().bits(), 0xBB);
     }
 
     #[test]
