@@ -21,6 +21,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Restore Cargo registry cache
         id: cargo-cache
@@ -71,6 +72,8 @@ jobs:
             libxdo-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Restore Cargo registry cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -109,6 +112,8 @@ jobs:
             libopenal-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Restore Cargo registry cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

@@ -340,10 +340,10 @@ extract_release_notes() {
 }
 
 compute_next_version() {
-    local declared major minor patch base_version base_major base_minor base_patch
+    local declared major base_version base_major base_minor base_patch
 
     declared="$(read_workspace_version)"
-    IFS=. read -r major minor patch <<< "${declared}"
+    IFS=. read -r major _ _ <<< "${declared}"
     BASE_TAG="$(latest_tag_for_major "${major}")"
 
     if [[ -z "${BASE_TAG}" ]]; then
