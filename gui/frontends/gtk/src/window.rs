@@ -615,11 +615,11 @@ impl WindowExtend for Window {
                     let _ = self.state().borrow_mut().run_command(SessionCommand::Reset);
                 }
                 ShortcutAction::ToggleFullscreen => {
-                    toggle_window_fullscreen(&self.window());
+                    toggle_window_fullscreen(self);
                 }
             },
             KeyboardShortcut::ToggleFullscreen => {
-                toggle_window_fullscreen(&self.window());
+                toggle_window_fullscreen(self);
             }
         }
         self.update_actions();
@@ -630,8 +630,24 @@ fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
     window.set_fullscreened(fullscreen);
 }
 
-fn toggle_window_fullscreen(window: &gtk::ApplicationWindow) {
-    set_window_fullscreen(window, !window.is_fullscreen());
+fn apply_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    let persist_result = {
+        let state = window.state();
+        state.borrow_mut().set_fullscreen_default(fullscreen)
+    };
+
+    match persist_result {
+        Ok(_) => window.sync_fullscreen_from_settings(),
+        Err(error) => {
+            log::warn!("failed to persist fullscreen setting: {error}");
+            set_window_fullscreen(&window.window(), fullscreen);
+        }
+    }
+}
+
+fn toggle_window_fullscreen(window: &Window) {
+    let fullscreen = !window.window().is_fullscreen();
+    apply_persisted_window_fullscreen(window, fullscreen);
 }
 
 fn rebuild_slot_menu(
