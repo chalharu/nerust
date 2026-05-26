@@ -1,11 +1,6 @@
 const VRAM_LEN: usize = 64 * 1024;
 const OAM_LEN: usize = 544;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ppu1Fault {
-    UnsupportedVramRemap(u8),
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Ppu1 {
     registers: [u8; 0x40],
@@ -14,7 +9,6 @@ pub(crate) struct Ppu1 {
     vmain: u8,
     vmadd: u16,
     oam_byte_addr: u16,
-    fault: Option<Ppu1Fault>,
 }
 
 impl Default for Ppu1 {
@@ -26,7 +20,6 @@ impl Default for Ppu1 {
             vmain: 0,
             vmadd: 0,
             oam_byte_addr: 0,
-            fault: None,
         }
     }
 }
@@ -57,9 +50,6 @@ impl Ppu1 {
             0x2115 => {
                 self.store_register(offset, value);
                 self.vmain = value;
-                if (value >> 2) & 0x03 != 0 {
-                    self.fault = Some(Ppu1Fault::UnsupportedVramRemap(value));
-                }
                 true
             }
             0x2116 => {
@@ -127,10 +117,6 @@ impl Ppu1 {
         self.vmadd
     }
 
-    pub(crate) fn take_fault(&mut self) -> Option<Ppu1Fault> {
-        self.fault.take()
-    }
-
     fn store_register(&mut self, offset: u16, value: u8) {
         self.registers[register_index(offset)] = value;
     }
@@ -173,7 +159,19 @@ fn register_index(offset: u16) -> usize {
 fn remap_vmadd(address: u16, vmain: u8) -> u16 {
     match (vmain >> 2) & 0x03 {
         0 => address,
-        _ => address,
+        1 => {
+            let rem = address & 0x00FF;
+            (address & 0xFF00) | ((rem << 3) & 0x00FF) | (rem >> 5)
+        }
+        2 => {
+            let rem = address & 0x01FF;
+            (address & 0xFE00) | ((rem << 3) & 0x01FF) | (rem >> 6)
+        }
+        3 => {
+            let rem = address & 0x03FF;
+            (address & 0xFC00) | ((rem << 3) & 0x03FF) | (rem >> 7)
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -202,5 +200,50 @@ mod tests {
         assert_eq!(ppu1.peek_vram(0), 0x34);
         assert_eq!(ppu1.peek_vram(1), 0x12);
         assert_eq!(ppu1.vmadd(), 1);
+    }
+
+    #[test]
+    fn vram_remap_mode1_rotates_lower_8_bits() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x2115, 0x84));
+        assert!(ppu1.write(0x2116, 0xE5));
+        assert!(ppu1.write(0x2117, 0x12));
+        assert!(ppu1.write(0x2118, 0x34));
+        assert!(ppu1.write(0x2119, 0x12));
+
+        assert_eq!(ppu1.peek_vram(0x122F * 2), 0x34);
+        assert_eq!(ppu1.peek_vram(0x122F * 2 + 1), 0x12);
+        assert_eq!(ppu1.vmadd(), 0x12E6);
+    }
+
+    #[test]
+    fn vram_remap_mode2_rotates_lower_9_bits() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x2115, 0x88));
+        assert!(ppu1.write(0x2116, 0xE5));
+        assert!(ppu1.write(0x2117, 0x23));
+        assert!(ppu1.write(0x2118, 0x78));
+        assert!(ppu1.write(0x2119, 0x56));
+
+        assert_eq!(ppu1.peek_vram(0x232F * 2), 0x78);
+        assert_eq!(ppu1.peek_vram(0x232F * 2 + 1), 0x56);
+        assert_eq!(ppu1.vmadd(), 0x23E6);
+    }
+
+    #[test]
+    fn vram_remap_mode3_rotates_lower_10_bits() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x2115, 0x8C));
+        assert!(ppu1.write(0x2116, 0xE5));
+        assert!(ppu1.write(0x2117, 0x43));
+        assert!(ppu1.write(0x2118, 0xBC));
+        assert!(ppu1.write(0x2119, 0x9A));
+
+        assert_eq!(ppu1.peek_vram(0x432F * 2), 0xBC);
+        assert_eq!(ppu1.peek_vram(0x432F * 2 + 1), 0x9A);
+        assert_eq!(ppu1.vmadd(), 0x43E6);
     }
 }
