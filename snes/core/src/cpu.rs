@@ -108,6 +108,7 @@ enum ImpliedOp {
     Clc,
     Sec,
     Sei,
+    Inx,
     Xce,
     Txs,
     Stp,
@@ -129,9 +130,28 @@ enum ImmediateLoadTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbsoluteOp {
     Sta { wide: bool },
+    Sty { wide: bool },
     Stz { wide: bool },
+    Bit { wide: bool },
     Jmp,
     Jsr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectOp {
+    Sta { wide: bool },
+    Stx { wide: bool },
+    Dec { wide: bool },
+    LdaIndexedX { wide: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchKind {
+    Always,
+    Equal,
+    NotEqual,
+    Minus,
+    Plus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,9 +162,14 @@ enum MicroState {
     Immediate8(Immediate8Op),
     ImmediateLoadLow(ImmediateLoadTarget),
     ImmediateLoadHigh(ImmediateLoadTarget, u8),
+    Direct(DirectOp),
+    DirectReadHigh { address: u16, low: u8 },
+    DirectDecHigh { address: u16, low: u8 },
+    Branch(BranchKind),
     AbsoluteLow(AbsoluteOp),
     AbsoluteHigh(AbsoluteOp, u8),
-    AbsoluteWriteHigh { address: u16, value: u8 },
+    AbsoluteBitHigh { address: u16, low: u8 },
+    WriteHigh { bank: u8, address: u16, value: u8 },
     JsrPushHigh { target: u16, return_addr: u16 },
     JsrPushLow { target: u16, return_addr: u16 },
     RtsPullLow,
@@ -222,10 +247,44 @@ impl Cpu {
             MicroState::ImmediateLoadHigh(target, low) => {
                 self.execute_immediate_load_high(bus, target, low)
             }
+            MicroState::Direct(op) => self.execute_direct(bus, op),
+            MicroState::DirectReadHigh { address, low } => {
+                let high = bus.read(u32::from(address.wrapping_add(1)));
+                self.registers.a = u16::from_le_bytes([low, high]);
+                self.update_nz16(self.registers.a);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::DirectDecHigh { address, low } => {
+                let high = bus.read(u32::from(address.wrapping_add(1)));
+                let value = u16::from_le_bytes([low, high]).wrapping_sub(1);
+                bus.write(u32::from(address), value as u8);
+                bus.write(u32::from(address.wrapping_add(1)), (value >> 8) as u8);
+                self.update_nz16(value);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::Branch(kind) => self.execute_branch(bus, kind),
             MicroState::AbsoluteLow(op) => self.execute_absolute_low(bus, op),
             MicroState::AbsoluteHigh(op, low) => self.execute_absolute_high(bus, op, low),
-            MicroState::AbsoluteWriteHigh { address, value } => {
-                self.write_bus(bus, address, value);
+            MicroState::AbsoluteBitHigh { address, low } => {
+                let high = self.read_data_bank(bus, address.wrapping_add(1));
+                let value = u16::from_le_bytes([low, high]);
+                self.registers
+                    .p
+                    .set(CpuStatus::ZERO, self.registers.a & value == 0);
+                self.registers
+                    .p
+                    .set(CpuStatus::NEGATIVE, value & 0x8000 != 0);
+                self.registers
+                    .p
+                    .set(CpuStatus::OVERFLOW, value & 0x4000 != 0);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::WriteHigh {
+                bank,
+                address,
+                value,
+            } => {
+                bus.write(((bank as u32) << 16) | u32::from(address), value);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::JsrPushHigh {
@@ -312,6 +371,16 @@ impl Cpu {
             ImpliedOp::Clc => self.registers.p.remove(CpuStatus::CARRY),
             ImpliedOp::Sec => self.registers.p.insert(CpuStatus::CARRY),
             ImpliedOp::Sei => self.registers.p.insert(CpuStatus::IRQ_DISABLE),
+            ImpliedOp::Inx => {
+                if self.index_is_8bit() {
+                    let value = (self.registers.x as u8).wrapping_add(1);
+                    self.registers.x = u16::from(value);
+                    self.update_nz8(value);
+                } else {
+                    self.registers.x = self.registers.x.wrapping_add(1);
+                    self.update_nz16(self.registers.x);
+                }
+            }
             ImpliedOp::Xce => self.execute_xce(),
             ImpliedOp::Txs => {
                 if self.index_is_8bit() {
@@ -328,6 +397,70 @@ impl Cpu {
                 self.current_state = CpuState::Stopped;
                 return;
             }
+        }
+        self.micro_state = MicroState::Fetch;
+    }
+
+    fn execute_direct(&mut self, bus: &mut dyn CpuBus, op: DirectOp) {
+        let offset = bus.read(self.full_pc());
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        let base = self.registers.d.wrapping_add(u16::from(offset));
+
+        match op {
+            DirectOp::Sta { wide } => {
+                bus.write(u32::from(base), self.registers.a as u8);
+                if wide {
+                    self.micro_state = MicroState::WriteHigh {
+                        bank: 0,
+                        address: base.wrapping_add(1),
+                        value: (self.registers.a >> 8) as u8,
+                    };
+                } else {
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::Stx { wide } => {
+                bus.write(u32::from(base), self.registers.x as u8);
+                if wide {
+                    self.micro_state = MicroState::WriteHigh {
+                        bank: 0,
+                        address: base.wrapping_add(1),
+                        value: (self.registers.x >> 8) as u8,
+                    };
+                } else {
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::Dec { wide } => {
+                let low = bus.read(u32::from(base));
+                if wide {
+                    self.micro_state = MicroState::DirectDecHigh { address: base, low };
+                } else {
+                    let value = low.wrapping_sub(1);
+                    bus.write(u32::from(base), value);
+                    self.update_nz8(value);
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::LdaIndexedX { wide } => {
+                let address = base.wrapping_add(self.registers.x);
+                let low = bus.read(u32::from(address));
+                if wide {
+                    self.micro_state = MicroState::DirectReadHigh { address, low };
+                } else {
+                    self.registers.a = (self.registers.a & 0xFF00) | u16::from(low);
+                    self.update_nz8(low);
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+        }
+    }
+
+    fn execute_branch(&mut self, bus: &mut dyn CpuBus, kind: BranchKind) {
+        let offset = bus.read(self.full_pc()) as i8;
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        if self.branch_taken(kind) {
+            self.registers.pc = self.registers.pc.wrapping_add_signed(i16::from(offset));
         }
         self.micro_state = MicroState::Fetch;
     }
@@ -380,9 +513,22 @@ impl Cpu {
             AbsoluteOp::Sta { wide } => {
                 self.write_bus(bus, address, self.registers.a as u8);
                 if wide {
-                    self.micro_state = MicroState::AbsoluteWriteHigh {
+                    self.micro_state = MicroState::WriteHigh {
+                        bank: self.registers.db,
                         address: address.wrapping_add(1),
                         value: (self.registers.a >> 8) as u8,
+                    };
+                } else {
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::Sty { wide } => {
+                self.write_bus(bus, address, self.registers.y as u8);
+                if wide {
+                    self.micro_state = MicroState::WriteHigh {
+                        bank: self.registers.db,
+                        address: address.wrapping_add(1),
+                        value: (self.registers.y >> 8) as u8,
                     };
                 } else {
                     self.micro_state = MicroState::Fetch;
@@ -391,11 +537,28 @@ impl Cpu {
             AbsoluteOp::Stz { wide } => {
                 self.write_bus(bus, address, 0);
                 if wide {
-                    self.micro_state = MicroState::AbsoluteWriteHigh {
+                    self.micro_state = MicroState::WriteHigh {
+                        bank: self.registers.db,
                         address: address.wrapping_add(1),
                         value: 0,
                     };
                 } else {
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::Bit { wide } => {
+                let value = self.read_data_bank(bus, address);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteBitHigh {
+                        address,
+                        low: value,
+                    };
+                } else {
+                    self.registers
+                        .p
+                        .set(CpuStatus::ZERO, (self.registers.a as u8) & value == 0);
+                    self.registers.p.set(CpuStatus::NEGATIVE, value & 0x80 != 0);
+                    self.registers.p.set(CpuStatus::OVERFLOW, value & 0x40 != 0);
                     self.micro_state = MicroState::Fetch;
                 }
             }
@@ -486,18 +649,42 @@ impl Cpu {
             0x18 => MicroState::Implied(ImpliedOp::Clc),
             0x38 => MicroState::Implied(ImpliedOp::Sec),
             0x78 => MicroState::Implied(ImpliedOp::Sei),
+            0xE8 => MicroState::Implied(ImpliedOp::Inx),
             0xFB => MicroState::Implied(ImpliedOp::Xce),
             0x9A => MicroState::Implied(ImpliedOp::Txs),
             0xDB => MicroState::Implied(ImpliedOp::Stp),
+            0x80 => MicroState::Branch(BranchKind::Always),
+            0xF0 => MicroState::Branch(BranchKind::Equal),
+            0xD0 => MicroState::Branch(BranchKind::NotEqual),
+            0x30 => MicroState::Branch(BranchKind::Minus),
+            0x10 => MicroState::Branch(BranchKind::Plus),
             0xC2 => MicroState::Immediate8(Immediate8Op::Rep),
             0xE2 => MicroState::Immediate8(Immediate8Op::Sep),
             0xA9 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::A),
             0xA2 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::X),
             0xA0 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::Y),
+            0x85 => MicroState::Direct(DirectOp::Sta {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x86 => MicroState::Direct(DirectOp::Stx {
+                wide: !self.index_is_8bit(),
+            }),
+            0xB5 => MicroState::Direct(DirectOp::LdaIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0xC6 => MicroState::Direct(DirectOp::Dec {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x8D => MicroState::AbsoluteLow(AbsoluteOp::Sta {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x8C => MicroState::AbsoluteLow(AbsoluteOp::Sty {
+                wide: !self.index_is_8bit(),
+            }),
             0x9C => MicroState::AbsoluteLow(AbsoluteOp::Stz {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x2C => MicroState::AbsoluteLow(AbsoluteOp::Bit {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x4C => MicroState::AbsoluteLow(AbsoluteOp::Jmp),
@@ -514,6 +701,11 @@ impl Cpu {
     fn write_bus(&mut self, bus: &mut dyn CpuBus, address: u16, value: u8) {
         let full = ((self.registers.db as u32) << 16) | u32::from(address);
         bus.write(full, value);
+    }
+
+    fn read_data_bank(&mut self, bus: &mut dyn CpuBus, address: u16) -> u8 {
+        let full = ((self.registers.db as u32) << 16) | u32::from(address);
+        bus.read(full)
     }
 
     fn stack_push(&mut self, bus: &mut dyn CpuBus, value: u8) {
@@ -546,6 +738,28 @@ impl Cpu {
             ImmediateLoadTarget::X | ImmediateLoadTarget::Y if self.index_is_8bit() => 1,
             _ => 2,
         }
+    }
+
+    fn branch_taken(&self, kind: BranchKind) -> bool {
+        match kind {
+            BranchKind::Always => true,
+            BranchKind::Equal => self.registers.p.contains(CpuStatus::ZERO),
+            BranchKind::NotEqual => !self.registers.p.contains(CpuStatus::ZERO),
+            BranchKind::Minus => self.registers.p.contains(CpuStatus::NEGATIVE),
+            BranchKind::Plus => !self.registers.p.contains(CpuStatus::NEGATIVE),
+        }
+    }
+
+    fn update_nz8(&mut self, value: u8) {
+        self.registers.p.set(CpuStatus::ZERO, value == 0);
+        self.registers.p.set(CpuStatus::NEGATIVE, value & 0x80 != 0);
+    }
+
+    fn update_nz16(&mut self, value: u16) {
+        self.registers.p.set(CpuStatus::ZERO, value == 0);
+        self.registers
+            .p
+            .set(CpuStatus::NEGATIVE, value & 0x8000 != 0);
     }
 
     fn refresh_state(&mut self) {
@@ -694,5 +908,43 @@ mod tests {
         assert_eq!(cpu.registers().pc(), 0x8004);
         assert_eq!(cpu.registers().s(), 0x01FF);
         assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+    }
+
+    #[test]
+    fn direct_page_indexed_loads_and_branches_work() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA9, 0x01, 0x85, 0x10, 0xC6, 0x10, 0xF0, 0x01,
+                0xDB, 0xA2, 0x10, 0x00, 0xB5, 0x00, 0x10, 0x01, 0xDB, 0xE8, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(system.memory.get(&0x0010), Some(&0x00));
+        assert_eq!(cpu.registers().a(), 0x0000);
+        assert_eq!(cpu.registers().x(), 0x0011);
+    }
+
+    #[test]
+    fn absolute_bit_and_sty_support_wait_loop_primitives() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA0, 0x21, 0x00, 0x8C, 0x16, 0x21, 0xA9, 0x80,
+                0x8D, 0x00, 0x20, 0x2C, 0x00, 0x20, 0x30, 0x01, 0xDB, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(system.memory.get(&0x002116), Some(&0x21));
+        assert_eq!(system.memory.get(&0x002117), Some(&0x00));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
     }
 }
