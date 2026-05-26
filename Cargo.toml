@@ -49,7 +49,10 @@ codegen-units = 1
 [workspace.package]
 version = "0.1.0"
 authors = ["chalharu"]
+description = "NES emulator written in Rust"
 license = "MPL-2.0"
+repository = "https://github.com/chalharu/nerust"
+homepage = "https://github.com/chalharu/nerust"
 edition = "2024"
 rust-version = "1.89"
 

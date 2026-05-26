@@ -1,0 +1,73 @@
+# release-plz workflow
+#
+# Manages the git/tag/release side of the Nerust release cycle:
+#   - `release-plz release-pr` opens or updates the release PR on pushes to master.
+#   - `release-plz release` creates the git tag and GitHub Release object for
+#     the current unreleased nerust_tao version on master.
+#
+# The GitHub Release object created here is the hook for the separate
+# release-artifacts.yml workflow, which is triggered by `release: published`
+# and only attaches build artifacts/checksums.
+#
+# Secret requirements:
+#   RELEASE_PLZ_TOKEN  – a Personal Access Token with `repo` scope. This is
+#   used instead of the built-in GITHUB_TOKEN so the release PR created by
+#   release-plz can trigger CI workflows.
+
+name: release-plz
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5.129
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5.129
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

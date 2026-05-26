@@ -1,0 +1,36 @@
+# release-plz configuration for nerust
+# https://release-plz.dev/docs/config
+#
+# Release ownership model:
+#   - release-plz manages: release PRs, version bumps, changelog, git tags, GitHub Release objects.
+#   - A separate workflow (release-artifacts.yml) attaches built binaries to the Release object
+#     created here, triggered by the `release: published` event to avoid races.
+#
+# Crates.io publishing is intentionally disabled for all packages; this is a
+# product release, not a library release.
+#
+# nerust_tao is released in git-only mode, so release-plz tracks the product
+# release from git tags/GitHub Releases instead of crates.io state.
+
+[workspace]
+release = false
+publish = false
+git_release_enable = false
+git_tag_enable = false
+repo_url = "https://github.com/chalharu/nerust"
+
+# nerust_tao represents the product release. All workspace crates share the
+# same version via [workspace.package] in Cargo.toml, so a version bump here
+# implies a coordinated bump of the workspace version.
+[[package]]
+name = "nerust_tao"
+release = true
+publish = false
+git_only = true
+git_release_enable = true
+git_tag_enable = true
+# Use a clean `vX.Y.Z` tag rather than the default `nerust_tao-vX.Y.Z`
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+# Product changelog lives at the workspace root
+changelog_path = "CHANGELOG.md"
