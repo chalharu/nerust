@@ -310,10 +310,13 @@ enum StackOp {
 enum BranchKind {
     Always,
     CarryClear,
+    CarrySet,
     Equal,
     NotEqual,
     Minus,
     Plus,
+    OverflowClear,
+    OverflowSet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1840,10 +1843,13 @@ impl Cpu {
             0xDB => MicroState::Implied(ImpliedOp::Stp),
             0x80 => MicroState::Branch(BranchKind::Always),
             0x90 => MicroState::Branch(BranchKind::CarryClear),
+            0xB0 => MicroState::Branch(BranchKind::CarrySet),
             0xF0 => MicroState::Branch(BranchKind::Equal),
             0xD0 => MicroState::Branch(BranchKind::NotEqual),
             0x30 => MicroState::Branch(BranchKind::Minus),
             0x10 => MicroState::Branch(BranchKind::Plus),
+            0x50 => MicroState::Branch(BranchKind::OverflowClear),
+            0x70 => MicroState::Branch(BranchKind::OverflowSet),
             0xC2 => MicroState::Immediate8(Immediate8Op::Rep),
             0xE2 => MicroState::Immediate8(Immediate8Op::Sep),
             0xA9 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::A),
@@ -2168,10 +2174,13 @@ impl Cpu {
         match kind {
             BranchKind::Always => true,
             BranchKind::CarryClear => !self.registers.p.contains(CpuStatus::CARRY),
+            BranchKind::CarrySet => self.registers.p.contains(CpuStatus::CARRY),
             BranchKind::Equal => self.registers.p.contains(CpuStatus::ZERO),
             BranchKind::NotEqual => !self.registers.p.contains(CpuStatus::ZERO),
             BranchKind::Minus => self.registers.p.contains(CpuStatus::NEGATIVE),
             BranchKind::Plus => !self.registers.p.contains(CpuStatus::NEGATIVE),
+            BranchKind::OverflowClear => !self.registers.p.contains(CpuStatus::OVERFLOW),
+            BranchKind::OverflowSet => self.registers.p.contains(CpuStatus::OVERFLOW),
         }
     }
 
@@ -2397,6 +2406,44 @@ mod tests {
         assert_eq!(system.memory.get(&0x0010), Some(&0x00));
         assert_eq!(cpu.registers().a(), 0x0000);
         assert_eq!(cpu.registers().x(), 0x0011);
+    }
+
+    #[test]
+    fn bcs_bvs_and_bvc_branch_when_condition_matches() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA0, 0x00, 0x00, 0x38, 0xB0, 0x01, 0xDB, 0xC8, 0xE2, 0x40,
+                0x70, 0x01, 0xDB, 0xC8, 0xC2, 0x40, 0x50, 0x01, 0xDB, 0xC8, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().y(), 0x0003);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn bcs_bvs_and_bvc_fall_through_when_condition_mismatches() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0x00, 0x00, 0x18, 0xB0, 0x01, 0xE8, 0xC2, 0x40, 0x70,
+                0x01, 0xE8, 0xE2, 0x40, 0x50, 0x01, 0xE8, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 112);
+
+        assert_eq!(cpu.registers().x(), 0x0003);
+        assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
     }
 
     #[test]
