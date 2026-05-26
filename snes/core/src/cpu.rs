@@ -270,6 +270,12 @@ enum AbsoluteOp {
     Sta {
         wide: bool,
     },
+    StaIndexedX {
+        wide: bool,
+    },
+    StaIndexedY {
+        wide: bool,
+    },
     Sty {
         wide: bool,
     },
@@ -350,6 +356,9 @@ enum DirectOp {
     Sta {
         wide: bool,
     },
+    StaIndexedX {
+        wide: bool,
+    },
     Stx {
         wide: bool,
     },
@@ -392,6 +401,7 @@ enum DirectIndexedIndirectOp {
     EorA,
     CmpA,
     Lda,
+    Sta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,6 +413,7 @@ enum DirectIndirectOp {
     EorA,
     CmpA,
     Lda,
+    Sta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,6 +425,7 @@ enum DirectIndirectLongOp {
     EorA,
     CmpA,
     Lda,
+    Sta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,6 +444,8 @@ enum DirectIndirectIndexedYOp {
     CmpALong,
     Lda,
     LdaLong,
+    Sta,
+    StaLong,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,6 +457,7 @@ enum StackRelativeOp {
     EorA,
     CmpA,
     Lda,
+    Sta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +469,7 @@ enum StackRelativeIndirectIndexedYOp {
     EorA,
     CmpA,
     Lda,
+    Sta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,6 +489,7 @@ enum AbsoluteLongOp {
     Lda { wide: bool },
     LdaIndexedX { wide: bool },
     Sta { wide: bool },
+    StaIndexedX { wide: bool },
     Jml,
     Jsl,
 }
@@ -876,13 +893,17 @@ impl Cpu {
                 let high = bus.read(u32::from(pointer_addr.wrapping_add(1)));
                 let target = u16::from_le_bytes([low, high]);
                 let address = self.full_data_address(target);
-                let low = bus.read(address);
-                if self.accumulator_is_8bit() {
-                    self.apply_direct_indexed_indirect(op, u16::from(low));
-                    self.micro_state = MicroState::Fetch;
+                if matches!(op, DirectIndexedIndirectOp::Sta) {
+                    self.store_accumulator(bus, address);
                 } else {
-                    self.micro_state =
-                        MicroState::DirectIndexedIndirectReadHigh { op, address, low };
+                    let low = bus.read(address);
+                    if self.accumulator_is_8bit() {
+                        self.apply_direct_indexed_indirect(op, u16::from(low));
+                        self.micro_state = MicroState::Fetch;
+                    } else {
+                        self.micro_state =
+                            MicroState::DirectIndexedIndirectReadHigh { op, address, low };
+                    }
                 }
             }
             MicroState::DirectIndexedIndirectReadHigh { op, address, low } => {
@@ -1528,15 +1549,15 @@ impl Cpu {
                 }
             }
             DirectOp::Sta { wide } => {
-                bus.write(u32::from(base), self.registers.a as u8);
-                if wide {
-                    self.micro_state = MicroState::WriteHigh {
-                        address: u32::from(base).wrapping_add(1),
-                        value: (self.registers.a >> 8) as u8,
-                    };
-                } else {
-                    self.micro_state = MicroState::Fetch;
-                }
+                self.write_operand_value(bus, u32::from(base), self.registers.a, wide);
+            }
+            DirectOp::StaIndexedX { wide } => {
+                self.write_operand_value(
+                    bus,
+                    u32::from(base.wrapping_add(self.registers.x)),
+                    self.registers.a,
+                    wide,
+                );
             }
             DirectOp::Stx { wide } => {
                 bus.write(u32::from(base), self.registers.x as u8);
@@ -1695,6 +1716,7 @@ impl Cpu {
                 self.apply_immediate_math(ImmediateMathOp::CmpA, value)
             }
             DirectIndexedIndirectOp::Lda => self.load_accumulator(value),
+            DirectIndexedIndirectOp::Sta => unreachable!("STA handled during address resolution"),
         }
     }
 
@@ -1704,13 +1726,16 @@ impl Cpu {
         let pointer_addr = self.registers.d.wrapping_add(u16::from(offset));
         let target = self.read_zero_bank_u16(bus, pointer_addr);
         let full = self.full_data_address(target);
-        let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
-        self.burn_internal_cycles(
-            bus,
-            (if self.accumulator_is_8bit() { 3 } else { 4 }) + self.direct_page_cycle_penalty(),
-        );
-        self.apply_direct_indirect(op, value);
-        self.micro_state = MicroState::Fetch;
+        let extra_cycles =
+            (if self.accumulator_is_8bit() { 3 } else { 4 }) + self.direct_page_cycle_penalty();
+        self.burn_internal_cycles(bus, extra_cycles);
+        if matches!(op, DirectIndirectOp::Sta) {
+            self.store_accumulator(bus, full);
+        } else {
+            let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
+            self.apply_direct_indirect(op, value);
+            self.micro_state = MicroState::Fetch;
+        }
     }
 
     fn apply_direct_indirect(&mut self, op: DirectIndirectOp, value: u16) {
@@ -1722,6 +1747,7 @@ impl Cpu {
             DirectIndirectOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             DirectIndirectOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             DirectIndirectOp::Lda => self.load_accumulator(value),
+            DirectIndirectOp::Sta => unreachable!("STA handled during address resolution"),
         }
     }
 
@@ -1730,13 +1756,16 @@ impl Cpu {
         self.registers.pc = self.registers.pc.wrapping_add(1);
         let pointer_addr = self.registers.d.wrapping_add(u16::from(offset));
         let full = self.read_zero_bank_u24(bus, pointer_addr);
-        let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
-        self.burn_internal_cycles(
-            bus,
-            (if self.accumulator_is_8bit() { 4 } else { 5 }) + self.direct_page_cycle_penalty(),
-        );
-        self.apply_direct_indirect_long(op, value);
-        self.micro_state = MicroState::Fetch;
+        let extra_cycles =
+            (if self.accumulator_is_8bit() { 4 } else { 5 }) + self.direct_page_cycle_penalty();
+        self.burn_internal_cycles(bus, extra_cycles);
+        if matches!(op, DirectIndirectLongOp::Sta) {
+            self.store_accumulator(bus, full);
+        } else {
+            let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
+            self.apply_direct_indirect_long(op, value);
+            self.micro_state = MicroState::Fetch;
+        }
     }
 
     fn apply_direct_indirect_long(&mut self, op: DirectIndirectLongOp, value: u16) {
@@ -1748,6 +1777,7 @@ impl Cpu {
             DirectIndirectLongOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             DirectIndirectLongOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             DirectIndirectLongOp::Lda => self.load_accumulator(value),
+            DirectIndirectLongOp::Sta => unreachable!("STA handled during address resolution"),
         }
     }
 
@@ -1766,7 +1796,8 @@ impl Cpu {
             | DirectIndirectIndexedYOp::EorA
             | DirectIndirectIndexedYOp::SbcA
             | DirectIndirectIndexedYOp::CmpA
-            | DirectIndirectIndexedYOp::Lda => {
+            | DirectIndirectIndexedYOp::Lda
+            | DirectIndirectIndexedYOp::Sta => {
                 let target = self.read_zero_bank_u16(bus, pointer_addr);
                 (
                     self.full_data_address(target)
@@ -1782,16 +1813,24 @@ impl Cpu {
             | DirectIndirectIndexedYOp::EorALong
             | DirectIndirectIndexedYOp::SbcALong
             | DirectIndirectIndexedYOp::CmpALong
-            | DirectIndirectIndexedYOp::LdaLong => (
+            | DirectIndirectIndexedYOp::LdaLong
+            | DirectIndirectIndexedYOp::StaLong => (
                 self.read_zero_bank_u24(bus, pointer_addr)
                     .wrapping_add(u32::from(self.registers.y)),
                 (if self.accumulator_is_8bit() { 4 } else { 5 }) + self.direct_page_cycle_penalty(),
             ),
         };
-        let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
         self.burn_internal_cycles(bus, extra_cycles);
-        self.apply_direct_indirect_indexed_y(op, value);
-        self.micro_state = MicroState::Fetch;
+        if matches!(
+            op,
+            DirectIndirectIndexedYOp::Sta | DirectIndirectIndexedYOp::StaLong
+        ) {
+            self.store_accumulator(bus, full);
+        } else {
+            let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
+            self.apply_direct_indirect_indexed_y(op, value);
+            self.micro_state = MicroState::Fetch;
+        }
     }
 
     fn apply_direct_indirect_indexed_y(&mut self, op: DirectIndirectIndexedYOp, value: u16) {
@@ -1830,11 +1869,17 @@ impl Cpu {
                     DirectIndirectIndexedYOp::Lda | DirectIndirectIndexedYOp::LdaLong => {
                         unreachable!("LDA handled below")
                     }
+                    DirectIndirectIndexedYOp::Sta | DirectIndirectIndexedYOp::StaLong => {
+                        unreachable!("STA handled during address resolution")
+                    }
                 };
                 self.apply_immediate_math(math_op, value)
             }
             DirectIndirectIndexedYOp::Lda | DirectIndirectIndexedYOp::LdaLong => {
                 self.load_accumulator(value)
+            }
+            DirectIndirectIndexedYOp::Sta | DirectIndirectIndexedYOp::StaLong => {
+                unreachable!("STA handled during address resolution")
             }
         }
     }
@@ -1848,6 +1893,7 @@ impl Cpu {
             StackRelativeOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             StackRelativeOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             StackRelativeOp::Lda => self.load_accumulator(value),
+            StackRelativeOp::Sta => unreachable!("STA handled in execute_stack_relative"),
         }
     }
 
@@ -1876,6 +1922,9 @@ impl Cpu {
                 self.apply_immediate_math(ImmediateMathOp::CmpA, value)
             }
             StackRelativeIndirectIndexedYOp::Lda => self.load_accumulator(value),
+            StackRelativeIndirectIndexedYOp::Sta => {
+                unreachable!("STA handled during address resolution")
+            }
         }
     }
 
@@ -1883,12 +1932,16 @@ impl Cpu {
         let offset = bus.read(self.full_pc());
         self.registers.pc = self.registers.pc.wrapping_add(1);
         let address = self.registers.s.wrapping_add(u16::from(offset));
-        let low = bus.read(u32::from(address));
-        if self.accumulator_is_8bit() {
-            self.apply_stack_relative(op, u16::from(low));
-            self.micro_state = MicroState::Fetch;
+        if matches!(op, StackRelativeOp::Sta) {
+            self.store_accumulator(bus, u32::from(address));
         } else {
-            self.micro_state = MicroState::StackRelativeReadHigh { op, address, low };
+            let low = bus.read(u32::from(address));
+            if self.accumulator_is_8bit() {
+                self.apply_stack_relative(op, u16::from(low));
+                self.micro_state = MicroState::Fetch;
+            } else {
+                self.micro_state = MicroState::StackRelativeReadHigh { op, address, low };
+            }
         }
     }
 
@@ -1904,10 +1957,14 @@ impl Cpu {
         let full = self
             .full_data_address(target)
             .wrapping_add(u32::from(self.registers.y));
-        let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
         self.burn_internal_cycles(bus, if self.accumulator_is_8bit() { 5 } else { 6 });
-        self.apply_stack_relative_indirect_indexed_y(op, value);
-        self.micro_state = MicroState::Fetch;
+        if matches!(op, StackRelativeIndirectIndexedYOp::Sta) {
+            self.store_accumulator(bus, full);
+        } else {
+            let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
+            self.apply_stack_relative_indirect_indexed_y(op, value);
+            self.micro_state = MicroState::Fetch;
+        }
     }
 
     fn execute_branch(&mut self, bus: &mut dyn CpuBus, kind: BranchKind) {
@@ -2615,15 +2672,30 @@ impl Cpu {
                 }
             }
             AbsoluteOp::Sta { wide } => {
-                self.write_bus(bus, address, self.registers.a as u8);
-                if wide {
-                    self.micro_state = MicroState::WriteHigh {
-                        address: self.full_data_address(address).wrapping_add(1),
-                        value: (self.registers.a >> 8) as u8,
-                    };
-                } else {
-                    self.micro_state = MicroState::Fetch;
-                }
+                self.write_operand_value(
+                    bus,
+                    self.full_data_address(address),
+                    self.registers.a,
+                    wide,
+                );
+            }
+            AbsoluteOp::StaIndexedX { wide } => {
+                self.write_operand_value(
+                    bus,
+                    self.full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x)),
+                    self.registers.a,
+                    wide,
+                );
+            }
+            AbsoluteOp::StaIndexedY { wide } => {
+                self.write_operand_value(
+                    bus,
+                    self.full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y)),
+                    self.registers.a,
+                    wide,
+                );
             }
             AbsoluteOp::Sty { wide } => {
                 self.write_bus(bus, address, self.registers.y as u8);
@@ -2938,15 +3010,15 @@ impl Cpu {
                 }
             }
             AbsoluteLongOp::Sta { wide } => {
-                bus.write(full, self.registers.a as u8);
-                if wide {
-                    self.micro_state = MicroState::WriteHigh {
-                        address: full.wrapping_add(1),
-                        value: (self.registers.a >> 8) as u8,
-                    };
-                } else {
-                    self.micro_state = MicroState::Fetch;
-                }
+                self.write_operand_value(bus, full, self.registers.a, wide);
+            }
+            AbsoluteLongOp::StaIndexedX { wide } => {
+                self.write_operand_value(
+                    bus,
+                    full.wrapping_add(u32::from(self.registers.x)),
+                    self.registers.a,
+                    wide,
+                );
             }
             AbsoluteLongOp::Jml => {
                 self.registers.pb = bank;
@@ -3384,6 +3456,9 @@ impl Cpu {
             0x75 => MicroState::Direct(DirectOp::AdcIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x95 => MicroState::Direct(DirectOp::StaIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0xF5 => MicroState::Direct(DirectOp::SbcIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3407,6 +3482,7 @@ impl Cpu {
                 wide: !self.index_is_8bit(),
             }),
             0x61 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::AdcA),
+            0x81 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::Sta),
             0xE1 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::SbcA),
             0x21 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::AndA),
             0x01 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::OraA),
@@ -3414,10 +3490,12 @@ impl Cpu {
             0xA1 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::Lda),
             0xC1 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::CmpA),
             0x63 => MicroState::StackRelative(StackRelativeOp::AdcA),
+            0x83 => MicroState::StackRelative(StackRelativeOp::Sta),
             0xE3 => MicroState::StackRelative(StackRelativeOp::SbcA),
             0xA3 => MicroState::StackRelative(StackRelativeOp::Lda),
             0xC3 => MicroState::StackRelative(StackRelativeOp::CmpA),
             0x67 => MicroState::DirectIndirectLong(DirectIndirectLongOp::AdcA),
+            0x87 => MicroState::DirectIndirectLong(DirectIndirectLongOp::Sta),
             0xE7 => MicroState::DirectIndirectLong(DirectIndirectLongOp::SbcA),
             0x27 => MicroState::DirectIndirectLong(DirectIndirectLongOp::AndA),
             0x07 => MicroState::DirectIndirectLong(DirectIndirectLongOp::OraA),
@@ -3427,8 +3505,10 @@ impl Cpu {
             0x31 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AndA),
             0x11 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::OraA),
             0x51 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::EorA),
+            0x91 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::Sta),
             0xF1 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::SbcA),
             0xB1 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::Lda),
+            0x92 => MicroState::DirectIndirect(DirectIndirectOp::Sta),
             0x32 => MicroState::DirectIndirect(DirectIndirectOp::AndA),
             0x12 => MicroState::DirectIndirect(DirectIndirectOp::OraA),
             0x52 => MicroState::DirectIndirect(DirectIndirectOp::EorA),
@@ -3446,6 +3526,7 @@ impl Cpu {
             0x53 => {
                 MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::EorA)
             }
+            0x93 => MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::Sta),
             0xF3 => {
                 MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::SbcA)
             }
@@ -3456,6 +3537,7 @@ impl Cpu {
             0x37 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AndALong),
             0x17 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::OraALong),
             0x57 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::EorALong),
+            0x97 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::StaLong),
             0xF7 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::SbcALong),
             0xB7 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::LdaLong),
             0x71 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AdcA),
@@ -3481,6 +3563,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x79 => MicroState::AbsoluteLow(AbsoluteOp::AdcIndexedY {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x99 => MicroState::AbsoluteLow(AbsoluteOp::StaIndexedY {
                 wide: !self.accumulator_is_8bit(),
             }),
             0xF9 => MicroState::AbsoluteLow(AbsoluteOp::SbcIndexedY {
@@ -3551,6 +3636,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x7D => MicroState::AbsoluteLow(AbsoluteOp::AdcIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x9D => MicroState::AbsoluteLow(AbsoluteOp::StaIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
             0xFD => MicroState::AbsoluteLow(AbsoluteOp::SbcIndexedX {
@@ -3658,6 +3746,9 @@ impl Cpu {
             0x7F => MicroState::AbsoluteLongLow(AbsoluteLongOp::AdcIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x9F => MicroState::AbsoluteLongLow(AbsoluteLongOp::StaIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0xFF => MicroState::AbsoluteLongLow(AbsoluteLongOp::SbcIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3736,6 +3827,22 @@ impl Cpu {
         } else {
             u16::from(low)
         }
+    }
+
+    fn write_operand_value(&mut self, bus: &mut dyn CpuBus, address: u32, value: u16, wide: bool) {
+        bus.write(address, value as u8);
+        if wide {
+            self.micro_state = MicroState::WriteHigh {
+                address: address.wrapping_add(1),
+                value: (value >> 8) as u8,
+            };
+        } else {
+            self.micro_state = MicroState::Fetch;
+        }
+    }
+
+    fn store_accumulator(&mut self, bus: &mut dyn CpuBus, address: u32) {
+        self.write_operand_value(bus, address, self.registers.a, !self.accumulator_is_8bit());
     }
 
     fn adjust_block_move_indexes(&mut self, direction: BlockMoveDirection) {
@@ -6182,6 +6289,277 @@ mod tests {
         assert_eq!(cpu.registers().x(), 0x0300);
         assert!(cpu.registers().status().contains(CpuStatus::CARRY));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn sta_direct_indexed_indirect_uses_direct_page_and_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x00FFA0, &[0x12, 0x12]);
+        system.load(0x7F1212, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7F, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0xA2, 0x91, 0xFF, 0x81, 0x10, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().x(), 0xFF91);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x7F1212), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F1213), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_stack_relative_writes_stack_window() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000201, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0xEF, 0x01, 0x9A, 0xA9, 0x00, 0x80, 0x83, 0x12, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().s(), 0x01EF);
+        assert_eq!(system.memory.get(&0x000201), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000202), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_writes_wrapped_direct_page() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0x85, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x000033), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_indirect_long_writes_full_24bit_pointer() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x34, 0x12, 0x7F]);
+        system.load(0x7F1234, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0x87, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x7F1234), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F1235), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_absolute_and_absolute_long_write_expected_bytes() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F1234, &[0x34, 0x12]);
+        system.load(0x7EFFFF, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7F, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x00, 0x80, 0x8D, 0x34, 0x12, 0x8F, 0xFF, 0xFF, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(system.memory.get(&0x7F1234), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F1235), Some(&0x80));
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_indirect_indexed_y_writes_with_data_bank_offset() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0xDC, 0xFE]);
+        system.load(0x7F0FDC, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0xA0, 0x00, 0x11, 0x91, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().y(), 0x1100);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(system.memory.get(&0x7F0FDC), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0FDD), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_indirect_writes_via_data_bank_pointer() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x34, 0x12]);
+        system.load(0x7F1234, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7F, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0x92, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x7F1234), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F1235), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_stack_relative_indirect_indexed_y_writes_using_stack_pointer_and_offset() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x0001FF, &[0xDC, 0xFE]);
+        system.load(0x7F0FDC, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0xEF, 0x01, 0x9A, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48,
+                0xAB, 0xC2, 0x20, 0xA9, 0x00, 0x80, 0xA0, 0x00, 0x11, 0x93, 0x10, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().s(), 0x01EF);
+        assert_eq!(cpu.registers().y(), 0x1100);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(system.memory.get(&0x7F0FDC), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0FDD), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_indexed_x_writes_wrapped_direct_page_address() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0xA2, 0x33, 0x01,
+                0x95, 0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().x(), 0x0133);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert_eq!(system.memory.get(&0x000134), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000135), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_direct_indirect_long_indexed_y_carries_into_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0xDC, 0xFE, 0x7E]);
+        system.load(0x7F0FDC, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x00, 0x80, 0xA0, 0x00, 0x11,
+                0x97, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().y(), 0x1100);
+        assert_eq!(system.memory.get(&0x7F0FDC), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0FDD), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_absolute_indexed_y_carries_into_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x34, 0x12]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x00, 0x80, 0xA0, 0x00, 0x03, 0x99, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0x8000);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().y(), 0x0300);
+        assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0300), Some(&0x80));
+    }
+
+    #[test]
+    fn sta_absolute_indexed_x_and_long_indexed_x_carry_into_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x34, 0x12]);
+        system.load(0x7F01FF, &[0x78, 0x56]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x00, 0x80, 0xA2, 0x00, 0x03, 0x9D, 0xFF, 0xFF, 0xA9, 0x34, 0x12, 0x9F, 0xFF, 0xFE,
+                0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().x(), 0x0300);
+        assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0300), Some(&0x80));
+        assert_eq!(system.memory.get(&0x7F01FF), Some(&0x34));
+        assert_eq!(system.memory.get(&0x7F0200), Some(&0x12));
     }
 
     #[test]
