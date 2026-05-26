@@ -135,6 +135,7 @@ enum ImmediateLoadTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImmediateMathOp {
+    BitA,
     AndA,
     AdcA,
     CmpA,
@@ -959,7 +960,8 @@ impl Cpu {
             DirectIndirectIndexedYOp::AdcA => {
                 let target = self.read_zero_bank_u16(bus, pointer_addr);
                 (
-                    self.full_data_address(target.wrapping_add(self.registers.y)),
+                    self.full_data_address(target)
+                        .wrapping_add(u32::from(self.registers.y)),
                     (if self.accumulator_is_8bit() { 3 } else { 4 })
                         + self.direct_page_cycle_penalty()
                         + self.direct_indirect_indexed_y_cycle_penalty(target),
@@ -1013,7 +1015,9 @@ impl Cpu {
         self.registers.pc = self.registers.pc.wrapping_add(1);
         let pointer_addr = self.registers.s.wrapping_add(u16::from(offset));
         let target = self.read_zero_bank_u16(bus, pointer_addr);
-        let full = self.full_data_address(target.wrapping_add(self.registers.y));
+        let full = self
+            .full_data_address(target)
+            .wrapping_add(u32::from(self.registers.y));
         let value = self.read_operand_value(bus, full, !self.accumulator_is_8bit());
         self.burn_internal_cycles(bus, if self.accumulator_is_8bit() { 5 } else { 6 });
         self.apply_stack_relative_indirect_indexed_y(op, value);
@@ -1392,6 +1396,18 @@ impl Cpu {
 
     fn apply_immediate_math(&mut self, op: ImmediateMathOp, value: u16) {
         match op {
+            ImmediateMathOp::BitA => {
+                if self.accumulator_is_8bit() {
+                    self.registers.p.set(
+                        CpuStatus::ZERO,
+                        (self.registers.a as u8) & (value as u8) == 0,
+                    );
+                } else {
+                    self.registers
+                        .p
+                        .set(CpuStatus::ZERO, self.registers.a & value == 0);
+                }
+            }
             ImmediateMathOp::AndA => {
                 if self.accumulator_is_8bit() {
                     let result = (self.registers.a as u8) & (value as u8);
@@ -1444,7 +1460,10 @@ impl Cpu {
 
     fn immediate_math_width(&self, op: ImmediateMathOp) -> u8 {
         match op {
-            ImmediateMathOp::AndA | ImmediateMathOp::AdcA | ImmediateMathOp::CmpA
+            ImmediateMathOp::BitA
+            | ImmediateMathOp::AndA
+            | ImmediateMathOp::AdcA
+            | ImmediateMathOp::CmpA
                 if self.accumulator_is_8bit() =>
             {
                 1
@@ -1483,6 +1502,7 @@ impl Cpu {
             0xA0 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::Y),
             0x29 => MicroState::ImmediateMathLow(ImmediateMathOp::AndA),
             0x69 => MicroState::ImmediateMathLow(ImmediateMathOp::AdcA),
+            0x89 => MicroState::ImmediateMathLow(ImmediateMathOp::BitA),
             0xC9 => MicroState::ImmediateMathLow(ImmediateMathOp::CmpA),
             0xE0 => MicroState::ImmediateMathLow(ImmediateMathOp::CmpX),
             0xC0 => MicroState::ImmediateMathLow(ImmediateMathOp::CmpY),
@@ -1964,6 +1984,44 @@ mod tests {
     }
 
     #[test]
+    fn bit_immediate_16bit_updates_only_zero_flag() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x77, 0x93, 0xE2, 0xC0, 0x89, 0x34, 0x12, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x9377);
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn bit_immediate_8bit_preserves_nv_and_sets_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x55, 0x00, 0xE2, 0xE0, 0x89, 0xAA, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0055);
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
     fn cpx_and_cpy_immediate_support_16bit_test_checks() {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
@@ -2143,7 +2201,7 @@ mod tests {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
         system.load(0x000033, &[0xDC, 0xFE]);
-        system.load(0x7E0FDC, &[0xED]);
+        system.load(0x7F0FDC, &[0xED]);
         system.load(
             0x008000,
             &[
@@ -2168,7 +2226,7 @@ mod tests {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
         system.load(0x0001FF, &[0xDC, 0xFE]);
-        system.load(0x7E0FDC, &[0xED]);
+        system.load(0x7F0FDC, &[0xED]);
         system.load(
             0x008000,
             &[
