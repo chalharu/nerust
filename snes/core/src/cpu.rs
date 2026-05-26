@@ -133,6 +133,7 @@ enum ImpliedOp {
     Tdc,
     Tsc,
     Tcs,
+    Xba,
     Xce,
     Txs,
     Stp,
@@ -1386,6 +1387,12 @@ impl Cpu {
                 if self.registers.e {
                     self.registers.s = (self.registers.s & 0x00FF) | 0x0100;
                 }
+            }
+            ImpliedOp::Xba => {
+                let low = self.registers.a as u8;
+                let high = (self.registers.a >> 8) as u8;
+                self.registers.a = (u16::from(low) << 8) | u16::from(high);
+                self.update_nz8(high);
             }
             ImpliedOp::Xce => self.execute_xce(),
             ImpliedOp::Txs => {
@@ -3320,6 +3327,64 @@ impl Cpu {
         }
     }
 
+    fn adc_decimal8(a: u8, operand: u8, carry_in: bool) -> (u8, bool, bool) {
+        let carry_in = i16::from(carry_in);
+        let mut low = i16::from(a & 0x0F) + i16::from(operand & 0x0F) + carry_in;
+        if low >= 0x0A {
+            low = ((low + 0x06) & 0x0F) + 0x10;
+        }
+
+        let mut result = i16::from(a & 0xF0) + i16::from(operand & 0xF0) + low;
+        if result >= 0xA0 {
+            result += 0x60;
+        }
+
+        let signed_result = i16::from((a & 0xF0) as i8) + i16::from((operand & 0xF0) as i8) + low;
+
+        (
+            result as u8,
+            result >= 0x100,
+            !(-128..=127).contains(&signed_result),
+        )
+    }
+
+    fn adc_decimal16(a: u16, operand: u16, carry_in: bool) -> (u16, bool, bool) {
+        let (low, carry, _) = Self::adc_decimal8(a as u8, operand as u8, carry_in);
+        let (high, carry, overflow) =
+            Self::adc_decimal8((a >> 8) as u8, (operand >> 8) as u8, carry);
+        ((u16::from(high) << 8) | u16::from(low), carry, overflow)
+    }
+
+    fn sbc_decimal8(a: u8, operand: u8, carry_in: bool) -> (u8, bool, bool) {
+        let carry_in_u8 = u8::from(carry_in);
+        let inverted = !operand;
+        let (sum1, carry1) = a.overflowing_add(inverted);
+        let (binary_result, carry2) = sum1.overflowing_add(carry_in_u8);
+
+        let mut low = i16::from(a & 0x0F) - i16::from(operand & 0x0F) + i16::from(carry_in_u8) - 1;
+        if low < 0 {
+            low = ((low - 0x06) & 0x0F) - 0x10;
+        }
+
+        let mut result = i16::from(a & 0xF0) - i16::from(operand & 0xF0) + low;
+        if result < 0 {
+            result -= 0x60;
+        }
+
+        (
+            result as u8,
+            carry1 || carry2,
+            ((!(a ^ inverted) & (a ^ binary_result)) & 0x80) != 0,
+        )
+    }
+
+    fn sbc_decimal16(a: u16, operand: u16, carry_in: bool) -> (u16, bool, bool) {
+        let (low, carry, _) = Self::sbc_decimal8(a as u8, operand as u8, carry_in);
+        let (high, carry, overflow) =
+            Self::sbc_decimal8((a >> 8) as u8, (operand >> 8) as u8, carry);
+        ((u16::from(high) << 8) | u16::from(low), carry, overflow)
+    }
+
     fn apply_immediate_math(&mut self, op: ImmediateMathOp, value: u16) {
         match op {
             ImmediateMathOp::BitA => {
@@ -3368,27 +3433,43 @@ impl Cpu {
                 if self.accumulator_is_8bit() {
                     let a = self.registers.a as u8;
                     let operand = value as u8;
-                    let carry_in = u8::from(self.registers.p.contains(CpuStatus::CARRY));
-                    let (sum1, carry1) = a.overflowing_add(operand);
-                    let (result, carry2) = sum1.overflowing_add(carry_in);
+                    let carry_in = self.registers.p.contains(CpuStatus::CARRY);
+                    let (result, carry, overflow) = if self.registers.p.contains(CpuStatus::DECIMAL)
+                    {
+                        Self::adc_decimal8(a, operand, carry_in)
+                    } else {
+                        let carry_in = u8::from(carry_in);
+                        let (sum1, carry1) = a.overflowing_add(operand);
+                        let (result, carry2) = sum1.overflowing_add(carry_in);
+                        (
+                            result,
+                            carry1 || carry2,
+                            ((!(a ^ operand) & (a ^ result)) & 0x80) != 0,
+                        )
+                    };
                     self.registers.a = (self.registers.a & 0xFF00) | u16::from(result);
-                    self.registers.p.set(CpuStatus::CARRY, carry1 || carry2);
-                    self.registers.p.set(
-                        CpuStatus::OVERFLOW,
-                        ((!(a ^ operand) & (a ^ result)) & 0x80) != 0,
-                    );
+                    self.registers.p.set(CpuStatus::CARRY, carry);
+                    self.registers.p.set(CpuStatus::OVERFLOW, overflow);
                     self.update_nz8(result);
                 } else {
                     let a = self.registers.a;
-                    let carry_in = u16::from(self.registers.p.contains(CpuStatus::CARRY));
-                    let (sum1, carry1) = a.overflowing_add(value);
-                    let (result, carry2) = sum1.overflowing_add(carry_in);
+                    let carry_in = self.registers.p.contains(CpuStatus::CARRY);
+                    let (result, carry, overflow) = if self.registers.p.contains(CpuStatus::DECIMAL)
+                    {
+                        Self::adc_decimal16(a, value, carry_in)
+                    } else {
+                        let carry_in = u16::from(carry_in);
+                        let (sum1, carry1) = a.overflowing_add(value);
+                        let (result, carry2) = sum1.overflowing_add(carry_in);
+                        (
+                            result,
+                            carry1 || carry2,
+                            ((!(a ^ value) & (a ^ result)) & 0x8000) != 0,
+                        )
+                    };
                     self.registers.a = result;
-                    self.registers.p.set(CpuStatus::CARRY, carry1 || carry2);
-                    self.registers.p.set(
-                        CpuStatus::OVERFLOW,
-                        ((!(a ^ value) & (a ^ result)) & 0x8000) != 0,
-                    );
+                    self.registers.p.set(CpuStatus::CARRY, carry);
+                    self.registers.p.set(CpuStatus::OVERFLOW, overflow);
                     self.update_nz16(result);
                 }
             }
@@ -3396,30 +3477,45 @@ impl Cpu {
                 if self.accumulator_is_8bit() {
                     let a = self.registers.a as u8;
                     let operand = value as u8;
-                    let carry_in = u8::from(self.registers.p.contains(CpuStatus::CARRY));
-                    let inverted = !operand;
-                    let (sum1, carry1) = a.overflowing_add(inverted);
-                    let (result, carry2) = sum1.overflowing_add(carry_in);
+                    let carry_in = self.registers.p.contains(CpuStatus::CARRY);
+                    let (result, carry, overflow) = if self.registers.p.contains(CpuStatus::DECIMAL)
+                    {
+                        Self::sbc_decimal8(a, operand, carry_in)
+                    } else {
+                        let carry_in = u8::from(carry_in);
+                        let inverted = !operand;
+                        let (sum1, carry1) = a.overflowing_add(inverted);
+                        let (result, carry2) = sum1.overflowing_add(carry_in);
+                        (
+                            result,
+                            carry1 || carry2,
+                            ((!(a ^ inverted) & (a ^ result)) & 0x80) != 0,
+                        )
+                    };
                     self.registers.a = (self.registers.a & 0xFF00) | u16::from(result);
-                    self.registers.p.set(CpuStatus::CARRY, carry1 || carry2);
-                    self.registers.p.set(
-                        CpuStatus::OVERFLOW,
-                        ((!(a ^ inverted) & (a ^ result)) & 0x80) != 0,
-                    );
+                    self.registers.p.set(CpuStatus::CARRY, carry);
+                    self.registers.p.set(CpuStatus::OVERFLOW, overflow);
                     self.update_nz8(result);
                 } else {
                     let a = self.registers.a;
-                    let operand = value;
-                    let carry_in = u16::from(self.registers.p.contains(CpuStatus::CARRY));
-                    let inverted = !operand;
-                    let (sum1, carry1) = a.overflowing_add(inverted);
-                    let (result, carry2) = sum1.overflowing_add(carry_in);
+                    let carry_in = self.registers.p.contains(CpuStatus::CARRY);
+                    let (result, carry, overflow) = if self.registers.p.contains(CpuStatus::DECIMAL)
+                    {
+                        Self::sbc_decimal16(a, value, carry_in)
+                    } else {
+                        let carry_in = u16::from(carry_in);
+                        let inverted = !value;
+                        let (sum1, carry1) = a.overflowing_add(inverted);
+                        let (result, carry2) = sum1.overflowing_add(carry_in);
+                        (
+                            result,
+                            carry1 || carry2,
+                            ((!(a ^ inverted) & (a ^ result)) & 0x8000) != 0,
+                        )
+                    };
                     self.registers.a = result;
-                    self.registers.p.set(CpuStatus::CARRY, carry1 || carry2);
-                    self.registers.p.set(
-                        CpuStatus::OVERFLOW,
-                        ((!(a ^ inverted) & (a ^ result)) & 0x8000) != 0,
-                    );
+                    self.registers.p.set(CpuStatus::CARRY, carry);
+                    self.registers.p.set(CpuStatus::OVERFLOW, overflow);
                     self.update_nz16(result);
                 }
             }
@@ -3486,6 +3582,7 @@ impl Cpu {
             0x5B => MicroState::Implied(ImpliedOp::Tcd),
             0x7B => MicroState::Implied(ImpliedOp::Tdc),
             0x3B => MicroState::Implied(ImpliedOp::Tsc),
+            0xEB => MicroState::Implied(ImpliedOp::Xba),
             0xFB => MicroState::Implied(ImpliedOp::Xce),
             0x9A => MicroState::Implied(ImpliedOp::Txs),
             0xDB => MicroState::Implied(ImpliedOp::Stp),
@@ -6313,6 +6410,66 @@ mod tests {
     }
 
     #[test]
+    fn adc_decimal_immediate_16bit_sets_carry_and_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xF8, 0xA9, 0x34, 0x12, 0x38, 0x69, 0x65, 0x87, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0000);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn adc_decimal_immediate_16bit_sets_overflow_and_negative() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xF8, 0xA9, 0x50, 0x35, 0x18, 0x69, 0x70, 0x44, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x8020);
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn adc_decimal_immediate_8bit_preserves_high_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x12, 0xCC, 0xE2, 0x20, 0xF8, 0x38, 0x69, 0x87, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0xCC00);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
     fn sbc_immediate_16bit_sets_carry_and_zero() {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
@@ -6350,6 +6507,66 @@ mod tests {
         assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
         assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn sbc_decimal_immediate_16bit_sets_carry_and_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xF8, 0x18, 0xA9, 0x90, 0x90, 0xE9, 0x89, 0x90, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0000);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn sbc_decimal_immediate_16bit_sets_overflow_without_carry() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xF8, 0x38, 0xA9, 0x00, 0x10, 0xE9, 0x00, 0x90, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x2000);
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
+    }
+
+    #[test]
+    fn sbc_decimal_immediate_8bit_preserves_high_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x90, 0xCC, 0xE2, 0x20, 0xF8, 0x18, 0xE9, 0x89, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0xCC00);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
     }
 
     #[test]
@@ -8214,5 +8431,37 @@ mod tests {
         assert_eq!(cpu.registers().s(), 0x0200);
         assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn xba_swaps_accumulator_bytes_and_sets_negative_from_new_low_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x12, 0x98, 0xEB, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x1298);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn xba_sets_zero_from_new_low_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xAA, 0x00, 0xEB, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0xAA00);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
     }
 }
