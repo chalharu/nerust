@@ -122,8 +122,17 @@ enum ImpliedOp {
     RolAcc,
     RorAcc,
     LsrAcc,
+    Tax,
+    Tay,
+    Txa,
+    Tya,
+    Txy,
+    Tyx,
+    Tsx,
     Tcd,
+    Tdc,
     Tsc,
+    Tcs,
     Xce,
     Txs,
     Stp,
@@ -1353,13 +1362,30 @@ impl Cpu {
             ImpliedOp::RolAcc => self.shift_accumulator(ShiftOp::Rol),
             ImpliedOp::RorAcc => self.shift_accumulator(ShiftOp::Ror),
             ImpliedOp::LsrAcc => self.shift_accumulator(ShiftOp::Lsr),
+            ImpliedOp::Tax => self.load_x(self.registers.a),
+            ImpliedOp::Tay => self.load_y(self.registers.a),
+            ImpliedOp::Txa => self.load_accumulator(self.registers.x),
+            ImpliedOp::Tya => self.load_accumulator(self.registers.y),
+            ImpliedOp::Txy => self.load_y(self.registers.x),
+            ImpliedOp::Tyx => self.load_x(self.registers.y),
+            ImpliedOp::Tsx => self.load_x(self.registers.s),
             ImpliedOp::Tcd => {
                 self.registers.d = self.registers.a;
                 self.update_nz16(self.registers.d);
             }
+            ImpliedOp::Tdc => {
+                self.registers.a = self.registers.d;
+                self.update_nz16(self.registers.a);
+            }
             ImpliedOp::Tsc => {
                 self.registers.a = self.registers.s;
                 self.update_nz16(self.registers.a);
+            }
+            ImpliedOp::Tcs => {
+                self.registers.s = self.registers.a;
+                if self.registers.e {
+                    self.registers.s = (self.registers.s & 0x00FF) | 0x0100;
+                }
             }
             ImpliedOp::Xce => self.execute_xce(),
             ImpliedOp::Txs => {
@@ -3449,7 +3475,16 @@ impl Cpu {
             0xCA => MicroState::Implied(ImpliedOp::Dex),
             0x88 => MicroState::Implied(ImpliedOp::Dey),
             0x4A => MicroState::Implied(ImpliedOp::LsrAcc),
+            0x8A => MicroState::Implied(ImpliedOp::Txa),
+            0x98 => MicroState::Implied(ImpliedOp::Tya),
+            0xA8 => MicroState::Implied(ImpliedOp::Tay),
+            0xAA => MicroState::Implied(ImpliedOp::Tax),
+            0x9B => MicroState::Implied(ImpliedOp::Txy),
+            0xBB => MicroState::Implied(ImpliedOp::Tyx),
+            0xBA => MicroState::Implied(ImpliedOp::Tsx),
+            0x1B => MicroState::Implied(ImpliedOp::Tcs),
             0x5B => MicroState::Implied(ImpliedOp::Tcd),
+            0x7B => MicroState::Implied(ImpliedOp::Tdc),
             0x3B => MicroState::Implied(ImpliedOp::Tsc),
             0xFB => MicroState::Implied(ImpliedOp::Xce),
             0x9A => MicroState::Implied(ImpliedOp::Txs),
@@ -7991,5 +8026,193 @@ mod tests {
         assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(!cpu.registers().status().contains(CpuStatus::OVERFLOW));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tax_transfers_full_accumulator_to_x_in_16bit_mode() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x65, 0x87, 0xAA, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x8765);
+        assert_eq!(cpu.registers().x(), 0x8765);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tay_truncates_to_low_byte_when_index_registers_are_8bit() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xAB, 0x87, 0xE2, 0x10, 0xA8, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x87AB);
+        assert_eq!(cpu.registers().y(), 0x00AB);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn txa_zero_extends_8bit_x_into_16bit_accumulator() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0xCD, 0xAB, 0xE2, 0x10, 0x8A, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x00CD);
+        assert_eq!(cpu.registers().x(), 0x00CD);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn txa_preserves_accumulator_high_byte_in_8bit_mode() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x34, 0x12, 0xA2, 0xCD, 0xAB, 0xE2, 0x20, 0x8A, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().a(), 0x12CD);
+        assert_eq!(cpu.registers().x(), 0xABCD);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tya_preserves_accumulator_high_byte_in_8bit_mode() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x78, 0x56, 0xA0, 0xEF, 0xCD, 0xE2, 0x20, 0x98, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().a(), 0x56EF);
+        assert_eq!(cpu.registers().y(), 0xCDEF);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn txy_follows_index_width() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0x98, 0xFE, 0xE2, 0x10, 0x9B, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().x(), 0x0098);
+        assert_eq!(cpu.registers().y(), 0x0098);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tyx_follows_index_width() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA0, 0x00, 0x00, 0xE2, 0x10, 0xBB, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().x(), 0x0000);
+        assert_eq!(cpu.registers().y(), 0x0000);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tsx_loads_stack_pointer_using_index_width() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0x00, 0x02, 0x9A, 0xE2, 0x10, 0xBA, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().s(), 0x0200);
+        assert_eq!(cpu.registers().x(), 0x0000);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn tcs_transfers_full_accumulator_to_stack_pointer() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x00, 0x02, 0xE2, 0x20, 0x1B, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x0200);
+        assert_eq!(cpu.registers().s(), 0x0200);
+    }
+
+    #[test]
+    fn tsc_and_tdc_transfer_full_16bit_values_even_when_accumulator_is_8bit() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x00, 0x02, 0x1B, 0xA9, 0x76, 0x98, 0x5B, 0xE2, 0x20,
+                0x3B, 0x7B, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0x9876);
+        assert_eq!(cpu.registers().d(), 0x9876);
+        assert_eq!(cpu.registers().s(), 0x0200);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
     }
 }
