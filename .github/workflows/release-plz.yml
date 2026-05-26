@@ -1,45 +1,28 @@
-# release-plz workflow
-#
-# Manages the git/tag/release side of the Nerust release cycle:
-#   - `release-plz release-pr` opens or updates the release PR on pushes to master.
-#   - `release-plz release` creates the git tag and GitHub Release object for
-#     the current unreleased nerust_tao version on master.
-#
-# The GitHub Release object created here is the hook for the separate
-# release-artifacts.yml workflow, which is triggered by `release: published`
-# and only attaches build artifacts/checksums.
-#
-# Secret requirements:
-#   RELEASE_PLZ_TOKEN  – a Personal Access Token with `repo` scope. This is
-#   used instead of the built-in GITHUB_TOKEN so the release PR created by
-#   release-plz can trigger CI workflows.
-
 name: release-plz
-
 on:
   push:
     branches: [master]
-
 jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           persist-credentials: false
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Run release-plz
-        uses: release-plz/action@v0.5.129
+        uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db
         with:
           command: release
         env:
@@ -48,6 +31,7 @@ jobs:
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
@@ -56,17 +40,17 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           persist-credentials: false
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Run release-plz
-        uses: release-plz/action@v0.5.129
+        uses: release-plz/action@064f4d1e36c843611ddf013be726beaa4ad804db
         with:
           command: release-pr
         env:

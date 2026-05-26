@@ -16,7 +16,7 @@ Official release artifacts are attached to each
 [GitHub Release](https://github.com/chalharu/nerust/releases):
 
 | Artifact | Platform |
-|---|---|
+| --- | --- |
 | `nerust-vX.Y.Z-linux-x86_64.tar.gz` | Linux x86\_64 |
 | `nerust-vX.Y.Z-linux-aarch64.tar.gz` | Linux aarch64 |
 | `nerust-vX.Y.Z-macos-aarch64.app.zip` | macOS aarch64 |

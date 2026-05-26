@@ -1,42 +1,21 @@
-# Release artifact workflow
-#
-# Triggered when release-plz publishes a GitHub Release (the `published`
-# event fires after the release is made non-draft, which is what release-plz
-# does by default). Builds the release binaries and attaches them to the
-# release object together with per-asset SHA-256 sidecars.
-#
-# Artifacts:
-#   nerust-vX.Y.Z-linux-x86_64.tar.gz         – Linux x86_64 tarball
-#   nerust-vX.Y.Z-linux-aarch64.tar.gz        – Linux aarch64 tarball
-#   nerust-vX.Y.Z-macos-aarch64.app.zip       – macOS aarch64 .app bundle
-#   *.sha256                                  – one SHA-256 sidecar per artifact
-#
-# Each tarball contains: nerust_tao, README.md, LICENSE.
-# The macOS bundle is ad-hoc signed (no Apple Developer account required).
-
 name: Release artifacts
-
 on:
   release:
     types: [published]
-
-permissions:
-  contents: write   # required to upload assets to the GitHub Release
-
 env:
   CARGO_TERM_COLOR: always
   TAG_NAME: ${{ github.event.release.tag_name }}
-
 jobs:
-  # -------------------------------------------------------------------------
-  # Linux x86_64
-  # -------------------------------------------------------------------------
   linux-x86_64:
     name: Linux x86_64
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          persist-credentials: false
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install system dependencies
@@ -49,10 +28,10 @@ jobs:
             libxdo-dev
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Cache Cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -72,21 +51,22 @@ jobs:
           packaging/linux/package.sh x86_64
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-x86_64
           path: target/dist/nerust-${{ env.TAG_NAME }}-linux-x86_64.tar.gz
           if-no-files-found: error
 
-  # -------------------------------------------------------------------------
-  # Linux aarch64
-  # -------------------------------------------------------------------------
   linux-aarch64:
     name: Linux aarch64
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          persist-credentials: false
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install system dependencies
@@ -99,10 +79,10 @@ jobs:
             libxdo-dev
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Cache Cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -122,30 +102,31 @@ jobs:
           packaging/linux/package.sh aarch64
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-aarch64
           path: target/dist/nerust-${{ env.TAG_NAME }}-linux-aarch64.tar.gz
           if-no-files-found: error
 
-  # -------------------------------------------------------------------------
-  # macOS aarch64 .app bundle
-  # -------------------------------------------------------------------------
   macos-aarch64:
     name: macOS aarch64
     runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          persist-credentials: false
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: aarch64-apple-darwin
 
       - name: Cache Cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -166,29 +147,29 @@ jobs:
           packaging/macos/build-app.sh
 
       - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-aarch64
           path: target/dist/nerust-${{ env.TAG_NAME }}-macos-aarch64.app.zip
           if-no-files-found: error
 
-  # -------------------------------------------------------------------------
-  # Checksums + upload all assets to the GitHub Release
-  # -------------------------------------------------------------------------
   upload:
     name: Upload release assets
     needs: [linux-x86_64, linux-aarch64, macos-aarch64]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist/
 
       - name: Flatten artifact directories
         run: |
           mkdir -p release-assets
-          find dist/ -type f | xargs -I{} mv {} release-assets/
+          find dist/ -type f -exec mv -- {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Generate SHA-256 checksums
@@ -208,11 +189,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
-            release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz \
-            release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256 \
-            release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz \
-            release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz.sha256 \
-            release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip \
-            release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip.sha256 \
+            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz" \
+            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256" \
+            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz" \
+            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz.sha256" \
+            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip" \
+            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip.sha256" \
             --repo "${{ github.repository }}" \
             --clobber
