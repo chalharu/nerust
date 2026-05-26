@@ -207,6 +207,22 @@ impl HostState {
         let _ = self.session.clear_input();
     }
 
+    pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let fullscreen = window_is_fullscreen(window);
+        match self.session.set_fullscreen_default(fullscreen) {
+            Ok(plan) if plan.fullscreen_default_changed => {
+                self.sync_menu_state();
+                self.refresh_window_title();
+                self.request_redraw();
+            }
+            Ok(_) => (),
+            Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
+        }
+    }
+
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         let now = Instant::now();
         self.maybe_refresh_window_title(now);

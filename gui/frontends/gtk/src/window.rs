@@ -232,6 +232,12 @@ impl WindowExtend for Window {
                 }
             });
         }
+        {
+            let result = result.clone();
+            let _ = window.connect_notify_local(Some("fullscreened"), move |window, _| {
+                sync_persisted_window_fullscreen(&result, window.is_fullscreen());
+            });
+        }
 
         let key_controller = gtk::EventControllerKey::new();
         {
@@ -630,13 +636,24 @@ fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
     window.set_fullscreened(fullscreen);
 }
 
-fn apply_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
-    let persist_result = {
-        let state = window.state();
-        state.borrow_mut().set_fullscreen_default(fullscreen)
-    };
+fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, String> {
+    let state = window.state();
+    Ok(state
+        .borrow_mut()
+        .set_fullscreen_default(fullscreen)?
+        .fullscreen_default_changed)
+}
 
-    match persist_result {
+fn sync_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    match persist_window_fullscreen_default(window, fullscreen) {
+        Ok(true) => window.update_actions(),
+        Ok(false) => (),
+        Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
+    }
+}
+
+fn apply_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    match persist_window_fullscreen_default(window, fullscreen) {
         Ok(_) => window.sync_fullscreen_from_settings(),
         Err(error) => {
             log::warn!("failed to persist fullscreen setting: {error}");
