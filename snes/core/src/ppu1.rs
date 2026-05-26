@@ -107,7 +107,6 @@ impl Ppu1 {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn peek_vram(&self, address: usize) -> u8 {
         self.vram[address % VRAM_LEN]
     }

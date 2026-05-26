@@ -99,7 +99,6 @@ impl Ppu2 {
         self.inidisp
     }
 
-    #[cfg(test)]
     pub(crate) fn peek_cgram(&self, index: usize) -> u8 {
         self.cgram[index % CGRAM_LEN]
     }

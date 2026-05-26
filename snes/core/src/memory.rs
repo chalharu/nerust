@@ -95,7 +95,6 @@ impl Memory {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn peek_wram(&self, address: usize) -> u8 {
         self.wram[address % WRAM_LEN]
     }
