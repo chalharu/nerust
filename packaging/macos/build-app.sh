@@ -93,7 +93,7 @@ ICONS_SRC="${SCRIPT_DIR}/icons/icon_1024x1024.png"
 ICONSET_DIR="${OUT_DIR}/AppIcon.iconset"
 
 if [[ -f "${ICONS_SRC}" ]]; then
-    echo "Generating AppIcon.icns from placeholder PNG…"
+    echo "Generating AppIcon.icns from ${ICONS_SRC}…"
     rm -rf "${ICONSET_DIR}"
     mkdir -p "${ICONSET_DIR}"
 

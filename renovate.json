@@ -3,7 +3,8 @@
 	"extends": [
 		"config:recommended",
 		":disableRateLimiting",
-		":dependencyDashboard"
+		":dependencyDashboard",
+		"helpers:pinGitHubActionDigests"
 	],
 	"timezone": "Asia/Tokyo",
 	"configMigration": true,

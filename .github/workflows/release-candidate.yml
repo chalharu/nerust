@@ -16,7 +16,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -39,7 +39,7 @@ jobs:
           fi
       - name: Prepare release candidate
         id: release_meta
-        run: python3 packaging/release/release_flow.py prepare-candidate >> "$GITHUB_OUTPUT"
+        run: bash packaging/release/release_flow.sh prepare-candidate >> "$GITHUB_OUTPUT"
       - name: Create release candidate commit
         env:
           VERSION: ${{ steps.release_meta.outputs.version }}
