@@ -1,10 +1,10 @@
-rom_root: ../../roms/snes-tests
+rom_root: ../../roms
 cases:
   - id: cputest-basic-final-state
     description: >
       The upstream gilyon basic 65C816 CPU test ROM reaches the published final
       state from cputest/tests-basic.txt.
-    rom: cputest/cputest-basic.sfc
+    rom: snes-tests/cputest/cputest-basic.sfc
     max_steps: 3000000
     check_interval_steps: 1024
     assertions:
@@ -36,7 +36,7 @@ cases:
     description: >
       The upstream gilyon full 65C816 CPU test ROM reaches the published final
       state from cputest/tests-full.txt.
-    rom: cputest/cputest-full.sfc
+    rom: snes-tests/cputest/cputest-full.sfc
     max_steps: 4500000
     check_interval_steps: 1024
     assertions:
@@ -64,3 +64,37 @@ cases:
       - kind: bus_u8
         address: "0x001E"
         expected: "0x00"
+  - id: vram-writes-without-dma-final-state
+    description: >
+      The undisbeliever VRAM write example populates CGRAM color 1 and writes
+      the expected second 2bpp tile into VRAM.
+    rom: snes-test-roms/bin/examples/vram-writes-without-dma.sfc
+    max_steps: 300000
+    check_interval_steps: 256
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x42"
+      - kind: vram_u8
+        address: "0x2016"
+        expected: "0x7E"
+      - kind: vram_u8
+        address: "0x2018"
+        expected: "0x42"
+      - kind: vram_u8
+        address: "0x201C"
+        expected: "0x42"
+  - id: hdma-to-cgram-final-state
+    description: >
+      The undisbeliever HDMA example drives CGRAM color 1 to the final gradient
+      entry produced by the direct HDMA tables.
+    rom: snes-test-roms/bin/examples/hdma-to-cgram.sfc
+    max_steps: 500000
+    check_interval_steps: 256
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0400"
