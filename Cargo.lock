@@ -3361,6 +3361,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_snes_core"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nerust_sound_openal"
 version = "0.1.0"
 dependencies = [
