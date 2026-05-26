@@ -17,7 +17,6 @@ pub use cpu::{CpuState, CpuStatus, Registers};
 pub use mapper::MapperKind;
 
 use bus::Bus;
-use bus::BusFault;
 use cpu::{Cpu, CpuFault};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -26,8 +25,6 @@ pub enum CoreError {
     Cartridge(#[from] CartridgeError),
     #[error("unsupported SNES CPU opcode 0x{opcode:02X} at {bank:02X}:{address:04X}")]
     UnsupportedOpcode { opcode: u8, bank: u8, address: u16 },
-    #[error("unsupported VMAIN remap mode in 0x{0:02X}")]
-    UnsupportedVramRemap(u8),
 }
 
 impl From<CpuFault> for CoreError {
@@ -42,14 +39,6 @@ impl From<CpuFault> for CoreError {
                 bank,
                 address,
             },
-        }
-    }
-}
-
-impl From<BusFault> for CoreError {
-    fn from(value: BusFault) -> Self {
-        match value {
-            BusFault::UnsupportedVramRemap(raw) => Self::UnsupportedVramRemap(raw),
         }
     }
 }
@@ -78,9 +67,6 @@ impl Core {
         self.bus.tick_video_stub();
         self.cpu.step(&mut self.bus);
         if let Some(fault) = self.cpu.take_fault() {
-            return Err(fault.into());
-        }
-        if let Some(fault) = self.bus.take_fault() {
             return Err(fault.into());
         }
         Ok(())
@@ -246,18 +232,13 @@ mod tests {
     }
 
     #[test]
-    fn core_reports_unsupported_vmain_remap_modes() {
+    fn core_accepts_supported_vmain_remap_modes() {
         let mut rom = build_lorom(0x8000);
         rom[0x0000..0x0006].copy_from_slice(&[0xA9, 0x0C, 0x8D, 0x15, 0x21, 0xDB]);
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
-        for _ in 0..32 {
-            if let Err(err) = core.step() {
-                assert_eq!(err, CoreError::UnsupportedVramRemap(0x0C));
-                return;
-            }
-        }
+        run_until_stopped(&mut core, 32);
 
-        panic!("expected unsupported VMAIN remap error");
+        assert_eq!(core.peek(0x002115), 0x0C);
     }
 }

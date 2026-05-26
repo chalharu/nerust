@@ -1,10 +1,5 @@
 use crate::cartridge::ADDRESS_MASK;
-use crate::{
-    Cartridge,
-    memory::Memory,
-    ppu1::{Ppu1, Ppu1Fault},
-    ppu2::Ppu2,
-};
+use crate::{Cartridge, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
@@ -15,11 +10,6 @@ pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
     fn write(&mut self, addr: u32, data: u8);
     fn tick(&mut self) {}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BusFault {
-    UnsupportedVramRemap(u8),
 }
 
 pub(crate) struct Bus {
@@ -69,12 +59,6 @@ impl Bus {
 
     pub(crate) fn write(&mut self, address: u32, value: u8) {
         self.write_resolved(address & ADDRESS_MASK, value);
-    }
-
-    pub(crate) fn take_fault(&mut self) -> Option<BusFault> {
-        self.ppu1.take_fault().map(|fault| match fault {
-            Ppu1Fault::UnsupportedVramRemap(value) => BusFault::UnsupportedVramRemap(value),
-        })
     }
 
     fn in_vblank(&self) -> bool {
