@@ -8,8 +8,6 @@ mod memory;
 mod screen;
 mod summary;
 
-pub(in crate::runner::validation) use self::memory::CartridgeRamAssertion;
-
 #[derive(Default)]
 pub(super) struct ValidationArtifacts {
     screen: screen::ScreenArtifacts,

@@ -12,6 +12,7 @@ pub mod video;
 use self::controller::ControllerRuntime;
 use self::runner::ConsoleRunner;
 use self::runner::data::ConsoleData;
+use self::runner::metrics::SharedConsoleMetrics;
 use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
@@ -143,7 +144,7 @@ pub struct Console {
     thread: Option<JoinHandle<()>>,
 
     video: ConsoleVideo,
-    metrics: Arc<RwLock<ConsoleMetrics>>,
+    metrics: SharedConsoleMetrics,
 }
 
 impl Console {
@@ -178,10 +179,10 @@ impl Console {
         let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
         screen.copy_frame_buffer(frame_buffer.as_mut());
         let frame_buffer = Arc::new(RwLock::new(frame_buffer));
-        let metrics = Arc::new(RwLock::new(ConsoleMetrics {
+        let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
-        }));
+        });
 
         let mut result = Self {
             data_sender,
@@ -227,7 +228,7 @@ impl Console {
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        *self.metrics.read().unwrap_or_else(|err| err.into_inner())
+        self.metrics.snapshot()
     }
 
     pub fn resume(&self) {
