@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps | sed -n 's#.*\"target_directory\":\"\\([^\"]*\\)\".*#\\1#p')}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps | perl -0ne 'print $1 if /"target_directory"\s*:\s*"([^"]+)"/')}"
 
 ARCH="${1:?Usage: package.sh <arch>}"
 BINARY="${BINARY:-${TARGET_DIR}/release/nerust_tao}"
@@ -43,6 +43,11 @@ echo "  binary : ${BINARY}"
 echo "  output : ${OUT_DIR}/${TARBALL_NAME}.tar.gz"
 
 # Validate inputs
+if [[ -z "${TARGET_DIR}" ]]; then
+    echo "Error: failed to determine cargo target directory" >&2
+    exit 1
+fi
+
 if [[ ! -f "${BINARY}" ]]; then
     echo "Error: binary not found at '${BINARY}'" >&2
     exit 1
