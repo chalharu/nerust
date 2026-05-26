@@ -679,10 +679,17 @@ enum MicroState {
         low: u8,
     },
     PushLow(u8),
+    PushLowRaw {
+        low: u8,
+        stack_addr: u16,
+    },
     PullAccumulatorHigh(u8),
     PullXHigh(u8),
     PullYHigh(u8),
-    PullDHigh(u8),
+    PullDHighRaw {
+        low: u8,
+        stack_addr: u16,
+    },
     Branch(BranchKind),
     AbsoluteLow(AbsoluteOp),
     AbsoluteHigh(AbsoluteOp, u8),
@@ -744,25 +751,30 @@ enum MicroState {
     JsrPushHigh {
         target: u16,
         return_addr: u16,
+        stack_addr: Option<u16>,
     },
     JsrPushLow {
         target: u16,
         return_addr: u16,
+        stack_addr: Option<u16>,
     },
     JslPushBank {
         target_bank: u8,
         target_addr: u16,
         return_addr: u16,
+        stack_addr: u16,
     },
     JslPushHigh {
         target_bank: u8,
         target_addr: u16,
         return_addr: u16,
+        stack_addr: u16,
     },
     JslPushLow {
         target_bank: u8,
         target_addr: u16,
         return_addr: u16,
+        stack_addr: u16,
     },
     Exception(ExceptionKind),
     ExceptionPushBank {
@@ -787,8 +799,14 @@ enum MicroState {
     RtsPullHigh(u8),
     RtsFinalize,
     RtlPullLow,
-    RtlPullHigh(u8),
-    RtlPullBank(u16),
+    RtlPullHigh {
+        low: u8,
+        stack_addr: u16,
+    },
+    RtlPullBank {
+        addr: u16,
+        stack_addr: u16,
+    },
     RtiPullStatus,
     RtiPullLow,
     RtiPullHigh(u8),
@@ -996,11 +1014,16 @@ impl Cpu {
             MicroState::PeiPointerLow => self.execute_pei_pointer_low(bus),
             MicroState::PeiPointerHigh { pointer_addr, low } => {
                 let high = bus.read(u32::from(pointer_addr.wrapping_add(1)));
-                self.stack_push(bus, high);
-                self.micro_state = MicroState::PushLow(low);
+                let stack_addr = self.stack_push_raw(bus, self.registers.s, high);
+                self.micro_state = MicroState::PushLowRaw { low, stack_addr };
             }
             MicroState::PushLow(low) => {
                 self.stack_push(bus, low);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::PushLowRaw { low, stack_addr } => {
+                let stack_addr = self.stack_push_raw(bus, stack_addr, low);
+                self.registers.s = self.normalize_stack_pointer(stack_addr);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::PullAccumulatorHigh(low) => {
@@ -1021,8 +1044,9 @@ impl Cpu {
                 self.update_nz16(self.registers.y);
                 self.micro_state = MicroState::Fetch;
             }
-            MicroState::PullDHigh(low) => {
-                let high = self.stack_pop(bus);
+            MicroState::PullDHighRaw { low, stack_addr } => {
+                let (stack_addr, high) = self.stack_pop_raw(bus, stack_addr);
+                self.registers.s = self.normalize_stack_pointer(stack_addr);
                 self.registers.d = u16::from_le_bytes([low, high]);
                 self.update_nz16(self.registers.d);
                 self.micro_state = MicroState::Fetch;
@@ -1113,18 +1137,31 @@ impl Cpu {
             MicroState::JsrPushHigh {
                 target,
                 return_addr,
+                stack_addr,
             } => {
-                self.stack_push(bus, (return_addr >> 8) as u8);
+                let stack_addr = if let Some(stack_addr) = stack_addr {
+                    Some(self.stack_push_raw(bus, stack_addr, (return_addr >> 8) as u8))
+                } else {
+                    self.stack_push(bus, (return_addr >> 8) as u8);
+                    None
+                };
                 self.micro_state = MicroState::JsrPushLow {
                     target,
                     return_addr,
+                    stack_addr,
                 };
             }
             MicroState::JsrPushLow {
                 target,
                 return_addr,
+                stack_addr,
             } => {
-                self.stack_push(bus, return_addr as u8);
+                if let Some(stack_addr) = stack_addr {
+                    let stack_addr = self.stack_push_raw(bus, stack_addr, return_addr as u8);
+                    self.registers.s = self.normalize_stack_pointer(stack_addr);
+                } else {
+                    self.stack_push(bus, return_addr as u8);
+                }
                 self.registers.pc = target;
                 self.micro_state = MicroState::Fetch;
             }
@@ -1132,32 +1169,38 @@ impl Cpu {
                 target_bank,
                 target_addr,
                 return_addr,
+                stack_addr,
             } => {
-                self.stack_push(bus, self.registers.pb);
+                let stack_addr = self.stack_push_raw(bus, stack_addr, self.registers.pb);
                 self.micro_state = MicroState::JslPushHigh {
                     target_bank,
                     target_addr,
                     return_addr,
+                    stack_addr,
                 };
             }
             MicroState::JslPushHigh {
                 target_bank,
                 target_addr,
                 return_addr,
+                stack_addr,
             } => {
-                self.stack_push(bus, (return_addr >> 8) as u8);
+                let stack_addr = self.stack_push_raw(bus, stack_addr, (return_addr >> 8) as u8);
                 self.micro_state = MicroState::JslPushLow {
                     target_bank,
                     target_addr,
                     return_addr,
+                    stack_addr,
                 };
             }
             MicroState::JslPushLow {
                 target_bank,
                 target_addr,
                 return_addr,
+                stack_addr,
             } => {
-                self.stack_push(bus, return_addr as u8);
+                let stack_addr = self.stack_push_raw(bus, stack_addr, return_addr as u8);
+                self.registers.s = self.normalize_stack_pointer(stack_addr);
                 self.registers.pb = target_bank;
                 self.registers.pc = target_addr;
                 self.micro_state = MicroState::Fetch;
@@ -1209,15 +1252,19 @@ impl Cpu {
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::RtlPullLow => {
-                let low = self.stack_pop(bus);
-                self.micro_state = MicroState::RtlPullHigh(low);
+                let (stack_addr, low) = self.stack_pop_raw(bus, self.registers.s);
+                self.micro_state = MicroState::RtlPullHigh { low, stack_addr };
             }
-            MicroState::RtlPullHigh(low) => {
-                let high = self.stack_pop(bus);
-                self.micro_state = MicroState::RtlPullBank(u16::from_le_bytes([low, high]));
+            MicroState::RtlPullHigh { low, stack_addr } => {
+                let (stack_addr, high) = self.stack_pop_raw(bus, stack_addr);
+                self.micro_state = MicroState::RtlPullBank {
+                    addr: u16::from_le_bytes([low, high]),
+                    stack_addr,
+                };
             }
-            MicroState::RtlPullBank(addr) => {
-                let bank = self.stack_pop(bus);
+            MicroState::RtlPullBank { addr, stack_addr } => {
+                let (stack_addr, bank) = self.stack_pop_raw(bus, stack_addr);
+                self.registers.s = self.normalize_stack_pointer(stack_addr);
                 self.registers.pb = bank;
                 self.registers.pc = addr.wrapping_add(1);
                 self.micro_state = MicroState::Fetch;
@@ -2165,8 +2212,11 @@ impl Cpu {
                 self.registers.pc.wrapping_add_signed(offset)
             }
         };
-        self.stack_push(bus, (value >> 8) as u8);
-        self.micro_state = MicroState::PushLow(value as u8);
+        let stack_addr = self.stack_push_raw(bus, self.registers.s, (value >> 8) as u8);
+        self.micro_state = MicroState::PushLowRaw {
+            low: value as u8,
+            stack_addr,
+        };
     }
 
     fn execute_pei_pointer_low(&mut self, bus: &mut dyn CpuBus) {
@@ -2326,8 +2376,12 @@ impl Cpu {
                 self.micro_state = MicroState::Fetch;
             }
             StackOp::Phd => {
-                self.stack_push(bus, (self.registers.d >> 8) as u8);
-                self.micro_state = MicroState::PushLow(self.registers.d as u8);
+                let stack_addr =
+                    self.stack_push_raw(bus, self.registers.s, (self.registers.d >> 8) as u8);
+                self.micro_state = MicroState::PushLowRaw {
+                    low: self.registers.d as u8,
+                    stack_addr,
+                };
             }
             StackOp::Plx => {
                 let low = self.stack_pop(bus);
@@ -2350,14 +2404,15 @@ impl Cpu {
                 }
             }
             StackOp::Plb => {
-                let value = self.stack_pop(bus);
+                let (stack_addr, value) = self.stack_pop_raw(bus, self.registers.s);
+                self.registers.s = self.normalize_stack_pointer(stack_addr);
                 self.registers.db = value;
                 self.update_nz8(value);
                 self.micro_state = MicroState::Fetch;
             }
             StackOp::Pld => {
-                let low = self.stack_pop(bus);
-                self.micro_state = MicroState::PullDHigh(low);
+                let (stack_addr, low) = self.stack_pop_raw(bus, self.registers.s);
+                self.micro_state = MicroState::PullDHighRaw { low, stack_addr };
             }
         }
     }
@@ -2959,6 +3014,7 @@ impl Cpu {
                 self.micro_state = MicroState::JsrPushHigh {
                     target: address,
                     return_addr,
+                    stack_addr: None,
                 };
             }
             AbsoluteOp::JsrIndexedXIndirect => {
@@ -2968,6 +3024,7 @@ impl Cpu {
                 self.micro_state = MicroState::JsrPushHigh {
                     target,
                     return_addr,
+                    stack_addr: Some(self.registers.s),
                 };
             }
         }
@@ -3205,6 +3262,7 @@ impl Cpu {
                     target_bank: bank,
                     target_addr: address,
                     return_addr,
+                    stack_addr: self.registers.s,
                 };
             }
         }
@@ -4214,17 +4272,32 @@ impl Cpu {
     fn stack_push(&mut self, bus: &mut dyn CpuBus, value: u8) {
         bus.write(u32::from(self.registers.s), value);
         self.registers.s = self.registers.s.wrapping_sub(1);
-        if self.registers.e {
-            self.registers.s = (self.registers.s & 0x00FF) | 0x0100;
-        }
+        self.registers.s = self.normalize_stack_pointer(self.registers.s);
     }
 
     fn stack_pop(&mut self, bus: &mut dyn CpuBus) -> u8 {
         self.registers.s = self.registers.s.wrapping_add(1);
-        if self.registers.e {
-            self.registers.s = (self.registers.s & 0x00FF) | 0x0100;
-        }
+        self.registers.s = self.normalize_stack_pointer(self.registers.s);
         bus.read(u32::from(self.registers.s))
+    }
+
+    fn stack_push_raw(&mut self, bus: &mut dyn CpuBus, stack_addr: u16, value: u8) -> u16 {
+        bus.write(u32::from(stack_addr), value);
+        stack_addr.wrapping_sub(1)
+    }
+
+    fn stack_pop_raw(&mut self, bus: &mut dyn CpuBus, stack_addr: u16) -> (u16, u8) {
+        let stack_addr = stack_addr.wrapping_add(1);
+        let value = bus.read(u32::from(stack_addr));
+        (stack_addr, value)
+    }
+
+    fn normalize_stack_pointer(&self, stack_addr: u16) -> u16 {
+        if self.registers.e {
+            (stack_addr & 0x00FF) | 0x0100
+        } else {
+            stack_addr
+        }
     }
 
     fn accumulator_is_8bit(&self) -> bool {
@@ -4578,6 +4651,57 @@ mod tests {
     }
 
     #[test]
+    fn emulation_mode_jsr_preserves_page_one_stack_wrap() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x5C, 0x00, 0x70, 0x7E]);
+        system.load(0x7E7000, &[0x20, 0x00, 0x80]);
+        system.load(0x7E8000, &[0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().s(), 0x01FE);
+        assert_eq!(system.memory.get(&0x0001FF), Some(&0x02));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x70));
+    }
+
+    #[test]
+    fn emulation_mode_pea_wraps_pushes_across_page_zero_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xF4, 0x76, 0x98, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().s(), 0x01FE);
+        assert_eq!(system.memory.get(&0x0000FF), Some(&0x76));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x98));
+    }
+
+    #[test]
+    fn emulation_mode_pei_wraps_pushes_across_page_zero_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000034, &[0x54, 0x76]);
+        system.load(0x008000, &[0xD4, 0x34, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().s(), 0x01FE);
+        assert_eq!(system.memory.get(&0x0000FF), Some(&0x54));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x76));
+    }
+
+    #[test]
     fn direct_page_indexed_loads_and_branches_work() {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
@@ -4772,6 +4896,117 @@ mod tests {
     }
 
     #[test]
+    fn emulation_mode_jsl_wraps_pushes_across_page_zero_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x5C, 0x00, 0x70, 0x7F]);
+        system.load(0x7F7000, &[0x22, 0x00, 0x80, 0xFE]);
+        system.load(0xFE8000, &[0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().s(), 0x01FD);
+        assert_eq!(system.memory.get(&0x0000FE), Some(&0x03));
+        assert_eq!(system.memory.get(&0x0000FF), Some(&0x70));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x7F));
+    }
+
+    #[test]
+    fn emulation_mode_plb_reads_from_second_page_when_stack_is_01ff() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0x99]);
+        system.load(0x000200, &[0x3D]);
+        system.load(0x008000, &[0xAB, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x01FF;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().db(), 0x3D);
+        assert_eq!(cpu.registers().s(), 0x0100);
+    }
+
+    #[test]
+    fn emulation_mode_pld_reads_from_second_page_when_stack_is_01ff() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0xAA, 0xBB]);
+        system.load(0x000200, &[0x56, 0x13]);
+        system.load(0x008000, &[0x2B, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x01FF;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().d(), 0x1356);
+        assert_eq!(cpu.registers().s(), 0x0101);
+    }
+
+    #[test]
+    fn emulation_mode_pld_crosses_into_second_page_after_first_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0xAA]);
+        system.load(0x0001FF, &[0x56]);
+        system.load(0x000200, &[0x13]);
+        system.load(0x008000, &[0x2B, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x01FE;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().d(), 0x1356);
+        assert_eq!(cpu.registers().s(), 0x0100);
+    }
+
+    #[test]
+    fn emulation_mode_rtl_reads_from_second_page_when_stack_is_01ff() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0x00, 0x10, 0x7F]);
+        system.load(0x000200, &[0xFF, 0x80, 0x00]);
+        system.load(0x008000, &[0x6B]);
+        system.load(0x008100, &[0xA9, 0x42, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x01FF;
+
+        run_until_stopped(&mut cpu, &mut system, 48);
+
+        assert_eq!(cpu.registers().a(), 0x0042);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().s(), 0x0102);
+    }
+
+    #[test]
+    fn emulation_mode_rtl_crosses_into_second_page_for_bank_byte_only() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000100, &[0x7F]);
+        system.load(0x0001FE, &[0xFF]);
+        system.load(0x0001FF, &[0x80]);
+        system.load(0x000200, &[0x00]);
+        system.load(0x008000, &[0x6B]);
+        system.load(0x008100, &[0xA9, 0x24, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x01FD;
+
+        run_until_stopped(&mut cpu, &mut system, 48);
+
+        assert_eq!(cpu.registers().a(), 0x0024);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().s(), 0x0100);
+    }
+
+    #[test]
     fn rti_restores_native_status_pc_bank_and_stack() {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
@@ -4860,6 +5095,43 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x7E);
         assert_eq!(cpu.registers().pc(), 0x7006);
         assert_eq!(cpu.registers().s(), 0x01FF);
+    }
+
+    #[test]
+    fn emulation_mode_jsr_indexed_x_indirect_wraps_pushes_across_page_zero_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x5C, 0x00, 0x70, 0x7F]);
+        system.load(0x7F7000, &[0xFC, 0xFF, 0xFF]);
+        system.load(0x7FFFFF, &[0x00]);
+        system.load(0x7F0000, &[0x80]);
+        system.load(0x7F8000, &[0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().s(), 0x01FE);
+        assert_eq!(system.memory.get(&0x0000FF), Some(&0x02));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x70));
+    }
+
+    #[test]
+    fn emulation_mode_phd_wraps_pushes_across_page_zero_boundary() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x0B, 0xDB]);
+
+        step_n(&mut cpu, &mut system, 7);
+        cpu.registers.d = 0x1357;
+        cpu.registers.s = 0x0100;
+
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.registers().s(), 0x01FE);
+        assert_eq!(system.memory.get(&0x0000FF), Some(&0x57));
+        assert_eq!(system.memory.get(&0x000100), Some(&0x13));
     }
 
     #[test]
