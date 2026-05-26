@@ -99,6 +99,8 @@ pub enum CpuState {
     #[default]
     Resetting,
     Running,
+    /// CPU has executed WAI and is suspended until an interrupt is asserted.
+    Waiting,
     Stopped,
 }
 
@@ -137,6 +139,7 @@ enum ImpliedOp {
     Xce,
     Txs,
     Stp,
+    Wai,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,6 +577,7 @@ enum BranchKind {
 enum ExceptionKind {
     Brk,
     Cop,
+    Nmi,
 }
 
 impl ExceptionKind {
@@ -581,9 +585,19 @@ impl ExceptionKind {
         match (self, emulation) {
             (Self::Cop, true) => 0x00FFF4,
             (Self::Brk, true) => 0x00FFFE,
+            (Self::Nmi, true) => 0x00FFFA,
             (Self::Cop, false) => 0x00FFE4,
             (Self::Brk, false) => 0x00FFE6,
+            (Self::Nmi, false) => 0x00FFEA,
         }
+    }
+
+    /// BRK/COP encode an implicit operand byte that fetch_opcode already skipped;
+    /// return_address points one past the opcode so we add another +1 to skip
+    /// the operand. NMI has no operand: the return address is the instruction
+    /// immediately after the WAI (or the one that was about to execute).
+    fn increments_pc(self) -> bool {
+        matches!(self, Self::Brk | Self::Cop)
     }
 }
 
@@ -812,6 +826,8 @@ enum MicroState {
     RtiPullHigh(u8),
     RtiPullBank(u16),
     Stopped,
+    /// WAI has been executed; CPU burns cycles here until an interrupt is pending.
+    WaitingForInterrupt,
 }
 
 pub(crate) struct Cpu {
@@ -1297,6 +1313,7 @@ impl Cpu {
             MicroState::Stopped => {
                 self.current_state = CpuState::Stopped;
             }
+            MicroState::WaitingForInterrupt => self.execute_wai(bus),
         }
         self.refresh_state();
     }
@@ -1326,6 +1343,10 @@ impl Cpu {
     }
 
     fn fetch_opcode(&mut self, bus: &mut dyn CpuBus) {
+        if bus.poll_nmi() {
+            self.start_nmi_sequence();
+            return;
+        }
         let address = self.registers.pc;
         let opcode = bus.read(self.full_pc());
         self.current_opcode = opcode;
@@ -1460,6 +1481,10 @@ impl Cpu {
             ImpliedOp::Stp => {
                 self.micro_state = MicroState::Stopped;
                 self.current_state = CpuState::Stopped;
+                return;
+            }
+            ImpliedOp::Wai => {
+                self.micro_state = MicroState::WaitingForInterrupt;
                 return;
             }
         }
@@ -2162,12 +2187,32 @@ impl Cpu {
     }
 
     fn execute_exception(&mut self, kind: ExceptionKind) {
-        self.registers.pc = self.registers.pc.wrapping_add(1);
+        // BRK and COP have an implicit operand byte; the opcode fetch already
+        // advanced PC past the opcode itself, so we add +1 to also skip the
+        // operand byte.  NMI has no operand; the return address is the PC as-is.
+        if kind.increments_pc() {
+            self.registers.pc = self.registers.pc.wrapping_add(1);
+        }
         let return_addr = self.registers.pc;
         if self.registers.e {
             self.micro_state = MicroState::ExceptionPushHigh { kind, return_addr };
         } else {
             self.micro_state = MicroState::ExceptionPushBank { kind, return_addr };
+        }
+    }
+
+    fn start_nmi_sequence(&mut self) {
+        let return_addr = self.registers.pc;
+        if self.registers.e {
+            self.micro_state = MicroState::ExceptionPushHigh {
+                kind: ExceptionKind::Nmi,
+                return_addr,
+            };
+        } else {
+            self.micro_state = MicroState::ExceptionPushBank {
+                kind: ExceptionKind::Nmi,
+                return_addr,
+            };
         }
     }
 
@@ -2183,6 +2228,17 @@ impl Cpu {
         let offset = i16::from_le_bytes([low, high]);
         self.registers.pc = self.registers.pc.wrapping_add_signed(offset);
         self.micro_state = MicroState::Fetch;
+    }
+
+    /// Idle cycle for WAI: burn a cycle and poll for a pending NMI.
+    /// When NMI is asserted the CPU starts the NMI exception sequence using
+    /// the current PC as the return address (the instruction after WAI).
+    fn execute_wai(&mut self, bus: &mut dyn CpuBus) {
+        if bus.poll_nmi() {
+            self.start_nmi_sequence();
+        }
+        // If no interrupt is pending, WaitingForInterrupt remains set; the CPU
+        // simply burns another cycle on the next step.
     }
 
     fn execute_immediate8(&mut self, bus: &mut dyn CpuBus, op: Immediate8Op) {
@@ -3664,6 +3720,7 @@ impl Cpu {
             0xFB => MicroState::Implied(ImpliedOp::Xce),
             0x9A => MicroState::Implied(ImpliedOp::Txs),
             0xDB => MicroState::Implied(ImpliedOp::Stp),
+            0xCB => MicroState::Implied(ImpliedOp::Wai),
             0x80 => MicroState::Branch(BranchKind::Always),
             0x90 => MicroState::Branch(BranchKind::CarryClear),
             0xB0 => MicroState::Branch(BranchKind::CarrySet),
@@ -4160,7 +4217,6 @@ impl Cpu {
             0x40 => MicroState::RtiPullStatus,
             0x60 => MicroState::RtsPullLow,
             0x6B => MicroState::RtlPullLow,
-            _ => MicroState::Stopped,
         }
     }
 
@@ -4484,6 +4540,7 @@ impl Cpu {
         self.current_state = match self.micro_state {
             MicroState::Reset { .. } => CpuState::Resetting,
             MicroState::Stopped => CpuState::Stopped,
+            MicroState::WaitingForInterrupt => CpuState::Waiting,
             _ => CpuState::Running,
         };
     }
@@ -4498,6 +4555,7 @@ mod tests {
     #[derive(Default)]
     struct TestBus {
         memory: BTreeMap<u32, u8>,
+        nmi_pending: bool,
     }
 
     impl TestBus {
@@ -4510,6 +4568,10 @@ mod tests {
         fn load_native_exception_vectors(&mut self, cop: u16, brk: u16) {
             self.load(0x00FFE4, &cop.to_le_bytes());
             self.load(0x00FFE6, &brk.to_le_bytes());
+        }
+
+        fn load_native_nmi_vector(&mut self, nmi: u16) {
+            self.load(0x00FFEA, &nmi.to_le_bytes());
         }
 
         fn load(&mut self, base: u32, bytes: &[u8]) {
@@ -4526,6 +4588,10 @@ mod tests {
 
         fn write(&mut self, addr: u32, data: u8) {
             self.memory.insert(addr, data);
+        }
+
+        fn poll_nmi(&mut self) -> bool {
+            core::mem::take(&mut self.nmi_pending)
         }
     }
 
@@ -8880,5 +8946,143 @@ mod tests {
         assert_eq!(cpu.registers().a(), 0xAA00);
         assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    // -----------------------------------------------------------------------
+    // WAI + NMI tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn wai_enters_waiting_state_and_burns_cycles_without_nmi() {
+        // WAI at reset PC; no NMI is ever raised.
+        // CPU should stay in Waiting state indefinitely.
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xCB]); // WAI
+
+        // 7-cycle reset
+        step_n(&mut cpu, &mut system, 7);
+        assert_eq!(cpu.current_state(), CpuState::Running);
+
+        // fetch WAI (1 cycle)
+        cpu.step(&mut system);
+        assert_eq!(cpu.current_state(), CpuState::Running);
+
+        // execute WAI (1 cycle) → enters Waiting
+        cpu.step(&mut system);
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+
+        // Extra idle cycles keep the CPU in Waiting with no NMI
+        step_n(&mut cpu, &mut system, 10);
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+    }
+
+    #[test]
+    fn wai_resumes_on_nmi_and_pushes_correct_return_address_native_mode() {
+        // Native-mode program:
+        //   CLC / XCE / REP #$30   – switch to native, 16-bit A/X/Y
+        //   WAI                     – suspend; return address will be $8005
+        //   STP                     – code after WAI (never reached in this test)
+        //
+        // NMI handler at $9000:
+        //   STP                     – we stop there to inspect state
+        //
+        // Assert that after NMI is taken:
+        //   - PC = $9001 (one past STP), PB = $00
+        //   - stack contains the saved PB, return_addr_high, return_addr_low, P
+
+        let nmi_handler_addr: u16 = 0x9000;
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        // Switch to native / 16-bit, then WAI at $8004, STP at $8005
+        system.load(0x008000, &[0x18, 0xFB, 0xC2, 0x30, 0xCB, 0xDB]);
+        system.load_native_nmi_vector(nmi_handler_addr);
+        system.load(0x009000, &[0xDB]); // NMI handler: STP
+
+        // Reset (7 cycles)
+        step_n(&mut cpu, &mut system, 7);
+
+        // Run until WAI is executing idle cycles (state = Waiting)
+        for _ in 0..50 {
+            cpu.step(&mut system);
+            if cpu.current_state() == CpuState::Waiting {
+                break;
+            }
+        }
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+        // PC should point to the instruction AFTER WAI ($8005)
+        assert_eq!(cpu.registers().pc(), 0x8005);
+
+        // Raise NMI on the next poll
+        system.nmi_pending = true;
+
+        // Run through the full NMI exception sequence + STP handler
+        run_until_stopped(&mut cpu, &mut system, 20);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        // PB is zeroed on exception; PC is one past the STP in NMI handler
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9001);
+
+        // Stack: the exception pushed PB($00), return_addr_high($80), return_addr_low($05), P
+        // Stack pointer started at $01FF; after 4 pushes it's at $01FB.
+        // Verify the return address bytes that were pushed.
+        assert_eq!(system.memory[&0x0001FF], 0x00); // PB
+        assert_eq!(system.memory[&0x0001FE], 0x80); // return addr high ($8005 → $80, $05)
+        assert_eq!(system.memory[&0x0001FD], 0x05); // return addr low
+        // $01FC = P (status flags) – value depends on state; just confirm it exists
+        assert!(system.memory.contains_key(&0x0001FC));
+    }
+
+    #[test]
+    fn nmi_uses_emulation_vector_in_emulation_mode() {
+        // Emulation-mode NMI vector is at $FFFA/$FFFB.
+        // Program: WAI (emulation mode, default after reset)
+        let nmi_handler_addr: u16 = 0xA000;
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xCB, 0xDB]); // WAI, STP
+        // Emulation NMI vector
+        system.load(0x00FFFA, &nmi_handler_addr.to_le_bytes());
+        system.load(0x00A000, &[0xDB]); // NMI handler: STP
+
+        step_n(&mut cpu, &mut system, 7); // reset
+        for _ in 0..50 {
+            cpu.step(&mut system);
+            if cpu.current_state() == CpuState::Waiting {
+                break;
+            }
+        }
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+
+        system.nmi_pending = true;
+        run_until_stopped(&mut cpu, &mut system, 20);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0xA001);
+    }
+
+    #[test]
+    fn nmi_is_taken_at_instruction_boundary_without_wai() {
+        let nmi_handler_addr: u16 = 0x9000;
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xEA, 0xEA, 0xDB]); // NOP, NOP, STP
+        system.load(0x00FFFA, &nmi_handler_addr.to_le_bytes());
+        system.load(0x009000, &[0xDB]); // NMI handler: STP
+
+        step_n(&mut cpu, &mut system, 7); // reset
+        cpu.step(&mut system); // fetch first NOP
+        cpu.step(&mut system); // execute first NOP -> fetch boundary at $8001
+
+        system.nmi_pending = true;
+        run_until_stopped(&mut cpu, &mut system, 20);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9001);
+        assert_eq!(system.memory[&0x0001FF], 0x80);
+        assert_eq!(system.memory[&0x0001FE], 0x01);
     }
 }

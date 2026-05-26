@@ -104,7 +104,7 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use super::{Core, CoreError, CpuState, CpuStatus, MapperKind};
+    use super::{Core, CpuState, CpuStatus, MapperKind};
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
@@ -196,24 +196,20 @@ mod tests {
     }
 
     #[test]
-    fn core_reports_unsupported_opcode_instead_of_stopping_cleanly() {
+    fn core_wai_suspends_until_nmi_fires() {
+        // 0xCB (WAI) is now supported: the core should enter Waiting state and
+        // NOT report an UnsupportedOpcode error.
         let mut rom = build_lorom(0x8000);
-        rom[0x0000] = 0xCB;
+        // WAI followed by STP so we can check the state machine exits cleanly.
+        rom[0x0000] = 0xCB; // WAI
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
-        for _ in 0..7 {
+        // Run reset (7 cycles) + fetch WAI (1) + execute WAI (1) = 9 total
+        for _ in 0..9 {
             core.step().unwrap();
         }
-
-        let err = core.step().unwrap_err();
-        assert_eq!(
-            err,
-            CoreError::UnsupportedOpcode {
-                opcode: 0xCB,
-                bank: 0x00,
-                address: 0x8000,
-            }
-        );
+        assert_eq!(core.current_state(), CpuState::Waiting);
+        assert_eq!(core.current_opcode(), 0xCB);
     }
 
     #[test]
