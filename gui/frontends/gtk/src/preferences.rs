@@ -58,6 +58,9 @@ pub(crate) fn present_preferences_dialog(
     {
         action_box.set_spacing(12);
         action_box.set_margin_top(12);
+        action_box.set_margin_bottom(12);
+        action_box.set_margin_start(12);
+        action_box.set_margin_end(12);
     }
 
     let content = dialog.content_area();
