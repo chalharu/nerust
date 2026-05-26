@@ -36,6 +36,7 @@ members = [
   "sound/openal",
   "sound/filter",
   "sound/traits",
+  "snes/core",
   "timer",
 ]
 default-members = ["core", "persistence", "console"]
@@ -99,6 +100,7 @@ nerust_screen_physical = { version = "=0.1.0", path = "screen/physical" }
 nerust_screen_rgb = { version = "=0.1.0", path = "screen/rgb" }
 nerust_screen_wgpu = { version = "=0.1.0", path = "screen/wgpu" }
 nerust_screen_video = { version = "=0.1.0", path = "screen/video" }
+nerust_snes_core = { version = "=0.1.0", path = "snes/core" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
 nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }

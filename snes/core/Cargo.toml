@@ -1,0 +1,13 @@
+[package]
+name = "nerust_snes_core"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
