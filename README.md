@@ -10,6 +10,57 @@
 
 An NES emulator written in Rust
 
+## Release artifacts
+
+Official release artifacts are attached to each
+[GitHub Release](https://github.com/chalharu/nerust/releases):
+
+| Artifact | Platform |
+| --- | --- |
+| `nerust-vX.Y.Z-linux-x86_64.tar.gz` | Linux x86\_64 |
+| `nerust-vX.Y.Z-linux-aarch64.tar.gz` | Linux aarch64 |
+| `nerust-vX.Y.Z-macos-aarch64.app.zip` | macOS aarch64 |
+
+Each tarball contains `nerust_tao` (the Tao frontend binary), `README.md`,
+and `LICENSE`. Each artifact has a matching `.sha256` sidecar. The macOS
+bundle is ad-hoc signed and not notarized.
+
+The official frontend is **Tao** (`nerust_tao`). The GTK4 frontend
+(`nerust_gtk`) is maintained for build-health but is not a release artifact.
+
+## Release workflow
+
+Releases are prepared through the long-lived `release` branch.
+
+1. Create the `release` branch once before the first release candidate.
+2. Run the **Prepare release candidate** workflow from `master`.
+3. The workflow refreshes the `release-candidate` branch, updates the release
+   version in `Cargo.toml`, ensures the matching `CHANGELOG.md` section exists,
+   and opens or updates a PR into `release`.
+4. The PR to `release` publishes versioned workflow artifacts so the exact
+   binaries can be reviewed before release.
+   The release metadata logic lives in `packaging/release/release_flow.sh`.
+5. Merging that PR into `release` creates the `vX.Y.Z` tag and GitHub Release.
+6. The automation then opens a follow-up PR from `release` back to `master` so
+   the released version and changelog stay in sync.
+7. Merge that sync PR before preparing the next release candidate.
+
+The **Release artifacts** workflow also validates artifact creation for PRs into
+`master` when release automation, workflow, packaging, or artifact-input files
+change. Those runs build the same artifacts with a validation-only tag suffix
+and never publish assets or open sync PRs.
+
+The automation reads the major version from `[workspace.package].version` in
+`Cargo.toml`. If there is already a `v<major>.*` tag, it bumps:
+
+- **patch** for workflow, packaging, docs, lockfile, and dependency-only
+  `Cargo.toml` updates
+- **minor** for everything else
+
+If there is no existing tag for the current major, the declared
+`[workspace.package].version` becomes the release version. The workflows use
+the `RELEASE_PLZ_TOKEN` repository secret as a PAT for branch and PR updates.
+
 ## Developer build/test paths
 
 - The default workspace developer path (`cargo build`, `cargo test`) now covers
@@ -41,10 +92,10 @@ cargo test -p nerust_timer --lib
 ### ROM tooling validation
 
 Run ROM tooling and generated regression tests explicitly when touching manifest,
-tooling, or ROM-test behavior:
+tooling, or ROM-test behavior. The manifest lives at `rom_test/rom_tests.yaml`.
 
 ```sh
-cargo test -p nerust_rom_test
+cargo test -p nerust_rom_test --release
 ```
 
 ### Frontend/backend validation
@@ -60,33 +111,15 @@ cargo build -p nerust_tao --release
 
 ## Usage
 
-### GTK4 Frontend
+### Tao Frontend (official)
 
-#### GTK4 dependencies
-
-- Cargo
-- Rust
-- GTK 4.0 or greater
-
-#### Build GTK4
-
-```sh
-cargo build -p nerust_gtk --release
-```
-
-#### Run GTK4
-
-```sh
-target/release/nerust_gtk
-```
-
-### Tao Frontend
+The Tao frontend is the official release target with wgpu-based rendering.
 
 #### Tao dependencies
 
-- Cargo
-- Rust
-- Linux では GTK3 開発パッケージ (`libgtk-3-dev` など)
+- Cargo + Rust
+- Linux: GTK3 development headers (`libgtk-3-dev`), OpenAL (`libopenal-dev`)
+- macOS: no additional system packages required
 
 #### Build Tao
 
@@ -100,25 +133,47 @@ cargo build -p nerust_tao --release
 target/release/nerust_tao [Rom File Path]
 ```
 
-引数なしで起動して `File -> Open` から ROM を開くこともできます。
+Launch without arguments and use `File → Open` to load a ROM.
+
+### GTK4 Frontend
+
+> **Note:** GTK4 is maintained for build-health but is not an official release
+> artifact. Use the Tao frontend for distribution.
+
+#### GTK4 dependencies
+
+- Cargo + Rust
+- GTK 4.0 or greater (`libgtk-4-dev`), OpenAL (`libopenal-dev`)
+
+#### Build GTK4
+
+```sh
+cargo build -p nerust_gtk --release
+```
+
+#### Run GTK4
+
+```sh
+target/release/nerust_gtk
+```
 
 ### ROM test tooling
 
-ROM regression cases are defined in `core/rom_tests.yaml`, with
+ROM regression cases are defined in `rom_test/rom_tests.yaml`, with
 NESdev-style categories and short descriptions for each case.
 
 ```sh
-# Validate configured ROM cases, print per-case progress,
-# and write an HTML report to target/rom-tests/validate/
-cargo run -p nerust_core --features rom-tooling --bin rom_tool -- validate
+# Run all ROM regression cases (requires ROM assets under roms/)
+cargo test -p nerust_rom_test --release
 
-# Capture actual hashes/screenshots with the same progress output
-cargo run -p nerust_core --features rom-tooling --bin rom_tool \
-  -- capture --case cpu.nestest
+# Validate configured ROM cases with an HTML report in target/rom-tests/validate/
+cargo run -p nerust_rom_test --bin rom_tool -- validate
 
-# Benchmark perf-enabled ROM cases from the shared manifest
-cargo run -p nerust_core --features rom-tooling --bin perf --release -- \
-  --case cpu.nestest
+# Capture actual hashes/screenshots for a specific case
+cargo run -p nerust_rom_test --bin rom_tool -- capture --case cpu.nestest
+
+# Benchmark perf-enabled ROM cases
+cargo run -p nerust_rom_test --bin perf --release -- --case cpu.nestest
 ```
 
 ## Save/load compatibility

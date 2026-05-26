@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Application identity -->
+    <key>CFBundleIdentifier</key>
+    <string>io.github.chalharu.nerust</string>
+
+    <key>CFBundleName</key>
+    <string>Nerust</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Nerust</string>
+
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+
+    <!-- Executable -->
+    <key>CFBundleExecutable</key>
+    <string>nerust_tao</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <!-- Copyright -->
+    <key>NSHumanReadableCopyright</key>
+    <string>© Mitsuharu Seki. Licensed under MPL-2.0.</string>
+
+    <!-- Icon -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <!-- Minimum macOS version -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <!-- Supported architectures -->
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+    </array>
+
+    <!-- High-resolution screen support -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Microphone / camera / location — none required -->
+
+    <!-- File types associated with this application -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>NES ROM</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>nes</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+        </dict>
+    </array>
+</dict>
+</plist>

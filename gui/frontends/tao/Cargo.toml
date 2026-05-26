@@ -2,6 +2,9 @@
 name = "nerust_tao"
 version.workspace = true
 authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
