@@ -158,6 +158,12 @@ enum ShiftOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockMoveDirection {
+    Increment,
+    Decrement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbsoluteOp {
     Adc {
         wide: bool,
@@ -465,6 +471,13 @@ enum MicroState {
     ImmediateLoadHigh(ImmediateLoadTarget, u8),
     ImmediateMathLow(ImmediateMathOp),
     ImmediateMathHigh(ImmediateMathOp, u8),
+    BlockMoveFirstBank(BlockMoveDirection),
+    BlockMoveSecondBank(BlockMoveDirection, u8),
+    BlockMoveTransfer {
+        direction: BlockMoveDirection,
+        source_bank: u8,
+        dest_bank: u8,
+    },
     BranchLongLow,
     BranchLongHigh(u8),
     Direct(DirectOp),
@@ -704,6 +717,17 @@ impl Cpu {
             MicroState::ImmediateMathHigh(op, low) => {
                 self.execute_immediate_math_high(bus, op, low)
             }
+            MicroState::BlockMoveFirstBank(direction) => {
+                self.execute_block_move_first_bank(bus, direction)
+            }
+            MicroState::BlockMoveSecondBank(direction, first_bank) => {
+                self.execute_block_move_second_bank(bus, direction, first_bank)
+            }
+            MicroState::BlockMoveTransfer {
+                direction,
+                source_bank,
+                dest_bank,
+            } => self.execute_block_move_transfer(bus, direction, source_bank, dest_bank),
             MicroState::BranchLongLow => self.execute_branch_long_low(bus),
             MicroState::BranchLongHigh(low) => self.execute_branch_long_high(bus, low),
             MicroState::Direct(op) => self.execute_direct(bus, op),
@@ -1758,6 +1782,57 @@ impl Cpu {
         self.micro_state = MicroState::Fetch;
     }
 
+    fn execute_block_move_first_bank(
+        &mut self,
+        bus: &mut dyn CpuBus,
+        direction: BlockMoveDirection,
+    ) {
+        let first_bank = bus.read(self.full_pc());
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        self.micro_state = MicroState::BlockMoveSecondBank(direction, first_bank);
+    }
+
+    fn execute_block_move_second_bank(
+        &mut self,
+        bus: &mut dyn CpuBus,
+        direction: BlockMoveDirection,
+        dest_bank: u8,
+    ) {
+        let source_bank = bus.read(self.full_pc());
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        self.micro_state = MicroState::BlockMoveTransfer {
+            direction,
+            source_bank,
+            dest_bank,
+        };
+    }
+
+    fn execute_block_move_transfer(
+        &mut self,
+        bus: &mut dyn CpuBus,
+        direction: BlockMoveDirection,
+        source_bank: u8,
+        dest_bank: u8,
+    ) {
+        let source = ((source_bank as u32) << 16) | u32::from(self.registers.x);
+        let dest = ((dest_bank as u32) << 16) | u32::from(self.registers.y);
+        let value = bus.read(source);
+        bus.write(dest, value);
+        self.registers.db = dest_bank;
+        self.registers.a = self.registers.a.wrapping_sub(1);
+        self.adjust_block_move_indexes(direction);
+        self.burn_internal_cycles(bus, 6);
+        self.micro_state = if self.registers.a == 0xFFFF {
+            MicroState::Fetch
+        } else {
+            MicroState::BlockMoveTransfer {
+                direction,
+                source_bank,
+                dest_bank,
+            }
+        };
+    }
+
     fn execute_stack(&mut self, bus: &mut dyn CpuBus, op: StackOp) {
         match op {
             StackOp::Pha => {
@@ -2707,6 +2782,8 @@ impl Cpu {
             0x70 => MicroState::Branch(BranchKind::OverflowSet),
             0xC2 => MicroState::Immediate8(Immediate8Op::Rep),
             0xE2 => MicroState::Immediate8(Immediate8Op::Sep),
+            0x44 => MicroState::BlockMoveFirstBank(BlockMoveDirection::Decrement),
+            0x54 => MicroState::BlockMoveFirstBank(BlockMoveDirection::Increment),
             0x82 => MicroState::BranchLongLow,
             0xA9 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::A),
             0xA2 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::X),
@@ -3076,6 +3153,17 @@ impl Cpu {
         } else {
             u16::from(low)
         }
+    }
+
+    fn adjust_block_move_indexes(&mut self, direction: BlockMoveDirection) {
+        let adjust = |value: u16, index_8bit: bool, direction| match (index_8bit, direction) {
+            (true, BlockMoveDirection::Increment) => u16::from((value as u8).wrapping_add(1)),
+            (true, BlockMoveDirection::Decrement) => u16::from((value as u8).wrapping_sub(1)),
+            (false, BlockMoveDirection::Increment) => value.wrapping_add(1),
+            (false, BlockMoveDirection::Decrement) => value.wrapping_sub(1),
+        };
+        self.registers.x = adjust(self.registers.x, self.index_is_8bit(), direction);
+        self.registers.y = adjust(self.registers.y, self.index_is_8bit(), direction);
     }
 
     fn burn_internal_cycles(&mut self, bus: &mut dyn CpuBus, additional: u8) {
@@ -3674,6 +3762,119 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x7E);
         assert_eq!(cpu.registers().pc(), 0x7006);
         assert_eq!(cpu.registers().s(), 0x01FF);
+    }
+
+    #[test]
+    fn mvn_copies_forward_across_bank_wrap() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x21]);
+        system.load(0x7E0000, &[0x22, 0x23, 0x24]);
+        system.load(0x7F0001, &[0x00, 0x99]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x03, 0x00, 0xA2, 0xFF, 0xFF, 0xA0, 0xFE, 0xFF, 0x54,
+                0x7F, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 256);
+
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().x(), 0x0003);
+        assert_eq!(cpu.registers().y(), 0x0002);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(system.memory.get(&0x7FFFFE), Some(&0x21));
+        assert_eq!(system.memory.get(&0x7FFFFF), Some(&0x22));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x23));
+        assert_eq!(system.memory.get(&0x7F0001), Some(&0x24));
+        assert_eq!(system.memory.get(&0x7F0002), Some(&0x99));
+    }
+
+    #[test]
+    fn mvn_with_8bit_indexes_wraps_low_bytes() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7E00FF, &[0x51]);
+        system.load(0x7E0000, &[0x52, 0x53, 0x54]);
+        system.load(0x7F0001, &[0x00, 0x99]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x03, 0x00, 0xA2, 0xFF, 0x05, 0xA0, 0xFE, 0x05, 0xE2,
+                0x10, 0x54, 0x7F, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 256);
+
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().x(), 0x0003);
+        assert_eq!(cpu.registers().y(), 0x0002);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(system.memory.get(&0x7F00FE), Some(&0x51));
+        assert_eq!(system.memory.get(&0x7F00FF), Some(&0x52));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x53));
+        assert_eq!(system.memory.get(&0x7F0001), Some(&0x54));
+        assert_eq!(system.memory.get(&0x7F0002), Some(&0x99));
+    }
+
+    #[test]
+    fn mvp_copies_backward_across_bank_wrap() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x21]);
+        system.load(0x7E0000, &[0x22, 0x23, 0x24]);
+        system.load(0x7F0001, &[0x00]);
+        system.load(0x7FFFFD, &[0x99]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x03, 0x00, 0xA2, 0x02, 0x00, 0xA0, 0x01, 0x00, 0x44,
+                0x7F, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 256);
+
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().x(), 0xFFFE);
+        assert_eq!(cpu.registers().y(), 0xFFFD);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(system.memory.get(&0x7FFFFE), Some(&0x21));
+        assert_eq!(system.memory.get(&0x7FFFFF), Some(&0x22));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x23));
+        assert_eq!(system.memory.get(&0x7F0001), Some(&0x24));
+        assert_eq!(system.memory.get(&0x7FFFFD), Some(&0x99));
+    }
+
+    #[test]
+    fn mvp_with_8bit_indexes_wraps_low_bytes() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7E00FF, &[0x51]);
+        system.load(0x7E0000, &[0x52, 0x53, 0x54]);
+        system.load(0x7F0001, &[0x00, 0x99]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x03, 0x00, 0xA2, 0x02, 0x05, 0xA0, 0x01, 0x05, 0xE2,
+                0x10, 0x44, 0x7F, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 256);
+
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().x(), 0x00FE);
+        assert_eq!(cpu.registers().y(), 0x00FD);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert_eq!(system.memory.get(&0x7F00FE), Some(&0x51));
+        assert_eq!(system.memory.get(&0x7F00FF), Some(&0x52));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x53));
+        assert_eq!(system.memory.get(&0x7F0001), Some(&0x54));
+        assert_eq!(system.memory.get(&0x7F0002), Some(&0x99));
     }
 
     #[test]
