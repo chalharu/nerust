@@ -36,14 +36,11 @@ impl GtkGlRenderer {
 
         let mut view = GlBackend::new();
         view.use_vao(true);
-        let video = state.video();
-        view.on_load(
-            video.presentation(),
-            video
-                .console_video_assets()
-                .expect("NES session always has video assets"),
-        )
-        .unwrap();
+        let snapshot = state.snapshot();
+        let profile = snapshot
+            .video_profile
+            .expect("session should publish a render profile");
+        view.on_load(&profile).unwrap();
         self.view = Some(view);
         self.resize(
             gl_area,

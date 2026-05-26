@@ -1,9 +1,9 @@
 use crate::error::PersistenceError;
 use crate::time::unix_millis;
 use nerust_contract_mirror::MirrorMode;
-use nerust_contract_options::Mmc3IrqVariant;
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::{CanonicalMediaIdentity, PersistenceIdentity};
 use nerust_contract_rom::RomFormat;
+use nerust_input_schema::SystemId;
 use std::io::{Read, Seek};
 use std::time::SystemTime;
 use zip::ZipArchive;
@@ -19,12 +19,13 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
+    #[serde(default = "default_system_id")]
+    pub(crate) system_id: SystemId,
     pub(crate) mapper_type: u32,
     pub(crate) sub_mapper_type: u32,
     pub(crate) prg_rom_crc64: u64,
     pub(crate) chr_rom_crc64: u64,
     pub(crate) trainer_crc64: u64,
-    pub(crate) mmc3_irq_variant: u32,
     pub(crate) emulator_version: String,
     pub(crate) rom_format: u32,
     pub(crate) mirror_mode_kind: u32,
@@ -38,6 +39,10 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) save_prg_ram_len: u64,
     pub(crate) chr_ram_len: u64,
     pub(crate) save_chr_ram_len: u64,
+}
+
+const fn default_system_id() -> SystemId {
+    SystemId::Nes
 }
 
 pub(crate) fn read_metadata<R: Read + Seek>(
@@ -61,21 +66,21 @@ pub(crate) fn read_metadata<R: Read + Seek>(
 pub(crate) fn encode_slot_metadata(
     slot_id: u64,
     saved_at: SystemTime,
-    target: PersistenceTarget,
+    identity: PersistenceIdentity,
     has_thumbnail: bool,
 ) -> Result<StateArchiveMetadata, PersistenceError> {
-    let rom_identity = target.rom_identity;
+    let CanonicalMediaIdentity::Rom(rom_identity) = identity.media;
     Ok(StateArchiveMetadata {
         schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
         has_thumbnail,
+        system_id: identity.system_id,
         mapper_type: u32::from(rom_identity.mapper_type),
         sub_mapper_type: u32::from(rom_identity.sub_mapper_type),
         prg_rom_crc64: rom_identity.prg_rom_crc64,
         chr_rom_crc64: rom_identity.chr_rom_crc64,
         trainer_crc64: rom_identity.trainer_crc64,
-        mmc3_irq_variant: mmc3_irq_variant_to_u32(target.options.mmc3_irq_variant),
         emulator_version: env!("CARGO_PKG_VERSION").to_string(),
         rom_format: rom_format_to_u32(rom_identity.format),
         mirror_mode_kind: mirror_mode_kind_to_u32(rom_identity.mirror_mode),
@@ -91,13 +96,14 @@ pub(crate) fn encode_slot_metadata(
     })
 }
 
-pub(crate) fn slot_matches_target(
+pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
-    target: PersistenceTarget,
+    identity: PersistenceIdentity,
 ) -> bool {
-    let rom_identity = target.rom_identity;
+    let CanonicalMediaIdentity::Rom(rom_identity) = identity.media;
     let mirror_mode_lut = mirror_mode_custom_lut(rom_identity.mirror_mode);
-    metadata.mapper_type == u32::from(rom_identity.mapper_type)
+    metadata.system_id == identity.system_id
+        && metadata.mapper_type == u32::from(rom_identity.mapper_type)
         && metadata.sub_mapper_type == u32::from(rom_identity.sub_mapper_type)
         && metadata.prg_rom_crc64 == rom_identity.prg_rom_crc64
         && metadata.chr_rom_crc64 == rom_identity.chr_rom_crc64
@@ -113,15 +119,6 @@ pub(crate) fn slot_matches_target(
         && metadata.save_prg_ram_len == rom_identity.save_prg_ram_len as u64
         && metadata.chr_ram_len == rom_identity.chr_ram_len as u64
         && metadata.save_chr_ram_len == rom_identity.save_chr_ram_len as u64
-        && metadata.mmc3_irq_variant == mmc3_irq_variant_to_u32(target.options.mmc3_irq_variant)
-}
-
-fn mmc3_irq_variant_to_u32(variant: Option<Mmc3IrqVariant>) -> u32 {
-    match variant {
-        Some(Mmc3IrqVariant::Sharp) => 1,
-        Some(Mmc3IrqVariant::Nec) => 2,
-        None => 0,
-    }
 }
 
 fn rom_format_to_u32(format: RomFormat) -> u32 {

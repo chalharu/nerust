@@ -12,12 +12,13 @@ pub mod video;
 use self::controller::ControllerRuntime;
 use self::runner::ConsoleRunner;
 use self::runner::data::ConsoleData;
-use self::state::StateExport;
+use self::runner::metrics::SharedConsoleMetrics;
+use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_core::Core;
 use nerust_core::cartridge_rom::CartridgeData;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
@@ -128,8 +129,8 @@ pub enum ConsoleError {
 enum ConsoleReply {
     Unit,
     MapperSave(Option<Vec<u8>>),
-    PersistenceTarget(PersistenceTarget),
-    StateExport(StateExport),
+    CanonicalMediaIdentity(CanonicalMediaIdentity),
+    StateExport(RuntimeStateExport),
     ControllerState(Vec<u8>),
     InputState(Vec<u8>),
 }
@@ -143,7 +144,7 @@ pub struct Console {
     thread: Option<JoinHandle<()>>,
 
     video: ConsoleVideo,
-    metrics: Arc<RwLock<ConsoleMetrics>>,
+    metrics: SharedConsoleMetrics,
 }
 
 impl Console {
@@ -178,20 +179,16 @@ impl Console {
         let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
         screen.copy_frame_buffer(frame_buffer.as_mut());
         let frame_buffer = Arc::new(RwLock::new(frame_buffer));
-        let metrics = Arc::new(RwLock::new(ConsoleMetrics {
+        let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
-        }));
+        });
 
         let mut result = Self {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo::new(
-                screen.video_presentation().clone(),
-                screen.console_video_assets().cloned(),
-                frame_buffer.clone(),
-            ),
+            video: ConsoleVideo::new(screen.video_presentation().clone(), frame_buffer.clone()),
             metrics: metrics.clone(),
         };
 
@@ -211,15 +208,15 @@ impl Console {
     }
 
     pub fn logical_size(&self) -> LogicalSize {
-        self.video().presentation().logical_size()
+        self.video().render_profile().logical_size
     }
 
     pub fn source_logical_size(&self) -> LogicalSize {
-        self.video().presentation().source_logical_size()
+        self.video().render_profile().source_logical_size
     }
 
     pub fn physical_size(&self) -> PhysicalSize {
-        self.video().presentation().physical_size()
+        self.video().render_profile().physical_size
     }
 
     pub fn video(&self) -> &ConsoleVideo {
@@ -227,11 +224,11 @@ impl Console {
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.video.frame_buffer().with_bytes(f)
+        self.video.with_frame_buffer(f)
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        *self.metrics.read().unwrap_or_else(|err| err.into_inner())
+        self.metrics.snapshot()
     }
 
     pub fn resume(&self) {
@@ -315,18 +312,18 @@ impl Console {
         Ok(())
     }
 
-    pub fn export_state(&self) -> Result<StateExport, ConsoleError> {
+    pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
         match self.send_request(ConsoleData::ExportState)? {
             ConsoleReply::StateExport(export) => Ok(export),
             _ => Err(ConsoleError::Core("unexpected state export reply".into())),
         }
     }
 
-    pub fn persistence_target(&self) -> Result<PersistenceTarget, ConsoleError> {
-        match self.send_request(ConsoleData::PersistenceTarget)? {
-            ConsoleReply::PersistenceTarget(target) => Ok(target),
+    pub fn canonical_media_identity(&self) -> Result<CanonicalMediaIdentity, ConsoleError> {
+        match self.send_request(ConsoleData::CanonicalMediaIdentity)? {
+            ConsoleReply::CanonicalMediaIdentity(identity) => Ok(identity),
             _ => Err(ConsoleError::Core(
-                "unexpected persistence target reply".into(),
+                "unexpected canonical media identity reply".into(),
             )),
         }
     }

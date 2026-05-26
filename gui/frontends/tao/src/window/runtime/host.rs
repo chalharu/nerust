@@ -8,8 +8,8 @@ use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, Setti
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::load::NesLoadOptions;
-use nerust_gui_shell::session::{KeyboardShortcut, NesSession};
+use nerust_gui_shell::load::{LoadRequest, MediaObject};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_gui_shell::settings::nes::scaling_factor;
 use nerust_screen_wgpu::surface::SurfaceSize;
@@ -37,10 +37,10 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
-    session: NesSession,
+    session: SessionHandle,
     app_menu: AppMenu,
     shell: NativeShellState,
-    default_load_options: NesLoadOptions,
+    default_load_request: LoadRequest,
     user_event_proxy: EventLoopProxy<UserEvent>,
     settings_helper: Option<settings::SettingsHelperHandle>,
     settings_open: bool,
@@ -51,14 +51,14 @@ impl HostState {
     pub(crate) fn new(
         app_menu: AppMenu,
         user_event_proxy: EventLoopProxy<UserEvent>,
-        default_load_options: NesLoadOptions,
+        default_load_request: LoadRequest,
     ) -> Self {
         Self {
             window: None,
-            session: NesSession::new_for_host(HostBackendIdentity::tao_wgpu()),
+            session: SessionHandle::new_for_host(HostBackendIdentity::tao_wgpu()),
             app_menu,
             shell: NativeShellState::new(),
-            default_load_options,
+            default_load_request,
             user_event_proxy,
             settings_helper: None,
             settings_open: false,
@@ -66,7 +66,7 @@ impl HostState {
         }
     }
 
-    pub(crate) fn session(&self) -> &NesSession {
+    pub(crate) fn session(&self) -> &SessionHandle {
         &self.session
     }
 
@@ -75,7 +75,7 @@ impl HostState {
     }
 
     pub(crate) fn resume_session(&mut self) {
-        self.session.resume();
+        let _ = self.session.run_command(SessionCommand::Resume);
     }
 
     pub(crate) fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
@@ -118,17 +118,21 @@ impl HostState {
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_with_options(None, data, self.default_load_options)
+        self.load_with_options(None, data, self.default_load_request.clone())
     }
 
     pub(crate) fn load_with_options(
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        options: NesLoadOptions,
+        request: LoadRequest,
     ) -> bool {
-        if self.session.load_with_options(rom_path, data, options) {
-            self.session.resume();
+        if self
+            .session
+            .load(MediaObject::new(rom_path, data), request)
+            .is_ok()
+        {
+            let _ = self.session.run_command(SessionCommand::Resume);
             self.after_rom_load();
             true
         } else {
@@ -140,7 +144,7 @@ impl HostState {
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();
-                self.load_with_options(Some(rom_path), data, self.default_load_options)
+                self.load_with_options(Some(rom_path), data, self.default_load_request.clone())
             }
             Err(error) => {
                 log::warn!("ROM open failed: {error}");
@@ -194,14 +198,14 @@ impl HostState {
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = keycode_controller_input(input.physical_key)
-            && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
+            && let Ok(Some(shortcut)) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
         }
     }
 
     pub(crate) fn clear_keys(&mut self) {
-        self.session.clear_controller_input();
+        let _ = self.session.clear_input();
     }
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
@@ -318,7 +322,7 @@ impl HostState {
     }
 
     fn apply_session_command(&mut self, command: SessionCommand) {
-        let outcome = self.session.run_command(command);
+        let outcome = self.session.run_command(command).unwrap_or_default();
         self.apply_command_outcome(outcome);
     }
 

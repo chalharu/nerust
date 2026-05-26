@@ -8,8 +8,6 @@ mod cartridge_ram;
 mod ppu_vram;
 mod work_ram;
 
-pub(in crate::runner::validation) use self::cartridge_ram::CartridgeRamAssertion;
-
 #[derive(Default)]
 pub(super) struct MemoryArtifacts {
     pub(super) work_ram: work_ram::WorkRamArtifacts,

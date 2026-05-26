@@ -1,6 +1,6 @@
 use crate::surface::SurfaceTarget;
 use nerust_backend_wgpu::{RenderResult, WgpuBackend};
-use nerust_gui_shell::session::NesSession;
+use nerust_gui_shell::session::SessionHandle;
 use nerust_screen_wgpu::{renderer::PresentationOptions, surface::SurfaceSize};
 use std::sync::Arc;
 use tao::window::Window as TaoWindow;
@@ -10,13 +10,15 @@ pub(crate) struct WgpuRenderer {
 }
 
 impl WgpuRenderer {
-    pub(crate) fn new(window: Arc<TaoWindow>, session: &NesSession) -> Self {
-        let video = session.video();
+    pub(crate) fn new(window: Arc<TaoWindow>, session: &SessionHandle) -> Self {
+        let snapshot = session.snapshot();
+        let profile = snapshot
+            .video_profile
+            .expect("session should publish a render profile");
         let backend = WgpuBackend::new(
             SurfaceTarget::new(window.clone(), session.window_size()),
             SurfaceSize::new(window.inner_size().width, window.inner_size().height),
-            video.presentation(),
-            video.console_video_assets(),
+            &profile,
             PresentationOptions {
                 vsync: session.settings_snapshot().local.video.presentation.vsync,
             },
@@ -31,9 +33,13 @@ impl WgpuRenderer {
 
     pub(crate) fn render(
         &mut self,
-        session: &NesSession,
+        session: &SessionHandle,
         window_size: SurfaceSize,
     ) -> RenderResult {
-        session.with_frame_buffer(|frame_buffer| self.backend.render(frame_buffer, window_size))
+        let snapshot = session.snapshot();
+        let frame = snapshot
+            .video_frame
+            .expect("session should publish a video frame");
+        self.backend.render(frame.bytes(), window_size)
     }
 }

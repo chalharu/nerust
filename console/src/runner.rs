@@ -1,11 +1,11 @@
 pub(crate) mod data;
+pub(crate) mod metrics;
 mod persistence;
 mod runtime;
 
-use data::ConsoleData;
-
-use super::ConsoleMetrics;
+use self::metrics::SharedConsoleMetrics;
 use crate::controller::ControllerRuntime;
+use data::ConsoleData;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;
@@ -21,7 +21,7 @@ pub(super) struct ConsoleRunner {
     data_receiver: Receiver<ConsoleData>,
     screen: ScreenBuffer,
     frame_buffer: Arc<RwLock<Box<[u8]>>>,
-    metrics: Arc<RwLock<ConsoleMetrics>>,
+    metrics: SharedConsoleMetrics,
 }
 
 impl ConsoleRunner {
@@ -30,7 +30,7 @@ impl ConsoleRunner {
         stop_receiver: Receiver<()>,
         screen: ScreenBuffer,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
-        metrics: Arc<RwLock<ConsoleMetrics>>,
+        metrics: SharedConsoleMetrics,
         controller: Box<dyn ControllerRuntime>,
     ) -> Self {
         Self {
@@ -66,13 +66,12 @@ impl ConsoleRunner {
         } else {
             0.0
         };
-        let mut metrics = self.metrics.write().unwrap_or_else(|err| err.into_inner());
-        *metrics = ConsoleMetrics {
-            frame_counter: self.frame_counter,
+        self.metrics.publish(
+            self.frame_counter,
+            self.paused,
+            loaded,
             emulation_fps,
             speed_multiplier,
-            loaded,
-            paused: self.paused,
-        };
+        );
     }
 }

@@ -2964,6 +2964,7 @@ dependencies = [
 name = "nerust_backend_opengl"
 version = "0.1.0"
 dependencies = [
+ "nerust_console",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_opengl",
@@ -2975,6 +2976,7 @@ name = "nerust_backend_wgpu"
 version = "0.1.0"
 dependencies = [
  "log",
+ "nerust_console",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_video",
@@ -3049,6 +3051,7 @@ version = "0.1.0"
 dependencies = [
  "nerust_contract_options",
  "nerust_contract_rom",
+ "nerust_input_schema",
 ]
 
 [[package]]
@@ -3174,7 +3177,10 @@ version = "0.1.0"
 dependencies = [
  "log",
  "nerust_console",
+ "nerust_contract_mirror",
  "nerust_contract_options",
+ "nerust_contract_persistence",
+ "nerust_contract_rom",
  "nerust_contract_settings",
  "nerust_gui_runtime",
  "nerust_gui_session",
@@ -3233,6 +3239,7 @@ dependencies = [
  "nerust_contract_options",
  "nerust_contract_persistence",
  "nerust_contract_rom",
+ "nerust_input_schema",
  "png",
  "rmp-serde",
  "serde",
@@ -3302,6 +3309,7 @@ version = "0.1.0"
 dependencies = [
  "gl",
  "log",
+ "nerust_console",
  "nerust_glwrap",
  "nerust_screen_filter",
  "nerust_screen_logical",

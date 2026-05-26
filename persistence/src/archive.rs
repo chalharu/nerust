@@ -1,11 +1,11 @@
 use crate::error::PersistenceError;
 use crate::metadata::{
     METADATA_ENTRY, STATE_ENTRY, StateArchiveMetadata, THUMBNAIL_ENTRY, read_metadata,
-    slot_matches_target,
+    slot_matches_identity,
 };
 use crate::model::StateSlotSummary;
 use crate::time::system_time_from_millis;
-use nerust_contract_persistence::PersistenceTarget;
+use nerust_contract_persistence::PersistenceIdentity;
 use std::fs::File;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -23,13 +23,13 @@ pub(crate) struct LoadedArchive {
 
 pub(crate) fn read_state_summary(
     path: &Path,
-    target: Option<PersistenceTarget>,
+    identity: Option<PersistenceIdentity>,
 ) -> Result<Option<StateSlotSummary>, PersistenceError> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file)?;
     let metadata = read_metadata(&mut archive)?;
-    if let Some(target) = target
-        && !slot_matches_target(&metadata, target)
+    if let Some(identity) = identity
+        && !slot_matches_identity(&metadata, identity)
     {
         return Ok(None);
     }

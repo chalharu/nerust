@@ -1,14 +1,14 @@
 use crate::State;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_contract_settings::local::ScalingMode;
-use nerust_contract_settings::nes::NesVideoFilter;
-use nerust_contract_settings::shared::{StoragePolicy, SystemSettings};
+use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
-use nerust_gui_shell::descriptor::NesConsoleProfile;
+use nerust_gui_shell::descriptor::{
+    SystemSettingsFieldKind, default_input_topology_descriptor, default_system_settings_page_model,
+};
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_sections, shortcut_descriptors,
@@ -18,7 +18,7 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::{InputTopologyDescriptor, SystemId};
+use nerust_input_schema::InputTopologyDescriptor;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -149,7 +149,7 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let topology = NesConsoleProfile.input_topology_descriptor();
+    let topology = state.borrow().input_topology_descriptor();
     let input_rows = build_input_rows(language, &input_page, &topology);
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
@@ -189,20 +189,21 @@ pub(crate) fn present_preferences_dialog(
         &latency_spin,
     ));
 
-    let filter_combo = combo_box(&[
-        ("none", text(language, UiText::None)),
-        ("ntsc_composite", text(language, UiText::NtscComposite)),
-        ("ntsc_svideo", text(language, UiText::NtscSVideo)),
-        ("ntsc_rgb", text(language, UiText::NtscRgb)),
-    ]);
-    system_page.append(&labeled_row(text(language, UiText::Filter), &filter_combo));
-    let mmc3_combo = combo_box(&[
-        ("auto", text(language, UiText::Auto)),
-        ("sharp", text(language, UiText::Sharp)),
-        ("nec", text(language, UiText::Nec)),
-    ]);
+    let system_page_model = state.borrow().system_settings_page_model();
+    let filter_field = system_field_by_id(&system_page_model, "video.filter");
+    let filter_combo = combo_from_optional_system_field(filter_field);
     system_page.append(&labeled_row(
-        text(language, UiText::Mmc3IrqVariant),
+        filter_field
+            .map(|field| field.label.as_str())
+            .unwrap_or(text(language, UiText::Filter)),
+        &filter_combo,
+    ));
+    let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
+    let mmc3_combo = combo_from_optional_system_field(mmc3_field);
+    system_page.append(&labeled_row(
+        mmc3_field
+            .map(|field| field.label.as_str())
+            .unwrap_or(text(language, UiText::Mmc3IrqVariant)),
         &mmc3_combo,
     ));
 
@@ -702,13 +703,17 @@ fn connect_local_updates(
         let widgets = widgets.clone();
         let _ = filter_combo.connect_changed(move |combo| {
             let mut snapshot = draft.borrow_mut();
-            let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
-            nes.video.filter = match combo.active_id().as_deref() {
-                Some("none") => NesVideoFilter::None,
-                Some("ntsc_svideo") => NesVideoFilter::NtscSVideo,
-                Some("ntsc_rgb") => NesVideoFilter::NtscRgb,
-                _ => NesVideoFilter::NtscComposite,
-            };
+            let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                &mut snapshot,
+                &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
+                &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    combo
+                        .active_id()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "ntsc_composite".to_string())
+                        .into(),
+                ),
+            );
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -717,12 +722,19 @@ fn connect_local_updates(
         let widgets = widgets.clone();
         let _ = mmc3_combo.connect_changed(move |combo| {
             let mut snapshot = draft.borrow_mut();
-            let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
-            nes.core.mmc3_irq_variant = match combo.active_id().as_deref() {
-                Some("sharp") => Some(Mmc3IrqVariant::Sharp),
-                Some("nec") => Some(Mmc3IrqVariant::Nec),
-                _ => None,
-            };
+            let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                &mut snapshot,
+                &nerust_gui_shell::descriptor::SystemSettingsFieldId(
+                    "core.mmc3_irq_variant".into(),
+                ),
+                &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    combo
+                        .active_id()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "auto".to_string())
+                        .into(),
+                ),
+            );
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -739,10 +751,7 @@ fn refresh_validation(
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(
-        &snapshot.shared,
-        &NesConsoleProfile.input_topology_descriptor(),
-    );
+    let conflicts = conflicting_keys(&snapshot.shared, &default_input_topology_descriptor());
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -769,10 +778,7 @@ fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    for (key, labels) in conflicting_keys(
-        &snapshot.shared,
-        &NesConsoleProfile.input_topology_descriptor(),
-    ) {
+    for (key, labels) in conflicting_keys(&snapshot.shared, &default_input_topology_descriptor()) {
         errors.push(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -843,18 +849,9 @@ fn apply_snapshot_to_widgets(
         _ => "48000",
     }));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::Nes).unwrap();
-    filter_combo.set_active_id(Some(match nes.video.filter {
-        NesVideoFilter::None => "none",
-        NesVideoFilter::NtscSVideo => "ntsc_svideo",
-        NesVideoFilter::NtscRgb => "ntsc_rgb",
-        NesVideoFilter::NtscComposite => "ntsc_composite",
-    }));
-    mmc3_combo.set_active_id(Some(match nes.core.mmc3_irq_variant {
-        Some(Mmc3IrqVariant::Sharp) => "sharp",
-        Some(Mmc3IrqVariant::Nec) => "nec",
-        None => "auto",
-    }));
+    let system_page = default_system_settings_page_model(snapshot);
+    apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
+    apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
     for row in input_rows {
         row.value_label
@@ -965,6 +962,41 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
         combo.append(Some(id), label);
     }
     combo
+}
+
+fn system_field_by_id<'a>(
+    page: &'a nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    field_id: &str,
+) -> Option<&'a nerust_gui_shell::descriptor::SystemSettingsFieldModel> {
+    page.fields
+        .iter()
+        .find(|field| field.id.as_str() == field_id)
+}
+
+fn combo_from_optional_system_field(
+    field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+) -> gtk::ComboBoxText {
+    let combo = gtk::ComboBoxText::new();
+    if let Some(field) = field {
+        let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
+        for option in options.iter() {
+            combo.append(Some(option.id.as_str()), &option.label);
+        }
+    }
+    combo
+}
+
+fn apply_system_field_by_id_to_combo(
+    page: &nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    field_id: &str,
+    combo: &gtk::ComboBoxText,
+) {
+    let Some(field) = system_field_by_id(page, field_id) else {
+        combo.set_active_id(None);
+        return;
+    };
+    let SystemSettingsFieldKind::Choice { selected, .. } = &field.kind;
+    combo.set_active_id(Some(selected.as_str()));
 }
 
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {

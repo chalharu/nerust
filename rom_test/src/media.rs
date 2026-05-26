@@ -7,12 +7,24 @@
 use super::error::RomTestError;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
+use nerust_screen_logical::LogicalSize;
 use nerust_sound_traits::MixerInput;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+
+pub(crate) fn validation_screen_buffer() -> ScreenBuffer {
+    ScreenBuffer::new(
+        FilterType::None,
+        LogicalSize {
+            width: 256,
+            height: 240,
+        },
+    )
+}
 
 pub(crate) fn screen_hash(screen_buffer: &ScreenBuffer) -> u64 {
     let mut hasher = Crc64Hasher::new();

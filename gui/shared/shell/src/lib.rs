@@ -1,13 +1,11 @@
-//! NES-specific shell/session composition.
+//! System-neutral shell/session orchestration.
 //!
-//! This crate owns the current NES system-facing shell adapters:
+//! This crate owns the shared orchestration layer used by native frontends:
 //!
-//! - [`descriptor::NesConsoleProfile`] — describes NES topology and builds the
-//!   default NES console/session composition.
-//! - [`load`] — shell-facing NES load options kept separate from
-//!   `nerust_contract_options`.
-//! - [`session::NesSession`] — wraps the generic [`nerust_gui_runtime::session::GuiSession`]
-//!   with NES controller/input behavior.
+//! - [`session::SessionHandle`] — host-facing session orchestrator.
+//! - [`session::SessionSnapshot`] — owned read model for host/runtime consumers.
+//! - [`descriptor`] — system definition, input adapter, runtime, and settings page contracts.
+//! - [`load`] — system-neutral media/load request types.
 //!
 //! `NativeShellState` lives in `nerust_gui_runtime::shell` because it is common
 //! to native hosts regardless of system.

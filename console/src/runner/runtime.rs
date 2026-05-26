@@ -131,8 +131,8 @@ impl ConsoleRunner {
                         let result = self.import_mapper_save_reply(core.as_mut(), &bytes);
                         Self::reply(reply, result);
                     }
-                    ConsoleData::PersistenceTarget(reply) => {
-                        let result = self.persistence_target_reply(core.as_ref());
+                    ConsoleData::CanonicalMediaIdentity(reply) => {
+                        let result = self.canonical_media_identity_reply(core.as_ref());
                         Self::reply(reply, result);
                     }
                     ConsoleData::ExportState(reply) => {
