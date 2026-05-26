@@ -384,10 +384,18 @@ impl HostState {
     }
 
     fn toggle_fullscreen(&mut self) {
-        let Some(window) = self.window.as_ref() else {
+        let fullscreen = if let Some(window) = self.window.as_ref() {
+            !window_is_fullscreen(window)
+        } else {
             return;
         };
-        set_window_fullscreen(window, !window_is_fullscreen(window));
+        if let Err(error) = self.persist_fullscreen_default(fullscreen) {
+            log::warn!("failed to persist fullscreen setting: {error}");
+            if let Some(window) = self.window.as_ref() {
+                set_window_fullscreen(window, fullscreen);
+            }
+            self.request_redraw();
+        }
     }
 
     fn open_settings_window(&mut self) {
@@ -458,6 +466,18 @@ impl HostState {
                 .window
                 .fullscreen_default,
         );
+    }
+
+    fn persist_fullscreen_default(
+        &mut self,
+        fullscreen: bool,
+    ) -> Result<SettingsApplyPlan, String> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        self.sync_fullscreen_from_settings();
+        self.sync_menu_state();
+        self.refresh_window_title();
+        self.request_redraw();
+        Ok(plan)
     }
 
     fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
