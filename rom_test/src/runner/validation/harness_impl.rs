@@ -4,68 +4,47 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{CartridgeRamAssertion, ValidationRunner};
+use super::ValidationRunner;
 use crate::error::RomTestError;
 use crate::events::{MemoryAssertionSpace, RomAssertion};
 use crate::harness::CaseHarness;
 
 impl CaseHarness for ValidationRunner {
     fn run_frame(&mut self) -> u64 {
-        self.runtime.run_frame()
+        self.run_frame()
     }
 
     fn frame_counter(&self) -> u64 {
-        self.runtime.frame_counter()
+        self.frame_counter()
     }
 
     fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
         match assertion {
-            RomAssertion::Screen { hash } => self.artifacts.record_screen_assert(
-                &self.case_id,
-                &self.runtime,
-                self.options,
-                frame,
-                *hash,
-            ),
+            RomAssertion::Screen { hash } => self.record_screen_assert(frame, *hash),
             RomAssertion::Memory {
                 space,
                 address,
                 value,
                 open_bus,
             } => match space {
-                MemoryAssertionSpace::WorkRam => self.artifacts.record_work_ram_assert(
-                    &self.case_id,
-                    &self.runtime,
-                    self.options,
+                MemoryAssertionSpace::WorkRam => {
+                    self.record_work_ram_assert(frame, usize::from(*address), *value)
+                }
+                MemoryAssertionSpace::CartridgeRam => self.record_cartridge_ram_assert(
                     frame,
                     usize::from(*address),
                     *value,
+                    *open_bus,
                 ),
-                MemoryAssertionSpace::CartridgeRam => self.artifacts.record_cartridge_ram_assert(
-                    &self.case_id,
-                    &self.runtime,
-                    self.options,
-                    CartridgeRamAssertion {
-                        frame,
-                        address: usize::from(*address),
-                        expected_value: *value,
-                        expect_open_bus: *open_bus,
-                    },
-                ),
-                MemoryAssertionSpace::PpuVram => self.artifacts.record_ppu_vram_assert(
-                    &self.case_id,
-                    &self.runtime,
-                    self.options,
-                    frame,
-                    usize::from(*address),
-                    *value,
-                ),
+                MemoryAssertionSpace::PpuVram => {
+                    self.record_ppu_vram_assert(frame, usize::from(*address), *value)
+                }
             },
         }
     }
 
     fn on_reset(&mut self) -> Result<(), RomTestError> {
-        self.runtime.reset();
+        self.reset_runtime();
         Ok(())
     }
 
@@ -75,12 +54,12 @@ impl CaseHarness for ValidationRunner {
         button: crate::events::ButtonCode,
         state: crate::events::PadState,
     ) -> Result<(), RomTestError> {
-        self.runtime.apply_standard_controller(pad, button, state);
+        self.apply_standard_controller(pad, button, state);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: crate::events::PadState) -> Result<(), RomTestError> {
-        self.runtime.set_microphone(state);
+        self.set_microphone(state);
         Ok(())
     }
 }

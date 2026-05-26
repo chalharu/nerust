@@ -7,14 +7,11 @@
 use super::ValidationRuntime;
 use crate::error::RomTestError;
 use crate::manifest::RomCase;
-use crate::media::HashingMixer;
+use crate::media::{HashingMixer, validation_screen_buffer};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_core::Core;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::StandardController;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_logical::LogicalSize;
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(
@@ -44,14 +41,4 @@ impl ValidationRuntime {
             pad2: Buttons::empty(),
         })
     }
-}
-
-fn validation_screen_buffer() -> ScreenBuffer {
-    ScreenBuffer::new(
-        FilterType::None,
-        LogicalSize {
-            width: 256,
-            height: 240,
-        },
-    )
 }
