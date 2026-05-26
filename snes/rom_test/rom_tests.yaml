@@ -1,0 +1,66 @@
+rom_root: ../../roms/snes-tests
+cases:
+  - id: cputest-basic-final-state
+    description: >
+      The upstream gilyon basic 65C816 CPU test ROM reaches the published final
+      state from cputest/tests-basic.txt.
+    rom: cputest/cputest-basic.sfc
+    max_steps: 3000000
+    check_interval_steps: 1024
+    assertions:
+      - kind: bus_u16
+        address: "0x0010"
+        expected: "0x0452"
+      - kind: bus_u16
+        address: "0x0012"
+        expected: "0xCC19"
+      - kind: bus_u16
+        address: "0x0014"
+        expected: "0x3456"
+      - kind: bus_u16
+        address: "0x0016"
+        expected: "0x5678"
+      - kind: bus_u16
+        address: "0x0018"
+        expected: "0x0028"
+      - kind: bus_u16
+        address: "0x001A"
+        expected: "0x01EF"
+      - kind: bus_u16
+        address: "0x001C"
+        expected: "0x0000"
+      - kind: bus_u8
+        address: "0x001E"
+        expected: "0x00"
+  - id: cputest-full-final-state
+    description: >
+      The upstream gilyon full 65C816 CPU test ROM reaches the published final
+      state from cputest/tests-full.txt.
+    rom: cputest/cputest-full.sfc
+    max_steps: 4500000
+    check_interval_steps: 1024
+    assertions:
+      - kind: bus_u16
+        address: "0x0010"
+        expected: "0x0649"
+      - kind: bus_u16
+        address: "0x0012"
+        expected: "0xCC5A"
+      - kind: bus_u16
+        address: "0x0014"
+        expected: "0x3456"
+      - kind: bus_u16
+        address: "0x0016"
+        expected: "0x5678"
+      - kind: bus_u16
+        address: "0x0018"
+        expected: "0x0028"
+      - kind: bus_u16
+        address: "0x001A"
+        expected: "0x01EF"
+      - kind: bus_u16
+        address: "0x001C"
+        expected: "0x0000"
+      - kind: bus_u8
+        address: "0x001E"
+        expected: "0x00"
