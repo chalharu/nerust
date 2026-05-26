@@ -209,6 +209,18 @@ enum AbsoluteOp {
     Cpy {
         wide: bool,
     },
+    Ldx {
+        wide: bool,
+    },
+    LdxIndexedY {
+        wide: bool,
+    },
+    Ldy {
+        wide: bool,
+    },
+    LdyIndexedX {
+        wide: bool,
+    },
     Lda {
         wide: bool,
     },
@@ -300,6 +312,15 @@ enum DirectOp {
         wide: bool,
     },
     Ldx {
+        wide: bool,
+    },
+    LdxIndexedY {
+        wide: bool,
+    },
+    Ldy {
+        wide: bool,
+    },
+    LdyIndexedX {
         wide: bool,
     },
     LdaIndexedX {
@@ -460,6 +481,10 @@ enum MicroState {
         address: u16,
         low: u8,
     },
+    DirectReadYHigh {
+        address: u16,
+        low: u8,
+    },
     DirectIncHigh {
         address: u16,
         low: u8,
@@ -511,6 +536,14 @@ enum MicroState {
         low: u8,
     },
     AbsoluteReadAccumulatorHigh {
+        address: u32,
+        low: u8,
+    },
+    AbsoluteReadXHigh {
+        address: u32,
+        low: u8,
+    },
+    AbsoluteReadYHigh {
         address: u32,
         low: u8,
     },
@@ -692,6 +725,12 @@ impl Cpu {
                 self.update_nz16(self.registers.x);
                 self.micro_state = MicroState::Fetch;
             }
+            MicroState::DirectReadYHigh { address, low } => {
+                let high = bus.read(u32::from(address.wrapping_add(1)));
+                self.registers.y = u16::from_le_bytes([low, high]);
+                self.update_nz16(self.registers.y);
+                self.micro_state = MicroState::Fetch;
+            }
             MicroState::DirectIncHigh { address, low } => {
                 let high = bus.read(u32::from(address.wrapping_add(1)));
                 let value = u16::from_le_bytes([low, high]).wrapping_add(1);
@@ -789,6 +828,18 @@ impl Cpu {
                 let high = bus.read(address.wrapping_add(1));
                 self.registers.a = u16::from_le_bytes([low, high]);
                 self.update_nz16(self.registers.a);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteReadXHigh { address, low } => {
+                let high = bus.read(address.wrapping_add(1));
+                self.registers.x = u16::from_le_bytes([low, high]);
+                self.update_nz16(self.registers.x);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteReadYHigh { address, low } => {
+                let high = bus.read(address.wrapping_add(1));
+                self.registers.y = u16::from_le_bytes([low, high]);
+                self.update_nz16(self.registers.y);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::AbsoluteBitHigh { address, low } => {
@@ -1337,8 +1388,36 @@ impl Cpu {
                 if wide {
                     self.micro_state = MicroState::DirectReadXHigh { address: base, low };
                 } else {
-                    self.registers.x = u16::from(low);
-                    self.update_nz8(low);
+                    self.load_x(u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::LdxIndexedY { wide } => {
+                let address = base.wrapping_add(self.registers.y);
+                let low = bus.read(u32::from(address));
+                if wide {
+                    self.micro_state = MicroState::DirectReadXHigh { address, low };
+                } else {
+                    self.load_x(u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::Ldy { wide } => {
+                let low = bus.read(u32::from(base));
+                if wide {
+                    self.micro_state = MicroState::DirectReadYHigh { address: base, low };
+                } else {
+                    self.load_y(u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::LdyIndexedX { wide } => {
+                let address = base.wrapping_add(self.registers.x);
+                let low = bus.read(u32::from(address));
+                if wide {
+                    self.micro_state = MicroState::DirectReadYHigh { address, low };
+                } else {
+                    self.load_y(u16::from(low));
                     self.micro_state = MicroState::Fetch;
                 }
             }
@@ -1998,6 +2077,60 @@ impl Cpu {
                     self.micro_state = MicroState::Fetch;
                 }
             }
+            AbsoluteOp::Ldx { wide } => {
+                let value = self.read_data_bank(bus, address);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteReadXHigh {
+                        address: self.full_data_address(address),
+                        low: value,
+                    };
+                } else {
+                    self.load_x(u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::LdxIndexedY { wide } => {
+                let full = self
+                    .full_data_address(address)
+                    .wrapping_add(u32::from(self.registers.y));
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteReadXHigh {
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    self.load_x(u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::Ldy { wide } => {
+                let value = self.read_data_bank(bus, address);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteReadYHigh {
+                        address: self.full_data_address(address),
+                        low: value,
+                    };
+                } else {
+                    self.load_y(u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::LdyIndexedX { wide } => {
+                let full = self
+                    .full_data_address(address)
+                    .wrapping_add(u32::from(self.registers.x));
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteReadYHigh {
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    self.load_y(u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
             AbsoluteOp::Lda { wide } => {
                 let value = self.read_data_bank(bus, address);
                 if wide {
@@ -2426,6 +2559,28 @@ impl Cpu {
         }
     }
 
+    fn load_x(&mut self, value: u16) {
+        if self.index_is_8bit() {
+            let value = value as u8;
+            self.registers.x = u16::from(value);
+            self.update_nz8(value);
+        } else {
+            self.registers.x = value;
+            self.update_nz16(value);
+        }
+    }
+
+    fn load_y(&mut self, value: u16) {
+        if self.index_is_8bit() {
+            let value = value as u8;
+            self.registers.y = u16::from(value);
+            self.update_nz8(value);
+        } else {
+            self.registers.y = value;
+            self.update_nz16(value);
+        }
+    }
+
     fn apply_immediate_math(&mut self, op: ImmediateMathOp, value: u16) {
         match op {
             ImmediateMathOp::BitA => {
@@ -2582,6 +2737,9 @@ impl Cpu {
             0x45 => MicroState::Direct(DirectOp::Eor {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0xA4 => MicroState::Direct(DirectOp::Ldy {
+                wide: !self.index_is_8bit(),
+            }),
             0xC4 => MicroState::Direct(DirectOp::Cpy {
                 wide: !self.index_is_8bit(),
             }),
@@ -2634,7 +2792,13 @@ impl Cpu {
             0x75 => MicroState::Direct(DirectOp::AdcIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0xB4 => MicroState::Direct(DirectOp::LdyIndexedX {
+                wide: !self.index_is_8bit(),
+            }),
             0xA6 => MicroState::Direct(DirectOp::Ldx {
+                wide: !self.index_is_8bit(),
+            }),
+            0xB6 => MicroState::Direct(DirectOp::LdxIndexedY {
                 wide: !self.index_is_8bit(),
             }),
             0xB5 => MicroState::Direct(DirectOp::LdaIndexedX {
@@ -2712,6 +2876,9 @@ impl Cpu {
             0xCD => MicroState::AbsoluteLow(AbsoluteOp::CmpA {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0xAC => MicroState::AbsoluteLow(AbsoluteOp::Ldy {
+                wide: !self.index_is_8bit(),
+            }),
             0xCC => MicroState::AbsoluteLow(AbsoluteOp::Cpy {
                 wide: !self.index_is_8bit(),
             }),
@@ -2735,8 +2902,14 @@ impl Cpu {
             0x5D => MicroState::AbsoluteLow(AbsoluteOp::EorIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0xBC => MicroState::AbsoluteLow(AbsoluteOp::LdyIndexedX {
+                wide: !self.index_is_8bit(),
+            }),
             0xBD => MicroState::AbsoluteLow(AbsoluteOp::LdaIndexedX {
                 wide: !self.accumulator_is_8bit(),
+            }),
+            0xBE => MicroState::AbsoluteLow(AbsoluteOp::LdxIndexedY {
+                wide: !self.index_is_8bit(),
             }),
             0xDD => MicroState::AbsoluteLow(AbsoluteOp::CmpAIndexedX {
                 wide: !self.accumulator_is_8bit(),
@@ -2754,6 +2927,9 @@ impl Cpu {
             }),
             0xAD => MicroState::AbsoluteLow(AbsoluteOp::Lda {
                 wide: !self.accumulator_is_8bit(),
+            }),
+            0xAE => MicroState::AbsoluteLow(AbsoluteOp::Ldx {
+                wide: !self.index_is_8bit(),
             }),
             0x8D => MicroState::AbsoluteLow(AbsoluteOp::Sta {
                 wide: !self.accumulator_is_8bit(),
@@ -4283,6 +4459,138 @@ mod tests {
         assert_eq!(cpu.registers().a(), 0x8000);
         assert_eq!(cpu.registers().db(), 0x7E);
         assert_eq!(cpu.registers().x(), 0x0300);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldx_absolute_reads_from_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x34, 0x12, 0xAE, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().x(), 0x8000);
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldx_direct_indexed_y_uses_wrapped_direct_page_address() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x34, 0x12, 0xA0, 0x33, 0x01,
+                0xB6, 0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().x(), 0x8000);
+        assert_eq!(cpu.registers().y(), 0x0133);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldx_absolute_indexed_y_carries_into_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x34, 0x12, 0xA0, 0x00, 0x03, 0xBE, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().x(), 0x8000);
+        assert_eq!(cpu.registers().y(), 0x0300);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldy_absolute_reads_from_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x34, 0x12, 0xAC, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().y(), 0x8000);
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldy_direct_indexed_x_uses_wrapped_direct_page_address() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x34, 0x12, 0xA2, 0x33, 0x01,
+                0xB4, 0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().y(), 0x8000);
+        assert_eq!(cpu.registers().x(), 0x0133);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ldy_absolute_indexed_x_carries_into_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x00, 0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x34, 0x12, 0xA2, 0x00, 0x03, 0xBC, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().y(), 0x8000);
+        assert_eq!(cpu.registers().x(), 0x0300);
+        assert_eq!(cpu.registers().db(), 0x7E);
         assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
     }
