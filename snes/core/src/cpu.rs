@@ -691,6 +691,10 @@ enum MicroState {
     RtlPullLow,
     RtlPullHigh(u8),
     RtlPullBank(u16),
+    RtiPullStatus,
+    RtiPullLow,
+    RtiPullHigh(u8),
+    RtiPullBank(u16),
     Stopped,
 }
 
@@ -1095,6 +1099,31 @@ impl Cpu {
                 let bank = self.stack_pop(bus);
                 self.registers.pb = bank;
                 self.registers.pc = addr.wrapping_add(1);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::RtiPullStatus => {
+                let value = self.stack_pop(bus);
+                self.set_status(value);
+                self.micro_state = MicroState::RtiPullLow;
+            }
+            MicroState::RtiPullLow => {
+                let low = self.stack_pop(bus);
+                self.micro_state = MicroState::RtiPullHigh(low);
+            }
+            MicroState::RtiPullHigh(low) => {
+                let high = self.stack_pop(bus);
+                let addr = u16::from_le_bytes([low, high]);
+                if self.registers.e {
+                    self.registers.pc = addr;
+                    self.micro_state = MicroState::Fetch;
+                } else {
+                    self.micro_state = MicroState::RtiPullBank(addr);
+                }
+            }
+            MicroState::RtiPullBank(addr) => {
+                let bank = self.stack_pop(bus);
+                self.registers.pb = bank;
+                self.registers.pc = addr;
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::Stopped => {
@@ -3454,6 +3483,7 @@ impl Cpu {
             0xAB => MicroState::Stack(StackOp::Plb),
             0x2B => MicroState::Stack(StackOp::Pld),
             0xF4 => MicroState::Immediate16Low(Immediate16Op::Pea),
+            0x40 => MicroState::RtiPullStatus,
             0x60 => MicroState::RtsPullLow,
             0x6B => MicroState::RtlPullLow,
             _ => MicroState::Stopped,
@@ -4075,6 +4105,32 @@ mod tests {
         assert_eq!(cpu.registers().pb(), 0x00);
         assert_eq!(cpu.registers().pc(), 0x800C);
         assert_eq!(cpu.registers().s(), 0x01FF);
+    }
+
+    #[test]
+    fn rti_restores_native_status_pc_bank_and_stack() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x0001F0, &[0x88, 0x00, 0x80, 0x7E]);
+        system.load(0x7E8000, &[0xDB]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x31, 0xA9, 0x34, 0x12, 0xA2, 0xEF, 0x01, 0x9A, 0xA2, 0x56, 0x34,
+                0xA0, 0x78, 0x56, 0x40,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().x(), 0x3456);
+        assert_eq!(cpu.registers().y(), 0x5678);
+        assert_eq!(cpu.registers().pb(), 0x7E);
+        assert_eq!(cpu.registers().pc(), 0x8001);
+        assert_eq!(cpu.registers().s(), 0x01F3);
+        assert_eq!(cpu.registers().status().bits(), 0x88);
     }
 
     #[test]
