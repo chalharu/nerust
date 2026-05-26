@@ -22,8 +22,9 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           components: rustfmt, clippy
-      - name: Cache Cargo registry and build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore Cargo registry cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -42,6 +43,14 @@ jobs:
           cargo test -p nerust_screen_buffer --lib --quiet
           cargo test -p nerust_screen_filter --lib --quiet
           cargo test -p nerust_timer --lib --quiet
+      - name: Save Cargo registry cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
   build-tao:
     name: Build Tao (Linux x86_64)
     runs-on: ubuntu-latest
@@ -62,8 +71,9 @@ jobs:
             libxdo-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-      - name: Cache Cargo registry and build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore Cargo registry cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -72,6 +82,14 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust_tao (release)
         run: cargo build -p nerust_tao --release --quiet
+      - name: Save Cargo registry cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
   build-gtk:
     name: Build GTK (Linux x86_64)
     runs-on: ubuntu-latest
@@ -91,8 +109,9 @@ jobs:
             libopenal-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-      - name: Cache Cargo registry and build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore Cargo registry cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -101,3 +120,11 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust_gtk (release)
         run: cargo build -p nerust_gtk --release --quiet
+      - name: Save Cargo registry cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
