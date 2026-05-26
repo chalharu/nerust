@@ -3369,6 +3369,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_snes_rom_test"
+version = "0.1.0"
+dependencies = [
+ "nerust_snes_core",
+ "serde",
+ "serde_derive",
+ "serde_yaml",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nerust_sound_openal"
 version = "0.1.0"
 dependencies = [
