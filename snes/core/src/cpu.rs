@@ -1439,7 +1439,7 @@ impl Cpu {
                 }
             }
             DirectOp::AdcIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1466,7 +1466,7 @@ impl Cpu {
                 }
             }
             DirectOp::SbcIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1493,7 +1493,7 @@ impl Cpu {
                 }
             }
             DirectOp::AndIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1520,7 +1520,7 @@ impl Cpu {
                 }
             }
             DirectOp::OraIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1547,7 +1547,7 @@ impl Cpu {
                 }
             }
             DirectOp::EorIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1562,7 +1562,7 @@ impl Cpu {
             }
             DirectOp::Inc { indexed_x, wide } => {
                 let address = if indexed_x {
-                    base.wrapping_add(self.registers.x)
+                    self.direct_indexed_addr(offset, self.registers.x)
                 } else {
                     base
                 };
@@ -1590,7 +1590,7 @@ impl Cpu {
                 }
             }
             DirectOp::CmpAIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectMathHigh {
@@ -1605,7 +1605,7 @@ impl Cpu {
             }
             DirectOp::Bit { indexed_x, wide } => {
                 let address = if indexed_x {
-                    base.wrapping_add(self.registers.x)
+                    self.direct_indexed_addr(offset, self.registers.x)
                 } else {
                     base
                 };
@@ -1651,7 +1651,7 @@ impl Cpu {
                 wide,
             } => {
                 let address = if indexed_x {
-                    base.wrapping_add(self.registers.x)
+                    self.direct_indexed_addr(offset, self.registers.x)
                 } else {
                     base
                 };
@@ -1680,7 +1680,7 @@ impl Cpu {
             DirectOp::StaIndexedX { wide } => {
                 self.write_operand_value_zero_bank(
                     bus,
-                    base.wrapping_add(self.registers.x),
+                    self.direct_indexed_addr(offset, self.registers.x),
                     self.registers.a,
                     wide,
                 );
@@ -1691,14 +1691,14 @@ impl Cpu {
             DirectOp::StxIndexedY { wide } => {
                 self.write_operand_value_zero_bank(
                     bus,
-                    base.wrapping_add(self.registers.y),
+                    self.direct_indexed_addr(offset, self.registers.y),
                     self.registers.x,
                     wide,
                 );
             }
             DirectOp::Dec { indexed_x, wide } => {
                 let address = if indexed_x {
-                    base.wrapping_add(self.registers.x)
+                    self.direct_indexed_addr(offset, self.registers.x)
                 } else {
                     base
                 };
@@ -1718,7 +1718,7 @@ impl Cpu {
             DirectOp::StyIndexedX { wide } => {
                 self.write_operand_value_zero_bank(
                     bus,
-                    base.wrapping_add(self.registers.x),
+                    self.direct_indexed_addr(offset, self.registers.x),
                     self.registers.y,
                     wide,
                 );
@@ -1729,13 +1729,13 @@ impl Cpu {
             DirectOp::StzIndexedX { wide } => {
                 self.write_operand_value_zero_bank(
                     bus,
-                    base.wrapping_add(self.registers.x),
+                    self.direct_indexed_addr(offset, self.registers.x),
                     0,
                     wide,
                 );
             }
             DirectOp::LdaIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectReadHigh { address, low };
@@ -1755,7 +1755,7 @@ impl Cpu {
                 }
             }
             DirectOp::LdxIndexedY { wide } => {
-                let address = base.wrapping_add(self.registers.y);
+                let address = self.direct_indexed_addr(offset, self.registers.y);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectReadXHigh { address, low };
@@ -1774,7 +1774,7 @@ impl Cpu {
                 }
             }
             DirectOp::LdyIndexedX { wide } => {
-                let address = base.wrapping_add(self.registers.x);
+                let address = self.direct_indexed_addr(offset, self.registers.x);
                 let low = bus.read(u32::from(address));
                 if wide {
                     self.micro_state = MicroState::DirectReadYHigh { address, low };
@@ -3332,15 +3332,19 @@ impl Cpu {
         (address & 0xFF00) | u16::from((address as u8).wrapping_add(1))
     }
 
-    fn direct_indexed_indirect_pointer_addr(&self, offset: u8) -> u16 {
+    fn direct_indexed_addr(&self, offset: u8, index: u16) -> u16 {
         if self.registers.e && (self.registers.d & 0x00FF) == 0 {
-            (self.registers.d & 0xFF00) | u16::from(offset.wrapping_add(self.registers.x as u8))
+            (self.registers.d & 0xFF00) | u16::from(offset.wrapping_add(index as u8))
         } else {
             self.registers
                 .d
                 .wrapping_add(u16::from(offset))
-                .wrapping_add(self.registers.x)
+                .wrapping_add(index)
         }
+    }
+
+    fn direct_indexed_indirect_pointer_addr(&self, offset: u8) -> u16 {
+        self.direct_indexed_addr(offset, self.registers.x)
     }
 
     fn adc_decimal8(a: u8, operand: u8, carry_in: bool) -> (u8, bool, bool) {
@@ -5906,6 +5910,26 @@ mod tests {
     }
 
     #[test]
+    fn ldx_direct_indexed_y_wraps_in_emulation_when_direct_page_low_is_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000133, &[0x56]);
+        system.load(0x000233, &[0xA9]);
+        system.load(
+            0x008000,
+            &[0xA9, 0x01, 0xEB, 0x5B, 0xA0, 0x34, 0xB6, 0xFF, 0xDB],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().x(), 0x0056);
+        assert_eq!(cpu.registers().y(), 0x0034);
+        assert_eq!(cpu.registers().d(), 0x0100);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
     fn ldx_absolute_indexed_y_carries_into_data_bank() {
         let mut cpu = Cpu::new();
         let mut system = TestBus::with_reset_vector(0x8000);
@@ -6037,6 +6061,28 @@ mod tests {
         assert_eq!(cpu.registers().d(), 0xFFFF);
         assert!(cpu.registers().status().contains(CpuStatus::CARRY));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn adc_direct_indexed_x_wraps_in_emulation_when_direct_page_low_is_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000133, &[0x21]);
+        system.load(0x000233, &[0x80]);
+        system.load(
+            0x008000,
+            &[
+                0xA9, 0x01, 0xEB, 0x5B, 0xA2, 0x34, 0xA9, 0x12, 0x18, 0x75, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(cpu.registers().a(), 0x0133);
+        assert_eq!(cpu.registers().x(), 0x0034);
+        assert_eq!(cpu.registers().d(), 0x0100);
+        assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
     }
 
     #[test]
