@@ -18,12 +18,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           components: rustfmt, clippy
-
       - name: Cache Cargo registry and build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -33,23 +31,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
-
       - name: Check formatting
         run: cargo fmt --all -- --check
-
       - name: Clippy (default members)
         run: cargo clippy --quiet
-
       - name: Unit tests (default members)
         run: cargo test --quiet
-
       - name: Support crate tests
         run: |
           cargo test -p nerust_cartridge_data --lib --quiet
           cargo test -p nerust_screen_buffer --lib --quiet
           cargo test -p nerust_screen_filter --lib --quiet
           cargo test -p nerust_timer --lib --quiet
-
   build-tao:
     name: Build Tao (Linux x86_64)
     runs-on: ubuntu-latest
@@ -60,7 +53,6 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -69,10 +61,8 @@ jobs:
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
       - name: Cache Cargo registry and build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -82,10 +72,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-tao-
-
       - name: Build nerust_tao (release)
         run: cargo build -p nerust_tao --release --quiet
-
   build-gtk:
     name: Build GTK (Linux x86_64)
     runs-on: ubuntu-latest
@@ -96,7 +84,6 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -104,10 +91,8 @@ jobs:
             libgtk-4-dev \
             libepoxy-dev \
             libopenal-dev
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
       - name: Cache Cargo registry and build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -117,6 +102,5 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-gtk-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gtk-
-
       - name: Build nerust_gtk (release)
         run: cargo build -p nerust_gtk --release --quiet
