@@ -2726,6 +2726,11 @@ impl Cpu {
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x46 => MicroState::Direct(DirectOp::Shift {
+                op: ShiftOp::Lsr,
+                indexed_x: false,
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x86 => MicroState::Direct(DirectOp::Stx {
                 wide: !self.index_is_8bit(),
             }),
@@ -2786,6 +2791,11 @@ impl Cpu {
             }),
             0x16 => MicroState::Direct(DirectOp::Shift {
                 op: ShiftOp::Asl,
+                indexed_x: true,
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x56 => MicroState::Direct(DirectOp::Shift {
+                op: ShiftOp::Lsr,
                 indexed_x: true,
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -2953,9 +2963,19 @@ impl Cpu {
                 indexed_x: false,
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x4E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
+                op: ShiftOp::Lsr,
+                indexed_x: false,
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x6C => MicroState::AbsoluteLow(AbsoluteOp::JmpIndirect),
             0x1E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
                 op: ShiftOp::Asl,
+                indexed_x: true,
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x5E => MicroState::AbsoluteLow(AbsoluteOp::Shift {
+                op: ShiftOp::Lsr,
                 indexed_x: true,
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -5218,6 +5238,100 @@ mod tests {
         assert_eq!(cpu.registers().db(), 0x7E);
         assert!(cpu.registers().status().contains(CpuStatus::CARRY));
         assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn lsr_direct_16bit_wraps_direct_page() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0x01, 0x00]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0xFF, 0xFF, 0x5B, 0x46, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 80);
+
+        assert_eq!(system.memory.get(&0x000033), Some(&0x00));
+        assert_eq!(system.memory.get(&0x000034), Some(&0x00));
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().d(), 0xFFFF);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn lsr_direct_indexed_x_uses_wrapped_direct_page_address() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x03, 0x00]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA2, 0x33, 0x01, 0x56, 0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(system.memory.get(&0x000134), Some(&0x01));
+        assert_eq!(system.memory.get(&0x000135), Some(&0x00));
+        assert_eq!(cpu.registers().x(), 0x0133);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn lsr_absolute_carries_into_next_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7EFFFF, &[0x01]);
+        system.load(0x7F0000, &[0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x30, 0x4E,
+                0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(system.memory.get(&0x7EFFFF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0000), Some(&0x40));
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+    }
+
+    #[test]
+    fn lsr_absolute_indexed_x_carries_into_next_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x01]);
+        system.load(0x7F0300, &[0x80]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x30, 0xA2,
+                0x00, 0x03, 0x5E, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(system.memory.get(&0x7F02FF), Some(&0x00));
+        assert_eq!(system.memory.get(&0x7F0300), Some(&0x40));
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().x(), 0x0300);
+        assert!(cpu.registers().status().contains(CpuStatus::CARRY));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
     }
 
     #[test]
