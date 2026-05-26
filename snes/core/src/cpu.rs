@@ -144,6 +144,7 @@ enum ImmediateLoadTarget {
 enum ImmediateMathOp {
     BitA,
     AndA,
+    OraA,
     EorA,
     AdcA,
     CmpA,
@@ -181,6 +182,15 @@ enum AbsoluteOp {
         wide: bool,
     },
     AndIndexedY {
+        wide: bool,
+    },
+    Ora {
+        wide: bool,
+    },
+    OraIndexedX {
+        wide: bool,
+    },
+    OraIndexedY {
         wide: bool,
     },
     Eor {
@@ -276,6 +286,12 @@ enum DirectOp {
     AndIndexedX {
         wide: bool,
     },
+    Ora {
+        wide: bool,
+    },
+    OraIndexedX {
+        wide: bool,
+    },
     Eor {
         wide: bool,
     },
@@ -344,6 +360,7 @@ enum DirectOp {
 enum DirectIndexedIndirectOp {
     AdcA,
     AndA,
+    OraA,
     EorA,
     CmpA,
     Lda,
@@ -353,6 +370,7 @@ enum DirectIndexedIndirectOp {
 enum DirectIndirectOp {
     AdcA,
     AndA,
+    OraA,
     EorA,
     CmpA,
     Lda,
@@ -362,6 +380,7 @@ enum DirectIndirectOp {
 enum DirectIndirectLongOp {
     AdcA,
     AndA,
+    OraA,
     EorA,
     CmpA,
     Lda,
@@ -373,6 +392,8 @@ enum DirectIndirectIndexedYOp {
     AdcALong,
     AndA,
     AndALong,
+    OraA,
+    OraALong,
     EorA,
     EorALong,
     CmpA,
@@ -385,6 +406,7 @@ enum DirectIndirectIndexedYOp {
 enum StackRelativeOp {
     AdcA,
     AndA,
+    OraA,
     EorA,
     CmpA,
     Lda,
@@ -394,6 +416,7 @@ enum StackRelativeOp {
 enum StackRelativeIndirectIndexedYOp {
     AdcA,
     AndA,
+    OraA,
     EorA,
     CmpA,
     Lda,
@@ -405,6 +428,8 @@ enum AbsoluteLongOp {
     AdcIndexedX { wide: bool },
     And { wide: bool },
     AndIndexedX { wide: bool },
+    Ora { wide: bool },
+    OraIndexedX { wide: bool },
     Eor { wide: bool },
     EorIndexedX { wide: bool },
     CmpA { wide: bool },
@@ -1234,6 +1259,33 @@ impl Cpu {
                     self.micro_state = MicroState::Fetch;
                 }
             }
+            DirectOp::Ora { wide } => {
+                let low = bus.read(u32::from(base));
+                if wide {
+                    self.micro_state = MicroState::DirectMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: base,
+                        low,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            DirectOp::OraIndexedX { wide } => {
+                let address = base.wrapping_add(self.registers.x);
+                let low = bus.read(u32::from(address));
+                if wide {
+                    self.micro_state = MicroState::DirectMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address,
+                        low,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
             DirectOp::Eor { wide } => {
                 let low = bus.read(u32::from(base));
                 if wide {
@@ -1502,6 +1554,9 @@ impl Cpu {
             DirectIndexedIndirectOp::AndA => {
                 self.apply_immediate_math(ImmediateMathOp::AndA, value)
             }
+            DirectIndexedIndirectOp::OraA => {
+                self.apply_immediate_math(ImmediateMathOp::OraA, value)
+            }
             DirectIndexedIndirectOp::EorA => {
                 self.apply_immediate_math(ImmediateMathOp::EorA, value)
             }
@@ -1531,6 +1586,7 @@ impl Cpu {
         match op {
             DirectIndirectOp::AdcA => self.apply_immediate_math(ImmediateMathOp::AdcA, value),
             DirectIndirectOp::AndA => self.apply_immediate_math(ImmediateMathOp::AndA, value),
+            DirectIndirectOp::OraA => self.apply_immediate_math(ImmediateMathOp::OraA, value),
             DirectIndirectOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             DirectIndirectOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             DirectIndirectOp::Lda => self.load_accumulator(value),
@@ -1555,6 +1611,7 @@ impl Cpu {
         match op {
             DirectIndirectLongOp::AdcA => self.apply_immediate_math(ImmediateMathOp::AdcA, value),
             DirectIndirectLongOp::AndA => self.apply_immediate_math(ImmediateMathOp::AndA, value),
+            DirectIndirectLongOp::OraA => self.apply_immediate_math(ImmediateMathOp::OraA, value),
             DirectIndirectLongOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             DirectIndirectLongOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             DirectIndirectLongOp::Lda => self.load_accumulator(value),
@@ -1572,6 +1629,7 @@ impl Cpu {
         let (full, extra_cycles) = match op {
             DirectIndirectIndexedYOp::AdcA
             | DirectIndirectIndexedYOp::AndA
+            | DirectIndirectIndexedYOp::OraA
             | DirectIndirectIndexedYOp::EorA
             | DirectIndirectIndexedYOp::CmpA
             | DirectIndirectIndexedYOp::Lda => {
@@ -1586,6 +1644,7 @@ impl Cpu {
             }
             DirectIndirectIndexedYOp::AdcALong
             | DirectIndirectIndexedYOp::AndALong
+            | DirectIndirectIndexedYOp::OraALong
             | DirectIndirectIndexedYOp::EorALong
             | DirectIndirectIndexedYOp::CmpALong
             | DirectIndirectIndexedYOp::LdaLong => (
@@ -1606,6 +1665,8 @@ impl Cpu {
             | DirectIndirectIndexedYOp::AdcALong
             | DirectIndirectIndexedYOp::AndA
             | DirectIndirectIndexedYOp::AndALong
+            | DirectIndirectIndexedYOp::OraA
+            | DirectIndirectIndexedYOp::OraALong
             | DirectIndirectIndexedYOp::EorA
             | DirectIndirectIndexedYOp::EorALong
             | DirectIndirectIndexedYOp::CmpA
@@ -1616,6 +1677,9 @@ impl Cpu {
                     }
                     DirectIndirectIndexedYOp::AndA | DirectIndirectIndexedYOp::AndALong => {
                         ImmediateMathOp::AndA
+                    }
+                    DirectIndirectIndexedYOp::OraA | DirectIndirectIndexedYOp::OraALong => {
+                        ImmediateMathOp::OraA
                     }
                     DirectIndirectIndexedYOp::EorA | DirectIndirectIndexedYOp::EorALong => {
                         ImmediateMathOp::EorA
@@ -1639,6 +1703,7 @@ impl Cpu {
         match op {
             StackRelativeOp::AdcA => self.apply_immediate_math(ImmediateMathOp::AdcA, value),
             StackRelativeOp::AndA => self.apply_immediate_math(ImmediateMathOp::AndA, value),
+            StackRelativeOp::OraA => self.apply_immediate_math(ImmediateMathOp::OraA, value),
             StackRelativeOp::EorA => self.apply_immediate_math(ImmediateMathOp::EorA, value),
             StackRelativeOp::CmpA => self.apply_immediate_math(ImmediateMathOp::CmpA, value),
             StackRelativeOp::Lda => self.load_accumulator(value),
@@ -1656,6 +1721,9 @@ impl Cpu {
             }
             StackRelativeIndirectIndexedYOp::AndA => {
                 self.apply_immediate_math(ImmediateMathOp::AndA, value)
+            }
+            StackRelativeIndirectIndexedYOp::OraA => {
+                self.apply_immediate_math(ImmediateMathOp::OraA, value)
             }
             StackRelativeIndirectIndexedYOp::EorA => {
                 self.apply_immediate_math(ImmediateMathOp::EorA, value)
@@ -1993,6 +2061,51 @@ impl Cpu {
                     };
                 } else {
                     self.apply_immediate_math(ImmediateMathOp::AndA, u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::Ora { wide } => {
+                let value = self.read_data_bank(bus, address);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: self.full_data_address(address),
+                        low: value,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::OraIndexedX { wide } => {
+                let full = self
+                    .full_data_address(address)
+                    .wrapping_add(u32::from(self.registers.x));
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteOp::OraIndexedY { wide } => {
+                let full = self
+                    .full_data_address(address)
+                    .wrapping_add(u32::from(self.registers.y));
+                let value = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: full,
+                        low: value,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
                     self.micro_state = MicroState::Fetch;
                 }
             }
@@ -2441,6 +2554,33 @@ impl Cpu {
                     self.micro_state = MicroState::Fetch;
                 }
             }
+            AbsoluteLongOp::Ora { wide } => {
+                let low = bus.read(full);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteLongMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: full,
+                        low,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
+            AbsoluteLongOp::OraIndexedX { wide } => {
+                let indexed = full.wrapping_add(u32::from(self.registers.x));
+                let low = bus.read(indexed);
+                if wide {
+                    self.micro_state = MicroState::AbsoluteLongMathHigh {
+                        op: ImmediateMathOp::OraA,
+                        address: indexed,
+                        low,
+                    };
+                } else {
+                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(low));
+                    self.micro_state = MicroState::Fetch;
+                }
+            }
             AbsoluteLongOp::Eor { wide } => {
                 let low = bus.read(full);
                 if wide {
@@ -2680,6 +2820,16 @@ impl Cpu {
                     self.update_nz16(self.registers.a);
                 }
             }
+            ImmediateMathOp::OraA => {
+                if self.accumulator_is_8bit() {
+                    let result = (self.registers.a as u8) | (value as u8);
+                    self.registers.a = (self.registers.a & 0xFF00) | u16::from(result);
+                    self.update_nz8(result);
+                } else {
+                    self.registers.a |= value;
+                    self.update_nz16(self.registers.a);
+                }
+            }
             ImmediateMathOp::EorA => {
                 if self.accumulator_is_8bit() {
                     let result = (self.registers.a as u8) ^ (value as u8);
@@ -2734,6 +2884,7 @@ impl Cpu {
         match op {
             ImmediateMathOp::BitA
             | ImmediateMathOp::AndA
+            | ImmediateMathOp::OraA
             | ImmediateMathOp::EorA
             | ImmediateMathOp::AdcA
             | ImmediateMathOp::CmpA
@@ -2789,6 +2940,7 @@ impl Cpu {
             0xA2 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::X),
             0xA0 => MicroState::ImmediateLoadLow(ImmediateLoadTarget::Y),
             0x29 => MicroState::ImmediateMathLow(ImmediateMathOp::AndA),
+            0x09 => MicroState::ImmediateMathLow(ImmediateMathOp::OraA),
             0x49 => MicroState::ImmediateMathLow(ImmediateMathOp::EorA),
             0x69 => MicroState::ImmediateMathLow(ImmediateMathOp::AdcA),
             0x89 => MicroState::ImmediateMathLow(ImmediateMathOp::BitA),
@@ -2812,8 +2964,12 @@ impl Cpu {
                 wide: !self.index_is_8bit(),
             }),
             0x23 => MicroState::StackRelative(StackRelativeOp::AndA),
+            0x03 => MicroState::StackRelative(StackRelativeOp::OraA),
             0x43 => MicroState::StackRelative(StackRelativeOp::EorA),
             0x25 => MicroState::Direct(DirectOp::And {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x05 => MicroState::Direct(DirectOp::Ora {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x45 => MicroState::Direct(DirectOp::Eor {
@@ -2846,6 +3002,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x35 => MicroState::Direct(DirectOp::AndIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x15 => MicroState::Direct(DirectOp::OraIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x55 => MicroState::Direct(DirectOp::EorIndexedX {
@@ -2900,6 +3059,7 @@ impl Cpu {
             }),
             0x61 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::AdcA),
             0x21 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::AndA),
+            0x01 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::OraA),
             0x41 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::EorA),
             0xA1 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::Lda),
             0xC1 => MicroState::DirectIndexedIndirect(DirectIndexedIndirectOp::CmpA),
@@ -2908,19 +3068,25 @@ impl Cpu {
             0xC3 => MicroState::StackRelative(StackRelativeOp::CmpA),
             0x67 => MicroState::DirectIndirectLong(DirectIndirectLongOp::AdcA),
             0x27 => MicroState::DirectIndirectLong(DirectIndirectLongOp::AndA),
+            0x07 => MicroState::DirectIndirectLong(DirectIndirectLongOp::OraA),
             0x47 => MicroState::DirectIndirectLong(DirectIndirectLongOp::EorA),
             0xA7 => MicroState::DirectIndirectLong(DirectIndirectLongOp::Lda),
             0xC7 => MicroState::DirectIndirectLong(DirectIndirectLongOp::CmpA),
             0x31 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AndA),
+            0x11 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::OraA),
             0x51 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::EorA),
             0xB1 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::Lda),
             0x32 => MicroState::DirectIndirect(DirectIndirectOp::AndA),
+            0x12 => MicroState::DirectIndirect(DirectIndirectOp::OraA),
             0x52 => MicroState::DirectIndirect(DirectIndirectOp::EorA),
             0xB2 => MicroState::DirectIndirect(DirectIndirectOp::Lda),
             0xD1 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::CmpA),
             0xD2 => MicroState::DirectIndirect(DirectIndirectOp::CmpA),
             0x33 => {
                 MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::AndA)
+            }
+            0x13 => {
+                MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::OraA)
             }
             0x53 => {
                 MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::EorA)
@@ -2930,6 +3096,7 @@ impl Cpu {
                 MicroState::StackRelativeIndirectIndexedY(StackRelativeIndirectIndexedYOp::CmpA)
             }
             0x37 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AndALong),
+            0x17 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::OraALong),
             0x57 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::EorALong),
             0xB7 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::LdaLong),
             0x71 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AdcA),
@@ -2940,6 +3107,9 @@ impl Cpu {
             0x77 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::AdcALong),
             0xD7 => MicroState::DirectIndirectIndexedY(DirectIndirectIndexedYOp::CmpALong),
             0x39 => MicroState::AbsoluteLow(AbsoluteOp::AndIndexedY {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x19 => MicroState::AbsoluteLow(AbsoluteOp::OraIndexedY {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x59 => MicroState::AbsoluteLow(AbsoluteOp::EorIndexedY {
@@ -2955,6 +3125,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x2D => MicroState::AbsoluteLow(AbsoluteOp::And {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x0D => MicroState::AbsoluteLow(AbsoluteOp::Ora {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x4D => MicroState::AbsoluteLow(AbsoluteOp::Eor {
@@ -2984,6 +3157,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x3D => MicroState::AbsoluteLow(AbsoluteOp::AndIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x1D => MicroState::AbsoluteLow(AbsoluteOp::OraIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x5D => MicroState::AbsoluteLow(AbsoluteOp::EorIndexedX {
@@ -3064,6 +3240,9 @@ impl Cpu {
             0x2F => MicroState::AbsoluteLongLow(AbsoluteLongOp::And {
                 wide: !self.accumulator_is_8bit(),
             }),
+            0x0F => MicroState::AbsoluteLongLow(AbsoluteLongOp::Ora {
+                wide: !self.accumulator_is_8bit(),
+            }),
             0x4F => MicroState::AbsoluteLongLow(AbsoluteLongOp::Eor {
                 wide: !self.accumulator_is_8bit(),
             }),
@@ -3074,6 +3253,9 @@ impl Cpu {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x3F => MicroState::AbsoluteLongLow(AbsoluteLongOp::AndIndexedX {
+                wide: !self.accumulator_is_8bit(),
+            }),
+            0x1F => MicroState::AbsoluteLongLow(AbsoluteLongOp::OraIndexedX {
                 wide: !self.accumulator_is_8bit(),
             }),
             0x5F => MicroState::AbsoluteLongLow(AbsoluteLongOp::EorIndexedX {
@@ -5159,6 +5341,175 @@ mod tests {
         assert_eq!(cpu.registers().a(), 0x11A3);
         assert_eq!(cpu.registers().x(), 0x0300);
         assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_immediate_16bit_updates_negative() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x00, 0x7F, 0x09, 0x5C, 0x80, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0xFF5C);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_immediate_8bit_preserves_high_byte() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x20, 0xA9, 0x50, 0x12, 0xE2, 0x20, 0x09, 0x0A, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 64);
+
+        assert_eq!(cpu.registers().a(), 0x125A);
+        assert!(!cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_direct_indexed_indirect_uses_direct_page_and_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x00FFA0, &[0x12, 0x12]);
+        system.load(0x7F1212, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7F, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0xFF, 0xFF, 0x5B, 0xA9, 0xFF, 0xFE, 0xA2, 0x91, 0xFF, 0x01, 0x10, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0xFFFF);
+        assert_eq!(cpu.registers().x(), 0xFF91);
+        assert_eq!(cpu.registers().db(), 0x7F);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_direct_indexed_x_uses_direct_page_wrap_and_index() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000134, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x03, 0x10, 0xA2, 0x33, 0x01,
+                0x15, 0x02, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0xFF5F);
+        assert_eq!(cpu.registers().x(), 0x0133);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_stack_relative_indirect_indexed_y_uses_stack_pointer_and_offset() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x0001FF, &[0xDC, 0xFE]);
+        system.load(0x7F0FDC, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA2, 0xEF, 0x01, 0x9A, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48,
+                0xAB, 0xC2, 0x20, 0xA9, 0x00, 0x7F, 0xA0, 0x00, 0x11, 0x13, 0x10, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 160);
+
+        assert_eq!(cpu.registers().a(), 0xFF5C);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().s(), 0x01EF);
+        assert_eq!(cpu.registers().y(), 0x1100);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_direct_indirect_long_indexed_y_carries_into_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x000033, &[0xDC, 0xFE, 0x7E]);
+        system.load(0x7F0FDC, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0x5B, 0xA9, 0x03, 0x10, 0xA0, 0x00, 0x11,
+                0x17, 0x34, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0xFF5F);
+        assert_eq!(cpu.registers().y(), 0x1100);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_absolute_indexed_y_carries_into_data_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x7E, 0x00, 0xE2, 0x20, 0x48, 0xAB, 0xC2, 0x20, 0xA9,
+                0x00, 0x7F, 0xA0, 0x00, 0x03, 0x19, 0xFF, 0xFF, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 128);
+
+        assert_eq!(cpu.registers().a(), 0xFF5C);
+        assert_eq!(cpu.registers().db(), 0x7E);
+        assert_eq!(cpu.registers().y(), 0x0300);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
+        assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
+    }
+
+    #[test]
+    fn ora_absolute_long_indexed_x_carries_into_bank() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x7F02FF, &[0x5C, 0xEF]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0xFF, 0xFF, 0xA2, 0x00, 0x03, 0xA9, 0x03, 0x10, 0x1F,
+                0xFF, 0xFF, 0x7E, 0xDB,
+            ],
+        );
+
+        run_until_stopped(&mut cpu, &mut system, 96);
+
+        assert_eq!(cpu.registers().a(), 0xFF5F);
+        assert_eq!(cpu.registers().x(), 0x0300);
+        assert!(cpu.registers().status().contains(CpuStatus::NEGATIVE));
         assert!(!cpu.registers().status().contains(CpuStatus::ZERO));
     }
 
