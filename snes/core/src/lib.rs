@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn core_reports_unsupported_opcode_instead_of_stopping_cleanly() {
         let mut rom = build_lorom(0x8000);
-        rom[0x0000] = 0x02;
+        rom[0x0000] = 0x42;
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
         for _ in 0..7 {
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(
             err,
             CoreError::UnsupportedOpcode {
-                opcode: 0x02,
+                opcode: 0x42,
                 bank: 0x00,
                 address: 0x8000,
             }

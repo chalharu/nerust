@@ -320,6 +320,23 @@ enum BranchKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExceptionKind {
+    Brk,
+    Cop,
+}
+
+impl ExceptionKind {
+    fn vector_address(self, emulation: bool) -> u32 {
+        match (self, emulation) {
+            (Self::Cop, true) => 0x00FFF4,
+            (Self::Brk, true) => 0x00FFFE,
+            (Self::Cop, false) => 0x00FFE4,
+            (Self::Brk, false) => 0x00FFE6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MicroState {
     Reset {
         remaining: u8,
@@ -447,6 +464,25 @@ enum MicroState {
         target_bank: u8,
         target_addr: u16,
         return_addr: u16,
+    },
+    Exception(ExceptionKind),
+    ExceptionPushBank {
+        kind: ExceptionKind,
+        return_addr: u16,
+    },
+    ExceptionPushHigh {
+        kind: ExceptionKind,
+        return_addr: u16,
+    },
+    ExceptionPushLow {
+        kind: ExceptionKind,
+        return_addr: u16,
+    },
+    ExceptionPushStatus(ExceptionKind),
+    ExceptionVectorLow(ExceptionKind),
+    ExceptionVectorHigh {
+        address: u32,
+        low: u8,
     },
     RtsPullLow,
     RtsPullHigh(u8),
@@ -729,6 +765,39 @@ impl Cpu {
                 self.stack_push(bus, return_addr as u8);
                 self.registers.pb = target_bank;
                 self.registers.pc = target_addr;
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::Exception(kind) => self.execute_exception(kind),
+            MicroState::ExceptionPushBank { kind, return_addr } => {
+                self.stack_push(bus, self.registers.pb);
+                self.micro_state = MicroState::ExceptionPushHigh { kind, return_addr };
+            }
+            MicroState::ExceptionPushHigh { kind, return_addr } => {
+                self.stack_push(bus, (return_addr >> 8) as u8);
+                self.micro_state = MicroState::ExceptionPushLow { kind, return_addr };
+            }
+            MicroState::ExceptionPushLow { kind, return_addr } => {
+                self.stack_push(bus, return_addr as u8);
+                self.micro_state = MicroState::ExceptionPushStatus(kind);
+            }
+            MicroState::ExceptionPushStatus(kind) => {
+                self.stack_push(bus, self.registers.p.bits());
+                self.registers.p.insert(CpuStatus::IRQ_DISABLE);
+                self.registers.p.remove(CpuStatus::DECIMAL);
+                self.micro_state = MicroState::ExceptionVectorLow(kind);
+            }
+            MicroState::ExceptionVectorLow(kind) => {
+                let address = kind.vector_address(self.registers.e);
+                let low = bus.read(address);
+                self.micro_state = MicroState::ExceptionVectorHigh {
+                    address: address.wrapping_add(1),
+                    low,
+                };
+            }
+            MicroState::ExceptionVectorHigh { address, low } => {
+                let high = bus.read(address);
+                self.registers.pb = 0;
+                self.registers.pc = u16::from_le_bytes([low, high]);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::RtsPullLow => {
@@ -1245,6 +1314,16 @@ impl Cpu {
             self.registers.pc = self.registers.pc.wrapping_add_signed(i16::from(offset));
         }
         self.micro_state = MicroState::Fetch;
+    }
+
+    fn execute_exception(&mut self, kind: ExceptionKind) {
+        self.registers.pc = self.registers.pc.wrapping_add(1);
+        let return_addr = self.registers.pc;
+        if self.registers.e {
+            self.micro_state = MicroState::ExceptionPushHigh { kind, return_addr };
+        } else {
+            self.micro_state = MicroState::ExceptionPushBank { kind, return_addr };
+        }
     }
 
     fn execute_immediate8(&mut self, bus: &mut dyn CpuBus, op: Immediate8Op) {
@@ -1826,6 +1905,8 @@ impl Cpu {
 
     fn decode_opcode(&mut self, opcode: u8) -> MicroState {
         match opcode {
+            0x00 => MicroState::Exception(ExceptionKind::Brk),
+            0x02 => MicroState::Exception(ExceptionKind::Cop),
             0xEA => MicroState::Implied(ImpliedOp::Nop),
             0x18 => MicroState::Implied(ImpliedOp::Clc),
             0x38 => MicroState::Implied(ImpliedOp::Sec),
@@ -2251,6 +2332,11 @@ mod tests {
             system
         }
 
+        fn load_native_exception_vectors(&mut self, cop: u16, brk: u16) {
+            self.load(0x00FFE4, &cop.to_le_bytes());
+            self.load(0x00FFE6, &brk.to_le_bytes());
+        }
+
         fn load(&mut self, base: u32, bytes: &[u8]) {
             for (offset, value) in bytes.iter().copied().enumerate() {
                 self.memory.insert(base + offset as u32, value);
@@ -2444,6 +2530,66 @@ mod tests {
         assert_eq!(cpu.registers().x(), 0x0003);
         assert!(cpu.registers().status().contains(CpuStatus::OVERFLOW));
         assert!(!cpu.registers().status().contains(CpuStatus::CARRY));
+    }
+
+    #[test]
+    fn brk_native_mode_pushes_bank_pc_and_status_then_vectors_to_bank_zero() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load_native_exception_vectors(0x9004, 0x9000);
+        system.load(0x009000, &[0xDB]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x34, 0x12, 0xA2, 0x56, 0x34, 0xA0, 0x78, 0x56, 0xC2,
+                0xF4, 0xE2, 0x0B, 0x5C, 0x00, 0x80, 0x7E,
+            ],
+        );
+        system.load(0x7E8000, &[0x00, 0xDB]);
+
+        run_until_stopped(&mut cpu, &mut system, 192);
+
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().x(), 0x3456);
+        assert_eq!(cpu.registers().y(), 0x5678);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9001);
+        assert_eq!(cpu.registers().s(), 0x01FB);
+        assert_eq!(cpu.registers().status().bits() & 0xFF, 0x07);
+        assert_eq!(system.memory.get(&0x0001FF), Some(&0x7E));
+        assert_eq!(system.memory.get(&0x0001FE), Some(&0x80));
+        assert_eq!(system.memory.get(&0x0001FD), Some(&0x02));
+        assert_eq!(system.memory.get(&0x0001FC), Some(&0x0B));
+    }
+
+    #[test]
+    fn cop_native_mode_uses_cop_vector_and_pushes_return_state() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load_native_exception_vectors(0x9004, 0x9000);
+        system.load(0x009004, &[0xDB]);
+        system.load(
+            0x008000,
+            &[
+                0x18, 0xFB, 0xC2, 0x30, 0xA9, 0x34, 0x12, 0xA2, 0x56, 0x34, 0xA0, 0x78, 0x56, 0xC2,
+                0xF4, 0xE2, 0x0B, 0x5C, 0x00, 0x80, 0x7E,
+            ],
+        );
+        system.load(0x7E8000, &[0x02, 0xDB]);
+
+        run_until_stopped(&mut cpu, &mut system, 192);
+
+        assert_eq!(cpu.registers().a(), 0x1234);
+        assert_eq!(cpu.registers().x(), 0x3456);
+        assert_eq!(cpu.registers().y(), 0x5678);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9005);
+        assert_eq!(cpu.registers().s(), 0x01FB);
+        assert_eq!(cpu.registers().status().bits() & 0xFF, 0x07);
+        assert_eq!(system.memory.get(&0x0001FF), Some(&0x7E));
+        assert_eq!(system.memory.get(&0x0001FE), Some(&0x80));
+        assert_eq!(system.memory.get(&0x0001FD), Some(&0x02));
+        assert_eq!(system.memory.get(&0x0001FC), Some(&0x0B));
     }
 
     #[test]
