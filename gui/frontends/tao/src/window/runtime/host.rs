@@ -17,16 +17,12 @@ use rfd::FileDialog;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-#[cfg(target_os = "macos")]
-use tao::platform::macos::WindowExtMacOS;
-#[cfg(not(target_os = "macos"))]
-use tao::window::Fullscreen;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
     event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
     keyboard::KeyCode,
-    window::{Window as TaoWindow, WindowBuilder, WindowId},
+    window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -500,38 +496,11 @@ fn create_window_builder(size: TaoLogicalSize<f64>, title: String) -> WindowBuil
 }
 
 fn window_is_fullscreen(window: &TaoWindow) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        window.simple_fullscreen() || window.fullscreen().is_some()
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        window.fullscreen().is_some()
-    }
+    window.fullscreen().is_some()
 }
 
 fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
-    #[cfg(target_os = "macos")]
-    {
-        if fullscreen {
-            if window.fullscreen().is_none() && !window.simple_fullscreen() {
-                let _ = window.set_simple_fullscreen(true);
-            }
-        } else {
-            if window.simple_fullscreen() {
-                let _ = window.set_simple_fullscreen(false);
-            }
-            if window.fullscreen().is_some() {
-                window.set_fullscreen(None);
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-    }
+    window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
 }
 
 fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
