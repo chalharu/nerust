@@ -1,3 +1,4 @@
+---
 rom_root: ../../roms
 cases:
   - id: cputest-basic-final-state
@@ -98,3 +99,36 @@ cases:
       - kind: cgram_u16
         address: "0x0002"
         expected: "0x0400"
+  - id: vmain-2bpp-remapping-final-state
+    description: >
+      The undisbeliever VMAIN 2bpp remapping ROM eventually reaches its steady
+      display loop with the remapped tile buffer written into VRAM.
+    rom: >
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 4096
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0000"
+        expected: "0x81"
+      - kind: vram_u8
+        address: "0x0002"
+        expected: "0x40"
+      - kind: vram_u8
+        address: "0x0006"
+        expected: "0x18"
+      - kind: vram_u8
+        address: "0x0010"
+        expected: "0x01"
+      - kind: vram_u8
+        address: "0x0012"
+        expected: "0x80"
+      - kind: vram_u8
+        address: "0x001C"
+        expected: "0x06"
+      - kind: vram_u8
+        address: "0x001E"
+        expected: "0x81"
