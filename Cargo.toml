@@ -41,7 +41,7 @@ members = [
 default-members = ["core", "persistence", "console"]
 
 [profile.release]
-debug = true
+debug = false
 
 [profile.release.package.nerust_core]
 codegen-units = 1
