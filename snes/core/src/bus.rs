@@ -3,13 +3,18 @@ use crate::{Cartridge, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
-const VBLANK_STUB_PERIOD: u8 = 11;
-const VBLANK_STUB_ACTIVE_START: u8 = 5;
+const VBLANK_STUB_PERIOD: u16 = 1024;
+const VBLANK_STUB_ACTIVE_START: u16 = 768;
 
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
     fn write(&mut self, addr: u32, data: u8);
     fn tick(&mut self) {}
+    /// Returns `true` and clears the pending-NMI flag when an NMI is waiting
+    /// for the CPU to service.  Returns `false` otherwise.
+    fn poll_nmi(&mut self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct Bus {
@@ -19,7 +24,12 @@ pub(crate) struct Bus {
     pub(crate) ppu2: Ppu2,
     cpu_io_registers: [u8; CPU_IO_REGISTER_COUNT],
     dma_registers: [u8; DMA_REGISTER_COUNT],
-    video_phase: u8,
+    video_phase: u16,
+    /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210.
+    nmi_flag: bool,
+    /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
+    /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
+    nmi_pending: bool,
 }
 
 impl Bus {
@@ -34,6 +44,8 @@ impl Bus {
             cpu_io_registers: [0; CPU_IO_REGISTER_COUNT],
             dma_registers: [0; DMA_REGISTER_COUNT],
             video_phase: 0,
+            nmi_flag: false,
+            nmi_pending: false,
         }
     }
 
@@ -43,10 +55,32 @@ impl Bus {
 
     pub(crate) fn reset_ephemeral_state(&mut self) {
         self.video_phase = 0;
+        self.nmi_flag = false;
+        self.nmi_pending = false;
     }
 
     pub(crate) fn tick_video_stub(&mut self) {
+        let was_in_vblank = self.in_vblank();
         self.video_phase = (self.video_phase + 1) % VBLANK_STUB_PERIOD;
+        // Rising edge of vblank: latch the NMI flag and optionally queue a
+        // pending NMI for the CPU (when NMITIMEN bit 7 is set).
+        if !was_in_vblank && self.in_vblank() {
+            self.nmi_flag = true;
+            if self.nmi_enabled() {
+                self.nmi_pending = true;
+            }
+        }
+    }
+
+    fn nmi_enabled(&self) -> bool {
+        // NMITIMEN ($4200) bit 7 enables VBlank NMI
+        self.cpu_io_registers[0x00] & 0x80 != 0
+    }
+
+    /// Consume and return the pending-NMI flag.  Called by the CPU each cycle
+    /// while in WAI state.
+    pub(crate) fn poll_nmi(&mut self) -> bool {
+        core::mem::take(&mut self.nmi_pending)
     }
 
     pub(crate) fn peek(&self, address: u32) -> u8 {
@@ -100,7 +134,7 @@ impl Bus {
                 self.memory.peek_mmio(offset).unwrap_or(0)
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4210) => {
-                if self.in_vblank() {
+                if self.nmi_flag {
                     0x80
                 } else {
                     0x00
@@ -145,6 +179,17 @@ impl Bus {
                 if value != 0 {
                     self.execute_dma(value);
                     self.cpu_io_registers[usize::from(offset - 0x4200)] = 0;
+                }
+            }
+            // NMITIMEN ($4200): track whether NMI is enabled; raise a pending NMI
+            // immediately if the NMI flag is already latched (i.e. we are mid-vblank
+            // and the program enables NMI after clearing RDNMI).
+            (0x00..=0x3F | 0x80..=0xBF, 0x4200) => {
+                let was_enabled = self.cpu_io_registers[0x00] & 0x80 != 0;
+                self.cpu_io_registers[0x00] = value;
+                let now_enabled = value & 0x80 != 0;
+                if !was_enabled && now_enabled && self.nmi_flag {
+                    self.nmi_pending = true;
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
@@ -315,12 +360,11 @@ impl Bus {
 
     fn read_cpu_io(&mut self, offset: u16) -> u8 {
         match offset {
+            // RDNMI ($4210): returns NMI flag in bit 7 and clears it on read.
             0x4210 => {
-                if self.in_vblank() {
-                    0x80
-                } else {
-                    0x00
-                }
+                let val = if self.nmi_flag { 0x80 } else { 0x00 };
+                self.nmi_flag = false;
+                val
             }
             0x4212 => {
                 if self.in_vblank() {
@@ -346,6 +390,10 @@ impl CpuBus for Bus {
 
     fn tick(&mut self) {
         self.tick_video_stub();
+    }
+
+    fn poll_nmi(&mut self) -> bool {
+        Bus::poll_nmi(self)
     }
 }
 
@@ -617,5 +665,103 @@ mod tests {
             0x00,
             "channel 1 was not spuriously triggered"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // NMI / RDNMI tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rdnmi_flag_is_set_on_vblank_entry_and_cleared_by_read() {
+        let mut bus = Bus::new(test_cartridge());
+
+        // No vblank yet: RDNMI reads 0x00 and flag stays clear
+        assert_eq!(bus.read(0x004210), 0x00);
+        assert!(!bus.nmi_flag);
+
+        // Tick until vblank starts
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(bus.nmi_flag, "nmi_flag should be set on vblank entry");
+
+        // First read returns 0x80 and clears the flag
+        assert_eq!(bus.read(0x004210), 0x80);
+        assert!(!bus.nmi_flag, "nmi_flag should be cleared after read");
+
+        // Second read returns 0x00 (flag already cleared)
+        assert_eq!(bus.read(0x004210), 0x00);
+    }
+
+    #[test]
+    fn nmi_pending_is_raised_when_vblank_starts_while_nmi_enabled() {
+        let mut bus = Bus::new(test_cartridge());
+
+        // Enable NMI via NMITIMEN ($4200 bit 7)
+        bus.write(0x004200, 0x80);
+        assert!(!bus.nmi_pending);
+
+        // Tick into vblank
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(
+            bus.nmi_pending,
+            "nmi_pending should be set when NMI is enabled at vblank"
+        );
+
+        // poll_nmi consumes the pending flag
+        assert!(bus.poll_nmi());
+        assert!(!bus.nmi_pending);
+        assert!(!bus.poll_nmi(), "second poll should return false");
+    }
+
+    #[test]
+    fn nmi_not_pending_when_nmi_disabled_at_vblank() {
+        let mut bus = Bus::new(test_cartridge());
+
+        // NMI disabled (NMITIMEN bit 7 = 0, default)
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(bus.nmi_flag);
+        assert!(
+            !bus.nmi_pending,
+            "nmi_pending should NOT be set when NMI is disabled"
+        );
+    }
+
+    #[test]
+    fn enabling_nmi_while_nmi_flag_is_set_raises_pending_nmi() {
+        let mut bus = Bus::new(test_cartridge());
+
+        // Tick into vblank without NMI enabled
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(bus.nmi_flag);
+        assert!(!bus.nmi_pending);
+
+        // Now enable NMI – should immediately queue pending NMI
+        bus.write(0x004200, 0x80);
+        assert!(
+            bus.nmi_pending,
+            "enabling NMI mid-vblank should queue pending NMI"
+        );
+    }
+
+    #[test]
+    fn rdnmi_peek_reflects_nmi_flag_without_clearing() {
+        let mut bus = Bus::new(test_cartridge());
+
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(bus.nmi_flag);
+
+        // Peek is non-destructive
+        assert_eq!(bus.peek(0x004210), 0x80);
+        assert!(bus.nmi_flag, "peek must not clear the NMI flag");
+        assert_eq!(bus.peek(0x004210), 0x80);
     }
 }
