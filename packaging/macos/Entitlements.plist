@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for ad-hoc signing of Nerust.app.
+
+  Ad-hoc signing (-) does not require an Apple Developer account. This keeps
+  the bundle signed for local distribution, but the archive is not notarized
+  and may require a first-launch Gatekeeper bypass.
+
+  These entitlements are intentionally minimal. Add only what the application
+  actually requires before shipping a notarised build.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Allow execution of JIT-compiled code; not needed for Nerust but
+         included as a no-op placeholder so the entitlements file is valid. -->
+</dict>
+</plist>

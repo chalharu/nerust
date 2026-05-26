@@ -1,0 +1,88 @@
+name: Prepare release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Source branch to release from
+        required: true
+        default: master
+        type: string
+jobs:
+  prepare:
+    name: Prepare release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.base_ref }}
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Authenticate git pushes
+        env:
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GH_REPO}.git"
+      - name: Validate release branch
+        run: |
+          if ! git ls-remote --exit-code --heads origin release > /dev/null 2>&1; then
+            echo "release branch does not exist on origin" >&2
+            exit 1
+          fi
+      - name: Prepare release candidate
+        id: release_meta
+        run: bash packaging/release/release_flow.sh prepare-candidate >> "$GITHUB_OUTPUT"
+      - name: Create release candidate commit
+        env:
+          VERSION: ${{ steps.release_meta.outputs.version }}
+        run: |
+          if git diff --quiet -- Cargo.toml CHANGELOG.md; then
+            exit 0
+          fi
+          git add Cargo.toml CHANGELOG.md
+          git commit -m "chore(release): prepare v${VERSION}"
+      - name: Push release candidate branch
+        run: |
+          git fetch origin "refs/heads/release-candidate:refs/remotes/origin/release-candidate" || true
+          git push --force-with-lease origin "HEAD:refs/heads/release-candidate"
+      - name: Create or update release PR
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          BASE_TAG: ${{ steps.release_meta.outputs.base_tag }}
+          BUMP_KIND: ${{ steps.release_meta.outputs.bump_kind }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
+          VERSION: ${{ steps.release_meta.outputs.version }}
+        run: |
+          body_file="$(mktemp)"
+          comparison_base="${BASE_TAG:-none}"
+          cat > "${body_file}" <<EOF
+          ## Summary
+          - prepare \`${TAG_NAME}\` from \`${BASE_REF}\`
+          - open the release review path against \`release\`
+          - publish versioned review artifacts from this PR for binary verification
+
+          ## Versioning
+          - version: \`${VERSION}\`
+          - bump kind: \`${BUMP_KIND}\`
+          - comparison base: \`${comparison_base}\`
+
+          ## Notes
+          - merge this PR into \`release\` to create the tag and GitHub Release
+          - after publishing, the automation opens a sync PR from \`release\` back to \`master\`
+          EOF
+          pr_number="$(gh pr list --head release-candidate --base release --state open --json number --jq '.[0].number')"
+          if [ -n "${pr_number}" ]; then
+            gh pr edit "${pr_number}" --title "chore(release): prepare ${TAG_NAME}" --body-file "${body_file}"
+          else
+            gh pr create --base release --head release-candidate --title "chore(release): prepare ${TAG_NAME}" --body-file "${body_file}"
+          fi
+          rm -f "${body_file}"

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="170" y1="96" x2="854" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#25345e"/>
+      <stop offset="0.55" stop-color="#151e36"/>
+      <stop offset="1" stop-color="#0b111f"/>
+    </linearGradient>
+    <linearGradient id="chrome" x1="192" y1="186" x2="832" y2="806" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="0.45" stop-color="#d7dde8"/>
+      <stop offset="1" stop-color="#9ea7b8"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="322" y1="300" x2="702" y2="544" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6ea8ff"/>
+      <stop offset="0.45" stop-color="#465ef2"/>
+      <stop offset="1" stop-color="#1a2558"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="252" y1="594" x2="768" y2="762" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff7a8f"/>
+      <stop offset="1" stop-color="#e11d48"/>
+    </linearGradient>
+    <linearGradient id="button" x1="622" y1="628" x2="780" y2="756" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff90a6"/>
+      <stop offset="1" stop-color="#e11d48"/>
+    </linearGradient>
+    <linearGradient id="nMark" x1="372" y1="298" x2="616" y2="516" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8ecff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="960" height="960" rx="228" fill="url(#bg)"/>
+  <path d="M128 108c88-58 210-82 402-82 173 0 291 28 384 94-86-17-197-24-337-24-209 0-344 18-449 76z" fill="#ffffff" fill-opacity="0.08"/>
+  <rect x="56" y="56" width="912" height="912" rx="204" fill="none" stroke="#8aa0d8" stroke-opacity="0.35" stroke-width="8"/>
+  <rect x="122" y="198" width="780" height="628" rx="156" fill="url(#chrome)"/>
+  <rect x="144" y="220" width="736" height="584" rx="136" fill="#0f1728" fill-opacity="0.13"/>
+  <rect x="296" y="260" width="432" height="292" rx="76" fill="url(#screen)"/>
+  <rect x="312" y="278" width="400" height="258" rx="60" fill="none" stroke="#dbe7ff" stroke-opacity="0.26" stroke-width="8"/>
+
+  <path d="M390 316h74l142 140V316h72v180h-72L462 354v142h-72z" fill="url(#nMark)"/>
+
+  <g fill="url(#accent)">
+    <rect x="210" y="600" width="180" height="64" rx="24"/>
+    <rect x="268" y="542" width="64" height="180" rx="24"/>
+    <circle cx="300" cy="632" r="38" fill="#ffb0bf" fill-opacity="0.45"/>
+  </g>
+
+  <g fill="#5f6b7f">
+    <rect x="430" y="642" width="88" height="28" rx="14"/>
+    <rect x="542" y="642" width="88" height="28" rx="14"/>
+  </g>
+
+  <g>
+    <circle cx="678" cy="658" r="60" fill="url(#button)"/>
+    <circle cx="796" cy="620" r="60" fill="url(#button)"/>
+    <circle cx="658" cy="638" r="18" fill="#ffffff" fill-opacity="0.26"/>
+    <circle cx="776" cy="600" r="18" fill="#ffffff" fill-opacity="0.26"/>
+  </g>
+
+  <rect x="236" y="742" width="552" height="12" rx="6" fill="#ffffff" fill-opacity="0.12"/>
+</svg>
