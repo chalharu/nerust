@@ -19,12 +19,14 @@ use std::sync::Arc;
 use std::time::Instant;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowExtMacOS;
+#[cfg(not(target_os = "macos"))]
+use tao::window::Fullscreen;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
     event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
     keyboard::KeyCode,
-    window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
+    window::{Window as TaoWindow, WindowBuilder, WindowId},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
