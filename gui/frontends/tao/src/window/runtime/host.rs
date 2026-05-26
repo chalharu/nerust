@@ -17,6 +17,8 @@ use rfd::FileDialog;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+#[cfg(target_os = "macos")]
+use tao::platform::macos::WindowExtMacOS;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
@@ -89,16 +91,15 @@ impl HostState {
                 .unwrap(),
         );
         self.app_menu.init_for_window(&window);
-        if self
-            .session
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default
-        {
-            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
+        set_window_fullscreen(
+            &window,
+            self.session
+                .settings_snapshot()
+                .local
+                .video
+                .window
+                .fullscreen_default,
+        );
         self.window = Some(window);
         self.sync_menu_state();
         self.request_redraw();
@@ -269,8 +270,21 @@ impl HostState {
         settings: SettingsSnapshot,
     ) -> Result<SettingsApplyPlan, String> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.window_settings_changed {
+        let fullscreen_default = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        if plan.fullscreen_default_changed && !fullscreen_default {
+            self.sync_fullscreen_from_settings();
+        }
+        if plan.scaling_changed {
             self.update_window_size_for_scaling();
+        }
+        if plan.fullscreen_default_changed && fullscreen_default {
+            self.sync_fullscreen_from_settings();
         }
         self.sync_menu_state();
         self.refresh_window_title();
@@ -375,11 +389,7 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        if window.fullscreen().is_some() {
-            window.set_fullscreen(None);
-        } else {
-            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
+        set_window_fullscreen(window, !window_is_fullscreen(window));
     }
 
     fn open_settings_window(&mut self) {
@@ -437,6 +447,21 @@ impl HostState {
         window.set_inner_size(logical_window_size(self.session.window_size(), Some(scale)));
     }
 
+    fn sync_fullscreen_from_settings(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        set_window_fullscreen(
+            window,
+            self.session
+                .settings_snapshot()
+                .local
+                .video
+                .window
+                .fullscreen_default,
+        );
+    }
+
     fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
         self.session
             .settings_snapshot()
@@ -448,7 +473,7 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        if window.fullscreen().is_some()
+        if window_is_fullscreen(window)
             || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
@@ -470,6 +495,41 @@ impl HostState {
 
 fn create_window_builder(size: TaoLogicalSize<f64>, title: String) -> WindowBuilder {
     WindowBuilder::new().with_title(title).with_inner_size(size)
+}
+
+fn window_is_fullscreen(window: &TaoWindow) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        window.simple_fullscreen() || window.fullscreen().is_some()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.fullscreen().is_some()
+    }
+}
+
+fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        if fullscreen {
+            if window.fullscreen().is_none() && !window.simple_fullscreen() {
+                let _ = window.set_simple_fullscreen(true);
+            }
+        } else {
+            if window.simple_fullscreen() {
+                let _ = window.set_simple_fullscreen(false);
+            }
+            if window.fullscreen().is_some() {
+                window.set_fullscreen(None);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    }
 }
 
 fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {

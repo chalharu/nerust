@@ -64,6 +64,7 @@ pub(crate) trait WindowExtend {
     fn close(&self);
     fn update_actions(&self);
     fn refresh_title(&self);
+    fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
 }
@@ -414,6 +415,7 @@ impl WindowExtend for Window {
 
         result.update_actions();
         window.present();
+        result.sync_fullscreen_from_settings();
         let _ = glarea.grab_focus();
         result
     }
@@ -550,6 +552,19 @@ impl WindowExtend for Window {
         self.window().set_title(Some(title.as_str()));
     }
 
+    fn sync_fullscreen_from_settings(&self) {
+        set_window_fullscreen(
+            &self.window(),
+            self.state()
+                .borrow()
+                .settings_snapshot()
+                .local
+                .video
+                .window
+                .fullscreen_default,
+        );
+    }
+
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
         if let Some(controller_input) = gdk_key_controller_input(key) {
             let shortcut = self
@@ -600,23 +615,23 @@ impl WindowExtend for Window {
                     let _ = self.state().borrow_mut().run_command(SessionCommand::Reset);
                 }
                 ShortcutAction::ToggleFullscreen => {
-                    if self.window().is_fullscreen() {
-                        self.window().unfullscreen();
-                    } else {
-                        self.window().fullscreen();
-                    }
+                    toggle_window_fullscreen(&self.window());
                 }
             },
             KeyboardShortcut::ToggleFullscreen => {
-                if self.window().is_fullscreen() {
-                    self.window().unfullscreen();
-                } else {
-                    self.window().fullscreen();
-                }
+                toggle_window_fullscreen(&self.window());
             }
         }
         self.update_actions();
     }
+}
+
+fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
+    window.set_fullscreened(fullscreen);
+}
+
+fn toggle_window_fullscreen(window: &gtk::ApplicationWindow) {
+    set_window_fullscreen(window, !window.is_fullscreen());
 }
 
 fn rebuild_slot_menu(
