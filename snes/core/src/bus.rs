@@ -3,6 +3,7 @@ use crate::{Cartridge, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
+const DMA_CHANNEL_COUNT: usize = 8;
 const VBLANK_STUB_PERIOD: u16 = 1024;
 const VBLANK_STUB_ACTIVE_START: u16 = 768;
 
@@ -30,6 +31,14 @@ pub(crate) struct Bus {
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
     /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
     nmi_pending: bool,
+    hdma_active_mask: u8,
+    hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
+    hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
+    hdma_data_bank: [u8; DMA_CHANNEL_COUNT],
+    hdma_line_counter: [u8; DMA_CHANNEL_COUNT],
+    hdma_repeat: [bool; DMA_CHANNEL_COUNT],
+    hdma_do_transfer: [bool; DMA_CHANNEL_COUNT],
+    hdma_indirect: [bool; DMA_CHANNEL_COUNT],
 }
 
 impl Bus {
@@ -46,6 +55,14 @@ impl Bus {
             video_phase: 0,
             nmi_flag: false,
             nmi_pending: false,
+            hdma_active_mask: 0,
+            hdma_table_addr: [0; DMA_CHANNEL_COUNT],
+            hdma_data_addr: [0; DMA_CHANNEL_COUNT],
+            hdma_data_bank: [0; DMA_CHANNEL_COUNT],
+            hdma_line_counter: [0; DMA_CHANNEL_COUNT],
+            hdma_repeat: [false; DMA_CHANNEL_COUNT],
+            hdma_do_transfer: [false; DMA_CHANNEL_COUNT],
+            hdma_indirect: [false; DMA_CHANNEL_COUNT],
         }
     }
 
@@ -57,18 +74,33 @@ impl Bus {
         self.video_phase = 0;
         self.nmi_flag = false;
         self.nmi_pending = false;
+        self.hdma_active_mask = 0;
+        self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
+        self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
+        self.hdma_data_bank = [0; DMA_CHANNEL_COUNT];
+        self.hdma_line_counter = [0; DMA_CHANNEL_COUNT];
+        self.hdma_repeat = [false; DMA_CHANNEL_COUNT];
+        self.hdma_do_transfer = [false; DMA_CHANNEL_COUNT];
+        self.hdma_indirect = [false; DMA_CHANNEL_COUNT];
     }
 
     pub(crate) fn tick_video_stub(&mut self) {
         let was_in_vblank = self.in_vblank();
         self.video_phase = (self.video_phase + 1) % VBLANK_STUB_PERIOD;
+        let in_vblank = self.in_vblank();
         // Rising edge of vblank: latch the NMI flag and optionally queue a
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
-        if !was_in_vblank && self.in_vblank() {
+        if !was_in_vblank && in_vblank {
             self.nmi_flag = true;
             if self.nmi_enabled() {
                 self.nmi_pending = true;
             }
+        }
+        if was_in_vblank && !in_vblank {
+            self.reload_hdma_channels();
+        }
+        if !in_vblank {
+            self.step_hdma_line();
         }
     }
 
@@ -192,6 +224,14 @@ impl Bus {
                     self.nmi_pending = true;
                 }
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
+                self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
+                if value == 0 {
+                    self.hdma_active_mask = 0;
+                } else if !self.in_vblank() {
+                    self.reload_hdma_channels();
+                }
+            }
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
             }
@@ -260,7 +300,7 @@ impl Bus {
         let b_to_a = dmap & 0x80 != 0; // direction: 0=A→B (CPU→PPU), 1=B→A (PPU→CPU)
         let fixed = dmap & 0x08 != 0; // no A-bus address change
         let decrement = dmap & 0x10 != 0; // decrement A-bus address (only when !fixed)
-        let pattern = (dmap & 0x07) as usize;
+        let pattern = dmap & 0x07;
 
         // A-bus starting address (24-bit, bank does not wrap during transfer)
         let mut a_addr: u32 = (u32::from(a1b) << 16) | (u32::from(a1t_hi) << 8) | u32::from(a1t_lo);
@@ -274,15 +314,7 @@ impl Bus {
 
         // Per-pattern B-bus address offsets (cycled during transfer).
         // Patterns 6 and 7 are aliases of 2 and 3 respectively.
-        let offsets: &[u8] = match pattern {
-            0 => &[0],
-            1 => &[0, 1],
-            2 | 6 => &[0, 0],
-            3 | 7 => &[0, 0, 1, 1],
-            4 => &[0, 1, 2, 3],
-            5 => &[0, 1, 0, 1],
-            _ => &[0],
-        };
+        let offsets = dma_transfer_offsets(pattern);
 
         let mut pidx: usize = 0;
 
@@ -337,6 +369,118 @@ impl Bus {
             0x2100..=0x213F => self.read_ppu_register(b_addr),
             0x2180..=0x2183 => self.memory.read_mmio(b_addr).unwrap_or(0),
             _ => 0,
+        }
+    }
+
+    fn reload_hdma_channels(&mut self) {
+        self.hdma_active_mask = 0;
+
+        let hdmaen = self.cpu_io_registers[0x0C];
+        for channel in 0..DMA_CHANNEL_COUNT {
+            if hdmaen & (1 << channel) == 0 {
+                continue;
+            }
+
+            if self.reload_hdma_channel(channel as u8) {
+                self.hdma_active_mask |= 1 << channel;
+            }
+        }
+    }
+
+    fn reload_hdma_channel(&mut self, channel: u8) -> bool {
+        let index = usize::from(channel);
+        let base = index * 0x10;
+        self.hdma_table_addr[index] = u16::from_le_bytes([
+            self.dma_registers[base + 0x2],
+            self.dma_registers[base + 0x3],
+        ]);
+        self.hdma_indirect[index] = self.dma_registers[base] & 0x40 != 0;
+        self.load_hdma_entry(channel)
+    }
+
+    fn load_hdma_entry(&mut self, channel: u8) -> bool {
+        let index = usize::from(channel);
+        let base = index * 0x10;
+        let table_bank = self.dma_registers[base + 0x4];
+        let mut table_addr = self.hdma_table_addr[index];
+
+        let line_control =
+            self.dma_read_abus((u32::from(table_bank) << 16) | u32::from(table_addr));
+        table_addr = table_addr.wrapping_add(1);
+        if line_control == 0 {
+            self.hdma_line_counter[index] = 0;
+            self.hdma_do_transfer[index] = false;
+            return false;
+        }
+
+        self.hdma_repeat[index] = line_control & 0x80 != 0;
+        self.hdma_do_transfer[index] = true;
+        self.hdma_line_counter[index] = if line_control & 0x7F == 0 {
+            0x80
+        } else {
+            line_control & 0x7F
+        };
+
+        if self.hdma_indirect[index] {
+            let low = self.dma_read_abus((u32::from(table_bank) << 16) | u32::from(table_addr));
+            let high = self.dma_read_abus(
+                (u32::from(table_bank) << 16) | u32::from(table_addr.wrapping_add(1)),
+            );
+            table_addr = table_addr.wrapping_add(2);
+            self.hdma_data_addr[index] = u16::from_le_bytes([low, high]);
+            self.hdma_data_bank[index] = self.dma_registers[base + 0x7];
+        } else {
+            self.hdma_data_addr[index] = table_addr;
+            self.hdma_data_bank[index] = table_bank;
+            table_addr = table_addr
+                .wrapping_add(dma_transfer_offsets(self.dma_registers[base] & 0x07).len() as u16);
+        }
+
+        self.hdma_table_addr[index] = table_addr;
+        true
+    }
+
+    fn step_hdma_line(&mut self) {
+        for channel in 0..DMA_CHANNEL_COUNT {
+            let bit = 1 << channel;
+            if self.hdma_active_mask & bit == 0 {
+                continue;
+            }
+
+            if self.hdma_do_transfer[channel] {
+                self.execute_hdma_transfer(channel as u8);
+            }
+
+            self.hdma_line_counter[channel] -= 1;
+            if self.hdma_line_counter[channel] == 0 {
+                if !self.load_hdma_entry(channel as u8) {
+                    self.hdma_active_mask &= !bit;
+                }
+            } else if !self.hdma_repeat[channel] {
+                self.hdma_do_transfer[channel] = false;
+            }
+        }
+    }
+
+    fn execute_hdma_transfer(&mut self, channel: u8) {
+        let index = usize::from(channel);
+        let base = index * 0x10;
+        let dmap = self.dma_registers[base];
+        let bbad = self.dma_registers[base + 0x1];
+        let offsets = dma_transfer_offsets(dmap & 0x07);
+
+        for (byte_index, offset) in offsets.iter().copied().enumerate() {
+            let source_addr = self.hdma_data_addr[index].wrapping_add(byte_index as u16);
+            let value = self.dma_read_abus(
+                (u32::from(self.hdma_data_bank[index]) << 16) | u32::from(source_addr),
+            );
+            let b_addr = 0x2100 | u16::from(bbad.wrapping_add(offset));
+            self.dma_write_bbus(b_addr, value);
+        }
+
+        if self.hdma_indirect[index] {
+            self.hdma_data_addr[index] =
+                self.hdma_data_addr[index].wrapping_add(offsets.len() as u16);
         }
     }
 
@@ -405,6 +549,18 @@ fn dma_abus_accessible(bank: u8, offset: u16) -> bool {
             0x2100..=0x21FF | 0x4000..=0x41FF | 0x4200..=0x421F | 0x4300..=0x437F,
         )
     )
+}
+
+fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
+    match pattern & 0x07 {
+        0 => &[0],
+        1 => &[0, 1],
+        2 | 6 => &[0, 0],
+        3 | 7 => &[0, 0, 1, 1],
+        4 => &[0, 1, 2, 3],
+        5 => &[0, 1, 0, 1],
+        _ => &[0],
+    }
 }
 
 #[cfg(test)]
@@ -479,6 +635,20 @@ mod tests {
 
     fn setup_dma_ch0(bus: &mut Bus, dmap: u8, bbad: u8, a_addr: u32, count: u16) {
         setup_dma_channel(bus, 0, dmap, bbad, a_addr, count);
+    }
+
+    fn setup_hdma_channel(bus: &mut Bus, channel: u8, dmap: u8, bbad: u8, table_addr: u32) {
+        let base = 0x00_4300 + (u32::from(channel) * 0x10);
+        bus.write(base, dmap);
+        bus.write(base + 0x1, bbad);
+        bus.write(base + 0x2, table_addr as u8);
+        bus.write(base + 0x3, (table_addr >> 8) as u8);
+        bus.write(base + 0x4, (table_addr >> 16) as u8);
+    }
+
+    fn tick_into_new_active_frame(bus: &mut Bus) {
+        bus.video_phase = VBLANK_STUB_PERIOD - 1;
+        bus.tick_video_stub();
     }
 
     /// DMA ch0, pattern 1 (two-register: VMDATAL/VMDATAH), increment source.
@@ -665,6 +835,116 @@ mod tests {
             0x00,
             "channel 1 was not spuriously triggered"
         );
+    }
+
+    #[test]
+    fn hdma_nonrepeat_entry_transfers_only_on_first_line() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_1000, 0x03);
+        bus.write(0x7E_1001, 0x5A);
+        bus.write(0x7E_1002, 0x00);
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_1000);
+        bus.write(0x00_420C, 0x01);
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(bus.memory.peek_wram(0), 0x5A);
+        assert_eq!(bus.memory.wmadd(), 1);
+
+        bus.tick_video_stub();
+        bus.tick_video_stub();
+        assert_eq!(
+            bus.memory.peek_wram(1),
+            0x00,
+            "non-repeat entry skips later lines"
+        );
+        assert_eq!(
+            bus.memory.wmadd(),
+            1,
+            "WMADD should not advance after first transfer"
+        );
+
+        bus.tick_video_stub();
+        assert_eq!(
+            bus.hdma_active_mask & 0x01,
+            0,
+            "channel disables at table terminator"
+        );
+    }
+
+    #[test]
+    fn hdma_repeat_entry_transfers_on_every_line() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_1100, 0x83);
+        bus.write(0x7E_1101, 0xA5);
+        bus.write(0x7E_1102, 0x00);
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_1100);
+        bus.write(0x00_420C, 0x01);
+
+        tick_into_new_active_frame(&mut bus);
+        bus.tick_video_stub();
+        bus.tick_video_stub();
+
+        assert_eq!(bus.memory.peek_wram(0), 0xA5);
+        assert_eq!(bus.memory.peek_wram(1), 0xA5);
+        assert_eq!(bus.memory.peek_wram(2), 0xA5);
+        assert_eq!(bus.memory.wmadd(), 3);
+
+        bus.tick_video_stub();
+        assert_eq!(bus.hdma_active_mask & 0x01, 0);
+    }
+
+    #[test]
+    fn hdma_two_channels_run_low_to_high_for_cgadd_then_cgdata() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_1200, 0x01);
+        bus.write(0x7E_1201, 0x01);
+        bus.write(0x7E_1202, 0x00);
+        bus.write(0x7E_1210, 0x01);
+        bus.write(0x7E_1211, 0x34);
+        bus.write(0x7E_1212, 0x12);
+        bus.write(0x7E_1213, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x21, 0x7E_1200);
+        setup_hdma_channel(&mut bus, 1, 0x02, 0x22, 0x7E_1210);
+        bus.write(0x00_420C, 0x03);
+
+        tick_into_new_active_frame(&mut bus);
+
+        assert_eq!(bus.ppu2.peek_cgram(2), 0x34);
+        assert_eq!(bus.ppu2.peek_cgram(3), 0x12);
+    }
+
+    #[test]
+    fn hdma_pattern3_can_update_cgadd_and_cgdata_in_one_channel() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_1300, 0x01);
+        bus.write(0x7E_1301, 0x00);
+        bus.write(0x7E_1302, 0x01);
+        bus.write(0x7E_1303, 0x78);
+        bus.write(0x7E_1304, 0x56);
+        bus.write(0x7E_1305, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x03, 0x21, 0x7E_1300);
+        bus.write(0x00_420C, 0x01);
+
+        tick_into_new_active_frame(&mut bus);
+
+        assert_eq!(bus.ppu2.peek_cgram(2), 0x78);
+        assert_eq!(bus.ppu2.peek_cgram(3), 0x56);
     }
 
     // -----------------------------------------------------------------------

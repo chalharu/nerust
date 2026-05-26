@@ -100,6 +100,18 @@ impl Core {
     pub fn peek(&self, address: u32) -> u8 {
         self.bus.peek(address)
     }
+
+    pub fn peek_wram(&self, address: usize) -> u8 {
+        self.bus.memory.peek_wram(address)
+    }
+
+    pub fn peek_vram(&self, address: usize) -> u8 {
+        self.bus.ppu1.peek_vram(address)
+    }
+
+    pub fn peek_cgram(&self, index: usize) -> u8 {
+        self.bus.ppu2.peek_cgram(index)
+    }
 }
 
 #[cfg(test)]
