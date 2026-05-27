@@ -288,6 +288,25 @@ mod tests {
     }
 
     #[test]
+    fn core_recurring_hcounter_irq_allows_progress_after_rti() {
+        let mut rom = build_lorom(0x8000);
+        rom[IRQ_VECTOR_OFFSET..IRQ_VECTOR_OFFSET + 2].copy_from_slice(&0x9000u16.to_le_bytes());
+        rom[0x0000..0x000F].copy_from_slice(&[
+            0xA9, 0x01, 0x8D, 0x07, 0x42, // LDA #$01 ; STA HTIMEL
+            0xA9, 0x10, 0x8D, 0x00, 0x42, // LDA #$10 ; STA NMITIMEN
+            0x58, 0xCB, 0xE6, 0x00, 0xDB, // CLI ; WAI ; INC $00 ; STP
+        ]);
+        rom[0x1000..0x1004].copy_from_slice(&[0xAD, 0x11, 0x42, 0x40]); // LDA $4211 ; RTI
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 1024);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.peek(0x7E0000), 0x01);
+    }
+
+    #[test]
     fn stepping_a_stopped_core_does_not_advance_vblank_stub() {
         let mut rom = build_lorom(0x8000);
         rom[0x0000] = 0xDB;

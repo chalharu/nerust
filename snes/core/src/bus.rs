@@ -211,8 +211,10 @@ impl Bus {
             self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
-            self.step_hdma_line();
             self.capture_presented_scanline();
+        }
+        if self.in_hblank() && !in_vblank {
+            self.step_hdma_line();
         }
     }
 
@@ -614,7 +616,17 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
                 if !self.in_vblank() {
+                    let previous_active_mask = self.hdma_active_mask;
                     self.hdma_active_mask = value & !self.hdma_ended_mask;
+                    let newly_active = self.hdma_active_mask & !previous_active_mask;
+                    for channel in 0..DMA_CHANNEL_COUNT {
+                        if newly_active & (1 << channel) != 0 {
+                            self.hdma_do_transfer[channel] = true;
+                        }
+                    }
+                    if self.in_hblank() {
+                        self.step_hdma_channels(newly_active);
+                    }
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4218..=0x421F) => {}
@@ -805,7 +817,16 @@ impl Bus {
                     (self.hdma_table_addr[channel] & 0x00FF) | (u16::from(value) << 8);
             }
             0xA => {
-                let (line_count, repeat) = decode_hdma_line_control(value);
+                let (line_count, repeat) = if value == 0 {
+                    // Software can seed live HDMA state directly. A manual NLTR=0 is
+                    // used by hardware timing ROMs to arm exactly one transfer from
+                    // the current A2A/DAS pointer instead of the encoded 128-line form
+                    // used when HDMA itself reloads line control from the table.
+                    (1, false)
+                } else {
+                    decode_hdma_line_control(value)
+                };
+                self.hdma_ended_mask &= !(1 << channel);
                 self.hdma_line_counter[channel] = line_count;
                 self.hdma_repeat[channel] = repeat;
             }
@@ -878,9 +899,13 @@ impl Bus {
     }
 
     fn step_hdma_line(&mut self) {
+        self.step_hdma_channels(self.hdma_active_mask);
+    }
+
+    fn step_hdma_channels(&mut self, mask: u8) {
         for channel in 0..DMA_CHANNEL_COUNT {
             let bit = 1 << channel;
-            if self.hdma_active_mask & bit == 0 {
+            if mask & bit == 0 || self.hdma_active_mask & bit == 0 {
                 continue;
             }
 
@@ -1722,6 +1747,10 @@ mod tests {
         bus.write(0x00_420C, 0x01);
 
         tick_into_new_active_frame(&mut bus);
+        assert_eq!(bus.memory.peek_wram(0), 0x00);
+        assert_eq!(bus.memory.wmadd(), 0);
+
+        tick_scanline(&mut bus);
         assert_eq!(bus.memory.peek_wram(0), 0x5A);
         assert_eq!(bus.memory.wmadd(), 1);
 
@@ -1765,13 +1794,13 @@ mod tests {
         tick_into_new_active_frame(&mut bus);
         tick_scanline(&mut bus);
         tick_scanline(&mut bus);
+        tick_scanline(&mut bus);
 
         assert_eq!(bus.memory.peek_wram(0), 0xA5);
         assert_eq!(bus.memory.peek_wram(1), 0xA5);
         assert_eq!(bus.memory.peek_wram(2), 0xA5);
         assert_eq!(bus.memory.wmadd(), 3);
 
-        tick_scanline(&mut bus);
         assert_eq!(bus.hdma_active_mask & 0x01, 0);
     }
 
@@ -1804,17 +1833,10 @@ mod tests {
         tick_scanline(&mut bus);
         assert_eq!(
             bus.memory.peek_wram(0),
-            0xEE,
-            "first enabled line is skipped"
+            0x5A,
+            "first enabled line uses the software-written A2A source at the next HBlank"
         );
         assert_eq!(bus.read(0x00_430A), 0x81, "live NLTR decrements in place");
-
-        tick_scanline(&mut bus);
-        assert_eq!(
-            bus.memory.peek_wram(0),
-            0x5A,
-            "second enabled line uses the software-written A2A source"
-        );
     }
 
     #[test]
@@ -1848,18 +1870,100 @@ mod tests {
         tick_scanline(&mut bus);
         assert_eq!(
             bus.memory.peek_wram(0),
-            0xEE,
-            "first enabled line is still skipped for indirect HDMA"
-        );
-
-        tick_scanline(&mut bus);
-        assert_eq!(
-            bus.memory.peek_wram(0),
             0x77,
-            "second enabled line uses the software-written indirect DAS/DASB source"
+            "first enabled line uses the software-written indirect DAS/DASB source"
         );
         assert_eq!(bus.read(0x00_4305), 0x01);
         assert_eq!(bus.read(0x00_4306), 0x25);
+    }
+
+    #[test]
+    fn hdma_midframe_enable_during_hblank_transfers_in_the_current_line_window() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+        bus.write(0x7E_2700, 0x5A);
+        bus.write(0x7E_2701, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2700);
+        bus.write(0x00_420C, 0x00);
+
+        tick_into_new_active_frame(&mut bus);
+        bus.write(0x00_4308, 0x00);
+        bus.write(0x00_4309, 0x27);
+        bus.write(0x00_430A, 0x01);
+
+        tick_subticks(&mut bus, 3);
+        assert!(bus.in_hblank());
+
+        bus.write(0x00_420C, 0x01);
+
+        assert_eq!(bus.memory.peek_wram(0), 0x5A);
+        assert_eq!(bus.memory.wmadd(), 1);
+        assert_eq!(bus.hdma_active_mask & 0x01, 0);
+    }
+
+    #[test]
+    fn hdma_midframe_enable_with_manual_zero_nltr_executes_one_transfer() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+        bus.write(0x7E_2600, 0x5A);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2600);
+        bus.write(0x00_420C, 0x00);
+
+        tick_into_new_active_frame(&mut bus);
+        bus.write(0x00_4308, 0x00);
+        bus.write(0x00_4309, 0x26);
+        bus.write(0x00_430A, 0x00);
+
+        bus.write(0x00_420C, 0x01);
+        tick_scanline(&mut bus);
+
+        assert_eq!(bus.memory.peek_wram(0), 0x5A);
+        assert_eq!(bus.memory.wmadd(), 1);
+        assert_eq!(bus.hdma_active_mask & 0x01, 0);
+    }
+
+    #[test]
+    fn manual_nltr_write_rearms_an_ended_hdma_channel_within_the_same_frame() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+        bus.write(0x7E_2600, 0x5A);
+        bus.write(0x7E_2601, 0x00);
+        bus.write(0x7E_2602, 0x6B);
+        bus.write(0x7E_2603, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2600);
+        bus.write(0x00_420C, 0x00);
+
+        tick_into_new_active_frame(&mut bus);
+
+        bus.write(0x00_4308, 0x00);
+        bus.write(0x00_4309, 0x26);
+        bus.write(0x00_430A, 0x00);
+        bus.write(0x00_420C, 0x01);
+        tick_scanline(&mut bus);
+
+        assert_eq!(bus.memory.peek_wram(0), 0x5A);
+        assert_eq!(bus.hdma_active_mask & 0x01, 0);
+
+        bus.write(0x00_4308, 0x02);
+        bus.write(0x00_4309, 0x26);
+        bus.write(0x00_430A, 0x00);
+        bus.write(0x00_420C, 0x01);
+        tick_scanline(&mut bus);
+
+        assert_eq!(bus.memory.peek_wram(1), 0x6B);
+        assert_eq!(bus.hdma_active_mask & 0x01, 0);
     }
 
     #[test]
@@ -1879,6 +1983,7 @@ mod tests {
         bus.write(0x00_420C, 0x01);
 
         tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
         assert_eq!(bus.memory.peek_wram(0), 0x11);
         assert_eq!(
             bus.read(0x00_4308),
@@ -1919,6 +2024,7 @@ mod tests {
         bus.write(0x00_420C, 0x01);
 
         tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
         assert_eq!(bus.memory.peek_wram(0), 0x33);
         assert_eq!(
             bus.hdma_active_mask & 0x01,
@@ -1941,7 +2047,8 @@ mod tests {
             "no extra transfers occur after re-enable"
         );
 
-        tick_subticks(&mut bus, VBLANK_STUB_PERIOD);
+        tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
         assert_eq!(
             bus.memory.peek_wram(1),
             0x33,
@@ -1973,10 +2080,11 @@ mod tests {
         );
 
         tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
         assert_eq!(
             bus.memory.peek_wram(0),
             0x44,
-            "the queued HDMAEN value is latched when the next active frame begins"
+            "the queued HDMAEN value transfers at the next frame's first HBlank"
         );
     }
 
@@ -1997,6 +2105,7 @@ mod tests {
         bus.write(0x00_420C, 0x03);
 
         tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
 
         assert_eq!(bus.ppu2.peek_cgram(2), 0x34);
         assert_eq!(bus.ppu2.peek_cgram(3), 0x12);
@@ -2017,6 +2126,7 @@ mod tests {
         bus.write(0x00_420C, 0x01);
 
         tick_into_new_active_frame(&mut bus);
+        tick_scanline(&mut bus);
 
         assert_eq!(bus.ppu2.peek_cgram(2), 0x78);
         assert_eq!(bus.ppu2.peek_cgram(3), 0x56);
