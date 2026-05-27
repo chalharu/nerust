@@ -1,4 +1,6 @@
-use crate::{Cartridge, PresentedBackdropLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
+use crate::{
+    Cartridge, PresentedBackdropLine, PresentedBg1Line, memory::Memory, ppu1::Ppu1, ppu2::Ppu2,
+};
 
 const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
@@ -135,6 +137,8 @@ pub(crate) struct Bus {
     hdma_indirect: [bool; DMA_CHANNEL_COUNT],
     presented_backdrop_current_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
     presented_backdrop_completed_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
+    presented_bg1_current_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
+    presented_bg1_completed_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
 }
 
 impl Bus {
@@ -176,6 +180,8 @@ impl Bus {
             hdma_indirect: [false; DMA_CHANNEL_COUNT],
             presented_backdrop_current_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_backdrop_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_bg1_current_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_bg1_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
         }
     }
 
@@ -213,6 +219,8 @@ impl Bus {
         self.hdma_indirect = [false; DMA_CHANNEL_COUNT];
         self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_backdrop_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_bg1_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_bg1_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
 
     #[cfg(test)]
@@ -277,6 +285,7 @@ impl Bus {
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
         if !was_in_vblank && in_vblank {
             self.presented_backdrop_completed_lines = self.presented_backdrop_current_lines;
+            self.presented_bg1_completed_lines = self.presented_bg1_current_lines;
             self.nmi_flag = true;
             if self.nmi_enabled() {
                 self.nmi_pending = true;
@@ -295,6 +304,7 @@ impl Bus {
             self.auto_joy_subticks_remaining = 0;
             self.reload_hdma_channels();
             self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+            self.presented_bg1_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
             self.capture_presented_scanline();
@@ -346,6 +356,19 @@ impl Bus {
             .flatten()
             .or_else(|| {
                 self.presented_backdrop_current_lines
+                    .get(line)
+                    .copied()
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn presented_bg1_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.presented_bg1_completed_lines
+            .get(line)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                self.presented_bg1_current_lines
                     .get(line)
                     .copied()
                     .flatten()
@@ -1074,6 +1097,10 @@ impl Bus {
         let inidisp = self.ppu2.peek(0x2100).unwrap_or(0);
         self.presented_backdrop_current_lines[scanline] =
             Some(PresentedBackdropLine { inidisp, color0 });
+        self.presented_bg1_current_lines[scanline] = Some(PresentedBg1Line {
+            hofs: self.ppu1.bg1_hofs(),
+            vofs: self.ppu1.bg1_vofs(),
+        });
     }
 
     fn read_ppu_register(&mut self, offset: u16) -> u8 {
@@ -1292,7 +1319,7 @@ mod tests {
         STANDARD_CONTROLLER_PAYLOAD_BITS, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
         VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
-    use crate::{Cartridge, PresentedBackdropLine};
+    use crate::{Cartridge, PresentedBackdropLine, PresentedBg1Line};
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
@@ -1750,6 +1777,39 @@ mod tests {
             bus.presented_backdrop_line(2),
             None,
             "the completed frame should not invent uncaptured lines"
+        );
+    }
+
+    #[test]
+    fn presented_bg1_lines_capture_scanline_scroll_offsets() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_210D, 0x23);
+        bus.write(0x00_210D, 0x01);
+        bus.write(0x00_210E, 0xAB);
+        bus.write(0x00_210E, 0x02);
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(
+            bus.presented_bg1_line(0),
+            Some(PresentedBg1Line {
+                hofs: 0x0123,
+                vofs: 0x02AB,
+            })
+        );
+
+        bus.write(0x00_210D, 0x45);
+        bus.write(0x00_210D, 0x03);
+        bus.write(0x00_210E, 0x67);
+        bus.write(0x00_210E, 0x00);
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.presented_bg1_line(1),
+            Some(PresentedBg1Line {
+                hofs: 0x0345,
+                vofs: 0x0067,
+            })
         );
     }
 

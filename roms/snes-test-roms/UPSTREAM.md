@@ -6,6 +6,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
 - Local artifact branch: `release-artifacts`
 - Included generated ROMs:
   - `bin/examples/hdma-to-cgram.sfc`
+  - `bin/examples/hdma-repeat-entry.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
   - `bin/effects/inidisp_extend_vblank.sfc`
   - `bin/effects/inidisp_fadein_fadeout.sfc`

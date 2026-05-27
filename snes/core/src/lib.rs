@@ -50,6 +50,12 @@ pub struct PresentedBackdropLine {
     pub color0: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentedBg1Line {
+    pub hofs: u16,
+    pub vofs: u16,
+}
+
 pub struct Core {
     cpu: Cpu,
     bus: Bus,
@@ -138,6 +144,10 @@ impl Core {
 
     pub fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
         self.bus.presented_backdrop_line(line)
+    }
+
+    pub fn presented_bg1_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.bus.presented_bg1_line(line)
     }
 }
 
