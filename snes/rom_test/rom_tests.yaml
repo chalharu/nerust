@@ -494,6 +494,44 @@ cases:
       - kind: bus_u8
         address: "0x00212C"
         expected: "0x01"
+  - id: vmain-mode7-tilemap-columns-5000k-screen-state
+    description: >
+      The undisbeliever Mode 7 tilemap-columns VMAIN demo renders a
+      deterministic set of vertical bars at 5000000 steps after VBlank DMA
+      transfers whole Mode 7 tilemap columns with increment-by-128.
+    rom: snes-test-roms/bin/effects/vmain-mode7-tilemap-columns.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xB03B6DA399D20694"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-tilemap-rows-5000k-screen-state
+    description: >
+      The undisbeliever Mode 7 tilemap-rows VMAIN demo renders a deterministic
+      set of horizontal bars at 5000000 steps after VBlank DMA transfers whole
+      Mode 7 tilemap rows with increment-by-1.
+    rom: snes-test-roms/bin/effects/vmain-mode7-tilemap-rows.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0x707A1B8A48968F81"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: inidisp-brightness-0-screen-state
     description: >
       The undisbeliever INIDISP brightness-0 hardware test reaches a stable
