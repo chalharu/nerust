@@ -17,6 +17,7 @@ members = [
   "input/nes_runtime",
   "persistence",
   "rom_test",
+  "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/tao",
   "gui/shared/runtime",

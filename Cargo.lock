@@ -2961,6 +2961,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_android"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nerust_backend_wgpu",
+ "nerust_gui_runtime",
+ "nerust_gui_session",
+ "nerust_gui_shell",
+ "nerust_screen_wgpu",
+ "simple_logger",
+ "winit",
+]
+
+[[package]]
 name = "nerust_backend_opengl"
 version = "0.1.0"
 dependencies = [

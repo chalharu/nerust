@@ -45,7 +45,7 @@ pub fn build_speaker(
 ) -> Result<HostedSpeaker, String> {
     let spec = audio_backend_spec(settings.audio.clone());
     match host_backend.audio_backend() {
-        AudioBackendKind::OpenAl => Ok(HostedSpeaker {
+        AudioBackendKind::OpenAl | AudioBackendKind::Android => Ok(HostedSpeaker {
             inner: HostedSpeakerInner::OpenAl(OpenAl::with_gain(
                 spec.requested_sample_rate,
                 CLOCK_RATE as i32,
@@ -54,7 +54,6 @@ pub fn build_speaker(
                 spec.gain,
             )),
         }),
-        AudioBackendKind::Android => Err("Android audio backend is not implemented yet".into()),
     }
 }
 
