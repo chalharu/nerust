@@ -217,7 +217,10 @@ impl PortraitTouchOverlay {
 pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverlayAction> {
     let input = |control| {
         if pressed {
-            TouchOverlayAction::Input(DigitalInputEvent::pressed(NES_ATTACHMENT_PLAYER_ONE, control))
+            TouchOverlayAction::Input(DigitalInputEvent::pressed(
+                NES_ATTACHMENT_PLAYER_ONE,
+                control,
+            ))
         } else {
             TouchOverlayAction::Input(DigitalInputEvent::released(
                 NES_ATTACHMENT_PLAYER_ONE,
@@ -235,16 +238,22 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
         TouchTarget::B => vec![input(NES_CONTROL_B)],
         TouchTarget::Start => vec![input(NES_CONTROL_START)],
         TouchTarget::Select => vec![input(NES_CONTROL_SELECT)],
-        TouchTarget::Pause if pressed => vec![TouchOverlayAction::Session(SessionCommand::TogglePause)],
+        TouchTarget::Pause if pressed => {
+            vec![TouchOverlayAction::Session(SessionCommand::TogglePause)]
+        }
         TouchTarget::Reset if pressed => vec![TouchOverlayAction::Session(SessionCommand::Reset)],
         TouchTarget::Save if pressed => {
-            vec![TouchOverlayAction::Session(SessionCommand::SaveActiveSlotOrNew)]
+            vec![TouchOverlayAction::Session(
+                SessionCommand::SaveActiveSlotOrNew,
+            )]
         }
         TouchTarget::Load if pressed => {
             vec![TouchOverlayAction::Session(SessionCommand::LoadActiveSlot)]
         }
         TouchTarget::Library if pressed => {
-            vec![TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary)]
+            vec![TouchOverlayAction::Frontend(
+                TouchFrontendAction::OpenLibrary,
+            )]
         }
         TouchTarget::Pause
         | TouchTarget::Reset
@@ -271,15 +280,24 @@ mod tests {
         let overlay = PortraitTouchOverlay::new(1080.0, 1920.0);
 
         assert_eq!(
-            overlay.hit_test(TouchPoint { x: 200.0, y: 1100.0 }),
+            overlay.hit_test(TouchPoint {
+                x: 200.0,
+                y: 1100.0
+            }),
             Some(TouchTarget::Up)
         );
         assert_eq!(
-            overlay.hit_test(TouchPoint { x: 900.0, y: 1180.0 }),
+            overlay.hit_test(TouchPoint {
+                x: 900.0,
+                y: 1180.0
+            }),
             Some(TouchTarget::A)
         );
         assert_eq!(
-            overlay.hit_test(TouchPoint { x: 120.0, y: 1760.0 }),
+            overlay.hit_test(TouchPoint {
+                x: 120.0,
+                y: 1760.0
+            }),
             Some(TouchTarget::Library)
         );
         assert_eq!(overlay.hit_test(TouchPoint { x: 50.0, y: 200.0 }), None);
@@ -319,7 +337,9 @@ mod tests {
         assert!(actions_for_target(TouchTarget::Pause, false).is_empty());
         assert_eq!(
             actions_for_target(TouchTarget::Library, true),
-            vec![TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary)]
+            vec![TouchOverlayAction::Frontend(
+                TouchFrontendAction::OpenLibrary
+            )]
         );
     }
 }
