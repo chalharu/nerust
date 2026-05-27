@@ -8,9 +8,20 @@ const HIROM_RESET_VECTOR_OFFSET: usize = 0xFFFC;
 const HEADER_TITLE_LEN: usize = 21;
 const LOROM_MAP_MODE_MASK: u8 = 0x2F;
 const LOROM_MAP_MODE_VALUE: u8 = 0x20;
+const SA1_MAP_MODE_VALUE: u8 = 0x23;
 const HIROM_MAP_MODE_MASK: u8 = 0x2F;
 const HIROM_MAP_MODE_VALUE: u8 = 0x21;
 const MAX_RAM_SIZE_CODE: u8 = 0x08;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnhancementChip {
+    None,
+    Sa1,
+    SuperFxGsu1,
+    SuperFxGsu2,
+    Cx4,
+    Dsp1Family,
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -32,6 +43,9 @@ pub enum CartridgeError {
 pub struct CartridgeHeader {
     title: String,
     map_mode: u8,
+    chipset: u8,
+    expansion_chip_subtype: Option<u8>,
+    enhancement_chip: EnhancementChip,
     rom_size_code: u8,
     ram_size_code: u8,
     reset_vector: u16,
@@ -46,6 +60,18 @@ impl CartridgeHeader {
 
     pub fn map_mode(&self) -> u8 {
         self.map_mode
+    }
+
+    pub fn chipset(&self) -> u8 {
+        self.chipset
+    }
+
+    pub fn expansion_chip_subtype(&self) -> Option<u8> {
+        self.expansion_chip_subtype
+    }
+
+    pub fn enhancement_chip(&self) -> EnhancementChip {
+        self.enhancement_chip
     }
 
     pub fn rom_size_code(&self) -> u8 {
@@ -133,7 +159,8 @@ impl Cartridge {
             return None;
         }
         let map_mode = rom[header_offset + 0x15];
-        if !Self::supported_map_mode(map_mode, mapper_kind) {
+        let chipset = rom[header_offset + 0x16];
+        if !Self::supported_map_mode(map_mode, chipset, mapper_kind) {
             return None;
         }
 
@@ -144,11 +171,21 @@ impl Cartridge {
             .to_owned();
         let reset_vector =
             u16::from_le_bytes([rom[reset_vector_offset], rom[reset_vector_offset + 1]]);
+        let expansion_chip_subtype = expansion_chip_subtype(rom, header_offset, chipset);
+        let enhancement_chip = enhancement_chip_for_header(
+            map_mode,
+            chipset,
+            expansion_chip_subtype,
+            rom[header_offset + 0x17],
+        );
 
         Some((
             CartridgeHeader {
                 title,
                 map_mode,
+                chipset,
+                expansion_chip_subtype,
+                enhancement_chip,
                 rom_size_code: rom[header_offset + 0x17],
                 ram_size_code: rom[header_offset + 0x18],
                 reset_vector,
@@ -159,9 +196,13 @@ impl Cartridge {
         ))
     }
 
-    fn supported_map_mode(map_mode: u8, mapper_kind: MapperKind) -> bool {
+    fn supported_map_mode(map_mode: u8, chipset: u8, mapper_kind: MapperKind) -> bool {
         match mapper_kind {
-            MapperKind::LoRom => map_mode & LOROM_MAP_MODE_MASK == LOROM_MAP_MODE_VALUE,
+            MapperKind::LoRom => {
+                let map_mode = map_mode & LOROM_MAP_MODE_MASK;
+                map_mode == LOROM_MAP_MODE_VALUE
+                    || (map_mode == SA1_MAP_MODE_VALUE && cartridge_coprocessor(chipset) == 0x3)
+            }
             MapperKind::HiRom => map_mode & HIROM_MAP_MODE_MASK == HIROM_MAP_MODE_VALUE,
         }
     }
@@ -199,6 +240,53 @@ impl Cartridge {
     }
 }
 
+fn cartridge_coprocessor(chipset: u8) -> u8 {
+    chipset >> 4
+}
+
+fn cartridge_features(chipset: u8) -> u8 {
+    chipset & 0x0F
+}
+
+fn has_coprocessor(chipset: u8) -> bool {
+    cartridge_features(chipset) >= 0x03
+}
+
+fn expansion_chip_subtype(rom: &[u8], header_offset: usize, chipset: u8) -> Option<u8> {
+    if !has_coprocessor(chipset) || cartridge_coprocessor(chipset) != 0x0F {
+        return None;
+    }
+    header_offset
+        .checked_sub(1)
+        .and_then(|offset| rom.get(offset))
+        .copied()
+}
+
+fn enhancement_chip_for_header(
+    map_mode: u8,
+    chipset: u8,
+    expansion_chip_subtype: Option<u8>,
+    rom_size_code: u8,
+) -> EnhancementChip {
+    if !has_coprocessor(chipset) {
+        return EnhancementChip::None;
+    }
+
+    match cartridge_coprocessor(chipset) {
+        0x0 => EnhancementChip::Dsp1Family,
+        0x1 => {
+            if chipset == 0x1A || rom_size_code > 0x0A {
+                EnhancementChip::SuperFxGsu2
+            } else {
+                EnhancementChip::SuperFxGsu1
+            }
+        }
+        0x3 if map_mode & LOROM_MAP_MODE_MASK == SA1_MAP_MODE_VALUE => EnhancementChip::Sa1,
+        0xF if matches!(expansion_chip_subtype, Some(0x03 | 0x10)) => EnhancementChip::Cx4,
+        _ => EnhancementChip::None,
+    }
+}
+
 fn strip_copier_header(bytes: &[u8]) -> Result<(&[u8], bool), CartridgeError> {
     match bytes.len() % 0x8000 {
         0 => Ok((bytes, false)),
@@ -220,7 +308,7 @@ fn ram_size_bytes(code: u8) -> Result<usize, CartridgeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cartridge, CartridgeError};
+    use super::{Cartridge, CartridgeError, EnhancementChip};
     use crate::MapperKind;
 
     const HEADER_OFFSET: usize = 0x7FC0;
@@ -241,6 +329,24 @@ mod tests {
         rom
     }
 
+    fn build_lorom_with_header(
+        title: &str,
+        map_mode: u8,
+        chipset: u8,
+        expansion_chip_subtype: Option<u8>,
+        rom_size_code: u8,
+    ) -> Vec<u8> {
+        let mut rom = build_lorom();
+        write_title(&mut rom, HEADER_OFFSET, title);
+        rom[HEADER_OFFSET + 0x15] = map_mode;
+        rom[HEADER_OFFSET + 0x16] = chipset;
+        rom[HEADER_OFFSET + 0x17] = rom_size_code;
+        if let Some(subtype) = expansion_chip_subtype {
+            rom[HEADER_OFFSET - 1] = subtype;
+        }
+        rom
+    }
+
     fn build_hirom() -> Vec<u8> {
         let mut rom = vec![0; 0x20000];
         rom[HIROM_HEADER_OFFSET..HIROM_HEADER_OFFSET + 21]
@@ -255,6 +361,32 @@ mod tests {
         rom
     }
 
+    fn build_hirom_with_header(
+        title: &str,
+        map_mode: u8,
+        chipset: u8,
+        expansion_chip_subtype: Option<u8>,
+        rom_size_code: u8,
+    ) -> Vec<u8> {
+        let mut rom = build_hirom();
+        write_title(&mut rom, HIROM_HEADER_OFFSET, title);
+        rom[HIROM_HEADER_OFFSET + 0x15] = map_mode;
+        rom[HIROM_HEADER_OFFSET + 0x16] = chipset;
+        rom[HIROM_HEADER_OFFSET + 0x17] = rom_size_code;
+        if let Some(subtype) = expansion_chip_subtype {
+            rom[HIROM_HEADER_OFFSET - 1] = subtype;
+        }
+        rom
+    }
+
+    fn write_title(rom: &mut [u8], header_offset: usize, title: &str) {
+        let mut title_bytes = [b' '; 21];
+        for (target, source) in title_bytes.iter_mut().zip(title.as_bytes()) {
+            *target = *source;
+        }
+        rom[header_offset..header_offset + title_bytes.len()].copy_from_slice(&title_bytes);
+    }
+
     #[test]
     fn parses_lorom_header_and_supports_copier_header_stripping() {
         let rom = build_lorom();
@@ -265,6 +397,9 @@ mod tests {
 
         assert_eq!(cartridge.header().title(), "CPU TEST HEADER");
         assert_eq!(cartridge.header().map_mode(), 0x30);
+        assert_eq!(cartridge.header().chipset(), 0x00);
+        assert_eq!(cartridge.header().expansion_chip_subtype(), None);
+        assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
         assert_eq!(cartridge.header().rom_size_code(), 0x08);
         assert_eq!(cartridge.header().ram_size_code(), 0x03);
         assert_eq!(cartridge.header().reset_vector(), 0x8000);
@@ -282,6 +417,8 @@ mod tests {
 
         assert_eq!(cartridge.header().title(), "HIROM TEST HEADER");
         assert_eq!(cartridge.header().map_mode(), 0x31);
+        assert_eq!(cartridge.header().chipset(), 0x00);
+        assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
         assert_eq!(cartridge.header().rom_size_code(), 0x09);
         assert_eq!(cartridge.header().ram_size_code(), 0x03);
         assert_eq!(cartridge.header().reset_vector(), 0x8000);
@@ -361,5 +498,113 @@ mod tests {
             Cartridge::from_bytes(&rom).unwrap_err(),
             CartridgeError::UnsupportedMapMode(0x21)
         );
+    }
+
+    #[test]
+    fn detects_requested_enhancement_chips_from_headers() {
+        for (title, mapper_kind, map_mode, chipset, subtype, rom_size_code, expected) in [
+            (
+                "SA1 TEST HEADER",
+                MapperKind::LoRom,
+                0x23,
+                0x34,
+                None,
+                0x0A,
+                EnhancementChip::Sa1,
+            ),
+            (
+                "GSU1 TEST HEADER",
+                MapperKind::LoRom,
+                0x20,
+                0x13,
+                None,
+                0x0A,
+                EnhancementChip::SuperFxGsu1,
+            ),
+            (
+                "GSU2 TEST HEADER",
+                MapperKind::LoRom,
+                0x20,
+                0x1A,
+                None,
+                0x0C,
+                EnhancementChip::SuperFxGsu2,
+            ),
+            (
+                "CX4 TEST HEADER",
+                MapperKind::LoRom,
+                0x20,
+                0xF3,
+                Some(0x03),
+                0x0A,
+                EnhancementChip::Cx4,
+            ),
+            (
+                "CX4 HITACHI HEADER",
+                MapperKind::LoRom,
+                0x20,
+                0xF3,
+                Some(0x10),
+                0x0A,
+                EnhancementChip::Cx4,
+            ),
+            (
+                "DSP1 TEST HEADER",
+                MapperKind::LoRom,
+                0x20,
+                0x03,
+                None,
+                0x0A,
+                EnhancementChip::Dsp1Family,
+            ),
+            (
+                "DSP1B TEST HEADER",
+                MapperKind::HiRom,
+                0x21,
+                0x05,
+                None,
+                0x0A,
+                EnhancementChip::Dsp1Family,
+            ),
+        ] {
+            let rom = match mapper_kind {
+                MapperKind::LoRom => {
+                    build_lorom_with_header(title, map_mode, chipset, subtype, rom_size_code)
+                }
+                MapperKind::HiRom => {
+                    build_hirom_with_header(title, map_mode, chipset, subtype, rom_size_code)
+                }
+            };
+            let cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+            assert_eq!(cartridge.header().mapper_kind(), mapper_kind);
+            assert_eq!(cartridge.header().chipset(), chipset);
+            assert_eq!(cartridge.header().expansion_chip_subtype(), subtype);
+            assert_eq!(cartridge.header().enhancement_chip(), expected);
+        }
+    }
+
+    #[test]
+    fn rejects_sa1_map_mode_without_sa1_chipset() {
+        let rom = build_lorom_with_header("BAD SA1 HEADER", 0x23, 0x00, None, 0x0A);
+
+        assert_eq!(
+            Cartridge::from_bytes(&rom).unwrap_err(),
+            CartridgeError::UnsupportedMapMode(0x23)
+        );
+    }
+
+    #[test]
+    fn does_not_report_sa1_without_sa1_map_mode() {
+        let cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "PLAIN LOROM",
+            0x20,
+            0x34,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
     }
 }
