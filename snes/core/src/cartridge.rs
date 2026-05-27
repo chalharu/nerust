@@ -1,6 +1,5 @@
 use crate::mapper::{LoRomMapper, Mapper, MapperKind};
 
-pub(crate) const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 const COPIER_HEADER_LEN: usize = 512;
 const LOROM_HEADER_OFFSET: usize = 0x7FC0;
 const LOROM_RESET_VECTOR_OFFSET: usize = 0x7FFC;

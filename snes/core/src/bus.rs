@@ -1,6 +1,6 @@
-use crate::cartridge::ADDRESS_MASK;
 use crate::{Cartridge, PresentedBackdropLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 
+const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
 const DMA_CHANNEL_COUNT: usize = 8;
