@@ -82,6 +82,7 @@ impl WindowRuntime {
                 }
                 WindowEvent::Focused(false) => self.host.clear_keys(),
                 WindowEvent::Resized(_) => {
+                    self.host.sync_fullscreen_default_from_window();
                     if let Some(window_size) = self.host.window_surface_size()
                         && let Some(renderer) = self.renderer.as_mut()
                     {

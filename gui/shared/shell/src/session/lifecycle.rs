@@ -102,6 +102,30 @@ impl SessionHandle {
         Ok(plan)
     }
 
+    pub fn set_fullscreen_default(
+        &mut self,
+        fullscreen: bool,
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+        if self.settings_snapshot.local.video.window.fullscreen_default == fullscreen {
+            return Ok(nerust_gui_runtime::settings::SettingsApplyPlan::default());
+        }
+
+        let mut next_settings = self.settings_snapshot.clone();
+        next_settings.local.video.window.fullscreen_default = fullscreen;
+        let plan = nerust_gui_runtime::settings::derive_apply_plan(
+            self.host_backend,
+            &self.settings_snapshot,
+            &next_settings,
+        );
+
+        if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
+            return Err(format!("failed to save settings: {error}"));
+        }
+
+        self.settings_snapshot = next_settings;
+        Ok(plan)
+    }
+
     pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
         let resolved = self.resolve_load_request(request, &media)?;
         self.flush_mapper_save()?;

@@ -120,10 +120,10 @@ fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc
             renderer.borrow_mut().realize(gl_area, &state);
         }
     }
-    if let Ok(state) = state.try_borrow() {
-        if let Some(frame) = state.snapshot().video_frame {
-            renderer.borrow().render(frame.bytes());
-        }
+    if let Ok(state) = state.try_borrow()
+        && let Some(frame) = state.snapshot().video_frame
+    {
+        renderer.borrow().render(frame.bytes());
     }
     unsafe {
         epoxy::Flush();
