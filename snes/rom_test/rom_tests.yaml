@@ -304,6 +304,44 @@ cases:
       - kind: bus_u16
         address: "0x004209"
         expected: "0x00D6"
+  - id: vmain-horizontal-scrolling-5000k-screen-state
+    description: >
+      The undisbeliever horizontal scrolling VMAIN demo renders a deterministic
+      BG1 tilemap state at 5000000 steps after repeatedly uploading columns
+      with VMAIN increment-by-32 DMA transfers.
+    rom: snes-test-roms/bin/effects/vmain-horizontal-scrolling.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xCBE9FCCE3E06CB19"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-vertical-scrolling-5000k-screen-state
+    description: >
+      The undisbeliever vertical scrolling VMAIN demo renders the deterministic
+      BG1 tilemap state at 5000000 steps after repeatedly uploading split rows
+      into a 64x32 tilemap.
+    rom: snes-test-roms/bin/effects/vmain-vertical-scrolling.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0x8BED4326A9A826FC"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: inidisp-brightness-0-screen-state
     description: >
       The undisbeliever INIDISP brightness-0 hardware test reaches a stable
