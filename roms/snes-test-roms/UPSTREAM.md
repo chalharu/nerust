@@ -13,6 +13,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/examples/hdma-indirect-repeating-pattern.sfc`
   - `bin/examples/hdma-to-cgram.sfc`
   - `bin/examples/hdma-repeat-entry.sfc`
+  - `bin/examples/textbuffer-hello-world.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
   - `bin/effects/inidisp_extend_vblank.sfc`
   - `bin/effects/inidisp_fadein_fadeout.sfc`

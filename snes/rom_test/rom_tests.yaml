@@ -83,6 +83,24 @@ cases:
       - kind: bus_u8
         address: "0x00212C"
         expected: "0x01"
+  - id: textbuffer-hello-world-300k-screen-state
+    description: >
+      The undisbeliever TextBuffer hello-world example renders a deterministic frame counter and greeting at 300000 steps, covering LoROM bank-81 resource reads together with NMI-driven TextBuffer VRAM updates.
+
+    rom: snes-test-roms/bin/examples/textbuffer-hello-world.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x0519133F376900A8"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vram-writes-without-dma-final-state
     description: >
       The undisbeliever VRAM write example populates CGRAM color 1 and writes the expected second 2bpp tile into VRAM.
