@@ -74,6 +74,13 @@ impl Default for SessionHandle {
 impl SessionHandle {
     pub fn new_for_host(identity: HostBackendIdentity) -> Self {
         let settings = crate::settings::defaults::manager::load_settings_manager(identity);
+        Self::new_with_settings_manager(identity, settings)
+    }
+
+    pub fn new_with_settings_manager(
+        identity: HostBackendIdentity,
+        settings: SettingsManager,
+    ) -> Self {
         let settings_snapshot = crate::settings::defaults::manager::current_or_default(&settings);
         let definition = default_system_definition();
         let descriptor = definition.descriptor();

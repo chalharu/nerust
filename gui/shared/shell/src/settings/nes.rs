@@ -5,8 +5,10 @@ use nerust_contract_settings::{
     local::ScalingMode,
     nes::{NesSettings, NesVideoFilter},
 };
+use nerust_gui_runtime::settings::{AudioBackendKind, HostBackendIdentity};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
+use nerust_sound_traits::{MixerInput, Sound};
 use nerust_sound_openal::OpenAl;
 use nerust_timer::CLOCK_RATE;
 
@@ -19,6 +21,14 @@ pub struct AudioBackendSpec {
     pub gain: f32,
 }
 
+pub struct HostedSpeaker {
+    inner: HostedSpeakerInner,
+}
+
+enum HostedSpeakerInner {
+    OpenAl(OpenAl),
+}
+
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new(
         filter_type(settings),
@@ -29,15 +39,23 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     )
 }
 
-pub fn build_speaker(settings: &HostBackendLocalSettings) -> OpenAl {
+pub fn build_speaker(
+    host_backend: HostBackendIdentity,
+    settings: &HostBackendLocalSettings,
+) -> Result<HostedSpeaker, String> {
     let spec = audio_backend_spec(settings.audio.clone());
-    OpenAl::with_gain(
-        spec.requested_sample_rate,
-        CLOCK_RATE as i32,
-        spec.buffer_width,
-        spec.buffer_count,
-        spec.gain,
-    )
+    match host_backend.audio_backend() {
+        AudioBackendKind::OpenAl => Ok(HostedSpeaker {
+            inner: HostedSpeakerInner::OpenAl(OpenAl::with_gain(
+                spec.requested_sample_rate,
+                CLOCK_RATE as i32,
+                spec.buffer_width,
+                spec.buffer_count,
+                spec.gain,
+            )),
+        }),
+        AudioBackendKind::Android => Err("Android audio backend is not implemented yet".into()),
+    }
 }
 
 pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
@@ -115,6 +133,34 @@ fn nearest_power_of_two(value: usize) -> usize {
         lower.max(1)
     } else {
         upper
+    }
+}
+
+impl Sound for HostedSpeaker {
+    fn start(&mut self) {
+        match &mut self.inner {
+            HostedSpeakerInner::OpenAl(speaker) => speaker.start(),
+        }
+    }
+
+    fn pause(&mut self) {
+        match &mut self.inner {
+            HostedSpeakerInner::OpenAl(speaker) => speaker.pause(),
+        }
+    }
+}
+
+impl MixerInput for HostedSpeaker {
+    fn push(&mut self, data: f32) {
+        match &mut self.inner {
+            HostedSpeakerInner::OpenAl(speaker) => speaker.push(data),
+        }
+    }
+
+    fn sample_rate(&self) -> u32 {
+        match &self.inner {
+            HostedSpeakerInner::OpenAl(speaker) => speaker.sample_rate(),
+        }
     }
 }
 

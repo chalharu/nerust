@@ -18,7 +18,7 @@ pub use self::persistence::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
-    #[error("desktop settings directories are unavailable")]
+    #[error("default settings directories are unavailable for this host")]
     DirectoriesUnavailable,
     #[error("settings schema version {found} is newer than supported version {expected}")]
     UnsupportedSchemaVersion { found: u32, expected: u32 },
@@ -37,6 +37,7 @@ pub enum SettingsError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostKind {
+    Android,
     Gtk,
     Glutin,
     Tao,
@@ -45,11 +46,18 @@ pub enum HostKind {
 impl HostKind {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Android => "android",
             Self::Gtk => "gtk",
             Self::Glutin => "glutin",
             Self::Tao => "tao",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioBackendKind {
+    OpenAl,
+    Android,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
@@ -109,6 +117,16 @@ impl HostBackendProfile {
 
     pub fn capabilities(&self) -> HostBackendCapabilities {
         match (self.host, self.backend) {
+            (HostKind::Android, RenderBackendKind::Wgpu) => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: false,
+                    supports_fullscreen_default: false,
+                    supports_scaling: false,
+                },
+                presentation: Some(BackendPresentationCapabilities {
+                    supports_vsync: true,
+                }),
+            },
             (HostKind::Gtk, RenderBackendKind::OpenGl) => HostBackendCapabilities {
                 window: HostWindowCapabilities {
                     remembers_window_size: false,
@@ -144,6 +162,17 @@ impl HostBackendProfile {
                 presentation: None,
             },
         }
+    }
+
+    pub fn audio_backend(self) -> AudioBackendKind {
+        match (self.host, self.backend) {
+            (HostKind::Android, RenderBackendKind::Wgpu) => AudioBackendKind::Android,
+            _ => AudioBackendKind::OpenAl,
+        }
+    }
+
+    pub fn android_wgpu() -> Self {
+        Self::new(HostKind::Android, RenderBackendKind::Wgpu)
     }
 
     pub fn gtk_opengl() -> Self {
@@ -788,11 +817,62 @@ video:
 
     #[test]
     fn host_backend_identity_formats_stably() {
+        assert_eq!(
+            HostBackendIdentity::android_wgpu().to_string(),
+            "android+wgpu"
+        );
         assert_eq!(HostBackendIdentity::gtk_opengl().to_string(), "gtk+opengl");
         assert_eq!(
             HostBackendIdentity::glutin_opengl().to_string(),
             "glutin+opengl"
         );
         assert_eq!(HostBackendIdentity::tao_wgpu().to_string(), "tao+wgpu");
+    }
+
+    #[test]
+    fn android_wgpu_profile_exposes_mobile_capabilities() {
+        let profile = HostBackendIdentity::android_wgpu();
+
+        assert_eq!(profile.audio_backend(), super::AudioBackendKind::Android);
+        assert_eq!(
+            profile.capabilities(),
+            super::HostBackendCapabilities {
+                window: super::HostWindowCapabilities {
+                    remembers_window_size: false,
+                    supports_fullscreen_default: false,
+                    supports_scaling: false,
+                },
+                presentation: Some(super::BackendPresentationCapabilities {
+                    supports_vsync: true,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn settings_paths_can_be_built_from_an_explicit_root() {
+        let root = PathBuf::from("/tmp/nerust-android");
+        let paths = super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
+
+        assert_eq!(paths.config_dir, root.join("config"));
+        assert_eq!(paths.data_dir, root.join("data"));
+        assert_eq!(
+            paths.shared_settings_file,
+            root.join("config").join("shared-settings.yaml")
+        );
+        assert_eq!(
+            paths.local_settings_file,
+            root.join("config")
+                .join("local-settings")
+                .join("android+wgpu.yaml")
+        );
+        assert_eq!(
+            paths.app_state_file,
+            root.join("data").join("app-state.yaml")
+        );
+        assert_eq!(
+            paths.central_storage_root,
+            root.join("data").join("persistence")
+        );
     }
 }
