@@ -8,20 +8,32 @@ use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::{Core, Mode7Registers};
 
 use super::{
-    VISIBLE_BG_Y_OFFSET,
+    BgLayer, VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
-    use_presented_bg1_scroll,
+    main_screen_for_line, presented_bg_line, use_presented_bg_scroll,
 };
 
-pub(super) fn render_mode7_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) {
+pub(super) fn render_mode7_bg1(
+    core: &Core,
+    brightness: u8,
+    current_tm: u8,
+    use_presented_tm: bool,
+    rgba: &mut [u8],
+) {
     let registers = core.mode7_registers();
     let current_hofs = i32::from(core.bg1_hofs());
     let current_vofs = i32::from(core.bg1_vofs());
-    let use_presented_scroll = use_presented_bg1_scroll(core);
+    let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     for screen_y in 0..SCREEN_HEIGHT {
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
+            & BgLayer::Bg1.tm_mask()
+            == 0
+        {
+            continue;
+        }
         let presented = use_presented_scroll
-            .then(|| core.presented_bg1_line(screen_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
             .flatten();
         let context = Mode7RenderContext {
             registers,

@@ -19,14 +19,75 @@ use obj::render_obj;
 
 pub(super) const VISIBLE_BG_Y_OFFSET: usize = 1;
 
-pub(super) fn use_presented_bg1_scroll(core: &Core) -> bool {
-    if !hdma_targets_bg1_scroll(core) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BgLayer {
+    Bg1,
+    Bg2,
+    Bg3,
+}
+
+impl BgLayer {
+    const fn tm_mask(self) -> u8 {
+        match self {
+            Self::Bg1 => 0x01,
+            Self::Bg2 => 0x02,
+            Self::Bg3 => 0x04,
+        }
+    }
+
+    const fn scroll_targets(self) -> (u8, u8) {
+        match self {
+            Self::Bg1 => (0x0D, 0x0E),
+            Self::Bg2 => (0x0F, 0x10),
+            Self::Bg3 => (0x11, 0x12),
+        }
+    }
+}
+
+pub(super) fn use_presented_main_screen(core: &Core) -> bool {
+    if !hdma_targets_bbus(core, &[0x2C]) {
         return false;
     }
 
     let mut first = None;
     for line in 0..crate::media::SCREEN_HEIGHT {
-        let Some(scroll) = core.presented_bg1_line(line) else {
+        let Some(screen) = core.presented_main_screen_line(line) else {
+            continue;
+        };
+        let Some(first_screen) = first else {
+            first = Some(screen);
+            continue;
+        };
+        if screen != first_screen {
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn main_screen_for_line(
+    core: &Core,
+    screen_y: usize,
+    current_tm: u8,
+    use_presented_tm: bool,
+) -> u8 {
+    if use_presented_tm {
+        core.presented_main_screen_line(screen_y)
+            .map_or(current_tm, |line| line.tm)
+    } else {
+        current_tm
+    }
+}
+
+pub(super) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
+    let (hofs, vofs) = layer.scroll_targets();
+    if !hdma_targets_bbus(core, &[hofs, vofs]) {
+        return false;
+    }
+
+    let mut first = None;
+    for line in 0..crate::media::SCREEN_HEIGHT {
+        let Some(scroll) = presented_bg_line(core, layer, line) else {
             continue;
         };
         let Some(first_scroll) = first else {
@@ -40,7 +101,19 @@ pub(super) fn use_presented_bg1_scroll(core: &Core) -> bool {
     false
 }
 
-fn hdma_targets_bg1_scroll(core: &Core) -> bool {
+pub(super) fn presented_bg_line(
+    core: &Core,
+    layer: BgLayer,
+    screen_y: usize,
+) -> Option<nerust_snes_core::PresentedBg1Line> {
+    match layer {
+        BgLayer::Bg1 => core.presented_bg1_line(screen_y),
+        BgLayer::Bg2 => core.presented_bg2_line(screen_y),
+        BgLayer::Bg3 => core.presented_bg3_line(screen_y),
+    }
+}
+
+fn hdma_targets_bbus(core: &Core, targets: &[u8]) -> bool {
     let hdmaen = core.peek(0x00420C);
     for channel in 0..8 {
         if hdmaen & (1 << channel) == 0 {
@@ -52,7 +125,7 @@ fn hdma_targets_bg1_scroll(core: &Core) -> bool {
         let bbad = core.peek(base + 0x01);
         for offset in dma_transfer_offsets(dmap) {
             let target = bbad.wrapping_add(*offset);
-            if matches!(target, 0x0D | 0x0E) {
+            if targets.contains(&target) {
                 return true;
             }
         }
@@ -87,7 +160,8 @@ pub struct RenderedScreen {
 
 pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let tm = core.peek(0x00212C);
-    if tm == 0 {
+    let use_presented_tm = use_presented_main_screen(core);
+    if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
             rgba: render_presented_backdrop(core),
         });
@@ -106,12 +180,31 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         pixel.copy_from_slice(&backdrop);
     }
 
-    if tm & 0x01 != 0 {
-        render_bg1(core, brightness, &mut rgba)?;
-    }
-    if tm & 0x10 != 0 {
-        render_obj(core, brightness, &mut rgba);
-    }
+    render_bg1(
+        core,
+        BgLayer::Bg1,
+        brightness,
+        tm,
+        use_presented_tm,
+        &mut rgba,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg2,
+        brightness,
+        tm,
+        use_presented_tm,
+        &mut rgba,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg3,
+        brightness,
+        tm,
+        use_presented_tm,
+        &mut rgba,
+    )?;
+    render_obj(core, brightness, tm, use_presented_tm, &mut rgba);
 
     Ok(RenderedScreen { rgba })
 }
