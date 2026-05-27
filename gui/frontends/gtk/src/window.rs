@@ -559,16 +559,15 @@ impl WindowExtend for Window {
     }
 
     fn sync_fullscreen_from_settings(&self) {
-        set_window_fullscreen(
-            &self.window(),
-            self.state()
-                .borrow()
-                .settings_snapshot()
-                .local
-                .video
-                .window
-                .fullscreen_default,
-        );
+        let fullscreen = self
+            .state()
+            .borrow()
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        set_window_fullscreen(&self.window(), fullscreen);
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
