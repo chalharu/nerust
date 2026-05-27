@@ -116,6 +116,14 @@ impl Core {
     pub fn peek_oam(&self, address: usize) -> u8 {
         self.bus.ppu1.peek_oam(address)
     }
+
+    pub fn bg1_hofs(&self) -> u16 {
+        self.bus.ppu1.bg1_hofs()
+    }
+
+    pub fn bg1_vofs(&self) -> u16 {
+        self.bus.ppu1.bg1_vofs()
+    }
 }
 
 #[cfg(test)]

@@ -5,5 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 pub mod manifest;
+pub mod media;
+pub mod render;
+pub mod report;
 pub mod results;
 pub mod runner;

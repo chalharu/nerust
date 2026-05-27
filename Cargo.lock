@@ -3372,7 +3372,10 @@ dependencies = [
 name = "nerust_snes_rom_test"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "crc",
  "nerust_snes_core",
+ "png",
  "serde",
  "serde_derive",
  "serde_yaml",

@@ -87,6 +87,48 @@ impl RomManifest {
         self.cases.iter().find(|case| case.id == case_id)
     }
 
+    pub fn select<'a>(&'a self, case_ids: &[String]) -> Result<Vec<&'a RomCase>, ManifestError> {
+        if !case_ids.is_empty() {
+            let available = self
+                .cases
+                .iter()
+                .map(|case| case.id.as_str())
+                .collect::<BTreeSet<_>>();
+            let missing = case_ids
+                .iter()
+                .map(String::as_str)
+                .filter(|case_id| !available.contains(case_id))
+                .collect::<BTreeSet<_>>();
+            if !missing.is_empty() {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "unknown ROM case id(s): {}",
+                        missing.into_iter().collect::<Vec<_>>().join(", ")
+                    ),
+                });
+            }
+        }
+
+        let mut selected = self
+            .cases
+            .iter()
+            .filter(|case| case_ids.is_empty() || case_ids.contains(&case.id))
+            .collect::<Vec<_>>();
+        selected.sort_by(|left, right| left.id.cmp(&right.id));
+
+        if selected.is_empty() {
+            return Err(ManifestError::Invalid {
+                message: if case_ids.is_empty() {
+                    "no ROM cases matched all cases".to_string()
+                } else {
+                    format!("no ROM cases matched {}", case_ids.join(", "))
+                },
+            });
+        }
+
+        Ok(selected)
+    }
+
     fn resolve(&mut self, manifest_path: &Path) -> Result<(), ManifestError> {
         if self.cases.is_empty() {
             return Err(ManifestError::Invalid {
@@ -273,4 +315,62 @@ fn parse_value(value: &str, label: &str) -> Result<u64, ManifestError> {
     u64::from_str_radix(digits, radix).map_err(|_| ManifestError::Invalid {
         message: format!("invalid {label} literal `{value}`"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Assertion, RomCase, RomManifest};
+    use std::path::PathBuf;
+
+    fn dummy_case(id: &str) -> RomCase {
+        RomCase {
+            id: id.to_string(),
+            description: format!("case {id}"),
+            rom: PathBuf::from(format!("{id}.sfc")),
+            max_steps: 1,
+            check_interval_steps: 1,
+            assertions: vec![Assertion::BusU8 {
+                address: "0x00".to_string(),
+                expected: "0x00".to_string(),
+            }],
+            resolved_rom_path: PathBuf::from(format!("/tmp/{id}.sfc")),
+        }
+    }
+
+    #[test]
+    fn select_rejects_unknown_requested_case_ids() {
+        let manifest = RomManifest {
+            rom_root: PathBuf::new(),
+            cases: vec![dummy_case("alpha"), dummy_case("beta")],
+        };
+
+        let error = manifest
+            .select(&["alpha".to_string(), "missing".to_string()])
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown ROM case id(s): missing"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn select_returns_cases_sorted_by_id() {
+        let manifest = RomManifest {
+            rom_root: PathBuf::new(),
+            cases: vec![dummy_case("beta"), dummy_case("alpha")],
+        };
+
+        let selected = manifest.select(&[]).unwrap();
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|case| case.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+    }
 }
