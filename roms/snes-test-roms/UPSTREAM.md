@@ -7,12 +7,16 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
 - Included generated ROMs:
   - `bin/examples/hdma-double-buffered-indirect-shear.sfc`
   - `bin/examples/hdma-double-buffered-parallax.sfc`
+  - `bin/examples/hdma-160scanline-hdma-entry.sfc`
+  - `bin/examples/hdma-indirect-mapping.sfc`
+  - `bin/examples/hdma-indirect-repeating-pattern.sfc`
   - `bin/examples/hdma-to-cgram.sfc`
   - `bin/examples/hdma-repeat-entry.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
   - `bin/effects/inidisp_extend_vblank.sfc`
   - `bin/effects/inidisp_fadein_fadeout.sfc`
   - `bin/effects/hdma-textbox-wipe.sfc`
+  - `bin/effects/repeating_hdma_pattern.sfc`
   - `bin/effects/window-precalculated-single.sfc`
   - `bin/effects/window-precalculated-symmetrical.sfc`
   - `bin/effects/window-shapes-single.sfc`
