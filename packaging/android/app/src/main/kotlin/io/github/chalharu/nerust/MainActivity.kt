@@ -4,6 +4,8 @@ import android.app.AlertDialog
 import android.app.NativeActivity
 import android.content.Intent
 import android.util.Log
+import android.widget.ArrayAdapter
+import android.widget.ListView
 
 class MainActivity : NativeActivity() {
     @Suppress("DEPRECATION")
@@ -74,9 +76,85 @@ class MainActivity : NativeActivity() {
             .show()
     }
 
+    /**
+     * Show a modal Android settings dialog.
+     *
+     * Presents an Android-relevant subset of settings. Each setting is backed
+     * by a tab-separated list of choices; the current selection is identified
+     * by index.  Tapping a row in the list opens a single-choice sub-dialog.
+     * Tapping "Save" calls [onSettingsDialogResult] with a comma-separated
+     * string of the final choice indices.  Cancel/dismiss calls it with `null`.
+     *
+     * @param keys           Stable setting identifiers (kept for documentation
+     *                       clarity and potential future use).
+     * @param labels         Human-readable label for each setting.
+     * @param choiceStrings  Tab-separated choice labels for each setting.
+     * @param currentIndices Current choice index as a string for each setting.
+     *
+     * Called from the Rust JNI bridge on the Java main thread.
+     */
+    fun showSettingsDialog(
+        keys: Array<String>,
+        labels: Array<String>,
+        choiceStrings: Array<String>,
+        currentIndices: Array<String>,
+    ) {
+        val selectedIndices = IntArray(labels.size) { i ->
+            currentIndices.getOrNull(i)?.toIntOrNull() ?: 0
+        }
+        val choiceArrays: Array<Array<String>> = Array(choiceStrings.size) { i ->
+            choiceStrings[i].split('\t').toTypedArray()
+        }
+
+        fun itemText(i: Int): String =
+            "${labels[i]}: ${choiceArrays[i].getOrElse(selectedIndices[i]) { "?" }}"
+
+        val displayItems = Array(labels.size) { i -> itemText(i) }
+        val listView = ListView(this)
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, displayItems)
+        listView.adapter = adapter
+
+        var resultSent = false
+
+        val parentDialog = AlertDialog.Builder(this)
+            .setTitle("Settings")
+            .setView(listView)
+            .setPositiveButton("Save") { _, _ ->
+                resultSent = true
+                onSettingsDialogResult(selectedIndices.joinToString(","))
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                resultSent = true
+                onSettingsDialogResult(null)
+            }
+            .setOnDismissListener {
+                if (!resultSent) {
+                    onSettingsDialogResult(null)
+                }
+            }
+            .create()
+
+        listView.setOnItemClickListener { _, _, which, _ ->
+            AlertDialog.Builder(this)
+                .setTitle(labels[which])
+                .setSingleChoiceItems(choiceArrays[which], selectedIndices[which]) { subDialog, choice ->
+                    selectedIndices[which] = choice
+                    displayItems[which] = itemText(which)
+                    adapter.notifyDataSetChanged()
+                    subDialog.dismiss()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        parentDialog.show()
+    }
+
     private external fun onFilePickerResult(uri: String?)
 
     private external fun onRomLibrarySelected(id: String?)
+
+    private external fun onSettingsDialogResult(result: String?)
 
     companion object {
         private const val TAG = "Nerust"
@@ -85,3 +163,4 @@ class MainActivity : NativeActivity() {
         private const val IMPORT_ACTION_ID = "__import__"
     }
 }
+
