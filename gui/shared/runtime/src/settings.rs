@@ -684,6 +684,24 @@ video:
     }
 
     #[test]
+    fn fullscreen_default_change_only_marks_window_settings() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
+
+        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+
+        assert!(plan.fullscreen_default_changed);
+        assert!(plan.window_settings_changed);
+        assert!(!plan.session_rebuild_required);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
     fn ephemeral_manager_round_trips_snapshot() {
         let manager = SettingsManager::ephemeral(
             test_shared_defaults(),

@@ -58,6 +58,9 @@ pub(crate) fn present_preferences_dialog(
     {
         action_box.set_spacing(12);
         action_box.set_margin_top(12);
+        action_box.set_margin_bottom(12);
+        action_box.set_margin_start(12);
+        action_box.set_margin_end(12);
     }
 
     let content = dialog.content_area();
@@ -435,6 +438,7 @@ pub(crate) fn present_preferences_dialog(
     {
         let draft = draft.clone();
         let state = state.clone();
+        let parent = parent.clone();
         let error_label = error_label.clone();
         let capture_target = capture_target.clone();
         let widgets = widget_bundle(
@@ -465,8 +469,11 @@ pub(crate) fn present_preferences_dialog(
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
-                match state.borrow_mut().apply_settings(snapshot) {
-                    Ok(_) => {
+                match apply_settings_without_reentrant_borrow(state.as_ref(), snapshot.clone()) {
+                    Ok(plan) => {
+                        if plan.fullscreen_default_changed {
+                            parent.set_fullscreened(snapshot.local.video.window.fullscreen_default);
+                        }
                         dialog.close();
                         run_finish_callback(&finish_for_response);
                     }
@@ -509,6 +516,29 @@ struct WidgetBundle {
 }
 
 type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+
+trait SettingsApplier {
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String>;
+}
+
+impl SettingsApplier for State {
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+        State::apply_settings(self, settings)
+    }
+}
+
+fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
+    state: &RefCell<T>,
+    snapshot: SettingsSnapshot,
+) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+    state.borrow_mut().apply_settings(snapshot)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn widget_bundle(
@@ -1021,6 +1051,56 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     scroller.set_child(Some(&page));
 
     (scroller, page)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow};
+    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_shell::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeState {
+        apply_calls: usize,
+        finish_calls: usize,
+    }
+
+    impl SettingsApplier for FakeState {
+        fn apply_settings(
+            &mut self,
+            _settings: SettingsSnapshot,
+        ) -> Result<SettingsApplyPlan, String> {
+            self.apply_calls += 1;
+            Ok(SettingsApplyPlan::default())
+        }
+    }
+
+    fn snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        }
+    }
+
+    #[test]
+    fn apply_helper_releases_mutable_borrow_before_follow_up_work() {
+        let state = RefCell::new(FakeState::default());
+
+        match apply_settings_without_reentrant_borrow(&state, snapshot()) {
+            Ok(_) => {
+                state.borrow_mut().finish_calls += 1;
+            }
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+
+        let state = state.borrow();
+        assert_eq!(state.apply_calls, 1);
+        assert_eq!(state.finish_calls, 1);
+    }
 }
 
 fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
