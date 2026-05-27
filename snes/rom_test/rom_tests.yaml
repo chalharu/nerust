@@ -273,3 +273,43 @@ cases:
       - kind: oam_u16
         address: "0x0000"
         expected: "0xF080"
+  - id: clear-autojoy-after-active-no-input-final-state
+    description: >
+      The undisbeliever clear-autojoy-after-autojoy-active hardware test reaches
+      a stable no-input display state once autojoy completion leaves manual
+      JOYSER reads exhausted until relatched.
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc
+    max_steps: 30000
+    check_interval_steps: 30000
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: bus_u16
+        address: "0x004218"
+        expected: "0x0000"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x001F"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x2010"
+        expected: "0x38"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x6C"
+      - kind: vram_u8
+        address: "0x2014"
+        expected: "0xC6"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
