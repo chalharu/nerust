@@ -1,4 +1,4 @@
-use crate::cartridge::ADDRESS_MASK;
+const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapperKind {
