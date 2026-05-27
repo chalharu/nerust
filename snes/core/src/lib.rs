@@ -219,6 +219,8 @@ mod tests {
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
     const IRQ_VECTOR_OFFSET: usize = 0x7FFE;
+    const HIROM_HEADER_OFFSET: usize = 0xFFC0;
+    const HIROM_RESET_VECTOR_OFFSET: usize = 0xFFFC;
 
     fn build_lorom(reset_vector: u16) -> Vec<u8> {
         let mut rom = vec![0; 0x10000];
@@ -226,6 +228,17 @@ mod tests {
         rom[0x7FD5] = 0x30;
         rom[0x7FD7] = 0x08;
         rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2]
+            .copy_from_slice(&reset_vector.to_le_bytes());
+        rom
+    }
+
+    fn build_hirom(reset_vector: u16) -> Vec<u8> {
+        let mut rom = vec![0; 0x20000];
+        rom[HIROM_HEADER_OFFSET..HIROM_HEADER_OFFSET + 21]
+            .copy_from_slice(b"TEST HIROM CORE      ");
+        rom[0xFFD5] = 0x31;
+        rom[0xFFD7] = 0x09;
+        rom[HIROM_RESET_VECTOR_OFFSET..HIROM_RESET_VECTOR_OFFSET + 2]
             .copy_from_slice(&reset_vector.to_le_bytes());
         rom
     }
@@ -256,6 +269,20 @@ mod tests {
         assert_eq!(core.registers().pb(), 0x00);
         assert_eq!(core.current_state(), CpuState::Running);
         assert_eq!(core.cartridge().header().mapper_kind(), MapperKind::LoRom);
+    }
+
+    #[test]
+    fn core_reset_fetches_the_hirom_reset_vector_and_program_byte() {
+        let mut rom = build_hirom(0x8000);
+        rom[0x8000] = 0xDB;
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 16);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.registers().pc(), 0x8001);
+        assert_eq!(core.cartridge().header().mapper_kind(), MapperKind::HiRom);
     }
 
     #[test]

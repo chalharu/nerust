@@ -158,8 +158,6 @@ pub(crate) struct Bus {
 
 impl Bus {
     pub(crate) fn new(cartridge: Cartridge) -> Self {
-        debug_assert_eq!(cartridge.mapper_kind(), crate::MapperKind::LoRom);
-
         Self {
             cartridge,
             memory: Memory::new(),
