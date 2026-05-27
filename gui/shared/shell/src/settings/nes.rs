@@ -8,6 +8,7 @@ use nerust_contract_settings::{
 use nerust_gui_runtime::settings::{AudioBackendKind, HostBackendIdentity};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
+#[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
 use nerust_sound_traits::{MixerInput, Sound};
 use nerust_timer::CLOCK_RATE;
@@ -26,6 +27,7 @@ pub struct HostedSpeaker {
 }
 
 enum HostedSpeakerInner {
+    #[cfg(not(target_os = "android"))]
     OpenAl(OpenAl),
     #[cfg(target_os = "android")]
     Android(nerust_sound_android::AndroidSound),
@@ -47,6 +49,7 @@ pub fn build_speaker(
 ) -> Result<HostedSpeaker, String> {
     let spec = audio_backend_spec(settings.audio.clone());
     match host_backend.audio_backend() {
+        #[cfg(not(target_os = "android"))]
         AudioBackendKind::OpenAl => Ok(HostedSpeaker {
             inner: HostedSpeakerInner::OpenAl(OpenAl::with_gain(
                 spec.requested_sample_rate,
@@ -56,6 +59,10 @@ pub fn build_speaker(
                 spec.gain,
             )),
         }),
+        #[cfg(target_os = "android")]
+        AudioBackendKind::OpenAl => {
+            Err("OpenAL audio backend is not built for Android targets".to_string())
+        }
         #[cfg(target_os = "android")]
         AudioBackendKind::Android => {
             let speaker = nerust_sound_android::AndroidSound::with_gain(
@@ -156,6 +163,7 @@ fn nearest_power_of_two(value: usize) -> usize {
 impl Sound for HostedSpeaker {
     fn start(&mut self) {
         match &mut self.inner {
+            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.start(),
             #[cfg(target_os = "android")]
             HostedSpeakerInner::Android(speaker) => speaker.start(),
@@ -164,6 +172,7 @@ impl Sound for HostedSpeaker {
 
     fn pause(&mut self) {
         match &mut self.inner {
+            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.pause(),
             #[cfg(target_os = "android")]
             HostedSpeakerInner::Android(speaker) => speaker.pause(),
@@ -174,6 +183,7 @@ impl Sound for HostedSpeaker {
 impl MixerInput for HostedSpeaker {
     fn push(&mut self, data: f32) {
         match &mut self.inner {
+            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.push(data),
             #[cfg(target_os = "android")]
             HostedSpeakerInner::Android(speaker) => speaker.push(data),
@@ -182,6 +192,7 @@ impl MixerInput for HostedSpeaker {
 
     fn sample_rate(&self) -> u32 {
         match &self.inner {
+            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.sample_rate(),
             #[cfg(target_os = "android")]
             HostedSpeakerInner::Android(speaker) => speaker.sample_rate(),
