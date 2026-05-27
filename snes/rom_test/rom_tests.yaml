@@ -154,6 +154,61 @@ cases:
       - kind: bus_u8
         address: "0x00212C"
         expected: "0x01"
+  - id: hdma-160scanline-entry-300k-screen-state
+    description: >
+      The undisbeliever 160-scanline HDMA entry example renders a deterministic BG1 horizontal-offset step pattern at 300000 steps, covering split long non-repeat HDMA entries that target BG1HOFS.
+
+    rom: snes-test-roms/bin/examples/hdma-160scanline-hdma-entry.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x325B2C5DAC5E4E04"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-indirect-mapping-300k-screen-state
+    description: >
+      The undisbeliever indirect HDMA mapping example renders a deterministic BG1 horizontal scroll gradient at 300000 steps, covering contiguous indirect BG1HOFS tables split across HDMA entries.
+
+    rom: snes-test-roms/bin/examples/hdma-indirect-mapping.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x1CC6396CE134AB4F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-indirect-repeating-pattern-300k-screen-state
+    description: >
+      The undisbeliever indirect repeating-pattern HDMA example renders deterministic repeated BG1 horizontal scroll waves at 300000 steps, covering repeated indirect table pointers.
+
+    rom: >-
+      snes-test-roms/bin/examples/hdma-indirect-repeating-pattern.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xE43A75CD98B668F7"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vmain-2bpp-remapping-final-state
     description: >
       The undisbeliever VMAIN 2bpp remapping ROM eventually reaches its steady display loop with the remapped tile buffer written into VRAM.
@@ -558,6 +613,24 @@ cases:
       - kind: bus_u8
         address: "0x002105"
         expected: "0x01"
+  - id: repeating-hdma-pattern-300k-screen-state
+    description: >
+      The undisbeliever repeating HDMA pattern effect renders deterministic BG3 cloud waves at 300000 steps, covering double-buffered indirect HDMA data reused across the visible display.
+
+    rom: snes-test-roms/bin/effects/repeating_hdma_pattern.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3E20FE792944CEAC"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x04"
   - id: window-shapes-single-300k-screen-state
     description: >
       The undisbeliever single window shapes effect renders a deterministic color-window triangle at 300000 steps using HDMA-updated WH0/WH1 and fixed-color math on the backdrop.
