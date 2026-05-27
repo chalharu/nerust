@@ -23,6 +23,13 @@ on:
       tag_name:
         required: false
         type: string
+    secrets:
+      ANDROID_CERTIFICATE:
+        required: false
+      ANDROID_PRIVATE_KEY:
+        required: false
+      ANDROID_PRIVATE_KEY_PASSWORD:
+        required: false
 env:
   CARGO_TERM_COLOR: always
 jobs:
@@ -88,7 +95,6 @@ jobs:
                 ;;
             esac
           done
-          
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
           if [[ "${PUBLISH_RELEASE}" == "true" ]]; then

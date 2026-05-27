@@ -40,8 +40,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    secrets: inherit
     uses: ./.github/workflows/release-artifacts.yml
+    secrets:
+      ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
+      ANDROID_PRIVATE_KEY: ${{ secrets.ANDROID_PRIVATE_KEY }}
+      ANDROID_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_PRIVATE_KEY_PASSWORD }}
     with:
       publish_release: true
       ref: ${{ github.sha }}
