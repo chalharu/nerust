@@ -579,6 +579,48 @@ cases:
       - kind: bus_u8
         address: "0x002131"
         expected: "0x20"
+  - id: window-precalculated-single-300k-screen-state
+    description: >
+      The undisbeliever precalculated single-window effect renders a deterministic color-window exclamation mark at 300000 steps using a double-buffered HDMA table targeting WH0/WH1.
+
+    rom: snes-test-roms/bin/effects/window-precalculated-single.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3DC53426DB47942B"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x70"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x00"
+  - id: window-precalculated-symmetrical-300k-screen-state
+    description: >
+      The undisbeliever precalculated symmetrical single-window effect renders deterministic color-window shapes at 300000 steps using a generated HDMA table targeting WH0/WH1.
+
+    rom: snes-test-roms/bin/effects/window-precalculated-symmetrical.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xC254D38C44C91781"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x70"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x00"
   - id: vmain-1bpp-tiles-0-300k-screen-state
     description: >
       The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at 300000 steps after converting 1bpp tile data into transparent 2bpp tiles with VMDATAL and VMDATAH DMA transfers.
