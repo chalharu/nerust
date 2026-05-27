@@ -19,8 +19,7 @@ use nerust_gui_session::commands::SessionCommand;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::SessionHandle;
 use nerust_gui_shell::touch::{
-    PortraitTouchOverlay, TouchFrontendAction, TouchOverlayAction, TouchPoint, TouchTarget,
-    actions_for_target,
+    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -323,15 +322,6 @@ impl AndroidFrontend {
                 TouchOverlayAction::Input(event) => {
                     let _ = self.session.apply_input_event(event);
                     self.request_redraw();
-                }
-                TouchOverlayAction::Session(command) => {
-                    self.run_session_command(command);
-                }
-                TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary) => {
-                    self.request_library_dialog();
-                }
-                TouchOverlayAction::Frontend(TouchFrontendAction::OpenSettings) => {
-                    self.request_settings_dialog();
                 }
             }
         }
