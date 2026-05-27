@@ -91,14 +91,14 @@ fn show_dialog_on_java_main_thread(
                 env.new_object_array(names.len() as _, &string_class, JObject::null())?;
             for (i, name) in names.iter().enumerate() {
                 let jname = env.new_string(name.as_str())?;
-                env.set_object_array_element(&names_array, i as _, jname)?;
+                names_array.set_element(env, i, &jname)?;
             }
 
             let ids_array: JObjectArray<'_> =
                 env.new_object_array(ids.len() as _, &string_class, JObject::null())?;
             for (i, id) in ids.iter().enumerate() {
                 let jid = env.new_string(id.as_str())?;
-                env.set_object_array_element(&ids_array, i as _, jid)?;
+                ids_array.set_element(env, i, &jid)?;
             }
 
             env.call_method(
@@ -141,25 +141,32 @@ fn wake_main_thread() {
 /// * otherwise               → user selected the library entry with that id
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onRomLibrarySelected(
-    env: jni::Env<'_>,
+    mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     id: JString<'_>,
 ) {
-    let result = if id.is_null() {
-        Ok(LibraryDialogResult::Dismissed)
-    } else {
-        id.try_to_string(&env).map(|s| {
-            if s == IMPORT_ACTION_ID {
-                LibraryDialogResult::ImportRequested
+    match env
+        .with_env(|env| -> jni::errors::Result<LibraryDialogResult> {
+            if id.is_null() {
+                Ok(LibraryDialogResult::Dismissed)
             } else {
-                LibraryDialogResult::Selected(s)
+                let id = id.try_to_string(env)?;
+                Ok(if id == IMPORT_ACTION_ID {
+                    LibraryDialogResult::ImportRequested
+                } else {
+                    LibraryDialogResult::Selected(id)
+                })
             }
         })
-    };
-    match result {
-        Ok(result) => publish_result(result),
-        Err(error) => {
+        .into_outcome()
+    {
+        jni::Outcome::Ok(result) => publish_result(result),
+        jni::Outcome::Err(error) => {
             log::error!("failed to decode Android ROM library dialog result: {error:?}");
+            publish_result(LibraryDialogResult::Dismissed);
+        }
+        jni::Outcome::Panic(_) => {
+            log::error!("Android ROM library dialog callback panicked");
             publish_result(LibraryDialogResult::Dismissed);
         }
     }

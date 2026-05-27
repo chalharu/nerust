@@ -9,7 +9,6 @@ const SETTINGS_ROOT_DIR_NAME: &str = "settings";
 const ROM_LIBRARY_ROOT_DIR_NAME: &str = "rom-library";
 
 pub(crate) struct AndroidStorage {
-    pub(crate) root: PathBuf,
     pub(crate) settings: SettingsManager,
     pub(crate) rom_library: RomLibrary,
 }
@@ -28,7 +27,6 @@ impl AndroidStorage {
             RomLibrary::open(RomLibraryPaths::new(root.join(ROM_LIBRARY_ROOT_DIR_NAME)))
                 .map_err(|error| format!("failed to open Android ROM library: {error}"))?;
         Ok(Self {
-            root,
             settings,
             rom_library,
         })
