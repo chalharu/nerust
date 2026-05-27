@@ -20,13 +20,16 @@ Official release artifacts are attached to each
 | `nerust-vX.Y.Z-linux-x86_64.tar.gz` | Linux x86\_64 |
 | `nerust-vX.Y.Z-linux-aarch64.tar.gz` | Linux aarch64 |
 | `nerust-vX.Y.Z-macos-aarch64.app.zip` | macOS aarch64 |
+| `nerust-vX.Y.Z-android-arm64-v8a.apk` | Android arm64-v8a |
 
 Each tarball contains `nerust_tao` (the Tao frontend binary), `README.md`,
-and `LICENSE`. Each artifact has a matching `.sha256` sidecar. The macOS
-bundle is ad-hoc signed and not notarized.
+and `LICENSE`. The Android artifact is a signed APK. Each artifact has a
+matching `.sha256` sidecar. The macOS bundle is ad-hoc signed and not
+notarized.
 
-The official frontend is **Tao** (`nerust_tao`). The GTK4 frontend
-(`nerust_gtk`) is maintained for build-health but is not a release artifact.
+The official desktop frontend is **Tao** (`nerust_tao`). The Android frontend
+ships as an `arm64-v8a` APK. The GTK4 frontend (`nerust_gtk`) is maintained for
+build-health but is not a release artifact.
 
 ## Release workflow
 
@@ -60,6 +63,9 @@ The automation reads the major version from `[workspace.package].version` in
 If there is no existing tag for the current major, the declared
 `[workspace.package].version` becomes the release version. The workflows use
 the `RELEASE_PLZ_TOKEN` repository secret as a PAT for branch and PR updates.
+Android signing additionally uses `ANDROID_SIGNING_KEY`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_STORE_PASSWORD`, and
+`ANDROID_KEY_PASSWORD`.
 
 ## Developer build/test paths
 
@@ -105,9 +111,20 @@ Run frontend and backend validation explicitly when touching OpenGL or UI code:
 ```sh
 cargo test -p nerust_screen_opengl --lib
 cargo test -p nerust_gui_runtime --lib
+cargo build -p nerust_android
 cargo build -p nerust_gtk --release
 cargo build -p nerust_tao --release
 ```
+
+### Android packaging
+
+Build the Android APK with the Gradle packaging project:
+
+```sh
+packaging/android/package.sh
+```
+
+This requires Java 17, the Android SDK/NDK, and `cargo-ndk` on the host.
 
 ## Usage
 

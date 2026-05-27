@@ -1,12 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:hasCode="true"
-        android:label="Nerust">
+        android:label="Nerust"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity
             android:name="io.github.chalharu.nerust.MainActivity"
             android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="true"
-            android:screenOrientation="portrait">
+            android:screenOrientation="sensorPortrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
