@@ -104,6 +104,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         window.decorView.post(::ensureMenuChromeAttached)
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.decorView.post(::ensureMenuChromeAttached)
+        }
+    }
+
     override fun onPause() {
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
@@ -357,7 +364,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         return true
     }
 
-    private fun contentRoot(): ViewGroup? = findViewById(android.R.id.content)
+    private fun contentRoot(): ViewGroup? =
+        findViewById<View>(android.R.id.content) as? ViewGroup ?: window.decorView as? ViewGroup
 
     private fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
