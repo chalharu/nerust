@@ -24,7 +24,14 @@ class MainActivityE2eTest {
     @Test
     fun appStartsAndDrawerMenuIsAvailable() {
         composeRule.waitUntil(timeoutMillis = STARTUP_TIMEOUT_MS) {
-            composeRule.onAllNodesWithContentDescription("Menu").fetchSemanticsNodes().isNotEmpty()
+            try {
+                composeRule
+                    .onAllNodesWithContentDescription("Menu")
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            } catch (_: IllegalStateException) {
+                false
+            }
         }
 
         composeRule.onNodeWithContentDescription("Menu").assertIsDisplayed().performClick()
