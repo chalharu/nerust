@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+    outputs:
+      tag_name: ${{ steps.release_meta.outputs.tag_name }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -32,3 +34,15 @@ jobs:
             exit 0
           fi
           gh release create "${TAG_NAME}" --target "${TARGET_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md
+  publish-assets:
+    name: Publish release assets
+    needs: [publish]
+    permissions:
+      contents: write
+      pull-requests: write
+    secrets: inherit
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      publish_release: true
+      ref: ${{ github.sha }}
+      tag_name: ${{ needs.publish.outputs.tag_name }}
