@@ -269,6 +269,62 @@ cases:
       - kind: bus_u16
         address: "0x004209"
         expected: "0x00D6"
+  - id: inidisp-brightness-0-screen-state
+    description: >
+      The undisbeliever INIDISP brightness-0 hardware test reaches a stable
+      black-screen wait state with brightness forced to zero, and should keep
+      matching that rendered frame hash when captured at 30000 steps.
+    rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_0.sfc
+    max_steps: 30000
+    check_interval_steps: 30000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0000"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: inidisp-brightness-delay-100k-screen-state
+    description: >
+      The undisbeliever INIDISP brightness-delay hardware test reaches a
+      deterministic 100000-step screen state once the delayed brightness writes
+      progress through their current IRQ-driven timing model.
+    rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_delay.sfc
+    max_steps: 100000
+    check_interval_steps: 100000
+    expected_screen_hash: "0xA7140ABD926FF413"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x90"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0xFFFF"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
