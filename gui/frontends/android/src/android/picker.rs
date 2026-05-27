@@ -41,8 +41,9 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
         return Ok(false);
     }
     let app = app.clone();
+    let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = start_picker_on_java_main_thread(&app) {
+        if let Err(error) = start_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
             PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
             wake_main_thread();
@@ -53,7 +54,7 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
 
 pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|mut env| {
+    vm.attach_current_thread(|env| {
         env.with_local_frame(16, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
@@ -119,7 +120,7 @@ pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, Str
 
 fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|mut env| {
+    vm.attach_current_thread(|env| {
         env.with_local_frame(4, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
@@ -129,7 +130,7 @@ fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
                 jni_sig!("()V"),
                 &[],
             )?;
-            Ok(())
+            Ok::<(), jni::errors::Error>(())
         })
     })
     .map_err(|error| format!("failed to launch Android ROM picker: {error:?}"))

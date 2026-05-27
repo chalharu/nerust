@@ -281,10 +281,15 @@ pub(crate) fn request_show_settings_dialog(
     let current_indices = current.current_indices();
 
     let app = app.clone();
+    let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) =
-            show_settings_on_java_main_thread(&app, &keys, &labels, &choices, &current_indices)
-        {
+        if let Err(error) = show_settings_on_java_main_thread(
+            &callback_app,
+            &keys,
+            &labels,
+            &choices,
+            &current_indices,
+        ) {
             log::error!("{error}");
             SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
             wake_main_thread();
@@ -300,15 +305,15 @@ fn show_settings_on_java_main_thread(
     choices: &[String],
     current_indices: &[String],
 ) -> Result<(), String> {
-    let n = keys.len() as i32;
+    let n = keys.len();
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|mut env| {
+    vm.attach_current_thread(|env| {
         // 4 arrays × n elements each + a few extra for the method call itself
         env.with_local_frame(4 + n * 4 + 8, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
 
-            let string_class = env.find_class("java/lang/String")?;
+            let string_class = env.find_class(jni_str!("java/lang/String"))?;
 
             let make_string_array = |items: &[String]| -> Result<JObjectArray<'_>, _> {
                 let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
@@ -337,7 +342,7 @@ fn show_settings_on_java_main_thread(
                     JValue::Object(current_arr.as_ref()),
                 ],
             )?;
-            Ok(())
+            Ok::<(), jni::errors::Error>(())
         })
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
