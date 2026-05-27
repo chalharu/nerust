@@ -48,7 +48,9 @@ const SNES_CONTROL_R: DigitalControlId = DigitalControlId::new("snes.control.r")
 pub(super) struct SnesSystemDefinition;
 
 #[derive(Debug, Default)]
-struct SnesInputAdapter;
+struct SnesInputAdapter {
+    buttons: u16,
+}
 
 pub(super) fn media_looks_like_snes(media: &MediaObject) -> bool {
     matches!(media.extension.as_deref(), Some("sfc" | "smc"))
@@ -102,7 +104,7 @@ impl SystemDefinition for SnesSystemDefinition {
     }
 
     fn create_input_adapter(&self, _settings: &SettingsSnapshot) -> Box<dyn SystemInputAdapter> {
-        Box::new(SnesInputAdapter)
+        Box::<SnesInputAdapter>::default()
     }
 
     fn create_runtime(
@@ -132,16 +134,30 @@ impl SystemInputAdapter for SnesInputAdapter {
         })
     }
 
-    fn apply_event(&mut self, _event: DigitalInputEvent) {}
+    fn apply_event(&mut self, event: DigitalInputEvent) {
+        if event.attachment != SNES_ATTACHMENT_CONTROLLER_ONE {
+            return;
+        }
+        if let Some(mask) = button_mask(event.control) {
+            if event.is_pressed() {
+                self.buttons |= mask;
+            } else {
+                self.buttons &= !mask;
+            }
+        }
+    }
 
-    fn clear(&mut self) {}
+    fn clear(&mut self) {
+        self.buttons = 0;
+    }
 
-    fn sync_from_runtime_state(&mut self, _bytes: &[u8]) -> Result<(), String> {
+    fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.buttons = decode_buttons(bytes)?;
         Ok(())
     }
 
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
+        Ok(self.buttons.to_le_bytes().to_vec())
     }
 }
 
@@ -155,6 +171,7 @@ pub(super) struct SnesRuntime {
 struct SnesRuntimeShared {
     metrics: RwLock<ConsoleMetrics>,
     frame: RwLock<Arc<[u8]>>,
+    input_buttons: RwLock<u16>,
 }
 
 enum SnesCommand {
@@ -170,6 +187,9 @@ enum SnesCommand {
     },
     Pause,
     Resume,
+    ApplyInput {
+        buttons: u16,
+    },
     ExportMapperSave {
         reply: Sender<Result<Option<Vec<u8>>, String>>,
     },
@@ -251,12 +271,16 @@ impl SystemRuntime for SnesRuntime {
         }
     }
 
-    fn apply_input_state(&mut self, _bytes: Vec<u8>) -> Result<(), String> {
-        Ok(())
+    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        let buttons = decode_buttons(&bytes)?;
+        self.shared.set_input_buttons(buttons);
+        self.commands
+            .send(SnesCommand::ApplyInput { buttons })
+            .map_err(|_| "SNES runtime worker is unavailable".to_string())
     }
 
     fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
+        Ok(self.shared.input_buttons().to_le_bytes().to_vec())
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
@@ -301,6 +325,7 @@ impl SnesRuntimeShared {
                 ..ConsoleMetrics::default()
             }),
             frame: RwLock::new(Arc::from(opaque_black_frame())),
+            input_buttons: RwLock::new(0),
         }
     }
 
@@ -325,6 +350,20 @@ impl SnesRuntimeShared {
             frame.clone(),
         )
     }
+
+    fn input_buttons(&self) -> u16 {
+        *self
+            .input_buttons
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    fn set_input_buttons(&self, buttons: u16) {
+        *self
+            .input_buttons
+            .write()
+            .unwrap_or_else(|err| err.into_inner()) = buttons;
+    }
 }
 
 fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<SnesRuntimeShared>) {
@@ -332,6 +371,7 @@ fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<S
     let mut loaded = false;
     let mut paused = true;
     let mut frame_counter = 0_u64;
+    let mut input_buttons = 0_u16;
     let mut last_frame_at = Instant::now();
     publish_metrics(&shared, frame_counter, loaded, paused, 0.0);
 
@@ -343,6 +383,7 @@ fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<S
                 &mut loaded,
                 &mut paused,
                 &mut frame_counter,
+                &mut input_buttons,
                 &shared,
             );
         }
@@ -384,6 +425,7 @@ fn handle_command(
     loaded: &mut bool,
     paused: &mut bool,
     frame_counter: &mut u64,
+    input_buttons: &mut u16,
     shared: &SnesRuntimeShared,
 ) {
     match command {
@@ -391,6 +433,9 @@ fn handle_command(
             let result = match Core::from_rom_bytes(&bytes) {
                 Ok(new_core) => {
                     *core = Some(new_core);
+                    if let Some(core) = core.as_mut() {
+                        core.set_standard_controller_buttons(0, *input_buttons);
+                    }
                     *loaded = true;
                     *paused = true;
                     *frame_counter = 0;
@@ -417,6 +462,7 @@ fn handle_command(
             let result = match core.as_mut() {
                 Some(core) => {
                     core.reset_cpu();
+                    core.set_standard_controller_buttons(0, *input_buttons);
                     *frame_counter = 0;
                     shared.publish_frame(render_backdrop_frame(core));
                     publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
@@ -434,6 +480,12 @@ fn handle_command(
             if *loaded {
                 *paused = false;
                 publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+            }
+        }
+        SnesCommand::ApplyInput { buttons } => {
+            *input_buttons = buttons;
+            if let Some(core) = core.as_mut() {
+                core.set_standard_controller_buttons(0, buttons);
             }
         }
         SnesCommand::ExportMapperSave { reply } => {
@@ -614,4 +666,29 @@ fn snes_control_from_persisted(control: &str) -> Option<DigitalControlId> {
         value if value == SNES_CONTROL_R.as_str() => Some(SNES_CONTROL_R),
         _ => None,
     }
+}
+
+fn button_mask(control: DigitalControlId) -> Option<u16> {
+    match control {
+        value if value == SNES_CONTROL_B => Some(1 << 15),
+        value if value == SNES_CONTROL_Y => Some(1 << 14),
+        value if value == SNES_CONTROL_SELECT => Some(1 << 13),
+        value if value == SNES_CONTROL_START => Some(1 << 12),
+        value if value == SNES_CONTROL_UP => Some(1 << 11),
+        value if value == SNES_CONTROL_DOWN => Some(1 << 10),
+        value if value == SNES_CONTROL_LEFT => Some(1 << 9),
+        value if value == SNES_CONTROL_RIGHT => Some(1 << 8),
+        value if value == SNES_CONTROL_A => Some(1 << 7),
+        value if value == SNES_CONTROL_X => Some(1 << 6),
+        value if value == SNES_CONTROL_L => Some(1 << 5),
+        value if value == SNES_CONTROL_R => Some(1 << 4),
+        _ => None,
+    }
+}
+
+fn decode_buttons(bytes: &[u8]) -> Result<u16, String> {
+    let bytes: [u8; 2] = bytes
+        .try_into()
+        .map_err(|_| format!("invalid SNES input state length: {}", bytes.len()))?;
+    Ok(u16::from_le_bytes(bytes))
 }
