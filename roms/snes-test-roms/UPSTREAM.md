@@ -30,8 +30,13 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/effects/vmain-vertical-scrolling-2-rows.sfc`
   - `bin/effects/vmain-vertical-scrolling.sfc`
   - `bin/hardware-tests/auto-joypad/auto-joy-timing-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-latches-joypad-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-test-automatic.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-timing-test.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
+  - `bin/hardware-tests/auto-joypad/clear-autojoy-1st-vb-sl.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-timing-test.sfc`
   - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc`
   - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc`
