@@ -1,5 +1,6 @@
 use nerust_gui_runtime::rom_library::{RomLibrary, RomLibraryPaths};
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsManager, SettingsPaths};
+use nerust_gui_runtime::settings::manager::SettingsManager;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsPaths};
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };

@@ -8,7 +8,8 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nerust_sound_traits::{MixerInput, Sound};
-use nerust_soundfilter::{Filter, NesFilter, Resampler, SimpleDownSampler};
+use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
+use nerust_soundfilter::{Filter, NesFilter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};

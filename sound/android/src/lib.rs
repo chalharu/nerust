@@ -27,17 +27,15 @@
 //!   returned by [`MixerInput::sample_rate`].
 
 #[cfg(target_os = "android")]
-mod android;
-
-#[cfg(target_os = "android")]
-pub use android::AndroidSound;
+pub mod android;
 
 /// Tests that exercise the source-rate clamping formula and the filter/resampler
 /// pipeline shared with the Android backend.  These run on all targets so they
 /// can be validated during desktop development without a real Android device.
 #[cfg(test)]
 mod tests {
-    use nerust_soundfilter::{Filter, NesFilter, Resampler, SimpleDownSampler};
+    use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
+    use nerust_soundfilter::{Filter, NesFilter};
 
     /// The multiplier cap – must match `OVERSAMPLE_FACTOR` in `android.rs`.
     const OVERSAMPLE_FACTOR: u32 = 4;

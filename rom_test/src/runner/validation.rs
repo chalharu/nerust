@@ -5,10 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 mod artifacts;
-mod assertions;
+pub(in crate::runner::validation) mod assertions;
 mod harness_impl;
-mod runner;
+pub(in crate::runner) mod runner;
 mod runtime;
-
-pub(in crate::runner::validation) use self::assertions::CartridgeRamAssertion;
-pub(in crate::runner) use self::runner::ValidationRunner;
