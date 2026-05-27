@@ -578,6 +578,7 @@ enum ExceptionKind {
     Brk,
     Cop,
     Nmi,
+    Irq,
 }
 
 impl ExceptionKind {
@@ -586,9 +587,11 @@ impl ExceptionKind {
             (Self::Cop, true) => 0x00FFF4,
             (Self::Brk, true) => 0x00FFFE,
             (Self::Nmi, true) => 0x00FFFA,
+            (Self::Irq, true) => 0x00FFFE,
             (Self::Cop, false) => 0x00FFE4,
             (Self::Brk, false) => 0x00FFE6,
             (Self::Nmi, false) => 0x00FFEA,
+            (Self::Irq, false) => 0x00FFEE,
         }
     }
 
@@ -1345,6 +1348,10 @@ impl Cpu {
     fn fetch_opcode(&mut self, bus: &mut dyn CpuBus) {
         if bus.poll_nmi() {
             self.start_nmi_sequence();
+            return;
+        }
+        if !self.registers.p.contains(CpuStatus::IRQ_DISABLE) && bus.poll_irq() {
+            self.start_irq_sequence();
             return;
         }
         let address = self.registers.pc;
@@ -2216,6 +2223,21 @@ impl Cpu {
         }
     }
 
+    fn start_irq_sequence(&mut self) {
+        let return_addr = self.registers.pc;
+        if self.registers.e {
+            self.micro_state = MicroState::ExceptionPushHigh {
+                kind: ExceptionKind::Irq,
+                return_addr,
+            };
+        } else {
+            self.micro_state = MicroState::ExceptionPushBank {
+                kind: ExceptionKind::Irq,
+                return_addr,
+            };
+        }
+    }
+
     fn execute_branch_long_low(&mut self, bus: &mut dyn CpuBus) {
         let low = bus.read(self.full_pc());
         self.registers.pc = self.registers.pc.wrapping_add(1);
@@ -2230,12 +2252,18 @@ impl Cpu {
         self.micro_state = MicroState::Fetch;
     }
 
-    /// Idle cycle for WAI: burn a cycle and poll for a pending NMI.
-    /// When NMI is asserted the CPU starts the NMI exception sequence using
-    /// the current PC as the return address (the instruction after WAI).
+    /// Idle cycle for WAI: burn a cycle and poll for a pending interrupt.
+    /// A masked IRQ still wakes the CPU, but execution resumes at the next
+    /// instruction until software clears I and takes the still-asserted source.
     fn execute_wai(&mut self, bus: &mut dyn CpuBus) {
         if bus.poll_nmi() {
             self.start_nmi_sequence();
+        } else if bus.poll_irq() {
+            if self.registers.p.contains(CpuStatus::IRQ_DISABLE) {
+                self.micro_state = MicroState::Fetch;
+            } else {
+                self.start_irq_sequence();
+            }
         }
         // If no interrupt is pending, WaitingForInterrupt remains set; the CPU
         // simply burns another cycle on the next step.
@@ -4556,6 +4584,7 @@ mod tests {
     struct TestBus {
         memory: BTreeMap<u32, u8>,
         nmi_pending: bool,
+        irq_pending: bool,
     }
 
     impl TestBus {
@@ -4572,6 +4601,10 @@ mod tests {
 
         fn load_native_nmi_vector(&mut self, nmi: u16) {
             self.load(0x00FFEA, &nmi.to_le_bytes());
+        }
+
+        fn load_emulation_irq_vector(&mut self, irq: u16) {
+            self.load(0x00FFFE, &irq.to_le_bytes());
         }
 
         fn load(&mut self, base: u32, bytes: &[u8]) {
@@ -4592,6 +4625,10 @@ mod tests {
 
         fn poll_nmi(&mut self) -> bool {
             core::mem::take(&mut self.nmi_pending)
+        }
+
+        fn poll_irq(&mut self) -> bool {
+            self.irq_pending
         }
     }
 
@@ -9032,6 +9069,90 @@ mod tests {
         assert_eq!(system.memory[&0x0001FD], 0x05); // return addr low
         // $01FC = P (status flags) – value depends on state; just confirm it exists
         assert!(system.memory.contains_key(&0x0001FC));
+    }
+
+    #[test]
+    fn wai_wakes_on_masked_irq_without_vectoring() {
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xCB, 0xDB]); // WAI, STP
+
+        step_n(&mut cpu, &mut system, 7);
+        for _ in 0..50 {
+            cpu.step(&mut system);
+            if cpu.current_state() == CpuState::Waiting {
+                break;
+            }
+        }
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+        assert_eq!(cpu.registers().pc(), 0x8001);
+
+        system.irq_pending = true;
+        run_until_stopped(&mut cpu, &mut system, 8);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.current_opcode(), 0xDB);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x8002);
+        assert!(system.irq_pending);
+        assert!(!system.memory.contains_key(&0x0001FF));
+    }
+
+    #[test]
+    fn wai_vectors_on_irq_when_interrupts_are_enabled() {
+        let irq_handler_addr: u16 = 0x9000;
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0x58, 0xCB, 0xDB]); // CLI, WAI, STP
+        system.load_emulation_irq_vector(irq_handler_addr);
+        system.load(0x009000, &[0xDB]); // STP
+
+        step_n(&mut cpu, &mut system, 7);
+        for _ in 0..50 {
+            cpu.step(&mut system);
+            if cpu.current_state() == CpuState::Waiting {
+                break;
+            }
+        }
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+        assert_eq!(cpu.registers().pc(), 0x8002);
+
+        system.irq_pending = true;
+        run_until_stopped(&mut cpu, &mut system, 32);
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9001);
+        assert_eq!(system.memory[&0x0001FF], 0x80);
+        assert_eq!(system.memory[&0x0001FE], 0x02);
+    }
+
+    #[test]
+    fn masked_wai_irq_is_taken_after_cli_on_next_fetch_boundary() {
+        let irq_handler_addr: u16 = 0x9000;
+        let mut cpu = Cpu::new();
+        let mut system = TestBus::with_reset_vector(0x8000);
+        system.load(0x008000, &[0xCB, 0x58, 0xDB]); // WAI, CLI, STP
+        system.load_emulation_irq_vector(irq_handler_addr);
+        system.load(0x009000, &[0xDB]); // STP
+
+        step_n(&mut cpu, &mut system, 7);
+        for _ in 0..50 {
+            cpu.step(&mut system);
+            if cpu.current_state() == CpuState::Waiting {
+                break;
+            }
+        }
+        assert_eq!(cpu.current_state(), CpuState::Waiting);
+        assert_eq!(cpu.registers().pc(), 0x8001);
+
+        system.irq_pending = true;
+        run_until_stopped(&mut cpu, &mut system, 32);
+
+        assert_eq!(cpu.current_state(), CpuState::Stopped);
+        assert_eq!(cpu.registers().pb(), 0x00);
+        assert_eq!(cpu.registers().pc(), 0x9001);
+        assert_eq!(system.memory[&0x0001FF], 0x80);
+        assert_eq!(system.memory[&0x0001FE], 0x02);
     }
 
     #[test]

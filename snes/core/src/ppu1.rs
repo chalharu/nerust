@@ -111,6 +111,10 @@ impl Ppu1 {
         self.vram[address % VRAM_LEN]
     }
 
+    pub(crate) fn peek_oam(&self, address: usize) -> u8 {
+        self.oam[address % OAM_LEN]
+    }
+
     #[cfg(test)]
     pub(crate) fn vmadd(&self) -> u16 {
         self.vmadd
@@ -244,5 +248,54 @@ mod tests {
         assert_eq!(ppu1.peek_vram(0x432F * 2), 0xBC);
         assert_eq!(ppu1.peek_vram(0x432F * 2 + 1), 0x9A);
         assert_eq!(ppu1.vmadd(), 0x43E6);
+    }
+
+    #[test]
+    fn oam_writes_cover_low_and_high_tables() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x2102, 0x00));
+        assert!(ppu1.write(0x2103, 0x00));
+        for value in [0x40, 0x50, 0x00, 0x30, 0x60, 0x50, 0x04, 0x30] {
+            assert!(ppu1.write(0x2104, value));
+        }
+
+        assert_eq!(ppu1.peek_oam(0), 0x40);
+        assert_eq!(ppu1.peek_oam(1), 0x50);
+        assert_eq!(ppu1.peek_oam(2), 0x00);
+        assert_eq!(ppu1.peek_oam(3), 0x30);
+        assert_eq!(ppu1.peek_oam(4), 0x60);
+        assert_eq!(ppu1.peek_oam(5), 0x50);
+        assert_eq!(ppu1.peek_oam(6), 0x04);
+        assert_eq!(ppu1.peek_oam(7), 0x30);
+
+        assert!(ppu1.write(0x2102, 0x00));
+        assert!(ppu1.write(0x2103, 0x01));
+        for _ in 0..4 {
+            assert!(ppu1.write(0x2104, 0xAA));
+        }
+
+        assert_eq!(ppu1.peek_oam(512), 0xAA);
+        assert_eq!(ppu1.peek_oam(513), 0xAA);
+        assert_eq!(ppu1.peek_oam(514), 0xAA);
+        assert_eq!(ppu1.peek_oam(515), 0xAA);
+    }
+
+    #[test]
+    fn oam_reads_follow_the_current_oam_address() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x2102, 0x00));
+        assert!(ppu1.write(0x2103, 0x00));
+        for value in [0x12, 0x34, 0x56, 0x78] {
+            assert!(ppu1.write(0x2104, value));
+        }
+
+        assert!(ppu1.write(0x2102, 0x00));
+        assert!(ppu1.write(0x2103, 0x00));
+        assert_eq!(ppu1.read(0x2138), Some(0x12));
+        assert_eq!(ppu1.read(0x2138), Some(0x34));
+        assert_eq!(ppu1.read(0x2138), Some(0x56));
+        assert_eq!(ppu1.read(0x2138), Some(0x78));
     }
 }

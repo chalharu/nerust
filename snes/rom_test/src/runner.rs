@@ -106,11 +106,13 @@ fn assertion_failures(case: &RomCase, core: &Core) -> Result<Vec<String>, Manife
             Assertion::BusU8 { .. }
             | Assertion::WramU8 { .. }
             | Assertion::VramU8 { .. }
-            | Assertion::CgramU8 { .. } => evaluate_u8_assertion(assertion, core),
+            | Assertion::CgramU8 { .. }
+            | Assertion::OamU8 { .. } => evaluate_u8_assertion(assertion, core),
             Assertion::BusU16 { .. }
             | Assertion::WramU16 { .. }
             | Assertion::VramU16 { .. }
-            | Assertion::CgramU16 { .. } => evaluate_u16_assertion(assertion, core),
+            | Assertion::CgramU16 { .. }
+            | Assertion::OamU16 { .. } => evaluate_u16_assertion(assertion, core),
         })
         .filter_map(Result::transpose)
         .collect()
@@ -127,6 +129,7 @@ fn evaluate_u8_assertion(
         Assertion::WramU8 { .. } => core.peek_wram(address as usize),
         Assertion::VramU8 { .. } => core.peek_vram(address as usize),
         Assertion::CgramU8 { .. } => core.peek_cgram(address as usize),
+        Assertion::OamU8 { .. } => core.peek_oam(address as usize),
         _ => {
             return Err(ManifestError::Invalid {
                 message: "evaluate_u8_assertion called for 16-bit assertion".to_string(),
@@ -166,6 +169,10 @@ fn evaluate_u16_assertion(
             core.peek_cgram(address as usize),
             core.peek_cgram(address as usize + 1),
         ]),
+        Assertion::OamU16 { .. } => u16::from_le_bytes([
+            core.peek_oam(address as usize),
+            core.peek_oam(address as usize + 1),
+        ]),
         _ => {
             return Err(ManifestError::Invalid {
                 message: "evaluate_u16_assertion called for 8-bit assertion".to_string(),
@@ -193,5 +200,7 @@ fn assertion_kind(assertion: &Assertion) -> &'static str {
         Assertion::VramU16 { .. } => "vram_u16",
         Assertion::CgramU8 { .. } => "cgram_u8",
         Assertion::CgramU16 { .. } => "cgram_u16",
+        Assertion::OamU8 { .. } => "oam_u8",
+        Assertion::OamU16 { .. } => "oam_u16",
     }
 }

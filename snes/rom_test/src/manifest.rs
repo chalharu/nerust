@@ -58,6 +58,8 @@ pub enum Assertion {
     VramU16 { address: String, expected: String },
     CgramU8 { address: String, expected: String },
     CgramU16 { address: String, expected: String },
+    OamU8 { address: String, expected: String },
+    OamU16 { address: String, expected: String },
 }
 
 pub fn load_default_manifest() -> Result<RomManifest, ManifestError> {
@@ -167,7 +169,9 @@ impl Assertion {
             | Self::VramU8 { address, .. }
             | Self::VramU16 { address, .. }
             | Self::CgramU8 { address, .. }
-            | Self::CgramU16 { address, .. } => parse_value(address, "address").and_then(|value| {
+            | Self::CgramU16 { address, .. }
+            | Self::OamU8 { address, .. }
+            | Self::OamU16 { address, .. } => parse_value(address, "address").and_then(|value| {
                 u32::try_from(value).map_err(|_| ManifestError::Invalid {
                     message: format!("address `{address}` does not fit in u32"),
                 })
@@ -180,17 +184,17 @@ impl Assertion {
             Self::BusU8 { expected, .. }
             | Self::WramU8 { expected, .. }
             | Self::VramU8 { expected, .. }
-            | Self::CgramU8 { expected, .. } => {
-                parse_value(expected, "expected").and_then(|value| {
-                    u8::try_from(value).map_err(|_| ManifestError::Invalid {
-                        message: format!("expected value `{expected}` does not fit in u8"),
-                    })
+            | Self::CgramU8 { expected, .. }
+            | Self::OamU8 { expected, .. } => parse_value(expected, "expected").and_then(|value| {
+                u8::try_from(value).map_err(|_| ManifestError::Invalid {
+                    message: format!("expected value `{expected}` does not fit in u8"),
                 })
-            }
+            }),
             Self::BusU16 { .. }
             | Self::WramU16 { .. }
             | Self::VramU16 { .. }
-            | Self::CgramU16 { .. } => Err(ManifestError::Invalid {
+            | Self::CgramU16 { .. }
+            | Self::OamU16 { .. } => Err(ManifestError::Invalid {
                 message: "expected_u8 called for 16-bit assertion".to_string(),
             }),
         }
@@ -201,7 +205,8 @@ impl Assertion {
             Self::BusU16 { expected, .. }
             | Self::WramU16 { expected, .. }
             | Self::VramU16 { expected, .. }
-            | Self::CgramU16 { expected, .. } => {
+            | Self::CgramU16 { expected, .. }
+            | Self::OamU16 { expected, .. } => {
                 parse_value(expected, "expected").and_then(|value| {
                     u16::try_from(value).map_err(|_| ManifestError::Invalid {
                         message: format!("expected value `{expected}` does not fit in u16"),
@@ -211,7 +216,8 @@ impl Assertion {
             Self::BusU8 { .. }
             | Self::WramU8 { .. }
             | Self::VramU8 { .. }
-            | Self::CgramU8 { .. } => Err(ManifestError::Invalid {
+            | Self::CgramU8 { .. }
+            | Self::OamU8 { .. } => Err(ManifestError::Invalid {
                 message: "expected_u16 called for 8-bit assertion".to_string(),
             }),
         }
@@ -226,7 +232,8 @@ impl Assertion {
             Self::BusU8 { .. }
             | Self::WramU8 { .. }
             | Self::VramU8 { .. }
-            | Self::CgramU8 { .. } => {
+            | Self::CgramU8 { .. }
+            | Self::OamU8 { .. } => {
                 self.expected_u8().map_err(|error| ManifestError::Invalid {
                     message: format!("ROM case `{case_id}` has invalid 8-bit assertion: {error}"),
                 })?;
@@ -234,7 +241,8 @@ impl Assertion {
             Self::BusU16 { .. }
             | Self::WramU16 { .. }
             | Self::VramU16 { .. }
-            | Self::CgramU16 { .. } => {
+            | Self::CgramU16 { .. }
+            | Self::OamU16 { .. } => {
                 self.expected_u16()
                     .map_err(|error| ManifestError::Invalid {
                         message: format!(
