@@ -43,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -385,7 +387,10 @@ private fun NerustMenuButton(onOpenMenu: () -> Unit) {
             .statusBarsPadding()
             .padding(16.dp),
     ) {
-        FilledTonalButton(onClick = onOpenMenu) {
+        FilledTonalButton(
+            onClick = onOpenMenu,
+            modifier = Modifier.semantics { contentDescription = "Menu" },
+        ) {
             Text("Menu")
         }
     }
@@ -482,7 +487,9 @@ private fun DrawerActionItem(label: String, onClick: () -> Unit) {
         label = { Text(label) },
         selected = false,
         onClick = onClick,
-        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+        modifier = Modifier
+            .semantics { contentDescription = label }
+            .padding(NavigationDrawerItemDefaults.ItemPadding),
     )
 }
 
