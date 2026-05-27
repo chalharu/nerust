@@ -1,0 +1,6 @@
+# yamllint disable rule:document-start
+linters:
+  cargo-coupling:
+    min_grade: C
+    max_critical: 0
+    max_circular: 0
