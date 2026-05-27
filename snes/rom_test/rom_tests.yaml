@@ -431,6 +431,19 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+  - id: hdma-timing-demonstration-300k-screen-state
+    description: >
+      The undisbeliever HDMA timing demonstration renders a deterministic
+      backdrop gradient at 300000 steps, covering paired HDMA channels that
+      update CGADD and CGDATA during active display.
+    rom: snes-test-roms/bin/hardware-tests/hdma-timing-demonstration.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xA105F6667CC4AFCD"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
