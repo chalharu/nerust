@@ -404,6 +404,20 @@ cases:
       - kind: bus_u8
         address: "0x004200"
         expected: "0x10"
+  - id: wrmpyb-in-flight-300k-screen-state
+    description: >
+      The undisbeliever WRMPYB in-flight hardware test renders the modelled
+      5A22 multiply timing table at 300000 steps, including the
+      hardware-observed zero result when the second WRMPYB write lands seven CPU
+      cycles after the previous multiply start.
+    rom: snes-test-roms/bin/hardware-tests/wrmpyb-in-flight.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x84F58BF561A352E7"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
