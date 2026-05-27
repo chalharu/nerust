@@ -12,7 +12,7 @@ mod memory;
 mod ppu1;
 mod ppu2;
 
-pub use cartridge::{Cartridge, CartridgeError, CartridgeHeader};
+pub use cartridge::{Cartridge, CartridgeError, CartridgeHeader, EnhancementChip};
 pub use cpu::{CpuState, CpuStatus, Registers};
 pub use mapper::MapperKind;
 pub use ppu1::Mode7Registers;
