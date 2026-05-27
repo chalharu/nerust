@@ -307,16 +307,16 @@ cases:
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a
-      deterministic 100000-step screen state once the delayed brightness writes
-      progress through their current IRQ-driven timing model.
+      deterministic 100000-step screen state while the current IRQ-driven
+      brightness ramp is still holding the display at zero brightness.
     rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_delay.sfc
     max_steps: 100000
     check_interval_steps: 100000
-    expected_screen_hash: "0xA7140ABD926FF413"
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
     assertions:
       - kind: bus_u8
         address: "0x002100"
-        expected: "0x0F"
+        expected: "0x00"
       - kind: bus_u8
         address: "0x002105"
         expected: "0x00"

@@ -838,6 +838,7 @@ pub(crate) struct Cpu {
     cycles: u64,
     current_opcode: u8,
     current_state: CpuState,
+    defer_irq_for_one_fetch: bool,
     micro_state: MicroState,
     fault: Option<CpuFault>,
 }
@@ -849,6 +850,7 @@ impl Default for Cpu {
             cycles: 0,
             current_opcode: 0,
             current_state: CpuState::Resetting,
+            defer_irq_for_one_fetch: false,
             micro_state: MicroState::Reset {
                 remaining: RESET_CYCLES,
                 low: 0,
@@ -1302,6 +1304,7 @@ impl Cpu {
                 let addr = u16::from_le_bytes([low, high]);
                 if self.registers.e {
                     self.registers.pc = addr;
+                    self.defer_irq_for_one_fetch = true;
                     self.micro_state = MicroState::Fetch;
                 } else {
                     self.micro_state = MicroState::RtiPullBank(addr);
@@ -1311,6 +1314,7 @@ impl Cpu {
                 let bank = self.stack_pop(bus);
                 self.registers.pb = bank;
                 self.registers.pc = addr;
+                self.defer_irq_for_one_fetch = true;
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::Stopped => {
@@ -1350,7 +1354,9 @@ impl Cpu {
             self.start_nmi_sequence();
             return;
         }
-        if !self.registers.p.contains(CpuStatus::IRQ_DISABLE) && bus.poll_irq() {
+        if self.defer_irq_for_one_fetch {
+            self.defer_irq_for_one_fetch = false;
+        } else if !self.registers.p.contains(CpuStatus::IRQ_DISABLE) && bus.poll_irq() {
             self.start_irq_sequence();
             return;
         }
