@@ -61,6 +61,14 @@ pub struct PresentedMainScreenLine {
     pub tm: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentedColorWindowLine {
+    pub wh0: u8,
+    pub wh1: u8,
+    pub wh2: u8,
+    pub wh3: u8,
+}
+
 pub struct Core {
     cpu: Cpu,
     bus: Bus,
@@ -131,6 +139,10 @@ impl Core {
         self.bus.ppu2.peek_cgram(index)
     }
 
+    pub fn fixed_color(&self) -> u16 {
+        self.bus.ppu2.fixed_color()
+    }
+
     pub fn peek_oam(&self, address: usize) -> u8 {
         self.bus.ppu1.peek_oam(address)
     }
@@ -193,6 +205,10 @@ impl Core {
 
     pub fn presented_main_screen_line(&self, line: usize) -> Option<PresentedMainScreenLine> {
         self.bus.presented_main_screen_line(line)
+    }
+
+    pub fn presented_color_window_line(&self, line: usize) -> Option<PresentedColorWindowLine> {
+        self.bus.presented_color_window_line(line)
     }
 }
 

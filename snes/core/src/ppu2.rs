@@ -8,6 +8,7 @@ pub(crate) struct Ppu2 {
     cgadd: u8,
     cgram_latch: u8,
     cgram_byte: bool,
+    fixed_color: u16,
 }
 
 impl Default for Ppu2 {
@@ -19,6 +20,7 @@ impl Default for Ppu2 {
             cgadd: 0,
             cgram_latch: 0,
             cgram_byte: false,
+            fixed_color: 0,
         }
     }
 }
@@ -54,8 +56,13 @@ impl Ppu2 {
                 self.cgram_byte = !self.cgram_byte;
                 true
             }
-            0x2123..=0x2133 => {
+            0x2123..=0x2131 | 0x2133 => {
                 self.store_register(offset, value);
+                true
+            }
+            0x2132 => {
+                self.store_register(offset, value);
+                self.write_fixed_color(value);
                 true
             }
             _ => false,
@@ -103,12 +110,29 @@ impl Ppu2 {
         self.cgram[index % CGRAM_LEN]
     }
 
+    pub(crate) fn fixed_color(&self) -> u16 {
+        self.fixed_color
+    }
+
     pub(crate) fn force_blank(&self) -> bool {
         self.inidisp & 0x80 != 0
     }
 
     fn store_register(&mut self, offset: u16, value: u8) {
         self.registers[register_index(offset)] = value;
+    }
+
+    fn write_fixed_color(&mut self, value: u8) {
+        let intensity = u16::from(value & 0x1F);
+        if value & 0x20 != 0 {
+            self.fixed_color = (self.fixed_color & !0x001F) | intensity;
+        }
+        if value & 0x40 != 0 {
+            self.fixed_color = (self.fixed_color & !0x03E0) | (intensity << 5);
+        }
+        if value & 0x80 != 0 {
+            self.fixed_color = (self.fixed_color & !0x7C00) | (intensity << 10);
+        }
     }
 }
 
@@ -132,5 +156,17 @@ mod tests {
         assert_eq!(ppu2.inidisp(), 0x00);
         assert_eq!(ppu2.peek_cgram(2), 0x7F);
         assert_eq!(ppu2.peek_cgram(3), 0x00);
+    }
+
+    #[test]
+    fn fixed_color_writes_update_selected_planes() {
+        let mut ppu2 = Ppu2::new();
+
+        assert!(ppu2.write(0x2132, 0x80 | 31));
+        assert!(ppu2.write(0x2132, 0x40 | 7));
+        assert!(ppu2.write(0x2132, 0x20 | 15));
+
+        assert_eq!(ppu2.fixed_color(), (31 << 10) | (7 << 5) | 15);
+        assert_eq!(ppu2.peek(0x2132), Some(0x20 | 15));
     }
 }

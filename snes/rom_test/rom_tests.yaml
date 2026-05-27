@@ -558,6 +558,27 @@ cases:
       - kind: bus_u8
         address: "0x002105"
         expected: "0x01"
+  - id: window-shapes-single-300k-screen-state
+    description: >
+      The undisbeliever single window shapes effect renders a deterministic color-window triangle at 300000 steps using HDMA-updated WH0/WH1 and fixed-color math on the backdrop.
+
+    rom: snes-test-roms/bin/effects/window-shapes-single.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xC22F41E56160A449"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x90"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x20"
   - id: vmain-1bpp-tiles-0-300k-screen-state
     description: >
       The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at 300000 steps after converting 1bpp tile data into transparent 2bpp tiles with VMDATAL and VMDATAH DMA transfers.

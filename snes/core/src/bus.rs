@@ -1,6 +1,6 @@
 use crate::{
-    Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedMainScreenLine, memory::Memory,
-    ppu1::Ppu1, ppu2::Ppu2,
+    Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
+    PresentedMainScreenLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2,
 };
 
 const ADDRESS_MASK: u32 = 0x00FF_FFFF;
@@ -150,6 +150,10 @@ pub(crate) struct Bus {
         [Option<PresentedMainScreenLine>; PRESENTED_SCANLINE_COUNT],
     presented_main_screen_completed_lines:
         [Option<PresentedMainScreenLine>; PRESENTED_SCANLINE_COUNT],
+    presented_color_window_current_lines:
+        [Option<PresentedColorWindowLine>; PRESENTED_SCANLINE_COUNT],
+    presented_color_window_completed_lines:
+        [Option<PresentedColorWindowLine>; PRESENTED_SCANLINE_COUNT],
 }
 
 impl Bus {
@@ -201,6 +205,8 @@ impl Bus {
             presented_bg4_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_main_screen_current_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_main_screen_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_color_window_current_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_color_window_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
         }
     }
 
@@ -248,6 +254,8 @@ impl Bus {
         self.presented_bg4_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_main_screen_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_main_screen_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_color_window_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_color_window_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
 
     #[cfg(test)]
@@ -317,6 +325,7 @@ impl Bus {
             self.presented_bg3_completed_lines = self.presented_bg3_current_lines;
             self.presented_bg4_completed_lines = self.presented_bg4_current_lines;
             self.presented_main_screen_completed_lines = self.presented_main_screen_current_lines;
+            self.presented_color_window_completed_lines = self.presented_color_window_current_lines;
             self.nmi_flag = true;
             if self.nmi_enabled() {
                 self.nmi_pending = true;
@@ -340,6 +349,7 @@ impl Bus {
             self.presented_bg3_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_bg4_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_main_screen_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+            self.presented_color_window_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
             self.capture_presented_scanline();
@@ -459,6 +469,22 @@ impl Bus {
             .flatten()
             .or_else(|| {
                 self.presented_main_screen_current_lines
+                    .get(line)
+                    .copied()
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn presented_color_window_line(
+        &self,
+        line: usize,
+    ) -> Option<PresentedColorWindowLine> {
+        self.presented_color_window_completed_lines
+            .get(line)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                self.presented_color_window_current_lines
                     .get(line)
                     .copied()
                     .flatten()
@@ -1206,6 +1232,12 @@ impl Bus {
         self.presented_main_screen_current_lines[scanline] = Some(PresentedMainScreenLine {
             tm: self.ppu2.peek(0x212C).unwrap_or(0),
         });
+        self.presented_color_window_current_lines[scanline] = Some(PresentedColorWindowLine {
+            wh0: self.ppu2.peek(0x2126).unwrap_or(0),
+            wh1: self.ppu2.peek(0x2127).unwrap_or(0),
+            wh2: self.ppu2.peek(0x2128).unwrap_or(0),
+            wh3: self.ppu2.peek(0x2129).unwrap_or(0),
+        });
     }
 
     fn read_ppu_register(&mut self, offset: u16) -> u8 {
@@ -1424,7 +1456,10 @@ mod tests {
         STANDARD_CONTROLLER_PAYLOAD_BITS, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
         VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
-    use crate::{Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedMainScreenLine};
+    use crate::{
+        Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
+        PresentedMainScreenLine,
+    };
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
@@ -1935,6 +1970,10 @@ mod tests {
         bus.write(0x00_2114, 0x68);
         bus.write(0x00_2114, 0x00);
         bus.write(0x00_212C, 0x0F);
+        bus.write(0x00_2126, 0x10);
+        bus.write(0x00_2127, 0x80);
+        bus.write(0x00_2128, 0x20);
+        bus.write(0x00_2129, 0x90);
 
         tick_into_new_active_frame(&mut bus);
 
@@ -1962,6 +2001,15 @@ mod tests {
         assert_eq!(
             bus.presented_main_screen_line(0),
             Some(PresentedMainScreenLine { tm: 0x0F })
+        );
+        assert_eq!(
+            bus.presented_color_window_line(0),
+            Some(PresentedColorWindowLine {
+                wh0: 0x10,
+                wh1: 0x80,
+                wh2: 0x20,
+                wh3: 0x90,
+            })
         );
     }
 
