@@ -56,6 +56,11 @@ pub struct PresentedBg1Line {
     pub vofs: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentedMainScreenLine {
+    pub tm: u8,
+}
+
 pub struct Core {
     cpu: Cpu,
     bus: Bus,
@@ -138,6 +143,22 @@ impl Core {
         self.bus.ppu1.bg1_vofs()
     }
 
+    pub fn bg2_hofs(&self) -> u16 {
+        self.bus.ppu1.bg2_hofs()
+    }
+
+    pub fn bg2_vofs(&self) -> u16 {
+        self.bus.ppu1.bg2_vofs()
+    }
+
+    pub fn bg3_hofs(&self) -> u16 {
+        self.bus.ppu1.bg3_hofs()
+    }
+
+    pub fn bg3_vofs(&self) -> u16 {
+        self.bus.ppu1.bg3_vofs()
+    }
+
     pub fn mode7_registers(&self) -> Mode7Registers {
         self.bus.ppu1.mode7_registers()
     }
@@ -148,6 +169,18 @@ impl Core {
 
     pub fn presented_bg1_line(&self, line: usize) -> Option<PresentedBg1Line> {
         self.bus.presented_bg1_line(line)
+    }
+
+    pub fn presented_bg2_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.bus.presented_bg2_line(line)
+    }
+
+    pub fn presented_bg3_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.bus.presented_bg3_line(line)
+    }
+
+    pub fn presented_main_screen_line(&self, line: usize) -> Option<PresentedMainScreenLine> {
+        self.bus.presented_main_screen_line(line)
     }
 }
 

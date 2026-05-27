@@ -543,6 +543,21 @@ cases:
       - kind: bus_u8
         address: "0x00212C"
         expected: "0x01"
+  - id: hdma-textbox-wipe-300k-screen-state
+    description: >
+      The undisbeliever HDMA textbox wipe effect uses HDMA to switch main-screen layers between BG1/BG2/OBJ and BG3 scanline regions.
+
+    rom: snes-test-roms/bin/effects/hdma-textbox-wipe.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xF8771E66B83B9EE5"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
   - id: vmain-1bpp-tiles-0-300k-screen-state
     description: >
       The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at 300000 steps after converting 1bpp tile data into transparent 2bpp tiles with VMDATAL and VMDATAH DMA transfers.

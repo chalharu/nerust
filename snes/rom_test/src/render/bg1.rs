@@ -8,48 +8,62 @@ use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::Core;
 
 use super::{
-    RenderError, VISIBLE_BG_Y_OFFSET,
+    BgLayer, RenderError, VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
+    main_screen_for_line,
     mode7::render_mode7_bg1,
+    presented_bg_line,
     tile::{bg_chr_2bpp_pixel, bg_chr_8bpp_pixel, chr_4bpp_pixel, read_tilemap_entry},
-    use_presented_bg1_scroll,
+    use_presented_bg_scroll,
 };
 
-const MODE0_BG1_CGRAM_BASE: usize = 0;
-
-pub(super) fn render_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) -> Result<(), RenderError> {
+pub(super) fn render_bg1(
+    core: &Core,
+    layer: BgLayer,
+    brightness: u8,
+    current_tm: u8,
+    use_presented_tm: bool,
+    rgba: &mut [u8],
+) -> Result<(), RenderError> {
     let bgmode = core.peek(0x002105);
-    let mode = bgmode & 0x07;
-    let mode = Bg1RenderMode::from_bgmode(mode)?;
-    if mode == Bg1RenderMode::Mode7 {
-        render_mode7_bg1(core, brightness, rgba);
+    let screen_mode = bgmode & 0x07;
+    let Some(mode) = BgRenderMode::from_bgmode(layer, screen_mode)? else {
+        return Ok(());
+    };
+    if mode == BgRenderMode::Mode7 {
+        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, rgba);
         return Ok(());
     }
 
-    let bg1sc = core.peek(0x002107);
+    let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
+    let bg34nba = core.peek(0x00210C);
     let context = Bg1RenderContext {
         mode,
-        tilemap_base: (usize::from(bg1sc & 0xFC)) << 9,
-        chr_base: usize::from(bg12nba & 0x0F) << 13,
+        tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
+        chr_base: layer.chr_base(bg12nba, bg34nba),
         tile_size: if bgmode & 0x10 != 0 { 16 } else { 8 },
-        tilemap_width_tiles: if bg1sc & 0x01 != 0 { 64 } else { 32 },
+        tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
+        bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
         brightness,
     };
-    let tilemap_height_tiles = if bg1sc & 0x02 != 0 { 64 } else { 32 };
+    let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
     let tilemap_height_pixels = tilemap_height_tiles * context.tile_size;
-    let current_hofs = usize::from(core.bg1_hofs());
-    let current_vofs = usize::from(core.bg1_vofs());
-    let use_presented_scroll = use_presented_bg1_scroll(core);
+    let (current_hofs, current_vofs) = layer.current_scroll(core);
+    let use_presented_scroll = use_presented_bg_scroll(core, layer);
 
     for screen_y in 0..SCREEN_HEIGHT {
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() == 0
+        {
+            continue;
+        }
         let presented = use_presented_scroll
-            .then(|| core.presented_bg1_line(screen_y))
+            .then(|| presented_bg_line(core, layer, screen_y))
             .flatten();
-        let hofs = presented.map_or(current_hofs, |line| usize::from(line.hofs))
+        let hofs = presented.map_or(usize::from(current_hofs), |line| usize::from(line.hofs))
             % tilemap_width_pixels.max(1);
-        let vofs = (presented.map_or(current_vofs, |line| usize::from(line.vofs))
+        let vofs = (presented.map_or(usize::from(current_vofs), |line| usize::from(line.vofs))
             + VISIBLE_BG_Y_OFFSET)
             % tilemap_height_pixels.max(1);
         let bg_y = (screen_y + vofs) % tilemap_height_pixels;
@@ -91,10 +105,10 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     let tile_number = usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16;
     let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
-        Bg1RenderMode::Mode0 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        Bg1RenderMode::Mode1 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        Bg1RenderMode::Mode3 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        Bg1RenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
+        BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Bpp4 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Bpp8 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
     if color == 0 {
         return None;
@@ -102,49 +116,111 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
 
     let palette = usize::from((entry >> 10) & 0x07);
     let color_index = match context.mode {
-        Bg1RenderMode::Mode0 => MODE0_BG1_CGRAM_BASE + palette * 4 + usize::from(color),
-        Bg1RenderMode::Mode1 => palette * 16 + usize::from(color),
-        Bg1RenderMode::Mode3 => usize::from(color),
-        Bg1RenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
+        BgRenderMode::Bpp2 => context.bpp2_palette_base + palette * 4 + usize::from(color),
+        BgRenderMode::Bpp4 => palette * 16 + usize::from(color),
+        BgRenderMode::Bpp8 => usize::from(color),
+        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
     Some(cgram_color_rgba(core, color_index, context.brightness))
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Bg1RenderContext {
-    mode: Bg1RenderMode,
+    mode: BgRenderMode,
     tilemap_base: usize,
     chr_base: usize,
     tile_size: usize,
     tilemap_width_tiles: usize,
+    bpp2_palette_base: usize,
     brightness: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bg1RenderMode {
-    Mode0,
-    Mode1,
-    Mode3,
+enum BgRenderMode {
+    Bpp2,
+    Bpp4,
+    Bpp8,
     Mode7,
 }
 
-impl Bg1RenderMode {
-    fn from_bgmode(mode: u8) -> Result<Self, RenderError> {
-        match mode {
-            0 => Ok(Self::Mode0),
-            1 => Ok(Self::Mode1),
-            3 => Ok(Self::Mode3),
-            7 => Ok(Self::Mode7),
+impl BgRenderMode {
+    fn from_bgmode(layer: BgLayer, mode: u8) -> Result<Option<Self>, RenderError> {
+        match (layer, mode) {
+            (BgLayer::Bg1 | BgLayer::Bg2 | BgLayer::Bg3, 0) => Ok(Some(Self::Bpp2)),
+            (BgLayer::Bg1 | BgLayer::Bg2, 1) => Ok(Some(Self::Bpp4)),
+            (BgLayer::Bg3, 1) => Ok(Some(Self::Bpp2)),
+            (BgLayer::Bg1, 3) => Ok(Some(Self::Bpp8)),
+            (BgLayer::Bg1, 7) => Ok(Some(Self::Mode7)),
+            (_, 3 | 7) => Ok(None),
             _ => Err(RenderError::UnsupportedBgMode { mode }),
         }
     }
 
     const fn tile_bytes(self) -> usize {
         match self {
-            Self::Mode0 => 16,
-            Self::Mode1 => 32,
-            Self::Mode3 => 64,
+            Self::Bpp2 => 16,
+            Self::Bpp4 => 32,
+            Self::Bpp8 => 64,
             Self::Mode7 => 0,
         }
+    }
+}
+
+fn bpp2_palette_base(layer: BgLayer, screen_mode: u8) -> usize {
+    match screen_mode {
+        0 => layer.mode0_palette_base(),
+        1 if layer == BgLayer::Bg3 => 0,
+        _ => 0,
+    }
+}
+
+impl BgLayer {
+    const fn bgsc_register(self) -> u32 {
+        match self {
+            Self::Bg1 => 0x002107,
+            Self::Bg2 => 0x002108,
+            Self::Bg3 => 0x002109,
+        }
+    }
+
+    const fn chr_base(self, bg12nba: u8, bg34nba: u8) -> usize {
+        match self {
+            Self::Bg1 => ((bg12nba & 0x0F) as usize) << 13,
+            Self::Bg2 => ((bg12nba >> 4) as usize) << 13,
+            Self::Bg3 => ((bg34nba & 0x0F) as usize) << 13,
+        }
+    }
+
+    fn current_scroll(self, core: &Core) -> (u16, u16) {
+        match self {
+            Self::Bg1 => (core.bg1_hofs(), core.bg1_vofs()),
+            Self::Bg2 => (core.bg2_hofs(), core.bg2_vofs()),
+            Self::Bg3 => (core.bg3_hofs(), core.bg3_vofs()),
+        }
+    }
+
+    const fn mode0_palette_base(self) -> usize {
+        match self {
+            Self::Bg1 => 0,
+            Self::Bg2 => 32,
+            Self::Bg3 => 64,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BgLayer, bpp2_palette_base};
+
+    #[test]
+    fn bpp2_palette_base_uses_mode0_layer_blocks() {
+        assert_eq!(bpp2_palette_base(BgLayer::Bg1, 0), 0);
+        assert_eq!(bpp2_palette_base(BgLayer::Bg2, 0), 32);
+        assert_eq!(bpp2_palette_base(BgLayer::Bg3, 0), 64);
+    }
+
+    #[test]
+    fn mode1_bg3_uses_first_palette_block() {
+        assert_eq!(bpp2_palette_base(BgLayer::Bg3, 1), 0);
     }
 }

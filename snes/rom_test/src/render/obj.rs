@@ -9,6 +9,7 @@ use nerust_snes_core::Core;
 
 use super::{
     color::{cgram_color_rgba, put_pixel},
+    main_screen_for_line,
     tile::chr_4bpp_pixel,
 };
 
@@ -16,12 +17,21 @@ const OBJ_TILE_SIZE: u8 = 8;
 const OBJ_SPRITES_PER_SCANLINE_LIMIT: usize = 32;
 const OBJ_TILE_SLIVERS_PER_SCANLINE_LIMIT: usize = 34;
 
-pub(super) fn render_obj(core: &Core, brightness: u8, rgba: &mut [u8]) {
+pub(super) fn render_obj(
+    core: &Core,
+    brightness: u8,
+    current_tm: u8,
+    use_presented_tm: bool,
+    rgba: &mut [u8],
+) {
     let obsel = core.peek(0x002101);
     let (small_size, large_size) = obj_size_pair((obsel >> 5) & 0x07);
     let sprites = collect_obj_sprites(core, small_size, large_size);
 
     for screen_y in 0..SCREEN_HEIGHT {
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 == 0 {
+            continue;
+        }
         let slivers = obj_slivers_for_scanline(&sprites, screen_y);
         for sliver in slivers.iter().rev() {
             render_obj_sliver(core, obsel, brightness, rgba, screen_y, *sliver);

@@ -1,5 +1,6 @@
 const VRAM_LEN: usize = 64 * 1024;
 const OAM_LEN: usize = 544;
+const BG_LAYER_COUNT: usize = 4;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mode7Registers {
@@ -21,9 +22,9 @@ pub(crate) struct Ppu1 {
     vmadd: u16,
     oam_byte_addr: u16,
     bgofs_latch: u8,
-    bg1_hofs_latch: u8,
-    bg1_hofs: u16,
-    bg1_vofs: u16,
+    bg_hofs_latch: [u8; BG_LAYER_COUNT],
+    bg_hofs: [u16; BG_LAYER_COUNT],
+    bg_vofs: [u16; BG_LAYER_COUNT],
     mode7: Mode7Registers,
     mode7_latch: u8,
 }
@@ -38,9 +39,9 @@ impl Default for Ppu1 {
             vmadd: 0,
             oam_byte_addr: 0,
             bgofs_latch: 0,
-            bg1_hofs_latch: 0,
-            bg1_hofs: 0,
-            bg1_vofs: 0,
+            bg_hofs_latch: [0; BG_LAYER_COUNT],
+            bg_hofs: [0; BG_LAYER_COUNT],
+            bg_vofs: [0; BG_LAYER_COUNT],
             mode7: Mode7Registers::default(),
             mode7_latch: 0,
         }
@@ -81,12 +82,22 @@ impl Ppu1 {
             }
             0x210D => {
                 self.store_register(offset, value);
-                self.write_bg1_hofs(value);
+                self.write_bg_hofs(0, value);
                 true
             }
             0x210E => {
                 self.store_register(offset, value);
-                self.write_bg1_vofs(value);
+                self.write_bg_vofs(0, value);
+                true
+            }
+            0x210F | 0x2111 | 0x2113 => {
+                self.store_register(offset, value);
+                self.write_bg_hofs(bg_hofs_index(offset), value);
+                true
+            }
+            0x2110 | 0x2112 | 0x2114 => {
+                self.store_register(offset, value);
+                self.write_bg_vofs(bg_vofs_index(offset), value);
                 true
             }
             0x2115 => {
@@ -124,7 +135,7 @@ impl Ppu1 {
                 self.write_mode7_word(offset, value);
                 true
             }
-            0x2101 | 0x2105..=0x210C | 0x210F..=0x2114 => {
+            0x2101 | 0x2105..=0x210C => {
                 self.store_register(offset, value);
                 true
             }
@@ -168,11 +179,27 @@ impl Ppu1 {
     }
 
     pub(crate) fn bg1_hofs(&self) -> u16 {
-        self.bg1_hofs
+        self.bg_hofs(0)
     }
 
     pub(crate) fn bg1_vofs(&self) -> u16 {
-        self.bg1_vofs
+        self.bg_vofs(0)
+    }
+
+    pub(crate) fn bg2_hofs(&self) -> u16 {
+        self.bg_hofs(1)
+    }
+
+    pub(crate) fn bg2_vofs(&self) -> u16 {
+        self.bg_vofs(1)
+    }
+
+    pub(crate) fn bg3_hofs(&self) -> u16 {
+        self.bg_hofs(2)
+    }
+
+    pub(crate) fn bg3_vofs(&self) -> u16 {
+        self.bg_vofs(2)
     }
 
     pub(crate) fn mode7_registers(&self) -> Mode7Registers {
@@ -220,17 +247,25 @@ impl Ppu1 {
         if increment_after_high { high } else { !high }
     }
 
-    fn write_bg1_hofs(&mut self, value: u8) {
-        self.bg1_hofs = ((u16::from(value) << 8)
-            | u16::from(self.bgofs_latch & 0xF8)
-            | u16::from(self.bg1_hofs_latch & 0x07))
-            & 0x03FF;
-        self.bgofs_latch = value;
-        self.bg1_hofs_latch = value;
+    fn bg_hofs(&self, index: usize) -> u16 {
+        self.bg_hofs[index]
     }
 
-    fn write_bg1_vofs(&mut self, value: u8) {
-        self.bg1_vofs = ((u16::from(value) << 8) | u16::from(self.bgofs_latch)) & 0x03FF;
+    fn bg_vofs(&self, index: usize) -> u16 {
+        self.bg_vofs[index]
+    }
+
+    fn write_bg_hofs(&mut self, index: usize, value: u8) {
+        self.bg_hofs[index] = ((u16::from(value) << 8)
+            | u16::from(self.bgofs_latch & 0xF8)
+            | u16::from(self.bg_hofs_latch[index] & 0x07))
+            & 0x03FF;
+        self.bgofs_latch = value;
+        self.bg_hofs_latch[index] = value;
+    }
+
+    fn write_bg_vofs(&mut self, index: usize, value: u8) {
+        self.bg_vofs[index] = ((u16::from(value) << 8) | u16::from(self.bgofs_latch)) & 0x03FF;
         self.bgofs_latch = value;
     }
 
@@ -251,6 +286,14 @@ impl Ppu1 {
 
 fn register_index(offset: u16) -> usize {
     usize::from(offset - 0x2100)
+}
+
+fn bg_hofs_index(offset: u16) -> usize {
+    usize::from((offset - 0x210D) / 2)
+}
+
+fn bg_vofs_index(offset: u16) -> usize {
+    usize::from((offset - 0x210E) / 2)
 }
 
 fn remap_vmadd(address: u16, vmain: u8) -> u16 {
@@ -394,16 +437,28 @@ mod tests {
     }
 
     #[test]
-    fn bg1_scroll_registers_track_common_two_write_sequences() {
+    fn bg_scroll_registers_track_common_two_write_sequences() {
         let mut ppu1 = Ppu1::new();
 
         assert!(ppu1.write(0x210D, 0x34));
         assert!(ppu1.write(0x210D, 0x02));
         assert!(ppu1.write(0x210E, 0x78));
         assert!(ppu1.write(0x210E, 0x01));
+        assert!(ppu1.write(0x210F, 0x56));
+        assert!(ppu1.write(0x210F, 0x03));
+        assert!(ppu1.write(0x2110, 0x9A));
+        assert!(ppu1.write(0x2110, 0x00));
+        assert!(ppu1.write(0x2111, 0xBC));
+        assert!(ppu1.write(0x2111, 0x02));
+        assert!(ppu1.write(0x2112, 0xDE));
+        assert!(ppu1.write(0x2112, 0x01));
 
         assert_eq!(ppu1.bg1_hofs(), 0x0234);
         assert_eq!(ppu1.bg1_vofs(), 0x0178);
+        assert_eq!(ppu1.bg2_hofs(), 0x0356);
+        assert_eq!(ppu1.bg2_vofs(), 0x009A);
+        assert_eq!(ppu1.bg3_hofs(), 0x02BC);
+        assert_eq!(ppu1.bg3_vofs(), 0x01DE);
     }
 
     #[test]
