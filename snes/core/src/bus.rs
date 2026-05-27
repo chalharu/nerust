@@ -41,6 +41,10 @@ pub(crate) struct Bus {
     /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
     nmi_pending: bool,
     irq_flag: bool,
+    latched_hcounter: u16,
+    latched_vcounter: u16,
+    ophct_high_byte: bool,
+    opvct_high_byte: bool,
     hdma_active_mask: u8,
     hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
@@ -60,12 +64,16 @@ impl Bus {
             memory: Memory::new(),
             ppu1: Ppu1::new(),
             ppu2: Ppu2::new(),
-            cpu_io_registers: [0; CPU_IO_REGISTER_COUNT],
+            cpu_io_registers: initial_cpu_io_registers(),
             dma_registers: [0; DMA_REGISTER_COUNT],
             video_phase: 0,
             nmi_flag: false,
             nmi_pending: false,
             irq_flag: false,
+            latched_hcounter: 0,
+            latched_vcounter: 0,
+            ophct_high_byte: false,
+            opvct_high_byte: false,
             hdma_active_mask: 0,
             hdma_table_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_addr: [0; DMA_CHANNEL_COUNT],
@@ -86,6 +94,11 @@ impl Bus {
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
+        self.cpu_io_registers[0x01] = 0xFF;
+        self.latched_hcounter = 0;
+        self.latched_vcounter = 0;
+        self.ophct_high_byte = false;
+        self.opvct_high_byte = false;
         self.hdma_active_mask = 0;
         self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
@@ -161,6 +174,41 @@ impl Bus {
             (true, false) => vmatch && self.current_subtick() == 0,
             (true, true) => vmatch && hmatch,
         }
+    }
+
+    fn current_hcounter(&self) -> u16 {
+        hcounter_midpoint_for_subtick(self.current_subtick())
+    }
+
+    fn wrio_port2_high(&self) -> bool {
+        self.cpu_io_registers[0x01] & 0x40 != 0
+    }
+
+    fn latch_counters(&mut self) {
+        self.latched_hcounter = self.current_hcounter();
+        self.latched_vcounter = self.current_scanline();
+        self.ophct_high_byte = false;
+        self.opvct_high_byte = false;
+    }
+
+    fn read_latched_hcounter(&mut self) -> u8 {
+        let value = counter_byte(self.latched_hcounter, self.ophct_high_byte);
+        self.ophct_high_byte = !self.ophct_high_byte;
+        value
+    }
+
+    fn read_latched_vcounter(&mut self) -> u8 {
+        let value = counter_byte(self.latched_vcounter, self.opvct_high_byte);
+        self.opvct_high_byte = !self.opvct_high_byte;
+        value
+    }
+
+    fn peek_latched_hcounter(&self) -> u8 {
+        counter_byte(self.latched_hcounter, self.ophct_high_byte)
+    }
+
+    fn peek_latched_vcounter(&self) -> u8 {
+        counter_byte(self.latched_vcounter, self.opvct_high_byte)
     }
 
     /// Consume and return the pending-NMI flag.  Called by the CPU each cycle
@@ -290,6 +338,13 @@ impl Bus {
                 }
                 if self.irq_event_matches_current_position() {
                     self.irq_flag = true;
+                }
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4201) => {
+                let previous = self.cpu_io_registers[0x01];
+                self.cpu_io_registers[0x01] = value;
+                if previous & 0x40 != 0 && value & 0x40 == 0 {
+                    self.latch_counters();
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
@@ -553,17 +608,39 @@ impl Bus {
     }
 
     fn read_ppu_register(&mut self, offset: u16) -> u8 {
-        self.ppu1
-            .read(offset)
-            .or_else(|| self.ppu2.read(offset))
-            .unwrap_or(0)
+        match offset {
+            0x2137 => {
+                if self.wrio_port2_high() {
+                    self.latch_counters();
+                }
+                0
+            }
+            0x213C => self.read_latched_hcounter(),
+            0x213D => self.read_latched_vcounter(),
+            0x213F => {
+                self.ophct_high_byte = false;
+                self.opvct_high_byte = false;
+                self.ppu2.read(offset).unwrap_or(0)
+            }
+            _ => self
+                .ppu1
+                .read(offset)
+                .or_else(|| self.ppu2.read(offset))
+                .unwrap_or(0),
+        }
     }
 
     fn peek_ppu_register(&self, offset: u16) -> u8 {
-        self.ppu1
-            .peek(offset)
-            .or_else(|| self.ppu2.peek(offset))
-            .unwrap_or(0)
+        match offset {
+            0x2137 => 0,
+            0x213C => self.peek_latched_hcounter(),
+            0x213D => self.peek_latched_vcounter(),
+            _ => self
+                .ppu1
+                .peek(offset)
+                .or_else(|| self.ppu2.peek(offset))
+                .unwrap_or(0),
+        }
     }
 
     fn write_ppu_register(&mut self, offset: u16, value: u8) -> bool {
@@ -622,6 +699,12 @@ fn dma_abus_accessible(bank: u8, offset: u16) -> bool {
     )
 }
 
+fn initial_cpu_io_registers() -> [u8; CPU_IO_REGISTER_COUNT] {
+    let mut registers = [0; CPU_IO_REGISTER_COUNT];
+    registers[0x01] = 0xFF;
+    registers
+}
+
 fn hcounter_target_is_in_subtick(target: u16, subtick: u16) -> bool {
     let start = (u32::from(subtick) * u32::from(HCOUNTER_DOTS_PER_LINE))
         / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
@@ -629,6 +712,23 @@ fn hcounter_target_is_in_subtick(target: u16, subtick: u16) -> bool {
         / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
     let target = u32::from(target.min(HCOUNTER_DOTS_PER_LINE.saturating_sub(1)));
     target >= start && target < end
+}
+
+fn hcounter_midpoint_for_subtick(subtick: u16) -> u16 {
+    let start = (u32::from(subtick) * u32::from(HCOUNTER_DOTS_PER_LINE))
+        / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
+    let end = (u32::from(subtick + 1) * u32::from(HCOUNTER_DOTS_PER_LINE))
+        / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
+    let midpoint = start + ((end - start).saturating_sub(1) / 2);
+    midpoint as u16
+}
+
+fn counter_byte(counter: u16, high: bool) -> u8 {
+    if high {
+        ((counter >> 8) & 0x01) as u8
+    } else {
+        counter as u8
+    }
 }
 
 fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
@@ -1329,5 +1429,122 @@ mod tests {
         assert!(bus.irq_flag);
         assert!(bus.poll_irq());
         assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn slhv_latches_current_h_and_v_counters() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x40);
+
+        for _ in 0..(5 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 5);
+        assert_eq!(bus.read(0x00213D), 0);
+        assert_eq!(bus.read(0x00213C), 127);
+        assert_eq!(bus.read(0x00213C), 0);
+    }
+
+    #[test]
+    fn slhv_latches_with_reset_default_wrio_state() {
+        let mut bus = Bus::new(test_cartridge());
+
+        for _ in 0..(4 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
+            bus.tick_video_stub();
+        }
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 4);
+        assert_eq!(bus.read(0x00213D), 0);
+    }
+
+    #[test]
+    fn stat78_resets_ophct_and_opvct_byte_order() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x40);
+
+        for _ in 0..(6 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 3) {
+            bus.tick_video_stub();
+        }
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 6);
+        assert_eq!(bus.read(0x00213F), 0x01);
+        assert_eq!(bus.read(0x00213D), 6);
+        assert_eq!(bus.read(0x00213C), 41);
+        assert_eq!(bus.read(0x00213C), 1);
+        assert_eq!(bus.read(0x00213F), 0x01);
+        assert_eq!(bus.read(0x00213C), 41);
+    }
+
+    #[test]
+    fn slhv_relatch_resets_counter_byte_order_and_preserves_high_bits() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x40);
+
+        for _ in 0..(257 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 1);
+        assert_eq!(bus.read(0x00213C), 127);
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 1);
+        assert_eq!(bus.read(0x00213D), 1);
+        assert_eq!(bus.read(0x00213C), 127);
+        assert_eq!(bus.read(0x00213C), 0);
+    }
+
+    #[test]
+    fn slhv_does_not_relatch_when_wrio_port2_is_low() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x40);
+
+        for _ in 0..(5 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+        assert_eq!(bus.read(0x002137), 0x00);
+
+        bus.write(0x004201, 0x00);
+        for _ in 0..(2 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
+            bus.tick_video_stub();
+        }
+        assert_eq!(bus.read(0x00213F), 0x01);
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 5);
+    }
+
+    #[test]
+    fn wrio_port2_falling_edge_latches_h_and_v_counters() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x40);
+
+        for _ in 0..(8 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+        bus.write(0x004201, 0x00);
+
+        assert_eq!(bus.read(0x00213D), 8);
+        assert_eq!(bus.read(0x00213D), 0);
+        assert_eq!(bus.read(0x00213C), 127);
+        assert_eq!(bus.read(0x00213C), 0);
+    }
+
+    #[test]
+    fn reset_ephemeral_state_restores_wrio_default_high() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004201, 0x00);
+        bus.reset_ephemeral_state();
+
+        for _ in 0..(3 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
+            bus.tick_video_stub();
+        }
+
+        assert_eq!(bus.read(0x002137), 0x00);
+        assert_eq!(bus.read(0x00213D), 3);
     }
 }
