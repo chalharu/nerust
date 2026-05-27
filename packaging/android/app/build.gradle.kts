@@ -2,12 +2,14 @@ plugins {
     id("com.android.application")
 }
 
+fun envOrNull(name: String): String? = System.getenv(name)?.takeUnless(String::isBlank)
+
 val versionNameOverride = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
 val versionCodeOverride = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 1
-val keystoreFilePath = System.getenv("ANDROID_KEY_STORE_PATH")
-val keystoreAlias = System.getenv("ANDROID_KEY_ALIAS")
-val keystoreStorePassword = System.getenv("ANDROID_KEY_STORE_PASSWORD")
-val keystoreKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+val keystoreFilePath = envOrNull("ANDROID_KEY_STORE_PATH")
+val keystoreAlias = envOrNull("ANDROID_KEY_ALIAS")
+val keystoreStorePassword = envOrNull("ANDROID_KEY_STORE_PASSWORD")
+val keystoreKeyPassword = envOrNull("ANDROID_KEY_PASSWORD")
 
 android {
     namespace = "io.github.chalharu.nerust"
@@ -57,7 +59,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
+            jniLibs.srcDir("src/main/jniLibs")
         }
     }
 }
