@@ -10,6 +10,7 @@ const LOROM_MAP_MODE_MASK: u8 = 0x2F;
 const LOROM_MAP_MODE_VALUE: u8 = 0x20;
 const HIROM_MAP_MODE_MASK: u8 = 0x2F;
 const HIROM_MAP_MODE_VALUE: u8 = 0x21;
+const MAX_RAM_SIZE_CODE: u8 = 0x08;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -21,6 +22,8 @@ pub enum CartridgeError {
     MissingHeader,
     #[error("unsupported SNES map mode 0x{0:02X}")]
     UnsupportedMapMode(u8),
+    #[error("unsupported SNES cartridge RAM size code 0x{0:02X}")]
+    UnsupportedRamSizeCode(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +31,7 @@ pub struct CartridgeHeader {
     title: String,
     map_mode: u8,
     rom_size_code: u8,
+    ram_size_code: u8,
     reset_vector: u16,
     has_copier_header: bool,
     mapper_kind: MapperKind,
@@ -46,6 +50,10 @@ impl CartridgeHeader {
         self.rom_size_code
     }
 
+    pub fn ram_size_code(&self) -> u8 {
+        self.ram_size_code
+    }
+
     pub fn reset_vector(&self) -> u16 {
         self.reset_vector
     }
@@ -62,6 +70,7 @@ impl CartridgeHeader {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cartridge {
     rom: Box<[u8]>,
+    save_ram: Box<[u8]>,
     header: CartridgeHeader,
     mapper: Mapper,
 }
@@ -79,8 +88,11 @@ impl Cartridge {
             ));
         };
 
+        let save_ram = vec![0; ram_size_bytes(header.ram_size_code)?].into_boxed_slice();
+
         Ok(Self {
             rom: rom.to_vec().into_boxed_slice(),
+            save_ram,
             header,
             mapper,
         })
@@ -136,6 +148,7 @@ impl Cartridge {
                 title,
                 map_mode,
                 rom_size_code: rom[header_offset + 0x17],
+                ram_size_code: rom[header_offset + 0x18],
                 reset_vector,
                 has_copier_header,
                 mapper_kind,
@@ -156,11 +169,19 @@ impl Cartridge {
     }
 
     pub fn read(&self, address: u32) -> Option<u8> {
-        self.mapper.read_rom(&self.rom, address)
+        self.mapper.read(&self.rom, &self.save_ram, address)
+    }
+
+    pub fn write(&mut self, address: u32, value: u8) -> bool {
+        self.mapper.write_ram(&mut self.save_ram, address, value)
     }
 
     pub fn rom_len(&self) -> usize {
         self.rom.len()
+    }
+
+    pub fn save_ram(&self) -> &[u8] {
+        &self.save_ram
     }
 }
 
@@ -170,6 +191,17 @@ fn strip_copier_header(bytes: &[u8]) -> Result<(&[u8], bool), CartridgeError> {
         COPIER_HEADER_LEN => Ok((&bytes[COPIER_HEADER_LEN..], true)),
         _ => Err(CartridgeError::InvalidRomSize),
     }
+}
+
+fn ram_size_bytes(code: u8) -> Result<usize, CartridgeError> {
+    if code == 0 {
+        return Ok(0);
+    }
+    if code > MAX_RAM_SIZE_CODE {
+        return Err(CartridgeError::UnsupportedRamSizeCode(code));
+    }
+
+    Ok(1024usize << code)
 }
 
 #[cfg(test)]
@@ -187,6 +219,7 @@ mod tests {
         rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"CPU TEST HEADER      ");
         rom[0x7FD5] = 0x30;
         rom[0x7FD7] = 0x08;
+        rom[0x7FD8] = 0x03;
         rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2]
             .copy_from_slice(&0x8000_u16.to_le_bytes());
         rom[0x0000] = 0xEA;
@@ -200,6 +233,7 @@ mod tests {
             .copy_from_slice(b"HIROM TEST HEADER    ");
         rom[0xFFD5] = 0x31;
         rom[0xFFD7] = 0x09;
+        rom[0xFFD8] = 0x03;
         rom[HIROM_RESET_VECTOR_OFFSET..HIROM_RESET_VECTOR_OFFSET + 2]
             .copy_from_slice(&0x8000_u16.to_le_bytes());
         rom[0x8000] = 0xEA;
@@ -218,9 +252,11 @@ mod tests {
         assert_eq!(cartridge.header().title(), "CPU TEST HEADER");
         assert_eq!(cartridge.header().map_mode(), 0x30);
         assert_eq!(cartridge.header().rom_size_code(), 0x08);
+        assert_eq!(cartridge.header().ram_size_code(), 0x03);
         assert_eq!(cartridge.header().reset_vector(), 0x8000);
         assert!(cartridge.header().has_copier_header());
         assert_eq!(cartridge.header().mapper_kind(), MapperKind::LoRom);
+        assert_eq!(cartridge.save_ram().len(), 8 * 1024);
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
         assert_eq!(cartridge.read(0x018000), Some(0xA2));
         assert_eq!(cartridge.read(0x808000), Some(0xEA));
@@ -233,11 +269,48 @@ mod tests {
         assert_eq!(cartridge.header().title(), "HIROM TEST HEADER");
         assert_eq!(cartridge.header().map_mode(), 0x31);
         assert_eq!(cartridge.header().rom_size_code(), 0x09);
+        assert_eq!(cartridge.header().ram_size_code(), 0x03);
         assert_eq!(cartridge.header().reset_vector(), 0x8000);
         assert_eq!(cartridge.header().mapper_kind(), MapperKind::HiRom);
+        assert_eq!(cartridge.save_ram().len(), 8 * 1024);
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
         assert_eq!(cartridge.read(0xC08000), Some(0xEA));
         assert_eq!(cartridge.read(0xC10000), Some(0xA2));
+    }
+
+    #[test]
+    fn lorom_sram_reads_writes_and_mirrors() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert_eq!(cartridge.read(0x700123), Some(0x00));
+        assert!(cartridge.write(0x700123, 0x5A));
+        assert_eq!(cartridge.read(0x700123), Some(0x5A));
+        assert_eq!(cartridge.read(0x702123), Some(0x5A));
+        assert_eq!(cartridge.read(0xF00123), Some(0x5A));
+        assert!(!cartridge.write(0x708000, 0xC3));
+    }
+
+    #[test]
+    fn hirom_sram_reads_writes_and_mirrors() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom()).unwrap();
+
+        assert_eq!(cartridge.read(0x206123), Some(0x00));
+        assert!(cartridge.write(0x206123, 0xA5));
+        assert_eq!(cartridge.read(0x206123), Some(0xA5));
+        assert_eq!(cartridge.read(0x216123), Some(0xA5));
+        assert_eq!(cartridge.read(0xA06123), Some(0xA5));
+        assert!(!cartridge.write(0x208000, 0xC3));
+    }
+
+    #[test]
+    fn rejects_unsupported_ram_size_codes() {
+        let mut rom = build_lorom();
+        rom[0x7FD8] = 0x09;
+
+        assert_eq!(
+            Cartridge::from_bytes(&rom).unwrap_err(),
+            CartridgeError::UnsupportedRamSizeCode(0x09)
+        );
     }
 
     #[test]

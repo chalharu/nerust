@@ -877,7 +877,9 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => {
                 self.write_dma_register(offset, value);
             }
-            _ => {}
+            _ => {
+                let _ = self.cartridge.write(address, value);
+            }
         }
     }
 
@@ -908,8 +910,12 @@ impl Bus {
         let bank = ((address >> 16) & 0xFF) as u8;
         let offset = (address & 0xFFFF) as u16;
 
-        if dma_abus_accessible(bank, offset) {
-            let _ = self.memory.write_cpu_bus(bank, offset, value);
+        if !dma_abus_accessible(bank, offset) {
+            return;
+        }
+
+        if !self.memory.write_cpu_bus(bank, offset, value) {
+            let _ = self.cartridge.write(address, value);
         }
     }
 
@@ -1466,6 +1472,7 @@ mod tests {
         let mut rom = vec![0; 0x8000];
         rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"WRAM BUS TEST        ");
         rom[0x7FD5] = 0x30;
+        rom[0x7FD8] = 0x03;
         rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2]
             .copy_from_slice(&0x8000_u16.to_le_bytes());
         Cartridge::from_bytes(&rom).unwrap()
@@ -1483,6 +1490,27 @@ mod tests {
 
         bus.write(0x7F0001, 0x99);
         assert_eq!(bus.read(0x7F0001), 0x99);
+    }
+
+    #[test]
+    fn cartridge_sram_reads_writes_through_cpu_bus() {
+        let mut bus = Bus::new(test_cartridge());
+
+        assert_eq!(bus.read(0x700456), 0x00);
+        bus.write(0x700456, 0xA5);
+
+        assert_eq!(bus.read(0x700456), 0xA5);
+        assert_eq!(bus.read(0x702456), 0xA5);
+    }
+
+    #[test]
+    fn cartridge_sram_reads_writes_through_dma_abus() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.dma_write_abus(0x700321, 0x3C);
+
+        assert_eq!(bus.dma_read_abus(0x700321), 0x3C);
+        assert_eq!(bus.read(0x702321), 0x3C);
     }
 
     #[test]
@@ -2222,6 +2250,22 @@ mod tests {
             0x00,
             "channel 1 was not spuriously triggered"
         );
+    }
+
+    #[test]
+    fn dma_b_to_a_writes_to_cartridge_sram() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_1234, 0x6D);
+        bus.write(0x00_2181, 0x34);
+        bus.write(0x00_2182, 0x12);
+        bus.write(0x00_2183, 0x7E);
+
+        setup_dma_ch0(&mut bus, 0x80, 0x80, 0x70_0321, 1);
+        bus.write(0x00_420B, 0x01);
+
+        assert_eq!(bus.read(0x70_0321), 0x6D);
+        assert_eq!(bus.read(0x72_0321), 0x6D);
     }
 
     #[test]
