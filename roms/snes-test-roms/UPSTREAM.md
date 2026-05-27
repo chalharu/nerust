@@ -5,6 +5,8 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
 - Upstream repository commit: `ac6ef80`
 - Local artifact branch: `release-artifacts`
 - Included generated ROMs:
+  - `bin/examples/hdma-double-buffered-indirect-shear.sfc`
+  - `bin/examples/hdma-double-buffered-parallax.sfc`
   - `bin/examples/hdma-to-cgram.sfc`
   - `bin/examples/hdma-repeat-entry.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
