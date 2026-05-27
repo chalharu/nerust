@@ -8,6 +8,8 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/examples/hdma-to-cgram.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
   - `bin/effects/inidisp_extend_vblank.sfc`
+  - `bin/effects/vmain-1bpp-tiles-0.sfc`
+  - `bin/effects/vmain-1bpp-tiles-1.sfc`
   - `bin/effects/vmain-horizontal-scrolling.sfc`
   - `bin/effects/vmain-vertical-scrolling.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`

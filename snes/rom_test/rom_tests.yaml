@@ -304,6 +304,44 @@ cases:
       - kind: bus_u16
         address: "0x004209"
         expected: "0x00D6"
+  - id: vmain-1bpp-tiles-0-300k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at
+      300000 steps after converting 1bpp tile data into transparent 2bpp tiles
+      with VMDATAL and VMDATAH DMA transfers.
+    rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-0.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x9E1FB4791831EA80"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-1bpp-tiles-1-300k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp tiles-1 demo renders deterministic text at
+      300000 steps after converting 1bpp tile data into opaque 2bpp tiles with
+      fixed-source VMDATAH DMA.
+    rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-1.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x7C8B0EE8F1650C4F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vmain-horizontal-scrolling-5000k-screen-state
     description: >
       The undisbeliever horizontal scrolling VMAIN demo renders a deterministic
