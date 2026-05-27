@@ -296,6 +296,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun ensureMenuChromeAttached() {
+        if (isFinishing || isDestroyed) {
+            return
+        }
         val root = contentRoot() ?: return
         installComposeOwners(root)
         val controls = root.findViewWithTag<View>(CONTROLS_OVERLAY_TAG)
