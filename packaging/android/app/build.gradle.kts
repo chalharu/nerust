@@ -92,12 +92,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel:$lifecycleVersion")
     implementation("androidx.savedstate:savedstate:1.5.0")
 
-    androidTestImplementation(composeBom)
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
     androidTestImplementation("junit:junit:4.13.2")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
