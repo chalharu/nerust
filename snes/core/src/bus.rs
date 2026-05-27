@@ -99,6 +99,8 @@ pub(crate) struct Bus {
     joyout_latch_high: bool,
     controller_ports: [StandardControllerPort; STANDARD_CONTROLLER_PORT_COUNT],
     hdma_active_mask: u8,
+    hdma_ended_mask: u8,
+    /// Live HDMA current address / A2A ($43x8/$43x9).
     hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_bank: [u8; DMA_CHANNEL_COUNT],
@@ -133,6 +135,7 @@ impl Bus {
             joyout_latch_high: false,
             controller_ports: [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT],
             hdma_active_mask: 0,
+            hdma_ended_mask: 0,
             hdma_table_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_bank: [0; DMA_CHANNEL_COUNT],
@@ -163,6 +166,7 @@ impl Bus {
         self.joyout_latch_high = false;
         self.controller_ports = [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT];
         self.hdma_active_mask = 0;
+        self.hdma_ended_mask = 0;
         self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_bank = [0; DMA_CHANNEL_COUNT];
@@ -476,9 +480,7 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x4016) => self.read_joyser0(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4017) => self.read_joyser1(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => self.read_cpu_io(offset),
-            (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => {
-                self.dma_registers[usize::from(offset - 0x4300)]
-            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => self.read_dma_register(offset),
             _ => self.cartridge.read(address).unwrap_or(0),
         }
     }
@@ -517,9 +519,7 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)]
             }
-            (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => {
-                self.dma_registers[usize::from(offset - 0x4300)]
-            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => self.peek_dma_register(offset),
             _ => self.cartridge.read(address).unwrap_or(0),
         }
     }
@@ -590,10 +590,8 @@ impl Bus {
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
-                if value == 0 {
-                    self.hdma_active_mask = 0;
-                } else if !self.in_vblank() {
-                    self.reload_hdma_channels();
+                if !self.in_vblank() {
+                    self.hdma_active_mask = value & !self.hdma_ended_mask;
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4218..=0x421F) => {}
@@ -601,7 +599,7 @@ impl Bus {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => {
-                self.dma_registers[usize::from(offset - 0x4300)] = value;
+                self.write_dma_register(offset, value);
             }
             _ => {}
         }
@@ -713,6 +711,7 @@ impl Bus {
         self.dma_registers[base + 0x3] = (a_addr >> 8) as u8;
         self.dma_registers[base + 0x5] = 0;
         self.dma_registers[base + 0x6] = 0;
+        self.hdma_data_addr[usize::from(channel)] = 0;
     }
 
     /// Write one byte to the B-bus (PPU / WRAM-port / ignored).
@@ -737,17 +736,75 @@ impl Bus {
         }
     }
 
+    fn read_dma_register(&self, offset: u16) -> u8 {
+        self.peek_dma_register(offset)
+    }
+
+    fn peek_dma_register(&self, offset: u16) -> u8 {
+        let index = usize::from((offset - 0x4300) / 0x10);
+        let register = usize::from((offset - 0x4300) % 0x10);
+
+        match register {
+            0x5 => self.hdma_data_addr[index] as u8,
+            0x6 => (self.hdma_data_addr[index] >> 8) as u8,
+            0x7 => self.hdma_data_bank[index],
+            0x8 => self.hdma_table_addr[index] as u8,
+            0x9 => (self.hdma_table_addr[index] >> 8) as u8,
+            0xA => encode_hdma_line_control(self.hdma_line_counter[index], self.hdma_repeat[index]),
+            _ => self.dma_registers[usize::from(offset - 0x4300)],
+        }
+    }
+
+    fn write_dma_register(&mut self, offset: u16, value: u8) {
+        let register_index = usize::from(offset - 0x4300);
+        let channel = register_index / 0x10;
+        let register = register_index % 0x10;
+
+        self.dma_registers[register_index] = value;
+
+        match register {
+            0x0 => self.hdma_indirect[channel] = value & 0x40 != 0,
+            0x5 => {
+                self.hdma_data_addr[channel] =
+                    (self.hdma_data_addr[channel] & 0xFF00) | u16::from(value);
+            }
+            0x6 => {
+                self.hdma_data_addr[channel] =
+                    (self.hdma_data_addr[channel] & 0x00FF) | (u16::from(value) << 8);
+            }
+            0x7 => self.hdma_data_bank[channel] = value,
+            0x8 => {
+                self.hdma_table_addr[channel] =
+                    (self.hdma_table_addr[channel] & 0xFF00) | u16::from(value);
+            }
+            0x9 => {
+                self.hdma_table_addr[channel] =
+                    (self.hdma_table_addr[channel] & 0x00FF) | (u16::from(value) << 8);
+            }
+            0xA => {
+                let (line_count, repeat) = decode_hdma_line_control(value);
+                self.hdma_line_counter[channel] = line_count;
+                self.hdma_repeat[channel] = repeat;
+            }
+            _ => {}
+        }
+    }
+
     fn reload_hdma_channels(&mut self) {
-        self.hdma_active_mask = 0;
+        self.hdma_active_mask = self.cpu_io_registers[0x0C];
+        self.hdma_ended_mask = 0;
 
         let hdmaen = self.cpu_io_registers[0x0C];
         for channel in 0..DMA_CHANNEL_COUNT {
-            if hdmaen & (1 << channel) == 0 {
+            let bit = 1 << channel;
+            if hdmaen & bit == 0 {
+                self.hdma_do_transfer[channel] = false;
                 continue;
             }
 
-            if self.reload_hdma_channel(channel as u8) {
-                self.hdma_active_mask |= 1 << channel;
+            if !self.reload_hdma_channel(channel as u8) {
+                self.hdma_active_mask &= !bit;
+                self.hdma_ended_mask |= bit;
             }
         }
     }
@@ -778,13 +835,10 @@ impl Bus {
             return false;
         }
 
-        self.hdma_repeat[index] = line_control & 0x80 != 0;
+        let (line_count, repeat) = decode_hdma_line_control(line_control);
+        self.hdma_line_counter[index] = line_count;
+        self.hdma_repeat[index] = repeat;
         self.hdma_do_transfer[index] = true;
-        self.hdma_line_counter[index] = if line_control & 0x7F == 0 {
-            0x80
-        } else {
-            line_control & 0x7F
-        };
 
         if self.hdma_indirect[index] {
             let low = self.dma_read_abus((u32::from(table_bank) << 16) | u32::from(table_addr));
@@ -794,11 +848,6 @@ impl Bus {
             table_addr = table_addr.wrapping_add(2);
             self.hdma_data_addr[index] = u16::from_le_bytes([low, high]);
             self.hdma_data_bank[index] = self.dma_registers[base + 0x7];
-        } else {
-            self.hdma_data_addr[index] = table_addr;
-            self.hdma_data_bank[index] = table_bank;
-            table_addr = table_addr
-                .wrapping_add(dma_transfer_offsets(self.dma_registers[base] & 0x07).len() as u16);
         }
 
         self.hdma_table_addr[index] = table_addr;
@@ -820,9 +869,10 @@ impl Bus {
             if self.hdma_line_counter[channel] == 0 {
                 if !self.load_hdma_entry(channel as u8) {
                     self.hdma_active_mask &= !bit;
+                    self.hdma_ended_mask |= bit;
                 }
-            } else if !self.hdma_repeat[channel] {
-                self.hdma_do_transfer[channel] = false;
+            } else {
+                self.hdma_do_transfer[channel] = !self.hdma_repeat[channel];
             }
         }
     }
@@ -835,9 +885,18 @@ impl Bus {
         let offsets = dma_transfer_offsets(dmap & 0x07);
 
         for (byte_index, offset) in offsets.iter().copied().enumerate() {
-            let source_addr = self.hdma_data_addr[index].wrapping_add(byte_index as u16);
+            let source_addr = if self.hdma_indirect[index] {
+                self.hdma_data_addr[index].wrapping_add(byte_index as u16)
+            } else {
+                self.hdma_table_addr[index].wrapping_add(byte_index as u16)
+            };
             let value = self.dma_read_abus(
-                (u32::from(self.hdma_data_bank[index]) << 16) | u32::from(source_addr),
+                (u32::from(if self.hdma_indirect[index] {
+                    self.hdma_data_bank[index]
+                } else {
+                    self.dma_registers[base + 0x4]
+                }) << 16)
+                    | u32::from(source_addr),
             );
             let b_addr = 0x2100 | u16::from(bbad.wrapping_add(offset));
             self.dma_write_bbus(b_addr, value);
@@ -846,6 +905,9 @@ impl Bus {
         if self.hdma_indirect[index] {
             self.hdma_data_addr[index] =
                 self.hdma_data_addr[index].wrapping_add(offsets.len() as u16);
+        } else {
+            self.hdma_table_addr[index] =
+                self.hdma_table_addr[index].wrapping_add(offsets.len() as u16);
         }
     }
 
@@ -955,6 +1017,30 @@ fn initial_cpu_io_registers() -> [u8; CPU_IO_REGISTER_COUNT] {
     let mut registers = [0; CPU_IO_REGISTER_COUNT];
     registers[0x01] = 0xFF;
     registers
+}
+
+fn decode_hdma_line_control(value: u8) -> (u8, bool) {
+    let line_count = if value & 0x7F == 0 {
+        0x80
+    } else {
+        value & 0x7F
+    };
+    let repeat = if value & 0x7F == 0 {
+        value & 0x80 != 0
+    } else {
+        value & 0x80 == 0
+    };
+    (line_count, repeat)
+}
+
+fn encode_hdma_line_control(line_count: u8, repeat: bool) -> u8 {
+    if line_count == 0 {
+        0
+    } else if line_count & 0x7F == 0 {
+        u8::from(repeat) << 7
+    } else {
+        (line_count & 0x7F) | (u8::from(!repeat) << 7)
+    }
 }
 
 fn hcounter_target_is_in_subtick(target: u16, subtick: u16) -> bool {
@@ -1569,7 +1655,9 @@ mod tests {
 
         bus.write(0x7E_1100, 0x83);
         bus.write(0x7E_1101, 0xA5);
-        bus.write(0x7E_1102, 0x00);
+        bus.write(0x7E_1102, 0xA5);
+        bus.write(0x7E_1103, 0xA5);
+        bus.write(0x7E_1104, 0x00);
 
         bus.write(0x00_2181, 0x00);
         bus.write(0x00_2182, 0x00);
@@ -1589,6 +1677,211 @@ mod tests {
 
         tick_scanline(&mut bus);
         assert_eq!(bus.hdma_active_mask & 0x01, 0);
+    }
+
+    #[test]
+    fn hdma_midframe_enable_uses_live_a2a_and_nltr_state() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+        bus.write(0x7E_0000, 0xEE);
+        bus.write(0x7E_2000, 0x5A);
+        bus.write(0x7E_2001, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2000);
+        bus.write(0x00_420C, 0x00);
+
+        tick_into_new_active_frame(&mut bus);
+
+        bus.write(0x00_4308, 0x00);
+        bus.write(0x00_4309, 0x20);
+        bus.write(0x00_430A, 0x82);
+        assert_eq!(bus.read(0x00_4308), 0x00);
+        assert_eq!(bus.read(0x00_4309), 0x20);
+        assert_eq!(bus.read(0x00_430A), 0x82);
+
+        bus.write(0x00_420C, 0x01);
+        assert_eq!(bus.hdma_active_mask & 0x01, 0x01);
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(0),
+            0xEE,
+            "first enabled line is skipped"
+        );
+        assert_eq!(bus.read(0x00_430A), 0x81, "live NLTR decrements in place");
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(0),
+            0x5A,
+            "second enabled line uses the software-written A2A source"
+        );
+    }
+
+    #[test]
+    fn hdma_midframe_enable_uses_live_indirect_pointer_state() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+        bus.write(0x7E_0000, 0xEE);
+        bus.write(0x7E_2400, 0x00);
+        bus.write(0x7E_2500, 0x77);
+
+        setup_hdma_channel(&mut bus, 0, 0x40, 0x80, 0x7E_2400);
+        bus.write(0x00_420C, 0x00);
+
+        tick_into_new_active_frame(&mut bus);
+
+        bus.write(0x00_4305, 0x00);
+        bus.write(0x00_4306, 0x25);
+        bus.write(0x00_4307, 0x7E);
+        bus.write(0x00_4308, 0x00);
+        bus.write(0x00_4309, 0x24);
+        bus.write(0x00_430A, 0x82);
+        assert_eq!(bus.read(0x00_4305), 0x00);
+        assert_eq!(bus.read(0x00_4306), 0x25);
+        assert_eq!(bus.read(0x00_4307), 0x7E);
+
+        bus.write(0x00_420C, 0x01);
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(0),
+            0xEE,
+            "first enabled line is still skipped for indirect HDMA"
+        );
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(0),
+            0x77,
+            "second enabled line uses the software-written indirect DAS/DASB source"
+        );
+        assert_eq!(bus.read(0x00_4305), 0x01);
+        assert_eq!(bus.read(0x00_4306), 0x25);
+    }
+
+    #[test]
+    fn hdma_midframe_420c_write_does_not_reload_current_progress() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_2200, 0x82);
+        bus.write(0x7E_2201, 0x11);
+        bus.write(0x7E_2202, 0x22);
+        bus.write(0x7E_2203, 0x00);
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2200);
+        bus.write(0x00_420C, 0x01);
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(bus.memory.peek_wram(0), 0x11);
+        assert_eq!(
+            bus.read(0x00_4308),
+            0x02,
+            "A2A advanced after the first line"
+        );
+
+        bus.write(0x00_420C, 0x00);
+        bus.write(0x00_420C, 0x01);
+        assert_eq!(
+            bus.read(0x00_4308),
+            0x02,
+            "mid-frame HDMAEN writes keep the current live A2A"
+        );
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(1),
+            0x22,
+            "channel resumes from the current HDMA position instead of reloading"
+        );
+        assert_eq!(bus.memory.wmadd(), 2);
+    }
+
+    #[test]
+    fn hdma_ended_channel_stays_ended_after_midframe_reenable() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_2300, 0x01);
+        bus.write(0x7E_2301, 0x33);
+        bus.write(0x7E_2302, 0x00);
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2300);
+        bus.write(0x00_420C, 0x01);
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(bus.memory.peek_wram(0), 0x33);
+        assert_eq!(
+            bus.hdma_active_mask & 0x01,
+            0,
+            "terminator ends the channel"
+        );
+
+        bus.write(0x00_420C, 0x00);
+        bus.write(0x00_420C, 0x01);
+        assert_eq!(
+            bus.hdma_active_mask & 0x01,
+            0,
+            "re-enabling a channel after its terminator does not revive it"
+        );
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.memory.wmadd(),
+            1,
+            "no extra transfers occur after re-enable"
+        );
+
+        tick_subticks(&mut bus, VBLANK_STUB_PERIOD);
+        assert_eq!(
+            bus.memory.peek_wram(1),
+            0x33,
+            "a fresh frame reload clears the ended mask and restarts the channel"
+        );
+    }
+
+    #[test]
+    fn hdmaen_writes_during_vblank_wait_until_the_next_active_frame() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x7E_2600, 0x01);
+        bus.write(0x7E_2601, 0x44);
+        bus.write(0x7E_2602, 0x00);
+
+        bus.write(0x00_2181, 0x00);
+        bus.write(0x00_2182, 0x00);
+        bus.write(0x00_2183, 0x00);
+
+        setup_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E_2600);
+        tick_subticks(&mut bus, VBLANK_STUB_ACTIVE_START);
+        assert!(bus.in_vblank());
+
+        bus.write(0x00_420C, 0x01);
+        assert_eq!(
+            bus.hdma_active_mask & 0x01,
+            0,
+            "writing HDMAEN during vblank should not change the current frame mask"
+        );
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(
+            bus.memory.peek_wram(0),
+            0x44,
+            "the queued HDMAEN value is latched when the next active frame begins"
+        );
     }
 
     #[test]
