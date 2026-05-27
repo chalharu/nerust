@@ -320,7 +320,7 @@ fn show_settings_on_java_main_thread(
                 let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
                 for (i, s) in items.iter().enumerate() {
                     let js = env.new_string(s.as_str())?;
-                    env.set_object_array_element(&arr, i as _, js)?;
+                    arr.set_element(env, i, &js)?;
                 }
                 Ok(arr)
             };
@@ -376,21 +376,28 @@ fn wake_main_thread() {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
-    env: jni::Env<'_>,
+    mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     result: JString<'_>,
 ) {
-    let dialog_result = if result.is_null() {
-        Ok(SettingsDialogResult::Dismissed)
-    } else {
-        result
-            .try_to_string(&env)
-            .map(SettingsDialogResult::Applied)
-    };
-    match dialog_result {
-        Ok(r) => publish_result(r),
-        Err(error) => {
+    match env
+        .with_env(|env| -> jni::errors::Result<SettingsDialogResult> {
+            if result.is_null() {
+                Ok(SettingsDialogResult::Dismissed)
+            } else {
+                let result = result.try_to_string(env)?;
+                Ok(SettingsDialogResult::Applied(result))
+            }
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(r) => publish_result(r),
+        jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
+            publish_result(SettingsDialogResult::Dismissed);
+        }
+        jni::Outcome::Panic(_) => {
+            log::error!("Android settings dialog callback panicked");
             publish_result(SettingsDialogResult::Dismissed);
         }
     }

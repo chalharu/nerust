@@ -154,19 +154,28 @@ fn wake_main_thread() {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onFilePickerResult(
-    env: jni::Env<'_>,
+    mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     uri: JString<'_>,
 ) {
-    let result = if uri.is_null() {
-        Ok(RomPickerResult::Cancelled)
-    } else {
-        uri.try_to_string(&env).map(RomPickerResult::Selected)
-    };
-    match result {
-        Ok(result) => publish_result(result),
-        Err(error) => {
+    match env
+        .with_env(|env| -> jni::errors::Result<RomPickerResult> {
+            if uri.is_null() {
+                Ok(RomPickerResult::Cancelled)
+            } else {
+                let uri = uri.try_to_string(env)?;
+                Ok(RomPickerResult::Selected(uri))
+            }
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(result) => publish_result(result),
+        jni::Outcome::Err(error) => {
             log::error!("failed to decode Android ROM picker result: {error:?}");
+            publish_result(RomPickerResult::Cancelled);
+        }
+        jni::Outcome::Panic(_) => {
+            log::error!("Android ROM picker callback panicked");
             publish_result(RomPickerResult::Cancelled);
         }
     }
