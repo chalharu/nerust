@@ -65,6 +65,24 @@ cases:
       - kind: bus_u8
         address: "0x001E"
         expected: "0x00"
+  - id: arguments-after-jsr-300k-screen-state
+    description: >
+      The undisbeliever 65816 arguments-after-JSR example renders a deterministic text screen at 300000 steps after repeatedly reading fixed 16-bit and 24-bit arguments following JSR/JSL calls.
+
+    rom: snes-test-roms/bin/65816-examples/arguments-after-jsr.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x5EE4948C7C61C2A5"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vram-writes-without-dma-final-state
     description: >
       The undisbeliever VRAM write example populates CGRAM color 1 and writes the expected second 2bpp tile into VRAM.
