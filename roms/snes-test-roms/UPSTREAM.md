@@ -12,6 +12,8 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
   - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc`
   - `bin/hardware-tests/auto-joypad/joyser0-read-during-autojoy.sfc`
+  - `bin/hardware-tests/inidisp_brightness_0.sfc`
+  - `bin/hardware-tests/inidisp_brightness_delay.sfc`
   - `bin/hardware-tests/inidisp_enable_display_mid_frame.sfc`
   - `bin/hardware-tests/inidisp_forgot_to_force_blank.sfc`
   - `bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc`
