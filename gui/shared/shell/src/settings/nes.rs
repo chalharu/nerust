@@ -30,7 +30,7 @@ enum HostedSpeakerInner {
     #[cfg(not(target_os = "android"))]
     OpenAl(OpenAl),
     #[cfg(target_os = "android")]
-    Android(nerust_sound_android::AndroidSound),
+    Android(nerust_sound_android::android::AndroidSound),
 }
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
@@ -65,7 +65,7 @@ pub fn build_speaker(
         }
         #[cfg(target_os = "android")]
         AudioBackendKind::Android => {
-            let speaker = nerust_sound_android::AndroidSound::with_gain(
+            let speaker = nerust_sound_android::android::AndroidSound::with_gain(
                 spec.requested_sample_rate,
                 settings.audio.latency_ms,
                 CLOCK_RATE as i32,

@@ -4,17 +4,10 @@ use nerust_contract_settings::shared::DesktopSharedSettings;
 use std::fmt;
 use std::path::PathBuf;
 
-mod apply;
-mod manager;
-mod persistence;
+pub mod apply;
+pub mod manager;
+pub mod persistence;
 mod store;
-
-pub use self::apply::{derive_apply_plan, validate_local_settings, validate_shared_settings};
-pub use self::manager::SettingsManager;
-pub use self::persistence::{
-    resolve_central_storage_paths, resolve_persistence_paths,
-    resolve_persistence_paths_with_import, system_storage_key,
-};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
@@ -248,11 +241,13 @@ fn sanitize_path_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::store::merge_with_defaults;
-    use super::{
-        HostBackendIdentity, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
+    use super::apply::{derive_apply_plan, validate_shared_settings};
+    use super::manager::SettingsManager;
+    use super::persistence::{
         resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
     };
+    use super::store::merge_with_defaults;
+    use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
     use nerust_contract_mirror::MirrorMode;
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_rom::{RomFormat, RomIdentity};
@@ -627,7 +622,7 @@ video:
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert_eq!(
             plan,
@@ -657,7 +652,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.session_rebuild_required);
     }
@@ -673,7 +668,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(!plan.session_rebuild_required);
     }
@@ -688,7 +683,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -705,7 +700,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -722,7 +717,7 @@ video:
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -810,7 +805,7 @@ video:
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
         shared.persistence.storage_directory = Some(custom_directory.clone());
 
-        super::validate_shared_settings(&shared).unwrap();
+        validate_shared_settings(&shared).unwrap();
 
         assert!(!custom_directory.exists());
     }

@@ -6,8 +6,6 @@
 
 pub mod resampler;
 
-pub use resampler::{Resampler, SimpleDownSampler};
-
 use std::f32;
 
 pub trait Filter {
