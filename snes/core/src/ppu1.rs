@@ -289,8 +289,8 @@ impl Ppu1 {
             }
             0x211D => self.mode7.c = word,
             0x211E => self.mode7.d = word,
-            0x211F => self.mode7.x = word,
-            0x2120 => self.mode7.y = word,
+            0x211F => self.mode7.x = mode7_center_coordinate(word),
+            0x2120 => self.mode7.y = mode7_center_coordinate(word),
             _ => unreachable!(),
         }
         self.mode7_latch = value;
@@ -338,6 +338,15 @@ fn vram_increment_words(vmain: u8) -> u16 {
         0 => 1,
         1 => 32,
         _ => 128,
+    }
+}
+
+fn mode7_center_coordinate(value: i16) -> i16 {
+    let value = value & 0x1FFF;
+    if value & 0x1000 != 0 {
+        value | !0x1FFF
+    } else {
+        value
     }
 }
 
@@ -526,6 +535,28 @@ mod tests {
         let mode7 = ppu1.mode7_registers();
         assert_eq!(mode7.a, 0x3400);
         assert_eq!(mode7.b, 0x1234);
+    }
+
+    #[test]
+    fn mode7_center_coordinates_are_13_bit_signed() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x211F, 0xFF));
+        assert!(ppu1.write(0x211F, 0x0F));
+        assert!(ppu1.write(0x2120, 0x34));
+        assert!(ppu1.write(0x2120, 0x12));
+
+        let mode7 = ppu1.mode7_registers();
+        assert_eq!(mode7.x, 0x0FFF);
+        assert_eq!(mode7.y, -0x0DCC);
+        assert_eq!(ppu1.peek(0x211F), Some(0x0F));
+        assert_eq!(ppu1.peek(0x2120), Some(0x12));
+
+        assert!(ppu1.write(0x211F, 0xBC));
+        assert!(ppu1.write(0x211F, 0x2A));
+
+        assert_eq!(ppu1.mode7_registers().x, 0x0ABC);
+        assert_eq!(ppu1.peek(0x211F), Some(0x2A));
     }
 
     #[test]
