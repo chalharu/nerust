@@ -125,6 +125,7 @@ pub(crate) struct Bus {
     auto_joy_active: bool,
     auto_joy_subticks_remaining: u8,
     joyout_latch_high: bool,
+    standard_controller_buttons: [u16; STANDARD_CONTROLLER_PORT_COUNT],
     controller_ports: [StandardControllerPort; STANDARD_CONTROLLER_PORT_COUNT],
     hdma_active_mask: u8,
     hdma_ended_mask: u8,
@@ -181,6 +182,7 @@ impl Bus {
             auto_joy_active: false,
             auto_joy_subticks_remaining: 0,
             joyout_latch_high: false,
+            standard_controller_buttons: [0; STANDARD_CONTROLLER_PORT_COUNT],
             controller_ports: [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT],
             hdma_active_mask: 0,
             hdma_ended_mask: 0,
@@ -655,8 +657,16 @@ impl Bus {
         ]
     }
 
-    fn sample_standard_controller_port(&self, _port: usize) -> u16 {
-        0
+    pub(crate) fn set_standard_controller_buttons(&mut self, port: usize, buttons: u16) -> bool {
+        let Some(current) = self.standard_controller_buttons.get_mut(port) else {
+            return false;
+        };
+        *current = buttons;
+        true
+    }
+
+    fn sample_standard_controller_port(&self, port: usize) -> u16 {
+        self.standard_controller_buttons[port]
     }
 
     fn load_standard_controller_ports(
@@ -1461,8 +1471,8 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 mod tests {
     use super::{
         AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus,
-        STANDARD_CONTROLLER_PAYLOAD_BITS, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
-        VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+        STANDARD_CONTROLLER_PAYLOAD_BITS, STANDARD_CONTROLLER_PORT_COUNT, VBLANK_STUB_ACTIVE_START,
+        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
     use crate::{
         Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
@@ -1702,6 +1712,42 @@ mod tests {
         for _ in 0..7 {
             assert_eq!(bus.read(0x004016), 0x00);
         }
+        assert_eq!(bus.read(0x004016), 0x01);
+    }
+
+    #[test]
+    fn standard_controller_buttons_feed_manual_and_autojoy_reads() {
+        let mut bus = Bus::new(test_cartridge());
+        assert!(bus.set_standard_controller_buttons(0, 0x8080));
+        assert!(!bus.set_standard_controller_buttons(STANDARD_CONTROLLER_PORT_COUNT, 0x8000));
+
+        bus.write(0x004016, 0x01);
+        assert_eq!(bus.read(0x004016), 0x01);
+        bus.write(0x004016, 0x00);
+        assert_eq!(bus.read(0x004016), 0x01);
+        for _ in 0..7 {
+            assert_eq!(bus.read(0x004016), 0x00);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
+
+        bus.write(0x004200, 0x01);
+        tick_subticks(
+            &mut bus,
+            AUTO_JOYPAD_START + u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS),
+        );
+
+        assert_eq!(bus.read(0x004218), 0x80);
+        assert_eq!(bus.read(0x004219), 0x80);
+    }
+
+    #[test]
+    fn standard_controller_buttons_survive_bus_reset() {
+        let mut bus = Bus::new(test_cartridge());
+        assert!(bus.set_standard_controller_buttons(0, 0x8000));
+
+        bus.reset_ephemeral_state();
+        bus.write(0x004016, 0x01);
+
         assert_eq!(bus.read(0x004016), 0x01);
     }
 

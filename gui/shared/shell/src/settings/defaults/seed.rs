@@ -13,6 +13,20 @@ use nerust_input_nes::topology::{
 use nerust_input_schema::{DigitalControlId, SystemId};
 use std::collections::BTreeMap;
 
+const SNES_ATTACHMENT_CONTROLLER_ONE: &str = "snes.attachment.controller1";
+const SNES_CONTROL_B: DigitalControlId = DigitalControlId::new("snes.control.b");
+const SNES_CONTROL_Y: DigitalControlId = DigitalControlId::new("snes.control.y");
+const SNES_CONTROL_SELECT: DigitalControlId = DigitalControlId::new("snes.control.select");
+const SNES_CONTROL_START: DigitalControlId = DigitalControlId::new("snes.control.start");
+const SNES_CONTROL_UP: DigitalControlId = DigitalControlId::new("snes.control.up");
+const SNES_CONTROL_DOWN: DigitalControlId = DigitalControlId::new("snes.control.down");
+const SNES_CONTROL_LEFT: DigitalControlId = DigitalControlId::new("snes.control.left");
+const SNES_CONTROL_RIGHT: DigitalControlId = DigitalControlId::new("snes.control.right");
+const SNES_CONTROL_A: DigitalControlId = DigitalControlId::new("snes.control.a");
+const SNES_CONTROL_X: DigitalControlId = DigitalControlId::new("snes.control.x");
+const SNES_CONTROL_L: DigitalControlId = DigitalControlId::new("snes.control.l");
+const SNES_CONTROL_R: DigitalControlId = DigitalControlId::new("snes.control.r");
+
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
         systems: BTreeMap::from([(SystemId::Nes, SystemSettings::Nes(NesSettings::default()))]),
@@ -66,6 +80,74 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         .entry(IMPLICIT_PROFILE_ID.to_string())
         .or_default();
     settings.input.systems.insert(SystemId::Nes, nes_input);
+    let mut snes_input = nerust_contract_settings::input::SystemInputSettings::default();
+    snes_input.implicit_keyboard_profile_mut().bindings = vec![
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_B,
+            KeyboardKey::KeyZ,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_Y,
+            KeyboardKey::KeyX,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_SELECT,
+            KeyboardKey::KeyC,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_START,
+            KeyboardKey::KeyV,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_UP,
+            KeyboardKey::ArrowUp,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_DOWN,
+            KeyboardKey::ArrowDown,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_LEFT,
+            KeyboardKey::ArrowLeft,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_RIGHT,
+            KeyboardKey::ArrowRight,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_A,
+            KeyboardKey::KeyA,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_X,
+            KeyboardKey::KeyS,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_L,
+            KeyboardKey::KeyQ,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_R,
+            KeyboardKey::KeyW,
+        ),
+    ];
+    let _ = snes_input
+        .keyboard_profiles
+        .entry(IMPLICIT_PROFILE_ID.to_string())
+        .or_default();
+    settings.input.systems.insert(SystemId::Snes, snes_input);
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
             action: ShortcutAction::TogglePause,

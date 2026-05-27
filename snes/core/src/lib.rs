@@ -133,6 +133,10 @@ impl Core {
         Ok(())
     }
 
+    pub fn set_standard_controller_buttons(&mut self, port: usize, buttons: u16) -> bool {
+        self.bus.set_standard_controller_buttons(port, buttons)
+    }
+
     pub fn peek(&self, address: u32) -> u8 {
         self.bus.peek(address)
     }

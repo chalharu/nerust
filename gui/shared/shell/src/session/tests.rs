@@ -567,6 +567,46 @@ fn auto_load_switches_to_snes_runtime_for_sfc_media() {
 }
 
 #[test]
+fn snes_session_flushes_keyboard_input_into_standard_pad_state() {
+    let mut session = test_session();
+
+    session
+        .load(
+            MediaObject::new(Some(PathBuf::from("game.sfc")), build_snes_lorom()),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+
+    assert_eq!(
+        session
+            .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, true)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        session
+            .runtime
+            .current_input_state()
+            .expect("SNES input state should export"),
+        vec![0x00, 0x80]
+    );
+
+    assert_eq!(
+        session
+            .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, false)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        session
+            .runtime
+            .current_input_state()
+            .expect("SNES input state should export"),
+        vec![0x00, 0x00]
+    );
+}
+
+#[test]
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
     let mut rom = vec![
