@@ -1321,6 +1321,101 @@ cases:
       - kind: bus_u8
         address: "0x00212C"
         expected: "0x01"
+  - id: blip-autojoy-test-300k-screen-state
+    description: >
+      The undisbeliever AUTOJOY blip hardware test renders a deterministic no-input IRQ timing table at 300000 steps, covering rapid NMITIMEN autojoy disable/re-enable during active autojoy.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFE08AC7EB0DFAEC8"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-test-automatic-300k-screen-state
+    description: >
+      The undisbeliever automatic AUTOJOY blip hardware test renders a deterministic no-input HVBJOY.0 count screen at 300000 steps, covering automatic rapid autojoy disable/re-enable loops.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test-automatic.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x4C53A210FB34C019"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-timing-test-300k-screen-state
+    description: >
+      The undisbeliever blip AUTOJOY timing hardware test renders deterministic HVBJOY count bounds at 300000 steps, covering short NMITIMEN autojoy-off windows during the first autojoy cycle.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-timing-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x5059F9A642476365"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-latches-joypad-300k-screen-state
+    description: >
+      The undisbeliever blipping AUTOJOY enable latches-joypad hardware test renders a deterministic no-input serial-read table at 300000 steps, covering rapid autojoy disable/re-enable around manual JOYSER0 reads.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-latches-joypad-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFEAFDE8611AD723D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: clear-autojoy-1st-vb-sl-300k-screen-state
+    description: >
+      The undisbeliever clear-AUTOJOY-on-first-VBlank-scanline hardware test renders a deterministic no-input IRQ timing table at 300000 steps, covering early VBlank autojoy disable behavior.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-1st-vb-sl.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFEBC31353C39DCCA"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: joypad-latch-clear-during-autojoy-no-input-final-state
     description: >
       The undisbeliever joypad-latch-clear-during-autojoy hardware test reaches a deterministic no-input display state once manual JOYSER latch clearing during active autojoy does not corrupt the final JOY state.
