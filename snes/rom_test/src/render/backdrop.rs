@@ -44,6 +44,25 @@ pub(super) fn render_presented_backdrop(core: &Core) -> Vec<u8> {
     rgba
 }
 
+pub(super) fn render_current_backdrop(core: &Core) -> Vec<u8> {
+    let backdrop = current_backdrop_line(core);
+    let fallback_window = current_color_window_line(core);
+    let color_math = BackdropColorMath::from_core(core);
+    let mut rgba = opaque_black_screen();
+
+    for screen_y in 0..SCREEN_HEIGHT {
+        let window = core
+            .presented_color_window_line(screen_y)
+            .unwrap_or(fallback_window);
+        for screen_x in 0..SCREEN_WIDTH {
+            let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);
+            put_pixel(&mut rgba, screen_x, screen_y, line_color);
+        }
+    }
+
+    rgba
+}
+
 fn current_backdrop_line(core: &Core) -> PresentedBackdropLine {
     PresentedBackdropLine {
         inidisp: core.peek(0x002100),
