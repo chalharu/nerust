@@ -315,7 +315,7 @@ fn show_settings_on_java_main_thread(
 
             let string_class = env.find_class(jni_str!("java/lang/String"))?;
 
-            let make_string_array =
+            let mut make_string_array =
                 |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
                 let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
                 for (i, s) in items.iter().enumerate() {
