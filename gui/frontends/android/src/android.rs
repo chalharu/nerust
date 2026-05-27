@@ -1,8 +1,10 @@
+mod library;
 mod picker;
 mod renderer;
 mod storage;
 mod surface;
 
+use self::library::LibraryDialogResult;
 use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::storage::AndroidStorage;
@@ -30,6 +32,7 @@ use winit::window::{Window, WindowId};
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     picker::bind_app(&app);
+    library::bind_app(&app);
     let frontend_app = app.clone();
     let storage_root = app
         .internal_data_path()
@@ -76,6 +79,46 @@ impl AndroidFrontend {
             renderer: None,
             overlay: None,
             active_touches: HashMap::new(),
+        }
+    }
+
+    fn load_from_library(&mut self, id: &str) -> Result<(), String> {
+        let bytes = self
+            .storage
+            .rom_library
+            .load_bytes(id)
+            .map_err(|error| format!("failed to load ROM from library: {error}"))?
+            .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
+        let path = self.storage.rom_library.rom_path(id);
+        if let Err(error) = self
+            .session
+            .load(MediaObject::new(path, bytes), LoadRequest::Auto)
+        {
+            return Err(format!("failed to start ROM {id} from library: {error}"));
+        }
+        self.request_redraw();
+        Ok(())
+    }
+
+    fn handle_library_result(&mut self, result: LibraryDialogResult) {
+        match result {
+            LibraryDialogResult::Dismissed => {}
+            LibraryDialogResult::Selected(id) => {
+                if let Err(error) = self.load_from_library(&id) {
+                    log::error!("{error}");
+                }
+            }
+            LibraryDialogResult::ImportRequested => {
+                match picker::request_open_document(&self.app) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        log::warn!("Android ROM picker request ignored while it is already open");
+                    }
+                    Err(error) => {
+                        log::error!("{error}");
+                    }
+                }
+            }
         }
     }
 
@@ -210,11 +253,14 @@ impl AndroidFrontend {
                     }
                 }
                 TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary) => {
-                    match picker::request_open_document(&self.app) {
+                    match library::request_show_library(
+                        &self.app,
+                        self.storage.rom_library.entries(),
+                    ) {
                         Ok(true) => {}
                         Ok(false) => {
                             log::warn!(
-                                "Android ROM picker request ignored while it is already open"
+                                "Android ROM library dialog ignored while it is already open"
                             );
                         }
                         Err(error) => {
@@ -273,6 +319,7 @@ impl ApplicationHandler for AndroidFrontend {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         let _ = self.session.clear_input();
         picker::reset();
+        library::reset();
         self.renderer = None;
         self.window = None;
         self.window_id = None;
@@ -316,6 +363,9 @@ impl ApplicationHandler for AndroidFrontend {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(result) = library::take_result() {
+            self.handle_library_result(result);
+        }
         if let Some(result) = picker::take_result() {
             self.handle_picker_result(result);
         }

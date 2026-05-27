@@ -238,6 +238,51 @@ mod tests {
     }
 
     #[test]
+    fn load_bytes_returns_none_for_unknown_id() {
+        let root = test_root("unknown-id");
+        let paths = RomLibraryPaths::new(root.clone());
+        let library = RomLibrary::open(paths).unwrap();
+        assert_eq!(library.load_bytes("does-not-exist").unwrap(), None);
+        assert_eq!(library.rom_path("does-not-exist"), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn most_recently_imported_entry_is_first() {
+        let root = test_root("import-order");
+        let paths = RomLibraryPaths::new(root.clone());
+        let mut library = RomLibrary::open(paths.clone()).unwrap();
+
+        let first = library
+            .import_bytes("First Game", "nes", b"first-rom")
+            .unwrap();
+        let second = library
+            .import_bytes("Second Game", "nes", b"second-rom")
+            .unwrap();
+
+        let entries = library.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, second.id);
+        assert_eq!(entries[1].id, first.id);
+
+        // Persisted order must match in-memory order.
+        let reopened = RomLibrary::open(paths).unwrap();
+        assert_eq!(reopened.entries()[0].id, second.id);
+        assert_eq!(reopened.entries()[1].id, first.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_returns_false_for_unknown_id() {
+        let root = test_root("remove-unknown");
+        let paths = RomLibraryPaths::new(root.clone());
+        let mut library = RomLibrary::open(paths).unwrap();
+        assert!(!library.remove("does-not-exist").unwrap());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn remove_deletes_catalog_entry_and_payload() {
         let root = test_root("remove");
         let paths = RomLibraryPaths::new(root.clone());
