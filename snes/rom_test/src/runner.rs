@@ -16,6 +16,7 @@ pub fn validate_case(case: &RomCase) -> CaseOutcome {
 }
 
 pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
+    let should_wait_for_final_screen = case.expected_screen_hash.is_some();
     let rom = match fs::read(case.rom_path()) {
         Ok(rom) => rom,
         Err(error) => {
@@ -58,7 +59,7 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
 
         if steps_executed.is_multiple_of(case.check_interval_steps) {
             match assertion_failures(case, &core) {
-                Ok(failures) if failures.is_empty() => {
+                Ok(failures) if failures.is_empty() && !should_wait_for_final_screen => {
                     return finalize_validation(case, steps_executed, failures, &core, options);
                 }
                 Ok(_) => {}
@@ -88,7 +89,7 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
 fn finalize_validation(
     case: &RomCase,
     steps_executed: u64,
-    failures: Vec<String>,
+    mut failures: Vec<String>,
     core: &Core,
     options: ValidationOptions,
 ) -> CaseOutcome {
@@ -102,6 +103,17 @@ fn finalize_validation(
         }
     };
     let final_screen_hash = screen_hash_rgba(&rendered.rgba);
+    match case.expected_screen_hash() {
+        Ok(Some(expected_screen_hash)) if expected_screen_hash != final_screen_hash => {
+            failures.push(format!(
+                "screen_hash: expected 0x{expected_screen_hash:016X}, got 0x{final_screen_hash:016X}"
+            ));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return internal_error(case, error.to_string());
+        }
+    }
     let screenshot_png = if options.capture_screenshot_png {
         match encode_screenshot_png(&rendered.rgba, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32) {
             Ok(bytes) => Some(bytes),
@@ -241,5 +253,72 @@ fn assertion_kind(assertion: &Assertion) -> &'static str {
         Assertion::CgramU16 { .. } => "cgram_u16",
         Assertion::OamU8 { .. } => "oam_u8",
         Assertion::OamU16 { .. } => "oam_u16",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_case;
+    use crate::manifest::load_manifest;
+    use crate::results::CaseOutcome;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const HEADER_OFFSET: usize = 0x7FC0;
+    const RESET_VECTOR_OFFSET: usize = 0x7FFC;
+
+    fn unique_temp_path(name: &str, extension: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("nerust-snes-rom-test-{name}-{unique}.{extension}"))
+    }
+
+    fn write_test_rom(path: &PathBuf) {
+        let mut rom = vec![0; 0x10000];
+        rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"TEST HASH ROM        ");
+        rom[0x7FD5] = 0x30;
+        rom[0x7FD7] = 0x08;
+        rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2].copy_from_slice(&0x8000u16.to_le_bytes());
+        rom[0x0000] = 0xEA;
+        fs::write(path, rom).expect("test rom should be written");
+    }
+
+    #[test]
+    fn expected_screen_hash_mismatch_is_reported_as_a_failure() {
+        let rom_path = unique_temp_path("hash-mismatch", "sfc");
+        let manifest_path = unique_temp_path("hash-mismatch", "yaml");
+        write_test_rom(&rom_path);
+        fs::write(
+            &manifest_path,
+            format!(
+                "rom_root: .\ncases:\n  - id: hash-mismatch\n    description: Hash mismatch test\n    rom: {}\n    max_steps: 32\n    check_interval_steps: 16\n    expected_screen_hash: \"0x0000000000000000\"\n",
+                rom_path.display()
+            ),
+        )
+        .expect("manifest should be written");
+
+        let manifest = load_manifest(&manifest_path).expect("manifest should load");
+        let outcome = validate_case(manifest.case("hash-mismatch").expect("case should exist"));
+
+        match outcome {
+            CaseOutcome::Completed(validation) => {
+                assert_eq!(validation.steps_executed, 32);
+                assert!(
+                    validation
+                        .failures
+                        .iter()
+                        .any(|failure| failure.starts_with("screen_hash: expected")),
+                    "expected screen hash failure, got {:?}",
+                    validation.failures
+                );
+            }
+            other => panic!("expected completed validation result, got {other:?}"),
+        }
+
+        fs::remove_file(rom_path).ok();
+        fs::remove_file(manifest_path).ok();
     }
 }
