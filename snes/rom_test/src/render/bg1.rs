@@ -42,7 +42,11 @@ pub(super) fn render_bg1(
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
         chr_base: layer.chr_base(bg12nba, bg34nba),
-        tile_size: if bgmode & 0x10 != 0 { 16 } else { 8 },
+        tile_size: if bgmode & layer.tile_size_mask() != 0 {
+            16
+        } else {
+            8
+        },
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
         brightness,
@@ -146,9 +150,10 @@ enum BgRenderMode {
 impl BgRenderMode {
     fn from_bgmode(layer: BgLayer, mode: u8) -> Result<Option<Self>, RenderError> {
         match (layer, mode) {
-            (BgLayer::Bg1 | BgLayer::Bg2 | BgLayer::Bg3, 0) => Ok(Some(Self::Bpp2)),
+            (BgLayer::Bg1 | BgLayer::Bg2 | BgLayer::Bg3 | BgLayer::Bg4, 0) => Ok(Some(Self::Bpp2)),
             (BgLayer::Bg1 | BgLayer::Bg2, 1) => Ok(Some(Self::Bpp4)),
             (BgLayer::Bg3, 1) => Ok(Some(Self::Bpp2)),
+            (BgLayer::Bg4, 1) => Ok(None),
             (BgLayer::Bg1, 3) => Ok(Some(Self::Bpp8)),
             (BgLayer::Bg1, 7) => Ok(Some(Self::Mode7)),
             (_, 3 | 7) => Ok(None),
@@ -180,6 +185,16 @@ impl BgLayer {
             Self::Bg1 => 0x002107,
             Self::Bg2 => 0x002108,
             Self::Bg3 => 0x002109,
+            Self::Bg4 => 0x00210A,
+        }
+    }
+
+    const fn tile_size_mask(self) -> u8 {
+        match self {
+            Self::Bg1 => 0x10,
+            Self::Bg2 => 0x20,
+            Self::Bg3 => 0x40,
+            Self::Bg4 => 0x80,
         }
     }
 
@@ -188,6 +203,7 @@ impl BgLayer {
             Self::Bg1 => ((bg12nba & 0x0F) as usize) << 13,
             Self::Bg2 => ((bg12nba >> 4) as usize) << 13,
             Self::Bg3 => ((bg34nba & 0x0F) as usize) << 13,
+            Self::Bg4 => ((bg34nba >> 4) as usize) << 13,
         }
     }
 
@@ -196,6 +212,7 @@ impl BgLayer {
             Self::Bg1 => (core.bg1_hofs(), core.bg1_vofs()),
             Self::Bg2 => (core.bg2_hofs(), core.bg2_vofs()),
             Self::Bg3 => (core.bg3_hofs(), core.bg3_vofs()),
+            Self::Bg4 => (core.bg4_hofs(), core.bg4_vofs()),
         }
     }
 
@@ -204,6 +221,7 @@ impl BgLayer {
             Self::Bg1 => 0,
             Self::Bg2 => 32,
             Self::Bg3 => 64,
+            Self::Bg4 => 96,
         }
     }
 }
@@ -217,6 +235,7 @@ mod tests {
         assert_eq!(bpp2_palette_base(BgLayer::Bg1, 0), 0);
         assert_eq!(bpp2_palette_base(BgLayer::Bg2, 0), 32);
         assert_eq!(bpp2_palette_base(BgLayer::Bg3, 0), 64);
+        assert_eq!(bpp2_palette_base(BgLayer::Bg4, 0), 96);
     }
 
     #[test]

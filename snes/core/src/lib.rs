@@ -159,6 +159,14 @@ impl Core {
         self.bus.ppu1.bg3_vofs()
     }
 
+    pub fn bg4_hofs(&self) -> u16 {
+        self.bus.ppu1.bg4_hofs()
+    }
+
+    pub fn bg4_vofs(&self) -> u16 {
+        self.bus.ppu1.bg4_vofs()
+    }
+
     pub fn mode7_registers(&self) -> Mode7Registers {
         self.bus.ppu1.mode7_registers()
     }
@@ -177,6 +185,10 @@ impl Core {
 
     pub fn presented_bg3_line(&self, line: usize) -> Option<PresentedBg1Line> {
         self.bus.presented_bg3_line(line)
+    }
+
+    pub fn presented_bg4_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.bus.presented_bg4_line(line)
     }
 
     pub fn presented_main_screen_line(&self, line: usize) -> Option<PresentedMainScreenLine> {

@@ -24,6 +24,7 @@ pub(super) enum BgLayer {
     Bg1,
     Bg2,
     Bg3,
+    Bg4,
 }
 
 impl BgLayer {
@@ -32,6 +33,7 @@ impl BgLayer {
             Self::Bg1 => 0x01,
             Self::Bg2 => 0x02,
             Self::Bg3 => 0x04,
+            Self::Bg4 => 0x08,
         }
     }
 
@@ -40,6 +42,7 @@ impl BgLayer {
             Self::Bg1 => (0x0D, 0x0E),
             Self::Bg2 => (0x0F, 0x10),
             Self::Bg3 => (0x11, 0x12),
+            Self::Bg4 => (0x13, 0x14),
         }
     }
 }
@@ -110,6 +113,7 @@ pub(super) fn presented_bg_line(
         BgLayer::Bg1 => core.presented_bg1_line(screen_y),
         BgLayer::Bg2 => core.presented_bg2_line(screen_y),
         BgLayer::Bg3 => core.presented_bg3_line(screen_y),
+        BgLayer::Bg4 => core.presented_bg4_line(screen_y),
     }
 }
 
@@ -148,7 +152,7 @@ fn dma_transfer_offsets(dmap: u8) -> &'static [u8] {
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error(
-        "unsupported BG mode {mode}; SNES rom_test currently supports BG1 rendering for modes 0, 1, 3, and 7"
+        "unsupported BG mode {mode}; SNES rom_test currently supports BG layers for modes 0, 1, 3, and 7"
     )]
     UnsupportedBgMode { mode: u8 },
 }
@@ -199,6 +203,14 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     render_bg1(
         core,
         BgLayer::Bg3,
+        brightness,
+        tm,
+        use_presented_tm,
+        &mut rgba,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg4,
         brightness,
         tm,
         use_presented_tm,

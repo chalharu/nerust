@@ -202,6 +202,14 @@ impl Ppu1 {
         self.bg_vofs(2)
     }
 
+    pub(crate) fn bg4_hofs(&self) -> u16 {
+        self.bg_hofs(3)
+    }
+
+    pub(crate) fn bg4_vofs(&self) -> u16 {
+        self.bg_vofs(3)
+    }
+
     pub(crate) fn mode7_registers(&self) -> Mode7Registers {
         self.mode7
     }
@@ -452,6 +460,10 @@ mod tests {
         assert!(ppu1.write(0x2111, 0x02));
         assert!(ppu1.write(0x2112, 0xDE));
         assert!(ppu1.write(0x2112, 0x01));
+        assert!(ppu1.write(0x2113, 0x24));
+        assert!(ppu1.write(0x2113, 0x03));
+        assert!(ppu1.write(0x2114, 0x68));
+        assert!(ppu1.write(0x2114, 0x00));
 
         assert_eq!(ppu1.bg1_hofs(), 0x0234);
         assert_eq!(ppu1.bg1_vofs(), 0x0178);
@@ -459,6 +471,8 @@ mod tests {
         assert_eq!(ppu1.bg2_vofs(), 0x009A);
         assert_eq!(ppu1.bg3_hofs(), 0x02BC);
         assert_eq!(ppu1.bg3_vofs(), 0x01DE);
+        assert_eq!(ppu1.bg4_hofs(), 0x0324);
+        assert_eq!(ppu1.bg4_vofs(), 0x0068);
     }
 
     #[test]

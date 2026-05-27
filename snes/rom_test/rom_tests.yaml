@@ -837,6 +837,24 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+  - id: joypad-bounce-200k-screen-state
+    description: >
+      The undisbeliever joypad bounce hardware test renders deterministic Mode 0 BG1-BG4 line indicators at 200000 steps while HDMA updates each BG vertical scroll register.
+
+    rom: snes-test-roms/bin/hardware-tests/joypad_bounce_test.sfc
+    max_steps: 200000
+    check_interval_steps: 200000
+    expected_screen_hash: "0x3A6FF67CFA03A523"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x1F"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable no-input display state once JOYOUT and JOYSER reads are implemented for a standard controller.
