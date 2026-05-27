@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 fun envOrNull(name: String): String? = System.getenv(name)?.takeUnless(String::isBlank)
@@ -57,6 +58,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    buildFeatures {
+        compose = true
+    }
+
     sourceSets {
         getByName("main") {
             jniLibs.srcDir("src/main/jniLibs")
@@ -68,4 +73,12 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2026.05.01")
+
+    implementation(composeBom)
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui")
 }

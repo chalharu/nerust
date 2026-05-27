@@ -3,11 +3,68 @@ package io.github.chalharu.nerust
 import android.app.AlertDialog
 import android.app.NativeActivity
 import android.content.Intent
+import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.ListView
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+
+private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
+private const val MENU_ACTION_LOAD_STATE = "load_state"
+private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
+private const val MENU_ACTION_RESET = "reset"
+private const val MENU_ACTION_SAVE_STATE = "save_state"
+private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
+private const val MENU_BUTTON_TAG = "nerust-menu-button"
 
 class MainActivity : NativeActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.decorView.post(::ensureMenuChromeAttached)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post(::ensureMenuChromeAttached)
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (removeDrawerOverlay()) {
+            return
+        }
+        super.onBackPressed()
+    }
+
     @Suppress("DEPRECATION")
     fun startRomPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -150,7 +207,73 @@ class MainActivity : NativeActivity() {
         parentDialog.show()
     }
 
+    private fun ensureMenuChromeAttached() {
+        val root = contentRoot() ?: return
+        val button = root.findViewWithTag<View>(MENU_BUTTON_TAG) ?: createMenuButtonOverlay().also(root::addView)
+        button.bringToFront()
+        root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)?.bringToFront()
+    }
+
+    private fun createMenuButtonOverlay(): ComposeView =
+        ComposeView(this).apply {
+            tag = MENU_BUTTON_TAG
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.START,
+            )
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setContent {
+                MaterialTheme {
+                    NerustMenuButton(onOpenMenu = ::showDrawerOverlay)
+                }
+            }
+        }
+
+    private fun showDrawerOverlay() {
+        val root = contentRoot() ?: return
+        val existing = root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)
+        if (existing != null) {
+            existing.bringToFront()
+            return
+        }
+
+        val overlay = ComposeView(this).apply {
+            tag = DRAWER_OVERLAY_TAG
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setContent {
+                MaterialTheme {
+                    NerustDrawerOverlay(
+                        onDismissRequest = { removeDrawerOverlay() },
+                        onMenuAction = ::dispatchMenuAction,
+                    )
+                }
+            }
+        }
+        root.addView(overlay)
+        overlay.bringToFront()
+    }
+
+    private fun removeDrawerOverlay(): Boolean {
+        val root = contentRoot() ?: return false
+        val overlay = root.findViewWithTag<View>(DRAWER_OVERLAY_TAG) ?: return false
+        root.removeView(overlay)
+        return true
+    }
+
+    private fun contentRoot(): ViewGroup? = findViewById(android.R.id.content)
+
+    private fun dispatchMenuAction(action: String) {
+        onMenuAction(action)
+    }
+
     private external fun onFilePickerResult(uri: String?)
+
+    private external fun onMenuAction(action: String)
 
     private external fun onRomLibrarySelected(id: String?)
 
@@ -164,3 +287,119 @@ class MainActivity : NativeActivity() {
     }
 }
 
+@Composable
+private fun NerustMenuButton(onOpenMenu: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .statusBarsPadding()
+            .padding(16.dp),
+    ) {
+        FilledTonalButton(onClick = onOpenMenu) {
+            Text("Menu")
+        }
+    }
+}
+
+@Composable
+private fun NerustDrawerOverlay(
+    onDismissRequest: () -> Unit,
+    onMenuAction: (String) -> Unit,
+) {
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Open)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Closed) {
+            onDismissRequest()
+        }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.statusBarsPadding()) {
+                Text(
+                    text = "Nerust",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
+                )
+                Text(
+                    text = "Open ROMs and control the current session.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+                )
+                DrawerActionItem(
+                    label = "ROM Library",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_OPEN_LIBRARY)
+                        }
+                    },
+                )
+                DrawerActionItem(
+                    label = "Settings",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_OPEN_SETTINGS)
+                        }
+                    },
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                DrawerActionItem(
+                    label = "Pause / Resume",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_TOGGLE_PAUSE)
+                        }
+                    },
+                )
+                DrawerActionItem(
+                    label = "Save State",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_SAVE_STATE)
+                        }
+                    },
+                )
+                DrawerActionItem(
+                    label = "Load State",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_LOAD_STATE)
+                        }
+                    },
+                )
+                DrawerActionItem(
+                    label = "Reset",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onMenuAction(MENU_ACTION_RESET)
+                        }
+                    },
+                )
+            }
+        },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(WindowInsets.safeDrawing.asPaddingValues()),
+        )
+    }
+}
+
+@Composable
+private fun DrawerActionItem(label: String, onClick: () -> Unit) {
+    NavigationDrawerItem(
+        label = { Text(label) },
+        selected = false,
+        onClick = onClick,
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+    )
+}
