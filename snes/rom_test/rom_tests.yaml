@@ -1283,6 +1283,32 @@ cases:
       - kind: oam_u16
         address: "0x0000"
         expected: "0xF080"
+  - id: joypad-latch-clear-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever joypad-latch-clear-during-autojoy hardware test reaches a deterministic no-input display state once manual JOYSER latch clearing during active autojoy does not corrupt the final JOY state.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-clear-during-autojoy.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x99E592A55875DB6A"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: joypad-latch-set-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever joypad-latch-set-during-autojoy hardware test reaches a deterministic no-input display state once manual JOYSER latch setting during active autojoy is shared with the serial controller state.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-set-during-autojoy.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x16D2DE27375F62FE"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: enable-autojoy-late-2-no-input-final-state
     description: >
       The undisbeliever enable-autojoy-late-test-2 hardware test reaches a stable no-input display state once same-frame autojoy arming is supported in the coarse timing model.
