@@ -63,8 +63,9 @@ pub(crate) fn request_show_library(
     let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
 
     let app = app.clone();
+    let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = show_dialog_on_java_main_thread(&app, &names, &ids) {
+        if let Err(error) = show_dialog_on_java_main_thread(&callback_app, &names, &ids) {
             log::error!("{error}");
             LIBRARY_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
             wake_main_thread();
@@ -79,12 +80,12 @@ fn show_dialog_on_java_main_thread(
     ids: &[String],
 ) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|mut env| {
-        env.with_local_frame(16 + names.len() as i32 * 2, |env| {
+    vm.attach_current_thread(|env| {
+        env.with_local_frame(16 + names.len() * 2, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
 
-            let string_class = env.find_class("java/lang/String")?;
+            let string_class = env.find_class(jni_str!("java/lang/String"))?;
 
             let names_array: JObjectArray<'_> =
                 env.new_object_array(names.len() as _, &string_class, JObject::null())?;
@@ -109,7 +110,7 @@ fn show_dialog_on_java_main_thread(
                     JValue::Object(ids_array.as_ref()),
                 ],
             )?;
-            Ok(())
+            Ok::<(), jni::errors::Error>(())
         })
     })
     .map_err(|error| format!("failed to show Android ROM library dialog: {error:?}"))
