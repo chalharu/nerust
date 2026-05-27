@@ -1309,6 +1309,19 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+  - id: enable-autojoy-late-no-input-final-state
+    description: >
+      The undisbeliever enable-autojoy-late hardware test reaches a deterministic no-input display state once IRQ-timed same-frame autojoy arming is covered across the tested H/V positions.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x08080EBE1D43AF88"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: enable-autojoy-late-2-no-input-final-state
     description: >
       The undisbeliever enable-autojoy-late-test-2 hardware test reaches a stable no-input display state once same-frame autojoy arming is supported in the coarse timing model.
@@ -1317,6 +1330,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc
     max_steps: 110592
     check_interval_steps: 110592
+    expected_screen_hash: "0xC62139DA6C909817"
     assertions:
       - kind: bus_u8
         address: "0x002100"
