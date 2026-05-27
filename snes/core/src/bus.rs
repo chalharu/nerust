@@ -17,6 +17,9 @@ const AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS: u8 = 12;
 const STANDARD_CONTROLLER_PORT_COUNT: usize = 2;
 const STANDARD_CONTROLLER_PAYLOAD_BITS: u8 = 16;
 const JOYSER1_STANDARD_HIGH_BITS: u8 = 0x1C;
+const MATH_MULTIPLY_CYCLES: u8 = 8;
+const MATH_DIVIDE_CYCLES: u8 = 16;
+const WRMPYB_IN_FLIGHT_ZERO_CYCLE: u8 = 7;
 #[cfg(test)]
 const VBLANK_STUB_ACTIVE_START: u16 =
     VBLANK_STUB_ACTIVE_START_LINE * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
@@ -66,6 +69,19 @@ impl StandardControllerPort {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MathPending {
+    Multiply {
+        cycles_remaining: u8,
+        result: u16,
+    },
+    Divide {
+        cycles_remaining: u8,
+        quotient: u16,
+        remainder: u16,
+    },
+}
+
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
     fn write(&mut self, addr: u32, data: u8);
@@ -91,6 +107,7 @@ pub(crate) struct Bus {
     video_master_clock_accumulator: u32,
     math_quotient: u16,
     math_result: u16,
+    math_pending: Option<MathPending>,
     /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210.
     nmi_flag: bool,
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
@@ -135,6 +152,7 @@ impl Bus {
             video_master_clock_accumulator: 0,
             math_quotient: 0,
             math_result: 0,
+            math_pending: None,
             nmi_flag: false,
             nmi_pending: false,
             irq_flag: false,
@@ -170,6 +188,7 @@ impl Bus {
         self.video_master_clock_accumulator = 0;
         self.math_quotient = 0;
         self.math_result = 0;
+        self.math_pending = None;
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
@@ -202,11 +221,52 @@ impl Bus {
     }
 
     pub(crate) fn tick_cpu_cycle(&mut self) {
+        self.tick_math_io();
         self.video_master_clock_accumulator += CPU_MASTER_CLOCKS_PER_CYCLE;
         while self.video_master_clock_accumulator >= VIDEO_MASTER_CLOCKS_PER_SUBTICK {
             self.video_master_clock_accumulator -= VIDEO_MASTER_CLOCKS_PER_SUBTICK;
             self.advance_video_one_subtick();
         }
+    }
+
+    fn tick_math_io(&mut self) {
+        let Some(pending) = self.math_pending else {
+            return;
+        };
+        self.math_pending = match pending {
+            MathPending::Multiply {
+                cycles_remaining,
+                result,
+            } if cycles_remaining <= 1 => {
+                self.math_result = result;
+                None
+            }
+            MathPending::Multiply {
+                cycles_remaining,
+                result,
+            } => Some(MathPending::Multiply {
+                cycles_remaining: cycles_remaining - 1,
+                result,
+            }),
+            MathPending::Divide {
+                cycles_remaining,
+                quotient,
+                remainder,
+            } if cycles_remaining <= 1 => {
+                self.math_quotient = quotient;
+                self.math_result = remainder;
+                None
+            }
+            MathPending::Divide {
+                cycles_remaining,
+                quotient,
+                remainder,
+            } => Some(MathPending::Divide {
+                cycles_remaining: cycles_remaining - 1,
+                quotient,
+                remainder,
+            }),
+        };
     }
 
     fn advance_video_one_subtick(&mut self) {
@@ -648,22 +708,14 @@ impl Bus {
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4203) => {
                 self.cpu_io_registers[0x03] = value;
-                self.math_result = u16::from(self.cpu_io_registers[0x02]) * u16::from(value);
+                self.start_multiply(value);
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4204..=0x4205) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4206) => {
                 self.cpu_io_registers[0x06] = value;
-                let dividend =
-                    u16::from_le_bytes([self.cpu_io_registers[0x04], self.cpu_io_registers[0x05]]);
-                if value == 0 {
-                    self.math_quotient = 0xFFFF;
-                    self.math_result = dividend;
-                } else {
-                    self.math_quotient = dividend / u16::from(value);
-                    self.math_result = dividend % u16::from(value);
-                }
+                self.start_divide(value);
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
@@ -1096,6 +1148,41 @@ impl Bus {
             _ => self.cpu_io_registers[usize::from(offset - 0x4200)],
         }
     }
+
+    fn start_multiply(&mut self, factor_b: u8) {
+        let cycles_since_previous_multiply = match self.math_pending {
+            Some(MathPending::Multiply {
+                cycles_remaining, ..
+            }) => MATH_MULTIPLY_CYCLES.saturating_sub(cycles_remaining),
+            _ => MATH_MULTIPLY_CYCLES,
+        };
+        self.math_quotient = u16::from(factor_b);
+        self.math_result = 0;
+        if cycles_since_previous_multiply == WRMPYB_IN_FLIGHT_ZERO_CYCLE {
+            self.math_pending = None;
+            return;
+        }
+
+        self.math_pending = Some(MathPending::Multiply {
+            cycles_remaining: MATH_MULTIPLY_CYCLES,
+            result: u16::from(self.cpu_io_registers[0x02]) * u16::from(factor_b),
+        });
+    }
+
+    fn start_divide(&mut self, divisor: u8) {
+        let dividend =
+            u16::from_le_bytes([self.cpu_io_registers[0x04], self.cpu_io_registers[0x05]]);
+        let (quotient, remainder) = if divisor == 0 {
+            (0xFFFF, dividend)
+        } else {
+            (dividend / u16::from(divisor), dividend % u16::from(divisor))
+        };
+        self.math_pending = Some(MathPending::Divide {
+            cycles_remaining: MATH_DIVIDE_CYCLES,
+            quotient,
+            remainder,
+        });
+    }
 }
 
 impl CpuBus for Bus {
@@ -1240,8 +1327,53 @@ mod tests {
         bus.write(0x004202, 0x12);
         bus.write(0x004203, 0x34);
 
+        tick_cpu_cycles(&mut bus, 8);
         assert_eq!(bus.read(0x004216), 0xA8);
         assert_eq!(bus.read(0x004217), 0x03);
+    }
+
+    #[test]
+    fn multiply_result_is_not_visible_until_eight_cpu_cycles_elapse() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004202, 0x12);
+        bus.write(0x004203, 0x34);
+
+        tick_cpu_cycles(&mut bus, 7);
+        assert_eq!(bus.read(0x004216), 0x00);
+        assert_eq!(bus.read(0x004217), 0x00);
+
+        tick_cpu_cycles(&mut bus, 1);
+        assert_eq!(bus.read(0x004216), 0xA8);
+        assert_eq!(bus.read(0x004217), 0x03);
+    }
+
+    #[test]
+    fn wrmpyb_write_seven_cycles_after_previous_multiply_clears_result() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004202, 0xFF);
+        bus.write(0x004203, 0xFF);
+        tick_cpu_cycles(&mut bus, 7);
+        bus.write(0x004203, 0x80);
+        tick_cpu_cycles(&mut bus, 8);
+
+        assert_eq!(bus.read(0x004216), 0x00);
+        assert_eq!(bus.read(0x004217), 0x00);
+    }
+
+    #[test]
+    fn wrmpyb_write_six_cycles_after_previous_multiply_starts_new_result() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004202, 0xFF);
+        bus.write(0x004203, 0xFF);
+        tick_cpu_cycles(&mut bus, 6);
+        bus.write(0x004203, 0x80);
+        tick_cpu_cycles(&mut bus, 8);
+
+        assert_eq!(bus.read(0x004216), 0x80);
+        assert_eq!(bus.read(0x004217), 0x7F);
     }
 
     #[test]
@@ -1252,6 +1384,7 @@ mod tests {
         bus.write(0x004205, 0x12);
         bus.write(0x004206, 0x12);
 
+        tick_cpu_cycles(&mut bus, 16);
         assert_eq!(bus.read(0x004214), 0x02);
         assert_eq!(bus.read(0x004215), 0x01);
         assert_eq!(bus.read(0x004216), 0x10);
@@ -1266,6 +1399,7 @@ mod tests {
         bus.write(0x004205, 0xDE);
         bus.write(0x004206, 0x00);
 
+        tick_cpu_cycles(&mut bus, 16);
         assert_eq!(bus.read(0x004214), 0xFF);
         assert_eq!(bus.read(0x004215), 0xFF);
         assert_eq!(bus.read(0x004216), 0xAD);
@@ -1550,6 +1684,12 @@ mod tests {
     fn tick_subticks(bus: &mut Bus, count: u16) {
         for _ in 0..count {
             bus.tick_video_stub();
+        }
+    }
+
+    fn tick_cpu_cycles(bus: &mut Bus, count: u8) {
+        for _ in 0..count {
+            bus.tick_cpu_cycle();
         }
     }
 
