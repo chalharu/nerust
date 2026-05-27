@@ -1,3 +1,5 @@
+mod snes;
+
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
 use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_options};
@@ -150,7 +152,23 @@ const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
 
 pub fn default_system_definition() -> Box<dyn SystemDefinition> {
-    Box::new(NesSystemDefinition)
+    system_definition_for_id(SystemId::Nes).expect("NES system definition should be available")
+}
+
+pub fn system_definition_for_id(system_id: SystemId) -> Result<Box<dyn SystemDefinition>, String> {
+    match system_id {
+        SystemId::Nes => Ok(Box::new(NesSystemDefinition)),
+        SystemId::Snes => Ok(Box::new(snes::SnesSystemDefinition)),
+        other => Err(format!("unsupported system id: {other:?}")),
+    }
+}
+
+pub fn system_id_for_media(media: &MediaObject) -> SystemId {
+    if snes::media_looks_like_snes(media) {
+        SystemId::Snes
+    } else {
+        SystemId::Nes
+    }
 }
 
 pub fn default_input_topology_descriptor() -> InputTopologyDescriptor {

@@ -123,6 +123,16 @@ impl Core {
         self.bus.cartridge()
     }
 
+    pub fn export_save_ram(&self) -> Option<Vec<u8>> {
+        let save_ram = self.bus.cartridge().save_ram();
+        (!save_ram.is_empty()).then(|| save_ram.to_vec())
+    }
+
+    pub fn load_save_ram(&mut self, save_ram: &[u8]) -> Result<(), CoreError> {
+        self.bus.cartridge_mut().load_save_ram(save_ram)?;
+        Ok(())
+    }
+
     pub fn peek(&self, address: u32) -> u8 {
         self.bus.peek(address)
     }
@@ -283,6 +293,19 @@ mod tests {
         assert_eq!(core.current_opcode(), 0xDB);
         assert_eq!(core.registers().pc(), 0x8001);
         assert_eq!(core.cartridge().header().mapper_kind(), MapperKind::HiRom);
+    }
+
+    #[test]
+    fn core_exports_and_restores_cartridge_save_ram() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x7FD8] = 0x03;
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        let mut save_ram = vec![0x5A; core.export_save_ram().unwrap().len()];
+        save_ram[0x0123] = 0xC3;
+
+        core.load_save_ram(&save_ram).unwrap();
+
+        assert_eq!(core.export_save_ram().unwrap()[0x0123], 0xC3);
     }
 
     #[test]

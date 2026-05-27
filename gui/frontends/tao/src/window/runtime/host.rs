@@ -347,7 +347,7 @@ impl HostState {
                 self.session.settings_snapshot().shared.general.language,
                 UiText::Open,
             ))
-            .add_filter("NES ROM", &["nes", "zip"])
+            .add_filter("Console ROM", &["nes", "sfc", "smc", "zip"])
             .pick_file()
             .is_some_and(|path| self.load_path(&path))
     }

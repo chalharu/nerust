@@ -212,6 +212,10 @@ impl Bus {
         &self.cartridge
     }
 
+    pub(crate) fn cartridge_mut(&mut self) -> &mut Cartridge {
+        &mut self.cartridge
+    }
+
     pub(crate) fn reset_ephemeral_state(&mut self) {
         self.video_phase = 0;
         self.video_master_clock_accumulator = 0;
