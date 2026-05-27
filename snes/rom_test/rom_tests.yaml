@@ -199,3 +199,44 @@ cases:
       - kind: oam_u16
         address: "0x0202"
         expected: "0x5555"
+  - id: inidisp-enable-display-mid-frame-final-state
+    description: >
+      The undisbeliever mid-frame display-enable hardware test reaches its
+      steady loop with the configured IRQ position and loaded PPU resources.
+    rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
+    max_steps: 30000
+    check_interval_steps: 30000
+    assertions:
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0xB1"
+      - kind: bus_u16
+        address: "0x004207"
+        expected: "0x000F"
+      - kind: bus_u16
+        address: "0x004209"
+        expected: "0x0059"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x7F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"
