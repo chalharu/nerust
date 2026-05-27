@@ -275,9 +275,102 @@ jobs:
           name: macos-aarch64
           path: target/dist/nerust-${{ needs.prepare-context.outputs.tag_name }}-macos-aarch64.app.zip
           if-no-files-found: error
+  android-arm64-v8a:
+    name: Android arm64-v8a
+    needs: [prepare-context]
+    if: ${{ needs.prepare-context.outputs.should_run == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Set up JDK 17
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3.2.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          targets: aarch64-linux-android
+          toolchain: stable
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked --version 4.1.2
+      - name: Restore Cargo registry and build cache
+        id: cargo-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-android-arm64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-android-arm64-
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
+          restore-keys: ${{ runner.os }}-gradle-android-
+      - name: Decode signing keystore
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+        run: |
+          if [[ -z "${ANDROID_SIGNING_KEY:-}" ]]; then
+            exit 0
+          fi
+          KEYSTORE_FILE="${RUNNER_TEMP}/release.jks"
+          echo "${ANDROID_SIGNING_KEY}" | base64 --decode > "${KEYSTORE_FILE}"
+          echo "ANDROID_KEY_STORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
+      - name: Package Android APK
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          ANDROID_KEY_STORE_PATH: ${{ env.ANDROID_KEY_STORE_PATH }}
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: ${{ needs.prepare-context.outputs.version }}
+          TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
+        run: |
+          chmod +x packaging/android/package.sh packaging/android/gradlew
+          packaging/android/package.sh
+      - name: Save Cargo registry and build cache
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save Gradle cache
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-arm64-v8a
+          path: |
+            target/dist/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk
+            target/dist/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
+          if-no-files-found: error
   assemble-assets:
     name: Assemble release assets
-    needs: [prepare-context, linux-x86_64, linux-aarch64, macos-aarch64]
+    needs: [prepare-context, linux-x86_64, linux-aarch64, macos-aarch64, android-arm64-v8a]
     if: ${{ needs.prepare-context.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -301,7 +394,8 @@ jobs:
           for file in \
             "nerust-${TAG_NAME}-linux-x86_64.tar.gz" \
             "nerust-${TAG_NAME}-linux-aarch64.tar.gz" \
-            "nerust-${TAG_NAME}-macos-aarch64.app.zip"
+            "nerust-${TAG_NAME}-macos-aarch64.app.zip" \
+            "nerust-${TAG_NAME}-android-arm64-v8a.apk"
           do
             sha256sum "${file}" > "${file}.sha256"
             cat "${file}.sha256"
@@ -317,6 +411,8 @@ jobs:
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-linux-aarch64.tar.gz.sha256
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-macos-aarch64.app.zip
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-macos-aarch64.app.zip.sha256
+            release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk
+            release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
           if-no-files-found: error
   publish-assets:
     if: ${{ github.event_name == 'release' }}
@@ -345,6 +441,8 @@ jobs:
             "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz.sha256" \
             "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip" \
             "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip.sha256" \
+            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk" \
+            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk.sha256" \
             --repo "${GH_REPO}" \
             --clobber
   sync-release:
