@@ -240,3 +240,36 @@ cases:
       - kind: oam_u16
         address: "0x0202"
         expected: "0x5555"
+  - id: joypad-rapid-read-no-input-final-state
+    description: >
+      The undisbeliever joypad rapid read hardware test reaches a stable
+      no-input display state once JOYOUT and JOYSER reads are implemented for a
+      standard controller.
+    rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
+    max_steps: 10000
+    check_interval_steps: 10000
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0000"
+      - kind: vram_u8
+        address: "0x0002"
+        expected: "0x01"
+      - kind: vram_u8
+        address: "0x0007"
+        expected: "0x08"
+      - kind: vram_u8
+        address: "0x0015"
+        expected: "0x1C"
+      - kind: vram_u8
+        address: "0x2001"
+        expected: "0xC0"
+      - kind: vram_u8
+        address: "0x2011"
+        expected: "0x0C"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
