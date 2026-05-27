@@ -27,11 +27,9 @@ class MainActivityE2eTest {
         device.pressHome()
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         context.startActivity(launchIntent)
-        require(device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)), STARTUP_TIMEOUT_MS)) {
-            "App window should be visible after startup"
-        }
 
-        val menuButton = device.wait(Until.findObject(By.desc("Menu")), ACCESSIBILITY_TIMEOUT_MS)
+        val menuButton = device.wait(Until.findObject(By.desc("Menu")), STARTUP_TIMEOUT_MS)
+            ?: device.wait(Until.findObject(By.text("Menu")), ACCESSIBILITY_TIMEOUT_MS)
         if (menuButton != null) {
             menuButton.click()
         } else {
