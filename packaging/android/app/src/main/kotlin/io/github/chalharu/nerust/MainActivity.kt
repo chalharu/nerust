@@ -16,6 +16,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ListView
 import androidx.compose.foundation.layout.Box
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -320,20 +320,23 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-    private fun createMenuButtonOverlay(): ComposeView =
-        ComposeView(this).apply {
+    private fun createMenuButtonOverlay(): Button =
+        Button(this).apply {
             tag = MENU_BUTTON_TAG
+            text = "Menu"
+            contentDescription = "Menu"
+            setAllCaps(false)
+            setOnClickListener { showDrawerOverlay() }
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START,
-            )
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent {
-                MaterialTheme {
-                    NerustMenuButton(onOpenMenu = ::showDrawerOverlay)
-                }
+            ).apply {
+                val margin = dp(16)
+                leftMargin = margin
+                topMargin = statusBarHeight() + margin
             }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
     private fun showDrawerOverlay() {
@@ -374,6 +377,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun contentRoot(): ViewGroup? =
         findViewById<View>(android.R.id.content) as? ViewGroup ?: window.decorView as? ViewGroup
 
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun statusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
+    }
+
     private fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
         onMenuAction(action)
@@ -392,22 +403,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
-    }
-}
-
-@Composable
-private fun NerustMenuButton(onOpenMenu: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .statusBarsPadding()
-            .padding(16.dp),
-    ) {
-        FilledTonalButton(
-            onClick = onOpenMenu,
-            modifier = Modifier.semantics { contentDescription = "Menu" },
-        ) {
-            Text("Menu")
-        }
     }
 }
 
