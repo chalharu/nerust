@@ -294,4 +294,30 @@ mod tests {
 
         assert_eq!(core.peek(0x002115), 0x0C);
     }
+
+    #[test]
+    fn core_can_wait_for_auto_joy_hvbjoy_pulse_and_read_zeroed_joy1() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x0000..0x001A].copy_from_slice(&[
+            0xA9, 0x01, // LDA #$01
+            0x8D, 0x00, 0x42, // STA $4200
+            0xAD, 0x12, 0x42, // wait_set: LDA $4212
+            0x29, 0x01, // AND #$01
+            0xF0, 0xF9, // BEQ wait_set
+            0xAD, 0x12, 0x42, // wait_clear: LDA $4212
+            0x29, 0x01, // AND #$01
+            0xD0, 0xF9, // BNE wait_clear
+            0xAD, 0x18, 0x42, // LDA $4218
+            0x8D, 0x00, 0x00, // STA $0000
+            0xDB, // STP
+        ]);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 5_000);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.peek(0x7E0000), 0x00);
+        assert_eq!(core.peek(0x004218), 0x00);
+    }
 }

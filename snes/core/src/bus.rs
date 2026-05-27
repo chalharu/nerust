@@ -8,9 +8,13 @@ const VBLANK_STUB_SCANLINES: u16 = 262;
 const VBLANK_STUB_SUBTICKS_PER_SCANLINE: u16 = 4;
 const VBLANK_STUB_PERIOD: u16 = VBLANK_STUB_SCANLINES * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
 const VBLANK_STUB_ACTIVE_START_LINE: u16 = 225;
+const AUTO_JOYPAD_START_SUBTICK: u16 = 1;
+const AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS: u8 = 12;
 #[cfg(test)]
 const VBLANK_STUB_ACTIVE_START: u16 =
     VBLANK_STUB_ACTIVE_START_LINE * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
+#[cfg(test)]
+const AUTO_JOYPAD_START: u16 = VBLANK_STUB_ACTIVE_START + AUTO_JOYPAD_START_SUBTICK;
 const HCOUNTER_DOTS_PER_LINE: u16 = 341;
 
 pub(crate) trait CpuBus {
@@ -45,6 +49,9 @@ pub(crate) struct Bus {
     latched_vcounter: u16,
     ophct_high_byte: bool,
     opvct_high_byte: bool,
+    auto_joy_armed: bool,
+    auto_joy_active: bool,
+    auto_joy_subticks_remaining: u8,
     hdma_active_mask: u8,
     hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
@@ -74,6 +81,9 @@ impl Bus {
             latched_vcounter: 0,
             ophct_high_byte: false,
             opvct_high_byte: false,
+            auto_joy_armed: false,
+            auto_joy_active: false,
+            auto_joy_subticks_remaining: 0,
             hdma_active_mask: 0,
             hdma_table_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_addr: [0; DMA_CHANNEL_COUNT],
@@ -99,6 +109,9 @@ impl Bus {
         self.latched_vcounter = 0;
         self.ophct_high_byte = false;
         self.opvct_high_byte = false;
+        self.auto_joy_armed = false;
+        self.auto_joy_active = false;
+        self.auto_joy_subticks_remaining = 0;
         self.hdma_active_mask = 0;
         self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
@@ -120,11 +133,18 @@ impl Bus {
             if self.nmi_enabled() {
                 self.nmi_pending = true;
             }
+            self.auto_joy_armed = self.auto_joy_enabled();
+            self.auto_joy_active = false;
+            self.auto_joy_subticks_remaining = 0;
         }
         if self.irq_event_matches_current_position() {
             self.irq_flag = true;
         }
+        self.tick_auto_joypad();
         if was_in_vblank && !in_vblank {
+            self.auto_joy_armed = false;
+            self.auto_joy_active = false;
+            self.auto_joy_subticks_remaining = 0;
             self.reload_hdma_channels();
         }
         if self.current_subtick() == 0 && !in_vblank {
@@ -135,6 +155,10 @@ impl Bus {
     fn nmi_enabled(&self) -> bool {
         // NMITIMEN ($4200) bit 7 enables VBlank NMI
         self.cpu_io_registers[0x00] & 0x80 != 0
+    }
+
+    fn auto_joy_enabled(&self) -> bool {
+        self.cpu_io_registers[0x00] & 0x01 != 0
     }
 
     fn vcounter_irq_enabled(&self) -> bool {
@@ -161,6 +185,23 @@ impl Bus {
 
     fn current_subtick(&self) -> u16 {
         self.video_phase % VBLANK_STUB_SUBTICKS_PER_SCANLINE
+    }
+
+    fn auto_joy_start_reachable(&self) -> bool {
+        self.current_scanline() < VBLANK_STUB_ACTIVE_START_LINE
+            || (self.current_scanline() == VBLANK_STUB_ACTIVE_START_LINE
+                && self.current_subtick() <= AUTO_JOYPAD_START_SUBTICK)
+    }
+
+    fn auto_joy_can_be_disarmed(&self) -> bool {
+        self.current_scanline() < VBLANK_STUB_ACTIVE_START_LINE
+            || (self.current_scanline() == VBLANK_STUB_ACTIVE_START_LINE
+                && self.current_subtick() < AUTO_JOYPAD_START_SUBTICK)
+    }
+
+    fn at_auto_joy_start(&self) -> bool {
+        self.current_scanline() == VBLANK_STUB_ACTIVE_START_LINE
+            && self.current_subtick() == AUTO_JOYPAD_START_SUBTICK
     }
 
     fn irq_event_matches_current_position(&self) -> bool {
@@ -241,6 +282,49 @@ impl Bus {
         self.current_subtick() + 1 == VBLANK_STUB_SUBTICKS_PER_SCANLINE
     }
 
+    fn hvbjoy_value(&self) -> u8 {
+        u8::from(self.in_vblank()) << 7
+            | u8::from(self.in_hblank()) << 6
+            | u8::from(self.auto_joy_active)
+    }
+
+    fn arm_auto_joy_for_current_frame(&mut self) {
+        self.auto_joy_armed = true;
+        if self.at_auto_joy_start() {
+            self.start_auto_joypad();
+        }
+    }
+
+    fn start_auto_joypad(&mut self) {
+        self.auto_joy_active = true;
+        self.auto_joy_subticks_remaining = AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS;
+    }
+
+    fn tick_auto_joypad(&mut self) {
+        if self.auto_joy_active {
+            self.auto_joy_subticks_remaining -= 1;
+            if self.auto_joy_subticks_remaining == 0 {
+                self.auto_joy_active = false;
+                self.auto_joy_armed = false;
+                self.complete_auto_joypad();
+            }
+            return;
+        }
+
+        if self.auto_joy_armed && self.at_auto_joy_start() {
+            self.start_auto_joypad();
+        }
+    }
+
+    fn complete_auto_joypad(&mut self) {
+        let registers = self.sample_auto_joypad_registers();
+        self.cpu_io_registers[0x18..0x20].copy_from_slice(&registers);
+    }
+
+    fn sample_auto_joypad_registers(&self) -> [u8; 8] {
+        [0; 8]
+    }
+
     fn read_resolved(&mut self, address: u32) -> u8 {
         let bank = ((address >> 16) & 0xFF) as u8;
         let offset = (address & 0xFFFF) as u16;
@@ -289,9 +373,7 @@ impl Bus {
                     0x00
                 }
             }
-            (0x00..=0x3F | 0x80..=0xBF, 0x4212) => {
-                u8::from(self.in_vblank()) << 7 | u8::from(self.in_hblank()) << 6
-            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4212) => self.hvbjoy_value(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4218) => self.cpu_io_registers[0x18],
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)]
@@ -330,11 +412,29 @@ impl Bus {
             // immediately if the NMI flag is already latched (i.e. we are mid-vblank
             // and the program enables NMI after clearing RDNMI).
             (0x00..=0x3F | 0x80..=0xBF, 0x4200) => {
-                let was_nmi_enabled = self.cpu_io_registers[0x00] & 0x80 != 0;
+                let previous = self.cpu_io_registers[0x00];
+                let was_nmi_enabled = previous & 0x80 != 0;
+                let was_auto_joy_enabled = previous & 0x01 != 0;
                 self.cpu_io_registers[0x00] = value;
                 let now_nmi_enabled = value & 0x80 != 0;
+                let now_auto_joy_enabled = value & 0x01 != 0;
                 if !was_nmi_enabled && now_nmi_enabled && self.nmi_flag {
                     self.nmi_pending = true;
+                }
+                if self.in_vblank()
+                    && !was_auto_joy_enabled
+                    && now_auto_joy_enabled
+                    && self.auto_joy_start_reachable()
+                {
+                    self.arm_auto_joy_for_current_frame();
+                }
+                if self.in_vblank()
+                    && was_auto_joy_enabled
+                    && !now_auto_joy_enabled
+                    && !self.auto_joy_active
+                    && self.auto_joy_can_be_disarmed()
+                {
+                    self.auto_joy_armed = false;
                 }
                 if self.irq_event_matches_current_position() {
                     self.irq_flag = true;
@@ -355,6 +455,7 @@ impl Bus {
                     self.reload_hdma_channels();
                 }
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4218..=0x421F) => {}
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
             }
@@ -660,7 +761,7 @@ impl Bus {
                 self.irq_flag = false;
                 val
             }
-            0x4212 => u8::from(self.in_vblank()) << 7 | u8::from(self.in_hblank()) << 6,
+            0x4212 => self.hvbjoy_value(),
             0x4218 => self.cpu_io_registers[0x18],
             _ => self.cpu_io_registers[usize::from(offset - 0x4200)],
         }
@@ -746,7 +847,8 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bus, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, VBLANK_STUB_ACTIVE_START,
+        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
     use crate::Cartridge;
 
@@ -794,6 +896,96 @@ mod tests {
         assert_eq!(bus.read(0x004218), 0x00);
     }
 
+    #[test]
+    fn auto_joy_hvbjoy_bit_becomes_active_then_clears_during_early_vblank() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(&mut bus, VBLANK_STUB_ACTIVE_START);
+        assert_eq!(bus.read(0x004212), 0x80);
+
+        tick_subticks(&mut bus, 1);
+        assert_eq!(bus.read(0x004212), 0x81);
+
+        tick_subticks(
+            &mut bus,
+            u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS.saturating_sub(1)),
+        );
+        assert_eq!(bus.read(0x004212), 0x81);
+
+        tick_subticks(&mut bus, 1);
+        assert_eq!(bus.read(0x004212), 0x80);
+    }
+
+    #[test]
+    fn auto_joy_completion_latches_joy_registers_to_zero() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.cpu_io_registers[0x18..0x20].fill(0xFF);
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(
+            &mut bus,
+            AUTO_JOYPAD_START + u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS),
+        );
+
+        for offset in 0x4218u16..=0x421Fu16 {
+            bus.write(u32::from(offset), 0xA5);
+            assert_eq!(
+                bus.read(u32::from(offset)),
+                0x00,
+                "JOY register {offset:04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn enabling_auto_joy_during_scanline_225_before_start_still_runs_this_frame() {
+        let mut bus = Bus::new(test_cartridge());
+
+        tick_subticks(&mut bus, VBLANK_STUB_ACTIVE_START);
+        assert_eq!(bus.read(0x004212), 0x80);
+
+        bus.write(0x004200, 0x01);
+        tick_subticks(&mut bus, 1);
+
+        assert_eq!(bus.read(0x004212), 0x81);
+    }
+
+    #[test]
+    fn enabling_auto_joy_exactly_at_start_still_runs_this_frame() {
+        let mut bus = Bus::new(test_cartridge());
+
+        tick_subticks(&mut bus, AUTO_JOYPAD_START);
+        assert_eq!(bus.read(0x004212), 0x80);
+
+        bus.write(0x004200, 0x01);
+
+        assert_eq!(bus.read(0x004212), 0x81);
+    }
+
+    #[test]
+    fn clearing_auto_joy_before_start_prevents_it_for_that_frame() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.cpu_io_registers[0x18..0x20].fill(0xAA);
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(&mut bus, VBLANK_STUB_ACTIVE_START);
+        bus.write(0x004200, 0x00);
+        tick_subticks(
+            &mut bus,
+            1 + u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS),
+        );
+
+        assert_eq!(bus.read(0x004212), 0x80);
+        for offset in 0x4218u16..=0x421Fu16 {
+            assert_eq!(
+                bus.read(u32::from(offset)),
+                0xAA,
+                "JOY register {offset:04X}"
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // DMA tests
     // -----------------------------------------------------------------------
@@ -835,6 +1027,12 @@ mod tests {
 
     fn tick_scanline(bus: &mut Bus) {
         for _ in 0..VBLANK_STUB_SUBTICKS_PER_SCANLINE {
+            bus.tick_video_stub();
+        }
+    }
+
+    fn tick_subticks(bus: &mut Bus, count: u16) {
+        for _ in 0..count {
             bus.tick_video_stub();
         }
     }
