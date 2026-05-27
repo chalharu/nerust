@@ -78,7 +78,7 @@ impl AndroidSound {
             .default_output_config()
             .map_err(|e| format!("failed to query default audio output configuration: {e}"))?;
 
-        let default_playback_sample_rate = supported_config.sample_rate().0;
+        let default_playback_sample_rate = supported_config.sample_rate();
         let playback_sample_rate = u32::try_from(requested_playback_sample_rate).map_err(|_| {
             format!(
                 "requested_playback_sample_rate must be non-negative, got {requested_playback_sample_rate}"
@@ -100,7 +100,7 @@ impl AndroidSound {
 
         let filter = NesFilter::new(playback_sample_rate as f32);
         let mut stream_config = supported_config.config();
-        stream_config.sample_rate = cpal::SampleRate(playback_sample_rate);
+        stream_config.sample_rate = playback_sample_rate;
         let configured_buffer_size =
             clamp_buffer_size(requested_buffer_frames, *supported_config.buffer_size());
         let configured_buffer_frames = match configured_buffer_size {
@@ -117,7 +117,10 @@ impl AndroidSound {
 
         log::info!(
             "android audio: device='{}' requested_rate={} default_rate={} channels={} target_latency_ms={} requested_buffer_frames={} configured_buffer_frames={} queue_capacity={}",
-            device.name().as_deref().unwrap_or("<unknown>"),
+            device
+                .description()
+                .map(|description| description.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string()),
             playback_sample_rate,
             default_playback_sample_rate,
             channels,
