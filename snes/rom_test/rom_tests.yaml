@@ -211,12 +211,13 @@ cases:
         expected: "0x01"
   - id: vmain-2bpp-remapping-final-state
     description: >
-      The undisbeliever VMAIN 2bpp remapping ROM eventually reaches its steady display loop with the remapped tile buffer written into VRAM.
+      The undisbeliever VMAIN 2bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through $2118/$2119.
 
     rom: >-
       snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc
     max_steps: 8500000
-    check_interval_steps: 4096
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -242,6 +243,44 @@ cases:
       - kind: vram_u8
         address: "0x001E"
         expected: "0x81"
+  - id: vmain-2bpp-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 2bpp no-remapping ROM renders the deterministic radial test image at 8500000 steps after writing its linear 2bpp tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-2bpp-split-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 2bpp split-bitplane remapping ROM renders the deterministic radial test image at 8500000 steps after writing separate bitplanes through remapped VMDATA DMA transfers.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-split-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vmain-4bpp-remapping-8500k-screen-state
     description: >
       The undisbeliever VMAIN 4bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through $2118/$2119.
@@ -783,6 +822,24 @@ cases:
     max_steps: 5000000
     check_interval_steps: 5000000
     expected_screen_hash: "0x8BED4326A9A826FC"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-vertical-scrolling-2-rows-5000k-screen-state
+    description: >
+      The undisbeliever vertical scrolling two-row VMAIN demo renders the deterministic BG1 tilemap state at 5000000 steps after transferring two split tilemap rows through paired DMA channels.
+
+    rom: snes-test-roms/bin/effects/vmain-vertical-scrolling-2-rows.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xDB312763F4F4ECA6"
     assertions:
       - kind: bus_u8
         address: "0x002100"
