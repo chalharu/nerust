@@ -144,6 +144,8 @@ pub(crate) struct Bus {
     presented_bg2_completed_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
     presented_bg3_current_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
     presented_bg3_completed_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
+    presented_bg4_current_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
+    presented_bg4_completed_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
     presented_main_screen_current_lines:
         [Option<PresentedMainScreenLine>; PRESENTED_SCANLINE_COUNT],
     presented_main_screen_completed_lines:
@@ -195,6 +197,8 @@ impl Bus {
             presented_bg2_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_bg3_current_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_bg3_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_bg4_current_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_bg4_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_main_screen_current_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_main_screen_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
         }
@@ -240,6 +244,8 @@ impl Bus {
         self.presented_bg2_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_bg3_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_bg3_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_bg4_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_bg4_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_main_screen_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_main_screen_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
@@ -309,6 +315,7 @@ impl Bus {
             self.presented_bg1_completed_lines = self.presented_bg1_current_lines;
             self.presented_bg2_completed_lines = self.presented_bg2_current_lines;
             self.presented_bg3_completed_lines = self.presented_bg3_current_lines;
+            self.presented_bg4_completed_lines = self.presented_bg4_current_lines;
             self.presented_main_screen_completed_lines = self.presented_main_screen_current_lines;
             self.nmi_flag = true;
             if self.nmi_enabled() {
@@ -331,6 +338,7 @@ impl Bus {
             self.presented_bg1_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_bg2_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_bg3_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+            self.presented_bg4_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_main_screen_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
@@ -422,6 +430,19 @@ impl Bus {
             .flatten()
             .or_else(|| {
                 self.presented_bg3_current_lines
+                    .get(line)
+                    .copied()
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn presented_bg4_line(&self, line: usize) -> Option<PresentedBg1Line> {
+        self.presented_bg4_completed_lines
+            .get(line)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                self.presented_bg4_current_lines
                     .get(line)
                     .copied()
                     .flatten()
@@ -1178,6 +1199,10 @@ impl Bus {
             hofs: self.ppu1.bg3_hofs(),
             vofs: self.ppu1.bg3_vofs(),
         });
+        self.presented_bg4_current_lines[scanline] = Some(PresentedBg1Line {
+            hofs: self.ppu1.bg4_hofs(),
+            vofs: self.ppu1.bg4_vofs(),
+        });
         self.presented_main_screen_current_lines[scanline] = Some(PresentedMainScreenLine {
             tm: self.ppu2.peek(0x212C).unwrap_or(0),
         });
@@ -1894,7 +1919,7 @@ mod tests {
     }
 
     #[test]
-    fn presented_lines_capture_bg2_bg3_scroll_and_main_screen() {
+    fn presented_lines_capture_bg2_bg3_bg4_scroll_and_main_screen() {
         let mut bus = Bus::new(test_cartridge());
 
         bus.write(0x00_210F, 0x56);
@@ -1905,7 +1930,11 @@ mod tests {
         bus.write(0x00_2111, 0x02);
         bus.write(0x00_2112, 0xDE);
         bus.write(0x00_2112, 0x01);
-        bus.write(0x00_212C, 0x07);
+        bus.write(0x00_2113, 0x24);
+        bus.write(0x00_2113, 0x03);
+        bus.write(0x00_2114, 0x68);
+        bus.write(0x00_2114, 0x00);
+        bus.write(0x00_212C, 0x0F);
 
         tick_into_new_active_frame(&mut bus);
 
@@ -1924,8 +1953,15 @@ mod tests {
             })
         );
         assert_eq!(
+            bus.presented_bg4_line(0),
+            Some(PresentedBg1Line {
+                hofs: 0x0324,
+                vofs: 0x0068,
+            })
+        );
+        assert_eq!(
             bus.presented_main_screen_line(0),
-            Some(PresentedMainScreenLine { tm: 0x07 })
+            Some(PresentedMainScreenLine { tm: 0x0F })
         );
     }
 
