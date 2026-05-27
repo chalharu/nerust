@@ -16,6 +16,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/effects/window-precalculated-single.sfc`
   - `bin/effects/window-precalculated-symmetrical.sfc`
   - `bin/effects/window-shapes-single.sfc`
+  - `bin/effects/window-mask-logic.sfc`
   - `bin/effects/vmain-1bpp-tiles-0.sfc`
   - `bin/effects/vmain-1bpp-tiles-1.sfc`
   - `bin/effects/vmain-horizontal-scrolling.sfc`

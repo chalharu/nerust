@@ -11,9 +11,9 @@ mod mode7;
 mod obj;
 mod tile;
 
-use backdrop::render_presented_backdrop;
+use backdrop::{render_current_backdrop, render_presented_backdrop};
 use bg1::render_bg1;
-use color::{cgram_color_rgba, opaque_black_screen};
+use color::opaque_black_screen;
 use nerust_snes_core::Core;
 use obj::render_obj;
 
@@ -173,16 +173,12 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     let inidisp = core.peek(0x002100);
     let brightness = inidisp & 0x0F;
-    let mut rgba = opaque_black_screen();
-
     if inidisp & 0x80 != 0 || brightness == 0 {
-        return Ok(RenderedScreen { rgba });
+        return Ok(RenderedScreen {
+            rgba: opaque_black_screen(),
+        });
     }
-
-    let backdrop = cgram_color_rgba(core, 0, brightness);
-    for pixel in rgba.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&backdrop);
-    }
+    let mut rgba = render_current_backdrop(core);
 
     render_bg1(
         core,
@@ -288,6 +284,25 @@ mod tests {
             &rendered.rgba[rendered.rgba.len() - 4..],
             &[0xFF, 0xFF, 0xFF, 0xFF]
         );
+    }
+
+    #[test]
+    fn backdrop_color_math_renders_under_enabled_main_screen_layers() {
+        let program = [
+            0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA9, 0x8F, 0x8D, 0x00, 0x21, 0x9C, 0x21, 0x21,
+            0xA9, 0xFF, 0x8D, 0x22, 0x21, 0xA9, 0x7F, 0x8D, 0x22, 0x21, 0x9C, 0x26, 0x21, 0xA9,
+            0xFF, 0x8D, 0x27, 0x21, 0xA9, 0x20, 0x8D, 0x25, 0x21, 0x9C, 0x2B, 0x21, 0xA9, 0x90,
+            0x8D, 0x30, 0x21, 0xA9, 0x20, 0x8D, 0x31, 0x21, 0xA9, 0x3F, 0x8D, 0x32, 0x21, 0xA9,
+            0x01, 0x8D, 0x2C, 0x21, 0xA9, 0x0F, 0x8D, 0x00, 0x21, 0xDB,
+        ];
+        let mut rom = build_lorom(0x8000);
+        rom[..program.len()].copy_from_slice(&program);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        let rendered = render_screen(&core).unwrap();
+        assert_eq!(&rendered.rgba[..4], &[0xFF, 0x00, 0x00, 0xFF]);
     }
 
     #[test]

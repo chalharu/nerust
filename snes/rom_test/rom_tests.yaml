@@ -621,6 +621,33 @@ cases:
       - kind: bus_u8
         address: "0x002131"
         expected: "0x00"
+  - id: window-mask-logic-300k-screen-state
+    description: >
+      The undisbeliever window mask logic effect renders deterministic overlapping color-window regions behind BG1 text at 300000 steps, covering WOBJSEL/WOBJLOG backdrop color math while main-screen layers remain enabled.
+
+    rom: snes-test-roms/bin/effects/window-mask-logic.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xF0FBC0506746395E"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0xA0"
+      - kind: bus_u8
+        address: "0x00212B"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x90"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x20"
   - id: vmain-1bpp-tiles-0-300k-screen-state
     description: >
       The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at 300000 steps after converting 1bpp tile data into transparent 2bpp tiles with VMDATAL and VMDATAH DMA transfers.
