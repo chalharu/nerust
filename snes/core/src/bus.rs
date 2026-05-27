@@ -7,6 +7,10 @@ const DMA_CHANNEL_COUNT: usize = 8;
 const VBLANK_STUB_SCANLINES: u16 = 262;
 const VBLANK_STUB_SUBTICKS_PER_SCANLINE: u16 = 4;
 const VBLANK_STUB_PERIOD: u16 = VBLANK_STUB_SCANLINES * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
+const MASTER_CLOCKS_PER_LINE: u32 = 1364;
+const CPU_MASTER_CLOCKS_PER_CYCLE: u32 = 6;
+const VIDEO_MASTER_CLOCKS_PER_SUBTICK: u32 =
+    MASTER_CLOCKS_PER_LINE / (VBLANK_STUB_SUBTICKS_PER_SCANLINE as u32);
 const VBLANK_STUB_ACTIVE_START_LINE: u16 = 225;
 const AUTO_JOYPAD_START_SUBTICK: u16 = 1;
 const AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS: u8 = 12;
@@ -84,6 +88,7 @@ pub(crate) struct Bus {
     cpu_io_registers: [u8; CPU_IO_REGISTER_COUNT],
     dma_registers: [u8; DMA_REGISTER_COUNT],
     video_phase: u16,
+    video_master_clock_accumulator: u32,
     /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210.
     nmi_flag: bool,
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
@@ -125,6 +130,7 @@ impl Bus {
             cpu_io_registers: initial_cpu_io_registers(),
             dma_registers: [0; DMA_REGISTER_COUNT],
             video_phase: 0,
+            video_master_clock_accumulator: 0,
             nmi_flag: false,
             nmi_pending: false,
             irq_flag: false,
@@ -157,6 +163,7 @@ impl Bus {
 
     pub(crate) fn reset_ephemeral_state(&mut self) {
         self.video_phase = 0;
+        self.video_master_clock_accumulator = 0;
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
@@ -183,7 +190,20 @@ impl Bus {
         self.presented_backdrop_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
 
+    #[cfg(test)]
     pub(crate) fn tick_video_stub(&mut self) {
+        self.advance_video_one_subtick();
+    }
+
+    pub(crate) fn tick_cpu_cycle(&mut self) {
+        self.video_master_clock_accumulator += CPU_MASTER_CLOCKS_PER_CYCLE;
+        while self.video_master_clock_accumulator >= VIDEO_MASTER_CLOCKS_PER_SUBTICK {
+            self.video_master_clock_accumulator -= VIDEO_MASTER_CLOCKS_PER_SUBTICK;
+            self.advance_video_one_subtick();
+        }
+    }
+
+    fn advance_video_one_subtick(&mut self) {
         let was_in_vblank = self.in_vblank();
         self.video_phase = (self.video_phase + 1) % VBLANK_STUB_PERIOD;
         let in_vblank = self.in_vblank();
@@ -1052,7 +1072,7 @@ impl CpuBus for Bus {
     }
 
     fn tick(&mut self) {
-        self.tick_video_stub();
+        self.tick_cpu_cycle();
     }
 
     fn poll_nmi(&mut self) -> bool {

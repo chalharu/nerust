@@ -6,8 +6,8 @@ cases:
       The upstream gilyon basic 65C816 CPU test ROM reaches the published final
       state from cputest/tests-basic.txt.
     rom: snes-tests/cputest/cputest-basic.sfc
-    max_steps: 3000000
-    check_interval_steps: 1024
+    max_steps: 6651904
+    check_interval_steps: 6651904
     assertions:
       - kind: bus_u16
         address: "0x0010"
@@ -38,8 +38,8 @@ cases:
       The upstream gilyon full 65C816 CPU test ROM reaches the published final
       state from cputest/tests-full.txt.
     rom: snes-tests/cputest/cputest-full.sfc
-    max_steps: 4500000
-    check_interval_steps: 1024
+    max_steps: 9633792
+    check_interval_steps: 9633792
     assertions:
       - kind: bus_u16
         address: "0x0010"
@@ -137,8 +137,8 @@ cases:
       The undisbeliever INIDISP force-blank hardware test reaches its steady
       IRQ-driven loop after loading VRAM, OAM, and CGRAM assets.
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
-    max_steps: 30000
-    check_interval_steps: 30000
+    max_steps: 69632
+    check_interval_steps: 69632
     expected_screen_hash: "0x173A1A92F44C3947"
     assertions:
       - kind: cgram_u16
@@ -211,8 +211,8 @@ cases:
       The undisbeliever mid-frame display-enable hardware test reaches its
       steady loop with the configured IRQ position and loaded PPU resources.
     rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
-    max_steps: 30000
-    check_interval_steps: 30000
+    max_steps: 114688
+    check_interval_steps: 114688
     assertions:
       - kind: bus_u8
         address: "0x004200"
@@ -249,14 +249,14 @@ cases:
         expected: "0x5555"
   - id: inidisp-extend-vblank-300k-screen-state
     description: >
-      The undisbeliever extend-VBlank demo reaches a deterministic 300000-step
-      screen state with the current IRQ-driven forced-blank flow, and should
-      keep matching that rendered frame hash when screenshots are captured from
-      the final checked state.
+      The undisbeliever extend-VBlank demo reaches a deterministic paced-timing
+      screen state at 7626752 steps with the current IRQ-driven forced-blank
+      flow, and should keep matching that rendered frame hash when screenshots
+      are captured from the final checked state.
     rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
-    max_steps: 300000
-    check_interval_steps: 300000
-    expected_screen_hash: "0xC2BEE8517488369F"
+    max_steps: 7626752
+    check_interval_steps: 7626752
+    expected_screen_hash: "0x2010B6768AF6C843"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -307,12 +307,12 @@ cases:
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a
-      deterministic 100000-step screen state while the current IRQ-driven
-      brightness ramp is still holding the display at zero brightness.
+      deterministic paced-timing screen state at 16384 steps while the delayed
+      brightness writes are still holding the display at zero brightness.
     rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_delay.sfc
-    max_steps: 100000
-    check_interval_steps: 100000
-    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    max_steps: 16384
+    check_interval_steps: 16384
+    expected_screen_hash: "0xBD1C16C241905E87"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -378,8 +378,8 @@ cases:
       no-input display state once JOYOUT and JOYSER reads are implemented for a
       standard controller.
     rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
-    max_steps: 10000
-    check_interval_steps: 10000
+    max_steps: 53248
+    check_interval_steps: 53248
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -412,8 +412,8 @@ cases:
       JOYSER reads exhausted until relatched.
     rom: >-
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc
-    max_steps: 30000
-    check_interval_steps: 30000
+    max_steps: 16384
+    check_interval_steps: 16384
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -452,8 +452,8 @@ cases:
       window does not corrupt the final no-input JOY state.
     rom: >-
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc
-    max_steps: 30000
-    check_interval_steps: 30000
+    max_steps: 16384
+    check_interval_steps: 16384
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -492,8 +492,8 @@ cases:
       active autojoy window.
     rom: >-
       snes-test-roms/bin/hardware-tests/auto-joypad/joyser0-read-during-autojoy.sfc
-    max_steps: 30000
-    check_interval_steps: 30000
+    max_steps: 49152
+    check_interval_steps: 49152
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -535,8 +535,8 @@ cases:
       in the coarse timing model.
     rom: >-
       snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc
-    max_steps: 50000
-    check_interval_steps: 50000
+    max_steps: 110592
+    check_interval_steps: 110592
     assertions:
       - kind: bus_u8
         address: "0x002100"

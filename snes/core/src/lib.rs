@@ -70,7 +70,7 @@ impl Core {
         if self.cpu.current_state() == CpuState::Stopped {
             return Ok(());
         }
-        self.bus.tick_video_stub();
+        self.bus.tick_cpu_cycle();
         self.cpu.step(&mut self.bus);
         if let Some(fault) = self.cpu.take_fault() {
             return Err(fault.into());
@@ -258,7 +258,7 @@ mod tests {
         rom[0x1000..0x1004].copy_from_slice(&[0xAD, 0x11, 0x42, 0x40]); // LDA $4211 ; RTI
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
-        run_until_stopped(&mut core, 256);
+        run_until_stopped(&mut core, 20_000);
 
         assert_eq!(core.current_state(), CpuState::Stopped);
         assert_eq!(core.current_opcode(), 0xDB);
@@ -279,7 +279,7 @@ mod tests {
         rom[0x1000..0x1004].copy_from_slice(&[0xAD, 0x11, 0x42, 0x40]); // LDA $4211 ; RTI
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
-        run_until_stopped(&mut core, 256);
+        run_until_stopped(&mut core, 20_000);
 
         assert_eq!(core.current_state(), CpuState::Stopped);
         assert_eq!(core.current_opcode(), 0xDB);
@@ -350,7 +350,7 @@ mod tests {
         ]);
 
         let mut core = Core::from_rom_bytes(&rom).unwrap();
-        run_until_stopped(&mut core, 5_000);
+        run_until_stopped(&mut core, 120_000);
 
         assert_eq!(core.current_state(), CpuState::Stopped);
         assert_eq!(core.current_opcode(), 0xDB);
