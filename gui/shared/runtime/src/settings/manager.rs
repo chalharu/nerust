@@ -59,6 +59,15 @@ impl SettingsManager {
         app_state_defaults: DesktopAppState,
     ) -> Result<Self, SettingsError> {
         let paths = settings_paths(&identity)?;
+        Self::load_with_paths(paths, shared_defaults, local_defaults, app_state_defaults)
+    }
+
+    pub fn load_with_paths(
+        paths: SettingsPaths,
+        shared_defaults: DesktopSharedSettings,
+        local_defaults: HostBackendLocalSettings,
+        app_state_defaults: DesktopAppState,
+    ) -> Result<Self, SettingsError> {
         let shared_document = load_settings_document(
             &paths.shared_settings_file,
             &shared_defaults,
@@ -101,6 +110,26 @@ impl SettingsManager {
     ) -> Self {
         match Self::load(
             identity,
+            shared_defaults.clone(),
+            local_defaults.clone(),
+            app_state_defaults.clone(),
+        ) {
+            Ok(manager) => manager,
+            Err(error) => {
+                log::warn!("settings persistence unavailable; using ephemeral settings: {error}");
+                Self::ephemeral(shared_defaults, local_defaults, app_state_defaults)
+            }
+        }
+    }
+
+    pub fn load_or_ephemeral_with_paths(
+        paths: SettingsPaths,
+        shared_defaults: DesktopSharedSettings,
+        local_defaults: HostBackendLocalSettings,
+        app_state_defaults: DesktopAppState,
+    ) -> Self {
+        match Self::load_with_paths(
+            paths,
             shared_defaults.clone(),
             local_defaults.clone(),
             app_state_defaults.clone(),

@@ -170,9 +170,13 @@ pub fn apply_default_system_settings_choice(
 }
 
 impl NesSystemDefinition {
-    fn build_console(self, settings: &SettingsSnapshot) -> Console {
+    fn build_console(
+        self,
+        host: &RuntimeHostServices,
+        settings: &SettingsSnapshot,
+    ) -> Result<Console, String> {
         self.build_console_with(
-            build_speaker(&settings.local),
+            build_speaker(host.host_backend, &settings.local)?,
             build_screen_buffer(&settings.shared),
         )
     }
@@ -181,12 +185,12 @@ impl NesSystemDefinition {
         self,
         speaker: S,
         screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
-    ) -> Console {
-        Console::new(
+    ) -> Result<Console, String> {
+        Ok(Console::new(
             speaker,
             screen_buffer,
             nerust_input_nes_runtime::standard_controller_runtime(),
-        )
+        ))
     }
 }
 
@@ -324,11 +328,11 @@ impl SystemDefinition for NesSystemDefinition {
 
     fn create_runtime(
         &self,
-        _host: &RuntimeHostServices,
+        host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
         Ok(Box::new(NesRuntime {
-            core: SessionCore::from_console(self.build_console(settings)),
+            core: SessionCore::from_console(self.build_console(host, settings)?),
         }))
     }
 }
