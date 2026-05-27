@@ -64,6 +64,7 @@ pub(crate) trait WindowExtend {
     fn close(&self);
     fn update_actions(&self);
     fn refresh_title(&self);
+    fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
 }
@@ -229,6 +230,12 @@ impl WindowExtend for Window {
                 if !window.is_active() {
                     result.state().borrow_mut().clear_input();
                 }
+            });
+        }
+        {
+            let result = result.clone();
+            let _ = window.connect_notify_local(Some("fullscreened"), move |window, _| {
+                sync_persisted_window_fullscreen(&result, window.is_fullscreen());
             });
         }
 
@@ -414,6 +421,7 @@ impl WindowExtend for Window {
 
         result.update_actions();
         window.present();
+        result.sync_fullscreen_from_settings();
         let _ = glarea.grab_focus();
         result
     }
@@ -550,6 +558,18 @@ impl WindowExtend for Window {
         self.window().set_title(Some(title.as_str()));
     }
 
+    fn sync_fullscreen_from_settings(&self) {
+        let fullscreen = self
+            .state()
+            .borrow()
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        set_window_fullscreen(&self.window(), fullscreen);
+    }
+
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
         if let Some(controller_input) = gdk_key_controller_input(key) {
             let shortcut = self
@@ -600,23 +620,50 @@ impl WindowExtend for Window {
                     let _ = self.state().borrow_mut().run_command(SessionCommand::Reset);
                 }
                 ShortcutAction::ToggleFullscreen => {
-                    if self.window().is_fullscreen() {
-                        self.window().unfullscreen();
-                    } else {
-                        self.window().fullscreen();
-                    }
+                    toggle_window_fullscreen(self);
                 }
             },
             KeyboardShortcut::ToggleFullscreen => {
-                if self.window().is_fullscreen() {
-                    self.window().unfullscreen();
-                } else {
-                    self.window().fullscreen();
-                }
+                toggle_window_fullscreen(self);
             }
         }
         self.update_actions();
     }
+}
+
+fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
+    window.set_fullscreened(fullscreen);
+}
+
+fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, String> {
+    let state = window.state();
+    Ok(state
+        .borrow_mut()
+        .set_fullscreen_default(fullscreen)?
+        .fullscreen_default_changed)
+}
+
+fn sync_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    match persist_window_fullscreen_default(window, fullscreen) {
+        Ok(true) => window.update_actions(),
+        Ok(false) => (),
+        Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
+    }
+}
+
+fn apply_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    match persist_window_fullscreen_default(window, fullscreen) {
+        Ok(_) => window.sync_fullscreen_from_settings(),
+        Err(error) => {
+            log::warn!("failed to persist fullscreen setting: {error}");
+            set_window_fullscreen(&window.window(), fullscreen);
+        }
+    }
+}
+
+fn toggle_window_fullscreen(window: &Window) {
+    let fullscreen = !window.window().is_fullscreen();
+    apply_persisted_window_fullscreen(window, fullscreen);
 }
 
 fn rebuild_slot_menu(

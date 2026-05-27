@@ -135,6 +135,17 @@ impl State {
         Ok(plan)
     }
 
+    pub(crate) fn set_fullscreen_default(
+        &mut self,
+        fullscreen: bool,
+    ) -> Result<SettingsApplyPlan, String> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        if plan.session_rebuild_required || plan.window_settings_changed {
+            self.renderer_reload_pending = true;
+        }
+        Ok(plan)
+    }
+
     pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
         std::mem::take(&mut self.renderer_reload_pending)
     }
