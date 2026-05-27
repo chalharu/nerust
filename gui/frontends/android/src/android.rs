@@ -1,4 +1,5 @@
 mod library;
+mod menu;
 mod picker;
 mod renderer;
 mod settings;
@@ -6,6 +7,7 @@ mod storage;
 mod surface;
 
 use self::library::LibraryDialogResult;
+use self::menu::MenuAction;
 use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
@@ -35,6 +37,7 @@ use winit::window::{Window, WindowId};
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     picker::bind_app(&app);
     library::bind_app(&app);
+    menu::bind_app(&app);
     settings::bind_app(&app);
     let frontend_app = app.clone();
     let storage_root = app
@@ -200,6 +203,49 @@ impl AndroidFrontend {
         }
     }
 
+    fn run_session_command(&mut self, command: SessionCommand) {
+        let outcome = self.session.run_command(command).unwrap_or_default();
+        if outcome.needs_redraw {
+            self.request_redraw();
+        }
+    }
+
+    fn request_library_dialog(&mut self) {
+        match library::request_show_library(&self.app, self.storage.rom_library.entries()) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::warn!("Android ROM library dialog ignored while it is already open");
+            }
+            Err(error) => {
+                log::error!("{error}");
+            }
+        }
+    }
+
+    fn request_settings_dialog(&mut self) {
+        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        match settings::request_show_settings_dialog(&self.app, &current) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::warn!("Android settings dialog ignored while it is already open");
+            }
+            Err(error) => {
+                log::error!("{error}");
+            }
+        }
+    }
+
+    fn handle_menu_action(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
+            MenuAction::OpenLibrary => self.request_library_dialog(),
+            MenuAction::OpenSettings => self.request_settings_dialog(),
+            MenuAction::Reset => self.run_session_command(SessionCommand::Reset),
+            MenuAction::SaveState => self.run_session_command(SessionCommand::SaveActiveSlotOrNew),
+            MenuAction::TogglePause => self.run_session_command(SessionCommand::TogglePause),
+        }
+    }
+
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if self.window.is_some() {
             return Ok(());
@@ -279,38 +325,13 @@ impl AndroidFrontend {
                     self.request_redraw();
                 }
                 TouchOverlayAction::Session(command) => {
-                    let outcome = self.session.run_command(command).unwrap_or_default();
-                    if outcome.needs_redraw {
-                        self.request_redraw();
-                    }
+                    self.run_session_command(command);
                 }
                 TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary) => {
-                    match library::request_show_library(
-                        &self.app,
-                        self.storage.rom_library.entries(),
-                    ) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            log::warn!(
-                                "Android ROM library dialog ignored while it is already open"
-                            );
-                        }
-                        Err(error) => {
-                            log::error!("{error}");
-                        }
-                    }
+                    self.request_library_dialog();
                 }
                 TouchOverlayAction::Frontend(TouchFrontendAction::OpenSettings) => {
-                    let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
-                    match settings::request_show_settings_dialog(&self.app, &current) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            log::warn!("Android settings dialog ignored while it is already open");
-                        }
-                        Err(error) => {
-                            log::error!("{error}");
-                        }
-                    }
+                    self.request_settings_dialog();
                 }
             }
         }
@@ -364,6 +385,7 @@ impl ApplicationHandler for AndroidFrontend {
         let _ = self.session.clear_input();
         picker::reset();
         library::reset();
+        menu::reset();
         settings::reset();
         self.renderer = None;
         self.window = None;
@@ -416,6 +438,9 @@ impl ApplicationHandler for AndroidFrontend {
         }
         if let Some(result) = settings::take_result() {
             self.handle_settings_result(result);
+        }
+        for action in menu::take_actions() {
+            self.handle_menu_action(action);
         }
         self.maybe_refresh_title(Instant::now());
         if let Some(window) = self.window.as_ref()
