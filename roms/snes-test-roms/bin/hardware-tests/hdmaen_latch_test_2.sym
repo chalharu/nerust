@@ -1,0 +1,15 @@
+0000ffb6 SnesHeader.EmptyBytes
+00808000 _wait_rom
+00808000 WaitScanlines_A
+00808007 WaitScanlines_A.Loop
+0080801a NmiHandler
+0080801a BreakHandler
+0080801a CopHandler
+0080801a EmptyHandler
+0080802a PartialHdmaTable
+0080802f IrqHandler
+00808035 ResetHandler
+00808039 ResetHandler.Reset
+00808076 Main
+008080e4 Main.HdmaChannelLoop
+008081f0 Main._OddScanline

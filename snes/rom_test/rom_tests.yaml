@@ -372,6 +372,38 @@ cases:
       - kind: oam_u16
         address: "0x0000"
         expected: "0xF080"
+  - id: hdmaen-latch-test-300k-screen-state
+    description: >
+      The undisbeliever HDMAEN latch hardware test renders the alternating
+      backdrop stripe pattern at 300000 steps once HIRQ, WAI, and mid-frame
+      HDMA activation are paced against the current CPU timing model.
+    rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+  - id: hdmaen-latch-test-2-300k-screen-state
+    description: >
+      The undisbeliever HDMAEN latch timing sweep test reaches the same
+      alternating backdrop stripe pattern at 300000 steps while keeping HIRQ
+      enabled for the next per-delay sweep.
+    rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test_2.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x10"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
