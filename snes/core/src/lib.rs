@@ -249,6 +249,27 @@ mod tests {
     }
 
     #[test]
+    fn core_combined_hv_irq_wakes_wai_and_returns_through_timeup_handler() {
+        let mut rom = build_lorom(0x8000);
+        rom[IRQ_VECTOR_OFFSET..IRQ_VECTOR_OFFSET + 2].copy_from_slice(&0x9000u16.to_le_bytes());
+        rom[0x0000..0x0012].copy_from_slice(&[
+            0xA0, 0x14, 0x8C, 0x09, 0x42, // LDY #20 ; STY VTIME
+            0xA0, 0x89, 0x8C, 0x07, 0x42, // LDY #137 ; STY HTIME
+            0xA9, 0x30, 0x8D, 0x00, 0x42, // LDA #$30 ; STA NMITIMEN
+            0x58, 0xCB, 0xDB, // CLI ; WAI ; STP
+        ]);
+        rom[0x1000..0x1004].copy_from_slice(&[0xAD, 0x11, 0x42, 0x40]); // LDA $4211 ; RTI
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.registers().pc(), 0x8012);
+        assert_eq!(core.peek(0x004211), 0x00);
+    }
+
+    #[test]
     fn stepping_a_stopped_core_does_not_advance_vblank_stub() {
         let mut rom = build_lorom(0x8000);
         rom[0x0000] = 0xDB;

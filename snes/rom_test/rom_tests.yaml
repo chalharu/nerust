@@ -164,3 +164,38 @@ cases:
       - kind: oam_u16
         address: "0x0202"
         expected: "0x5555"
+  - id: inidisp-forgot-to-force-blank-2-final-state
+    description: >
+      The undisbeliever follow-up force-blank hardware test reaches its steady
+      HV-IRQ loop after re-uploading PPU data during active display.
+    rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc
+    max_steps: 5000
+    check_interval_steps: 5000
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x7F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"

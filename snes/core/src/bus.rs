@@ -4,8 +4,14 @@ use crate::{Cartridge, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
 const DMA_CHANNEL_COUNT: usize = 8;
-const VBLANK_STUB_PERIOD: u16 = 1024;
-const VBLANK_STUB_ACTIVE_START: u16 = 768;
+const VBLANK_STUB_SCANLINES: u16 = 262;
+const VBLANK_STUB_SUBTICKS_PER_SCANLINE: u16 = 4;
+const VBLANK_STUB_PERIOD: u16 = VBLANK_STUB_SCANLINES * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
+const VBLANK_STUB_ACTIVE_START_LINE: u16 = 225;
+#[cfg(test)]
+const VBLANK_STUB_ACTIVE_START: u16 =
+    VBLANK_STUB_ACTIVE_START_LINE * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
+const HCOUNTER_DOTS_PER_LINE: u16 = 341;
 
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
@@ -102,13 +108,13 @@ impl Bus {
                 self.nmi_pending = true;
             }
         }
-        if self.vcounter_irq_enabled() && self.video_phase == self.vtime_target() {
+        if self.irq_event_matches_current_position() {
             self.irq_flag = true;
         }
         if was_in_vblank && !in_vblank {
             self.reload_hdma_channels();
         }
-        if !in_vblank {
+        if self.current_subtick() == 0 && !in_vblank {
             self.step_hdma_line();
         }
     }
@@ -122,9 +128,39 @@ impl Bus {
         self.cpu_io_registers[0x00] & 0x20 != 0
     }
 
+    fn hcounter_irq_enabled(&self) -> bool {
+        self.cpu_io_registers[0x00] & 0x10 != 0
+    }
+
     fn vtime_target(&self) -> u16 {
         u16::from(self.cpu_io_registers[0x09])
             | (u16::from(self.cpu_io_registers[0x0A] & 0x01) << 8)
+    }
+
+    fn htime_target(&self) -> u16 {
+        u16::from(self.cpu_io_registers[0x07])
+            | (u16::from(self.cpu_io_registers[0x08] & 0x01) << 8)
+    }
+
+    fn current_scanline(&self) -> u16 {
+        self.video_phase / VBLANK_STUB_SUBTICKS_PER_SCANLINE
+    }
+
+    fn current_subtick(&self) -> u16 {
+        self.video_phase % VBLANK_STUB_SUBTICKS_PER_SCANLINE
+    }
+
+    fn irq_event_matches_current_position(&self) -> bool {
+        let vmatch = self.vcounter_irq_enabled() && self.current_scanline() == self.vtime_target();
+        let hmatch = self.hcounter_irq_enabled()
+            && hcounter_target_is_in_subtick(self.htime_target(), self.current_subtick());
+
+        match (self.vcounter_irq_enabled(), self.hcounter_irq_enabled()) {
+            (false, false) => false,
+            (false, true) => hmatch,
+            (true, false) => vmatch && self.current_subtick() == 0,
+            (true, true) => vmatch && hmatch,
+        }
     }
 
     /// Consume and return the pending-NMI flag.  Called by the CPU each cycle
@@ -134,7 +170,7 @@ impl Bus {
     }
 
     pub(crate) fn poll_irq(&mut self) -> bool {
-        self.irq_flag && self.vcounter_irq_enabled()
+        self.irq_flag && (self.vcounter_irq_enabled() || self.hcounter_irq_enabled())
     }
 
     pub(crate) fn peek(&self, address: u32) -> u8 {
@@ -150,7 +186,11 @@ impl Bus {
     }
 
     fn in_vblank(&self) -> bool {
-        self.video_phase >= VBLANK_STUB_ACTIVE_START
+        self.current_scanline() >= VBLANK_STUB_ACTIVE_START_LINE
+    }
+
+    fn in_hblank(&self) -> bool {
+        self.current_subtick() + 1 == VBLANK_STUB_SUBTICKS_PER_SCANLINE
     }
 
     fn read_resolved(&mut self, address: u32) -> u8 {
@@ -202,11 +242,7 @@ impl Bus {
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4212) => {
-                if self.in_vblank() {
-                    0x80
-                } else {
-                    0x00
-                }
+                u8::from(self.in_vblank()) << 7 | u8::from(self.in_hblank()) << 6
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4218) => self.cpu_io_registers[0x18],
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
@@ -252,7 +288,7 @@ impl Bus {
                 if !was_nmi_enabled && now_nmi_enabled && self.nmi_flag {
                     self.nmi_pending = true;
                 }
-                if value & 0x20 != 0 && self.video_phase == self.vtime_target() {
+                if self.irq_event_matches_current_position() {
                     self.irq_flag = true;
                 }
             }
@@ -547,13 +583,7 @@ impl Bus {
                 self.irq_flag = false;
                 val
             }
-            0x4212 => {
-                if self.in_vblank() {
-                    0x80
-                } else {
-                    0x00
-                }
-            }
+            0x4212 => u8::from(self.in_vblank()) << 7 | u8::from(self.in_hblank()) << 6,
             0x4218 => self.cpu_io_registers[0x18],
             _ => self.cpu_io_registers[usize::from(offset - 0x4200)],
         }
@@ -592,6 +622,15 @@ fn dma_abus_accessible(bank: u8, offset: u16) -> bool {
     )
 }
 
+fn hcounter_target_is_in_subtick(target: u16, subtick: u16) -> bool {
+    let start = (u32::from(subtick) * u32::from(HCOUNTER_DOTS_PER_LINE))
+        / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
+    let end = (u32::from(subtick + 1) * u32::from(HCOUNTER_DOTS_PER_LINE))
+        / u32::from(VBLANK_STUB_SUBTICKS_PER_SCANLINE);
+    let target = u32::from(target.min(HCOUNTER_DOTS_PER_LINE.saturating_sub(1)));
+    target >= start && target < end
+}
+
 fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
     match pattern & 0x07 {
         0 => &[0],
@@ -606,7 +645,9 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bus, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD};
+    use super::{
+        Bus, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+    };
     use crate::Cartridge;
 
     const HEADER_OFFSET: usize = 0x7FC0;
@@ -690,6 +731,12 @@ mod tests {
     fn tick_into_new_active_frame(bus: &mut Bus) {
         bus.video_phase = VBLANK_STUB_PERIOD - 1;
         bus.tick_video_stub();
+    }
+
+    fn tick_scanline(bus: &mut Bus) {
+        for _ in 0..VBLANK_STUB_SUBTICKS_PER_SCANLINE {
+            bus.tick_video_stub();
+        }
     }
 
     /// DMA ch0, pattern 1 (two-register: VMDATAL/VMDATAH), increment source.
@@ -897,8 +944,7 @@ mod tests {
         assert_eq!(bus.memory.peek_wram(0), 0x5A);
         assert_eq!(bus.memory.wmadd(), 1);
 
-        bus.tick_video_stub();
-        bus.tick_video_stub();
+        tick_scanline(&mut bus);
         assert_eq!(
             bus.memory.peek_wram(1),
             0x00,
@@ -910,7 +956,7 @@ mod tests {
             "WMADD should not advance after first transfer"
         );
 
-        bus.tick_video_stub();
+        tick_scanline(&mut bus);
         assert_eq!(
             bus.hdma_active_mask & 0x01,
             0,
@@ -934,15 +980,15 @@ mod tests {
         bus.write(0x00_420C, 0x01);
 
         tick_into_new_active_frame(&mut bus);
-        bus.tick_video_stub();
-        bus.tick_video_stub();
+        tick_scanline(&mut bus);
+        tick_scanline(&mut bus);
 
         assert_eq!(bus.memory.peek_wram(0), 0xA5);
         assert_eq!(bus.memory.peek_wram(1), 0xA5);
         assert_eq!(bus.memory.peek_wram(2), 0xA5);
         assert_eq!(bus.memory.wmadd(), 3);
 
-        bus.tick_video_stub();
+        tick_scanline(&mut bus);
         assert_eq!(bus.hdma_active_mask & 0x01, 0);
     }
 
@@ -1141,7 +1187,7 @@ mod tests {
         bus.write(0x00420A, 0);
         bus.write(0x004200, 0x20);
 
-        for _ in 0..40 {
+        for _ in 0..(40 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
             bus.tick_video_stub();
         }
 
@@ -1160,7 +1206,7 @@ mod tests {
         bus.write(0x00420A, 0);
         bus.write(0x004200, 0x20);
 
-        for _ in 0..40 {
+        for _ in 0..(40 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
             bus.tick_video_stub();
         }
 
@@ -1178,7 +1224,7 @@ mod tests {
         bus.write(0x00420A, 0);
         bus.write(0x004200, 0x20);
 
-        for _ in 0..40 {
+        for _ in 0..(40 * VBLANK_STUB_SUBTICKS_PER_SCANLINE) {
             bus.tick_video_stub();
         }
 
@@ -1189,6 +1235,99 @@ mod tests {
 
         assert!(bus.irq_flag);
         assert!(!bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn hcounter_irq_raises_timeup_without_vcounter_programming() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004207, 0x35);
+        bus.write(0x004208, 0x01);
+        bus.write(0x004200, 0x10);
+
+        for _ in 0..3 {
+            bus.tick_video_stub();
+        }
+
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn combined_hv_irq_waits_for_both_targets() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 103);
+        bus.write(0x00420A, 0);
+        bus.write(0x004207, 137);
+        bus.write(0x004208, 0);
+        bus.write(0x004200, 0x30);
+
+        for _ in 0..(103 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn combined_hv_irq_reasserts_on_later_frames_after_acknowledgement() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 1);
+        bus.write(0x00420A, 0);
+        bus.write(0x004207, 137);
+        bus.write(0x004208, 0);
+        bus.write(0x004200, 0x30);
+
+        for _ in 0..(VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+        assert_eq!(bus.read(0x004211), 0x80);
+
+        for _ in 0..VBLANK_STUB_PERIOD {
+            bus.tick_video_stub();
+        }
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn enabling_hcounter_irq_at_matching_subtick_raises_timeup_immediately() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004207, 137);
+        bus.write(0x004208, 0);
+        bus.tick_video_stub();
+
+        bus.write(0x004200, 0x10);
+
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+    }
+
+    #[test]
+    fn enabling_combined_hv_irq_at_matching_position_raises_timeup_immediately() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 2);
+        bus.write(0x00420A, 0);
+        bus.write(0x004207, 137);
+        bus.write(0x004208, 0);
+
+        for _ in 0..(2 * VBLANK_STUB_SUBTICKS_PER_SCANLINE + 1) {
+            bus.tick_video_stub();
+        }
+
+        bus.write(0x004200, 0x30);
+
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
         assert_eq!(bus.read(0x004211), 0x80);
     }
 }
