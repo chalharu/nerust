@@ -7,7 +7,8 @@ use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
 use nerust_gui_shell::descriptor::{
-    SystemSettingsFieldKind, default_input_topology_descriptor, default_system_settings_page_model,
+    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
+    SystemSettingsPageModel, system_definition_for_id,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -18,7 +19,8 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_input_schema::{InputTopologyDescriptor, SystemId};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -195,20 +197,24 @@ pub(crate) fn present_preferences_dialog(
     let system_page_model = state.borrow().system_settings_page_model();
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
     let filter_combo = combo_from_optional_system_field(filter_field);
-    system_page.append(&labeled_row(
+    let filter_row = labeled_row(
         filter_field
             .map(|field| field.label.as_str())
             .unwrap_or(text(language, UiText::Filter)),
         &filter_combo,
-    ));
+    );
+    filter_row.set_visible(filter_field.is_some());
+    system_page.append(&filter_row);
     let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
     let mmc3_combo = combo_from_optional_system_field(mmc3_field);
-    system_page.append(&labeled_row(
+    let mmc3_row = labeled_row(
         mmc3_field
             .map(|field| field.label.as_str())
             .unwrap_or(text(language, UiText::Mmc3IrqVariant)),
         &mmc3_combo,
-    ));
+    );
+    mmc3_row.set_visible(mmc3_field.is_some());
+    system_page.append(&mmc3_row);
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
@@ -227,6 +233,7 @@ pub(crate) fn present_preferences_dialog(
         &mmc3_combo,
         &input_rows,
         &capture_target,
+        &topology,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
     );
@@ -237,6 +244,7 @@ pub(crate) fn present_preferences_dialog(
         &storage_dir_row,
         &storage_error_label,
         &input_conflict_label,
+        &topology,
     );
 
     {
@@ -260,6 +268,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         );
         let _ = language_combo.connect_changed(move |combo| {
@@ -295,6 +304,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         ),
     );
@@ -328,6 +338,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         ),
     );
@@ -355,6 +366,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         );
         let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
@@ -394,6 +406,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         );
         let target = row.target.clone();
@@ -424,6 +437,7 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         );
         let target = row.target.clone();
@@ -460,12 +474,13 @@ pub(crate) fn present_preferences_dialog(
             &mmc3_combo,
             &input_rows,
             &capture_target,
+            &topology,
             language,
         );
         let _ = dialog.connect_response(move |dialog, response| match response {
             gtk::ResponseType::Ok => {
                 let snapshot = draft.borrow().clone();
-                if !validation_errors(&snapshot).is_empty() {
+                if !validation_errors(&snapshot, &topology).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
@@ -512,6 +527,7 @@ struct WidgetBundle {
     mmc3_combo: gtk::ComboBoxText,
     input_rows: Vec<InputRow>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
+    input_topology: InputTopologyDescriptor,
     language: AppLanguage,
 }
 
@@ -560,6 +576,7 @@ fn widget_bundle(
     mmc3_combo: &gtk::ComboBoxText,
     input_rows: &[InputRow],
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
+    input_topology: &InputTopologyDescriptor,
     language: AppLanguage,
 ) -> WidgetBundle {
     WidgetBundle {
@@ -581,6 +598,7 @@ fn widget_bundle(
         mmc3_combo: mmc3_combo.clone(),
         input_rows: input_rows.to_vec(),
         capture_target: capture_target.clone(),
+        input_topology: input_topology.clone(),
         language,
     }
 }
@@ -603,6 +621,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.mmc3_combo,
         &widgets.input_rows,
         &widgets.capture_target,
+        &widgets.input_topology,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
     );
@@ -613,6 +632,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.storage_dir_row,
         &widgets.storage_error_label,
         &widgets.input_conflict_label,
+        &widgets.input_topology,
     );
 }
 
@@ -733,17 +753,18 @@ fn connect_local_updates(
         let widgets = widgets.clone();
         let _ = filter_combo.connect_changed(move |combo| {
             let mut snapshot = draft.borrow_mut();
-            let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+            if !apply_system_settings_choice_for_topology(
+                &widgets.input_topology,
                 &mut snapshot,
-                &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
-                &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
-                    combo
-                        .active_id()
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "ntsc_composite".to_string())
-                        .into(),
-                ),
-            );
+                "video.filter",
+                combo
+                    .active_id()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "ntsc_composite".to_string()),
+            ) {
+                return;
+            }
+            drop(snapshot);
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -752,19 +773,18 @@ fn connect_local_updates(
         let widgets = widgets.clone();
         let _ = mmc3_combo.connect_changed(move |combo| {
             let mut snapshot = draft.borrow_mut();
-            let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+            if !apply_system_settings_choice_for_topology(
+                &widgets.input_topology,
                 &mut snapshot,
-                &nerust_gui_shell::descriptor::SystemSettingsFieldId(
-                    "core.mmc3_irq_variant".into(),
-                ),
-                &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
-                    combo
-                        .active_id()
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "auto".to_string())
-                        .into(),
-                ),
-            );
+                "core.mmc3_irq_variant",
+                combo
+                    .active_id()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ) {
+                return;
+            }
+            drop(snapshot);
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -777,11 +797,12 @@ fn refresh_validation(
     storage_dir_row: &gtk::Box,
     storage_error_label: &gtk::Label,
     input_conflict_label: &gtk::Label,
+    input_topology: &InputTopologyDescriptor,
 ) {
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared, &default_input_topology_descriptor());
+    let conflicts = conflicting_keys(&snapshot.shared, input_topology);
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -803,12 +824,15 @@ fn refresh_validation(
     ok_button.set_sensitive(!has_errors);
 }
 
-fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
+fn validation_errors(
+    snapshot: &SettingsSnapshot,
+    input_topology: &InputTopologyDescriptor,
+) -> Vec<String> {
     let mut errors = Vec::new();
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    for (key, labels) in conflicting_keys(&snapshot.shared, &default_input_topology_descriptor()) {
+    for (key, labels) in conflicting_keys(&snapshot.shared, input_topology) {
         errors.push(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -816,6 +840,42 @@ fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
         ));
     }
     errors
+}
+
+fn system_settings_page_model(
+    system_id: SystemId,
+    snapshot: &SettingsSnapshot,
+) -> SystemSettingsPageModel {
+    system_definition_for_id(system_id)
+        .expect("active system definition should be available")
+        .settings_page(snapshot)
+}
+
+fn apply_system_settings_choice_for_topology(
+    input_topology: &InputTopologyDescriptor,
+    settings: &mut SettingsSnapshot,
+    field_id: &str,
+    choice_id: String,
+) -> bool {
+    let page = system_settings_page_model(input_topology.system, settings);
+    if !page
+        .fields
+        .iter()
+        .any(|field| field.id.as_str() == field_id)
+    {
+        return false;
+    }
+
+    let field = SystemSettingsFieldId(Cow::Owned(field_id.to_string()));
+    let choice = SystemSettingsChoiceId(Cow::Owned(choice_id));
+    if let Err(error) = system_definition_for_id(input_topology.system)
+        .expect("active system definition should be available")
+        .apply_settings_choice(settings, &field, &choice)
+    {
+        log::warn!("failed to apply system settings choice: {error}");
+        return false;
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -836,6 +896,7 @@ fn apply_snapshot_to_widgets(
     mmc3_combo: &gtk::ComboBoxText,
     input_rows: &[InputRow],
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
+    input_topology: &InputTopologyDescriptor,
     unbound_label: &str,
     capture_label: &str,
 ) {
@@ -879,7 +940,7 @@ fn apply_snapshot_to_widgets(
         _ => "48000",
     }));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = default_system_settings_page_model(snapshot);
+    let system_page = system_settings_page_model(input_topology.system, snapshot);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 

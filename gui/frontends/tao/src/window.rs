@@ -23,12 +23,16 @@ pub enum WindowMmc3IrqVariant {
 }
 
 fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRequest {
-    LoadRequest::Explicit {
-        system_id: SystemId::Nes,
-        options: SystemLoadOptions {
-            mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
-        },
+    if let Some(mmc3_irq_variant) = options.mmc3_irq_variant {
+        return LoadRequest::Explicit {
+            system_id: SystemId::Nes,
+            options: SystemLoadOptions {
+                mmc3_irq_variant: Some(shell_mmc3_irq_variant(mmc3_irq_variant)),
+            },
+        };
     }
+
+    LoadRequest::Auto
 }
 
 fn shell_mmc3_irq_variant(
@@ -111,6 +115,14 @@ mod tests {
                     mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
                 },
             }
+        );
+    }
+
+    #[test]
+    fn default_window_load_options_keep_system_auto_detection() {
+        assert_eq!(
+            system_load_request_from_window_options(WindowLoadOptions::default()),
+            LoadRequest::Auto
         );
     }
 }

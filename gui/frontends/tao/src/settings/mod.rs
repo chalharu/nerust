@@ -6,6 +6,7 @@ use crate::settings::bridge::{
     ChildToParentMessage, ParentToChildMessage, read_message, write_message,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_input_schema::SystemId;
 use std::io::{BufReader, BufWriter};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -15,8 +16,8 @@ use tao::event_loop::EventLoopProxy;
 pub const HELPER_FLAG: &str = "settings-ui-helper";
 
 pub fn run_settings_helper_from_stdio() -> Result<(), String> {
-    let (snapshot, bridge) = bridge::SettingsChildBridge::connect_stdio()?;
-    ui::run(snapshot, bridge)
+    let (snapshot, system_id, bridge) = bridge::SettingsChildBridge::connect_stdio()?;
+    ui::run(snapshot, system_id, bridge)
 }
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ impl SettingsHelperHandle {
 
 pub(crate) fn spawn_settings_helper(
     initial_snapshot: SettingsSnapshot,
+    system_id: SystemId,
     proxy: EventLoopProxy<UserEvent>,
 ) -> Result<SettingsHelperHandle, String> {
     let current_exe = std::env::current_exe()
@@ -63,6 +65,7 @@ pub(crate) fn spawn_settings_helper(
                 child_stdin,
                 child_stdout,
                 initial_snapshot,
+                system_id,
                 proxy.clone(),
             ) {
                 log::warn!("settings helper bridge failed: {error}");
@@ -78,12 +81,19 @@ fn bridge_settings_helper(
     child_stdin: std::process::ChildStdin,
     child_stdout: std::process::ChildStdout,
     initial_snapshot: SettingsSnapshot,
+    system_id: SystemId,
     proxy: EventLoopProxy<UserEvent>,
 ) -> Result<(), String> {
     let mut reader = BufReader::new(child_stdout);
     let mut writer = BufWriter::new(child_stdin);
 
-    write_message(&mut writer, &ParentToChildMessage::Init(initial_snapshot))?;
+    write_message(
+        &mut writer,
+        &ParentToChildMessage::Init {
+            snapshot: initial_snapshot,
+            system_id,
+        },
+    )?;
     while let Some(message) = read_message::<_, ChildToParentMessage>(&mut reader)? {
         match message {
             ChildToParentMessage::Apply(snapshot) => {

@@ -13,8 +13,8 @@ use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
 use nerust_gui_shell::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldModel, apply_default_system_settings_choice,
-    default_input_topology_descriptor, default_system_settings_page_model,
+    SystemSettingsChoiceId, SystemSettingsFieldModel, SystemSettingsPageModel,
+    system_definition_for_id,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -25,7 +25,7 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_input_schema::{InputTopologyDescriptor, SystemId};
 use rfd::FileDialog;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -90,6 +90,7 @@ struct SettingsApp {
             >,
         >,
     >,
+    system_id: SystemId,
     draft: SettingsSnapshot,
     page: SettingsPage,
     input_section: InputPageSection,
@@ -101,6 +102,7 @@ struct SettingsApp {
 
 pub(super) fn run(
     snapshot: SettingsSnapshot,
+    system_id: SystemId,
     bridge: SettingsChildBridge<
         std::io::BufReader<std::io::Stdin>,
         std::io::BufWriter<std::io::Stdout>,
@@ -108,7 +110,7 @@ pub(super) fn run(
 ) -> Result<(), String> {
     let bridge = Arc::new(Mutex::new(bridge));
     iced::application(
-        move || SettingsApp::new(snapshot.clone(), bridge.clone()),
+        move || SettingsApp::new(snapshot.clone(), system_id, bridge.clone()),
         update,
         view,
     )
@@ -187,11 +189,7 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
         Message::SetSampleRate(choice) => state.draft.local.audio.sample_rate = choice.value,
         Message::SetLatency(value) => state.draft.local.audio.latency_ms = value,
         Message::SetSystemChoice(field, choice) => {
-            let _ = apply_default_system_settings_choice(
-                &mut state.draft,
-                &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
-                &SystemSettingsChoiceId(choice.value.into()),
-            );
+            state.apply_system_choice(&field, choice.value);
         }
         Message::StartCapture(target) => state.capture_target = Some(target),
         Message::ClearCapture(target) => {
@@ -287,6 +285,7 @@ fn view(state: &SettingsApp) -> Element<'_, Message> {
 impl SettingsApp {
     fn new(
         snapshot: SettingsSnapshot,
+        system_id: SystemId,
         bridge: Arc<
             Mutex<
                 SettingsChildBridge<
@@ -305,6 +304,7 @@ impl SettingsApp {
             .unwrap_or_default();
         Self {
             bridge,
+            system_id,
             draft: snapshot,
             page: SettingsPage::General,
             input_section: InputPageSection::Attachment(0),
@@ -319,12 +319,45 @@ impl SettingsApp {
         self.draft.shared.general.language
     }
 
+    fn input_topology(&self) -> InputTopologyDescriptor {
+        system_definition_for_id(self.system_id)
+            .expect("active system definition should be available")
+            .descriptor()
+            .input_topology
+    }
+
+    fn system_page_model(&self) -> SystemSettingsPageModel {
+        system_definition_for_id(self.system_id)
+            .expect("active system definition should be available")
+            .settings_page(&self.draft)
+    }
+
+    fn apply_system_choice(&mut self, field: &str, choice: String) {
+        let definition = system_definition_for_id(self.system_id)
+            .expect("active system definition should be available");
+        if !self
+            .system_page_model()
+            .fields
+            .iter()
+            .any(|candidate| candidate.id.as_str() == field)
+        {
+            return;
+        }
+        if let Err(error) = definition.apply_settings_choice(
+            &mut self.draft,
+            &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.to_string().into()),
+            &SystemSettingsChoiceId(choice.into()),
+        ) {
+            log::warn!("failed to apply system settings choice: {error}");
+        }
+    }
+
     fn validation_errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        for (key, labels) in conflicting_keys(&self.draft.shared, &input_topology()) {
+        for (key, labels) in conflicting_keys(&self.draft.shared, &self.input_topology()) {
             errors.push(format!(
                 "{}: {}",
                 keyboard_key_label(key),
@@ -341,7 +374,7 @@ impl SettingsApp {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology())
+        let (key, labels) = conflicting_keys(&self.draft.shared, &self.input_topology())
             .into_iter()
             .next()?;
         Some(format!(
@@ -414,7 +447,8 @@ impl SettingsApp {
             content = content.push(text(conflict));
         }
 
-        let sections = keyboard_binding_sections(&input_topology());
+        let topology = self.input_topology();
+        let sections = keyboard_binding_sections(&topology);
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(
@@ -553,7 +587,7 @@ impl SettingsApp {
     }
 
     fn system_page(&self) -> Element<'_, Message> {
-        let model = default_system_settings_page_model(&self.draft);
+        let model = self.system_page_model();
         let mut content = column![];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field));
@@ -753,10 +787,6 @@ fn sample_rate_options() -> Vec<Choice<u32>> {
             label: "48000".to_string(),
         },
     ]
-}
-
-fn input_topology() -> InputTopologyDescriptor {
-    default_input_topology_descriptor()
 }
 
 fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {
