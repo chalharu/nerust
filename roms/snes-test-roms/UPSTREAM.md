@@ -21,6 +21,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/hardware-tests/inidisp_forgot_to_force_blank.sfc`
   - `bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc`
   - `bin/hardware-tests/joypad_rapid_read_test.sfc`
+  - `bin/hardware-tests/object-dropout-test.sfc`
   - `bin/hardware-tests/reset-position-test.sfc`
   - `bin/hardware-tests/vram-mid-scanline-test.sfc`
   - `bin/hardware-tests/wrmpyb-in-flight.sfc`

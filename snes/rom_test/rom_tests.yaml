@@ -444,6 +444,19 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+  - id: object-dropout-300k-screen-state
+    description: >
+      The undisbeliever object dropout hardware test renders the deterministic
+      OBJ overflow pattern at 300000 steps, covering the per-scanline sprite and
+      tile-sliver limits including offscreen sprites at X=-256.
+    rom: snes-test-roms/bin/hardware-tests/object-dropout-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3347C7633FF81D85"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
