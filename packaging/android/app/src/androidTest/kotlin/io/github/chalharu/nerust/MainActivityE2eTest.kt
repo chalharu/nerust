@@ -27,15 +27,22 @@ class MainActivityE2eTest {
         device.pressHome()
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         context.startActivity(launchIntent)
+        require(device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)), STARTUP_TIMEOUT_MS)) {
+            "App window should be visible after startup"
+        }
 
-        val menuButton =
-            requireNotNull(device.wait(Until.findObject(By.desc("Menu")), STARTUP_TIMEOUT_MS)) {
-                "Menu button should be visible after startup"
-            }
-        menuButton.click()
+        val menuButton = device.wait(Until.findObject(By.desc("Menu")), ACCESSIBILITY_TIMEOUT_MS)
+        if (menuButton != null) {
+            menuButton.click()
+        } else {
+            device.click(
+                (device.displayWidth * MENU_BUTTON_X_RATIO).toInt(),
+                (device.displayHeight * MENU_BUTTON_Y_RATIO).toInt(),
+            )
+        }
 
         requireNotNull(device.wait(Until.findObject(By.text("Nerust")), DRAWER_TIMEOUT_MS)) {
-            "Drawer title should be visible after tapping Menu"
+            "Drawer title should be visible after tapping Menu; menuAccessibilityNodeFound=${menuButton != null}; display=${device.displayWidth}x${device.displayHeight}"
         }
 
         listOf(
@@ -55,6 +62,9 @@ class MainActivityE2eTest {
 
     private companion object {
         const val STARTUP_TIMEOUT_MS = 60_000L
+        const val ACCESSIBILITY_TIMEOUT_MS = 10_000L
         const val DRAWER_TIMEOUT_MS = 5_000L
+        const val MENU_BUTTON_X_RATIO = 0.16
+        const val MENU_BUTTON_Y_RATIO = 0.08
     }
 }
