@@ -97,7 +97,7 @@ fn clear_macos_runtime_guard() {
 
 #[cfg(target_os = "macos")]
 fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! {
-    log::warn!(
+    log::debug!(
         "re-executing process without macOS DYLD environment variables to avoid ImageIO/AppKit plugin conflicts: {}",
         dyld_env_vars_present.join(", "),
     );
