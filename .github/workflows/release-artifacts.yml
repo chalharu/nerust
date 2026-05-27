@@ -2,9 +2,6 @@ name: Release artifacts
 on:
   pull_request:
     branches: [master, release]
-  workflow_run:
-    workflows: ["Publish release"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       ref:
@@ -13,6 +10,17 @@ on:
         type: string
       tag_name:
         description: Override artifact tag name
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      publish_release:
+        required: true
+        type: boolean
+      ref:
+        required: false
+        type: string
+      tag_name:
         required: false
         type: string
 env:
@@ -34,23 +42,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref || github.sha }}
       - name: Resolve artifact context
         id: context
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG_NAME: ${{ inputs.tag_name || '' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release && 'true' || 'false' }}
           PR_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
           PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
           PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
-          WORKFLOW_RUN_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
         run: |
           should_run=true
-          if [[ "${EVENT_NAME}" == "workflow_run" && "${WORKFLOW_RUN_CONCLUSION}" != "success" ]]; then
-            should_run=false
-          fi
-
           if [[ "${EVENT_NAME}" == "pull_request" && "${PR_BASE_REF}" == "master" ]]; then
             should_run=false
             while IFS= read -r path; do
@@ -84,28 +88,29 @@ jobs:
                 ;;
             esac
           done
-
+          
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
-          case "${EVENT_NAME}" in
-            workflow_dispatch)
-              tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
-              ;;
-            workflow_run)
-              tag_name="${workspace_tag_name}"
-              ;;
-            pull_request)
-              if [[ "${PR_BASE_REF}" == "release" ]]; then
-                tag_name="${workspace_tag_name}"
-              else
-                tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
-              fi
-              ;;
-            *)
-              echo "unexpected event type: ${EVENT_NAME}" >&2
-              exit 1
-              ;;
-          esac
+          if [[ "${PUBLISH_RELEASE}" == "true" ]]; then
+            tag_name="${INPUT_TAG_NAME:-${workspace_tag_name}}"
+          else
+            case "${EVENT_NAME}" in
+              workflow_dispatch)
+                tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
+                ;;
+              pull_request)
+                if [[ "${PR_BASE_REF}" == "release" ]]; then
+                  tag_name="${workspace_tag_name}"
+                else
+                  tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
+                fi
+                ;;
+              *)
+                echo "unexpected event type: ${EVENT_NAME}" >&2
+                exit 1
+                ;;
+            esac
+          fi
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
@@ -411,7 +416,7 @@ jobs:
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
           if-no-files-found: error
   publish-assets:
-    if: ${{ github.event_name == 'workflow_run' }}
+    if: ${{ inputs.publish_release }}
     name: Publish release assets
     needs: [assemble-assets, prepare-context]
     runs-on: ubuntu-latest
@@ -426,10 +431,16 @@ jobs:
           path: release-assets/
       - name: Upload assets to GitHub Release
         env:
+          CHECKOUT_REF: ${{ needs.prepare-context.outputs.checkout_ref }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
+          release_target="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.target_commitish')"
+          if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
+            echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
+            exit 1
+          fi
           mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --repo "${GH_REPO}" --json assets --jq '.assets[].name')
           release_files=(
             "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz"
@@ -461,7 +472,7 @@ jobs:
           fi
           gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
   sync-release:
-    if: ${{ github.event_name == 'workflow_run' }}
+    if: ${{ inputs.publish_release }}
     name: Sync release back to master
     needs: [publish-assets, prepare-context]
     runs-on: ubuntu-latest
