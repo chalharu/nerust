@@ -62,7 +62,7 @@ rust-version = "1.89"
 alto = { version = "=3.0.4" }
 bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
-cpal = { version = "=0.15.3" }
+cpal = { version = "=0.17.3" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
 epoxy = { version = "=0.1.0" }
