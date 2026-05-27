@@ -1,0 +1,17 @@
+0000ffb6 SnesHeader.EmptyBytes
+00808000 NmiHandler
+00808004 NmiHandler.Nmi_Fast
+00808014 BreakHandler
+00808014 CopHandler
+00808014 EmptyHandler
+00808016 PartialHdmaTable
+0080801b IrqHandler
+0080801f ResetHandler
+00808023 ResetHandler.Reset
+00808060 Main
+008080be Main.HdmaChannelLoop
+008080c1 Main.HtimeLoop
+008080db Main.WaitUntilHblank._Loop_58_
+008080e0 Main.WaitUntilHblankEnd._Loop_60_
+008080eb Main.WaitUntilHblank._Loop_62_
+008080fb Main.WaitUntilHblankEnd._Loop_64_
