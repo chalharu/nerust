@@ -62,10 +62,12 @@ The automation reads the major version from `[workspace.package].version` in
 
 If there is no existing tag for the current major, the declared
 `[workspace.package].version` becomes the release version. The workflows use
-the `RELEASE_PLZ_TOKEN` repository secret as a PAT for branch and PR updates.
-Android signing additionally uses `ANDROID_SIGNING_KEY`,
-`ANDROID_KEY_ALIAS`, `ANDROID_KEY_STORE_PASSWORD`, and
-`ANDROID_KEY_PASSWORD`.
+the built-in `GITHUB_TOKEN` for branch, release, and PR updates. Because GitHub
+marks automation-created pull request workflows as approval-required when they
+come from `GITHUB_TOKEN`, release-candidate PR checks may need an explicit
+**Approve workflows to run** action in the PR UI.
+Android signing uses `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY`. If the
+private key is encrypted, also set `ANDROID_PRIVATE_KEY_PASSWORD`.
 
 ## Developer build/test paths
 
@@ -125,6 +127,9 @@ packaging/android/package.sh
 ```
 
 This requires Java 17, the Android SDK/NDK, and `cargo-ndk` on the host.
+If `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY` are exported, the packaging
+script generates a temporary JKS keystore automatically before Gradle signs the
+release APK.
 
 ## Usage
 
