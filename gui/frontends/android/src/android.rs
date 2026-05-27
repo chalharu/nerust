@@ -1,23 +1,34 @@
 mod renderer;
+mod storage;
 mod surface;
 
 use self::renderer::WgpuRenderer;
+use self::storage::AndroidStorage;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::SessionCommand;
 use nerust_gui_shell::session::SessionHandle;
+use nerust_gui_shell::touch::{
+    PortraitTouchOverlay, TouchFrontendAction, TouchOverlayAction, TouchPoint, TouchTarget,
+    actions_for_target,
+};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::android::activity::AndroidApp;
 use winit::platform::android::EventLoopBuilderExtAndroid;
+use winit::platform::android::activity::AndroidApp;
 use winit::window::{Window, WindowId};
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
+    let storage_root = app
+        .internal_data_path()
+        .ok_or_else(|| "Android internal data path is unavailable".to_string())?;
+    let storage = AndroidStorage::open(storage_root.join("nerust"))?;
     let mut builder = EventLoop::<()>::with_user_event();
     builder.with_android_app(app);
     builder.handle_volume_keys();
@@ -26,7 +37,7 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::default();
+    let mut state = AndroidFrontend::new(storage);
     event_loop
         .run_app(&mut state)
         .map_err(|error| format!("Android event loop failed: {error}"))
@@ -34,25 +45,32 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
 
 struct AndroidFrontend {
     session: SessionHandle,
+    storage: AndroidStorage,
     shell: NativeShellState,
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
     renderer: Option<WgpuRenderer>,
+    overlay: Option<PortraitTouchOverlay>,
+    active_touches: HashMap<u64, TouchTarget>,
 }
 
-impl Default for AndroidFrontend {
-    fn default() -> Self {
+impl AndroidFrontend {
+    fn new(storage: AndroidStorage) -> Self {
         Self {
-            session: SessionHandle::new_for_host(HostBackendIdentity::android_wgpu()),
+            session: SessionHandle::new_with_settings_manager(
+                HostBackendIdentity::android_wgpu(),
+                storage.settings.clone(),
+            ),
+            storage,
             shell: NativeShellState::new(),
             window: None,
             window_id: None,
             renderer: None,
+            overlay: None,
+            active_touches: HashMap::new(),
         }
     }
-}
 
-impl AndroidFrontend {
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if self.window.is_some() {
             return Ok(());
@@ -71,6 +89,7 @@ impl AndroidFrontend {
         self.window_id = Some(window.id());
         self.renderer = Some(WgpuRenderer::new(window.clone(), &self.session));
         self.window = Some(window);
+        self.rebuild_overlay();
         Ok(())
     }
 
@@ -79,6 +98,18 @@ impl AndroidFrontend {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
+    }
+
+    fn rebuild_overlay(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            self.overlay = None;
+            return;
+        };
+        let size = window.inner_size();
+        self.overlay = Some(PortraitTouchOverlay::new(
+            size.width as f32,
+            size.height as f32,
+        ));
     }
 
     fn render(&mut self) {
@@ -104,8 +135,62 @@ impl AndroidFrontend {
     }
 
     fn maybe_refresh_title(&mut self, now: Instant) {
-        if self.shell.should_refresh_title(now) && let Some(window) = self.window.as_ref() {
+        if self.shell.should_refresh_title(now)
+            && let Some(window) = self.window.as_ref()
+        {
             window.set_title(&self.session.window_title());
+        }
+    }
+
+    fn apply_touch_actions(&mut self, actions: Vec<TouchOverlayAction>) {
+        for action in actions {
+            match action {
+                TouchOverlayAction::Input(event) => {
+                    let _ = self.session.apply_input_event(event);
+                    self.request_redraw();
+                }
+                TouchOverlayAction::Session(command) => {
+                    let outcome = self.session.run_command(command).unwrap_or_default();
+                    if outcome.needs_redraw {
+                        self.request_redraw();
+                    }
+                }
+                TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary) => {
+                    log::warn!("ROM library UI is not wired into the Android frontend yet");
+                }
+            }
+        }
+    }
+
+    fn sync_touch_target(&mut self, touch_id: u64, next_target: Option<TouchTarget>) {
+        let previous = self.active_touches.get(&touch_id).copied();
+        if previous == next_target {
+            return;
+        }
+        if let Some(previous) = previous {
+            self.apply_touch_actions(actions_for_target(previous, false));
+            self.active_touches.remove(&touch_id);
+        }
+        if let Some(next) = next_target {
+            self.apply_touch_actions(actions_for_target(next, true));
+            self.active_touches.insert(touch_id, next);
+        }
+    }
+
+    fn handle_touch(&mut self, touch: Touch) {
+        let next_target = self.overlay.as_ref().and_then(|overlay| {
+            overlay.hit_test(TouchPoint {
+                x: touch.location.x as f32,
+                y: touch.location.y as f32,
+            })
+        });
+        match touch.phase {
+            TouchPhase::Started | TouchPhase::Moved => {
+                self.sync_touch_target(touch.id, next_target);
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.sync_touch_target(touch.id, None);
+            }
         }
     }
 }
@@ -126,6 +211,8 @@ impl ApplicationHandler for AndroidFrontend {
         self.renderer = None;
         self.window = None;
         self.window_id = None;
+        self.overlay = None;
+        self.active_touches.clear();
         self.shell.needs_redraw = true;
     }
 
@@ -154,8 +241,10 @@ impl ApplicationHandler for AndroidFrontend {
                         size.height,
                     ));
                 }
+                self.rebuild_overlay();
                 self.request_redraw();
             }
+            WindowEvent::Touch(touch) => self.handle_touch(touch),
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }
