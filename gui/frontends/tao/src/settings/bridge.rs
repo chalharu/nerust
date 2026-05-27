@@ -1,4 +1,5 @@
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_input_schema::SystemId;
 use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
 use std::io::{self, BufRead, Read, Write};
@@ -8,7 +9,10 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) enum ParentToChildMessage {
-    Init(SettingsSnapshot),
+    Init {
+        snapshot: SettingsSnapshot,
+        system_id: SystemId,
+    },
     ApplyResult(Result<(), String>),
 }
 
@@ -23,17 +27,21 @@ pub(super) struct SettingsChildBridge<R, W> {
 }
 
 impl SettingsChildBridge<io::BufReader<io::Stdin>, io::BufWriter<io::Stdout>> {
-    pub(super) fn connect_stdio() -> Result<(SettingsSnapshot, Self), String> {
+    pub(super) fn connect_stdio() -> Result<(SettingsSnapshot, SystemId, Self), String> {
         let stdin = io::BufReader::new(io::stdin());
         let stdout = io::BufWriter::new(io::stdout());
         let mut bridge = Self {
             reader: stdin,
             writer: stdout,
         };
-        let Some(ParentToChildMessage::Init(snapshot)) = read_message(&mut bridge.reader)? else {
+        let Some(ParentToChildMessage::Init {
+            snapshot,
+            system_id,
+        }) = read_message(&mut bridge.reader)?
+        else {
             return Err("settings helper did not receive an init message".into());
         };
-        Ok((snapshot, bridge))
+        Ok((snapshot, system_id, bridge))
     }
 }
 
@@ -45,7 +53,7 @@ impl<R: BufRead, W: Write> SettingsChildBridge<R, W> {
         )?;
         match read_message(&mut self.reader)? {
             Some(ParentToChildMessage::ApplyResult(result)) => result,
-            Some(ParentToChildMessage::Init(_)) => {
+            Some(ParentToChildMessage::Init { .. }) => {
                 Err("settings helper received an unexpected init message".into())
             }
             None => Err("settings helper lost its parent bridge".into()),
@@ -112,6 +120,7 @@ mod tests {
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
+    use nerust_input_schema::SystemId;
     use std::io::Cursor;
 
     fn snapshot() -> SettingsSnapshot {
@@ -160,6 +169,29 @@ mod tests {
             ChildToParentMessage::Apply(received) => {
                 assert_eq!(received.shared.general, snapshot.shared.general);
             }
+        }
+    }
+
+    #[test]
+    fn init_message_carries_active_system() {
+        let snapshot = snapshot();
+        let mut buffer = Vec::new();
+        write_message(
+            &mut buffer,
+            &ParentToChildMessage::Init {
+                snapshot,
+                system_id: SystemId::Snes,
+            },
+        )
+        .unwrap();
+
+        let decoded = read_message::<_, ParentToChildMessage>(&mut Cursor::new(buffer))
+            .unwrap()
+            .unwrap();
+
+        match decoded {
+            ParentToChildMessage::Init { system_id, .. } => assert_eq!(system_id, SystemId::Snes),
+            ParentToChildMessage::ApplyResult(_) => panic!("expected init message"),
         }
     }
 }

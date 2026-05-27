@@ -461,8 +461,9 @@ fn system_settings(settings: &SettingsSnapshot) -> NesSettings {
         .shared
         .systems
         .get(&SystemId::Nes)
-        .map(|settings| match settings {
-            SystemSettings::Nes(nes) => nes.clone(),
+        .and_then(|settings| match settings {
+            SystemSettings::Nes(nes) => Some(nes.clone()),
+            SystemSettings::Snes(_) => None,
         })
         .unwrap_or_default()
 }
@@ -475,6 +476,13 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
         .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
     match current {
         SystemSettings::Nes(nes) => nes,
+        SystemSettings::Snes(_) => {
+            *current = SystemSettings::Nes(NesSettings::default());
+            let SystemSettings::Nes(nes) = current else {
+                unreachable!();
+            };
+            nes
+        }
     }
 }
 

@@ -79,8 +79,9 @@ pub fn system_settings(settings: &DesktopSharedSettings) -> NesSettings {
     settings
         .systems
         .get(&nerust_input_schema::SystemId::Nes)
-        .map(|settings| match settings {
-            SystemSettings::Nes(nes) => nes.clone(),
+        .and_then(|settings| match settings {
+            SystemSettings::Nes(nes) => Some(nes.clone()),
+            SystemSettings::Snes(_) => None,
         })
         .unwrap_or_default()
 }
@@ -161,7 +162,10 @@ mod tests {
         let SystemSettings::Nes(nes) = settings
             .systems
             .get_mut(&nerust_input_schema::SystemId::Nes)
-            .unwrap();
+            .unwrap()
+        else {
+            panic!("expected NES settings");
+        };
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let resolved = effective_load_options(
@@ -180,7 +184,10 @@ mod tests {
         let SystemSettings::Nes(nes) = settings
             .systems
             .get_mut(&nerust_input_schema::SystemId::Nes)
-            .unwrap();
+            .unwrap()
+        else {
+            panic!("expected NES settings");
+        };
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
         assert!(matches!(

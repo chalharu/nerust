@@ -237,6 +237,7 @@ mod tests {
     use nerust_contract_settings::{
         language::AppLanguage,
         nes::{NesSettings, NesVideoFilter},
+        snes::SnesSettings,
     };
     use nerust_input_schema::SystemId;
     use nerust_persistence::sidecar::resolve_sidecars;
@@ -268,7 +269,13 @@ mod tests {
 
     fn test_shared_defaults() -> DesktopSharedSettings {
         DesktopSharedSettings {
-            systems: BTreeMap::from([(SystemId::Nes, SystemSettings::Nes(NesSettings::default()))]),
+            systems: BTreeMap::from([
+                (SystemId::Nes, SystemSettings::Nes(NesSettings::default())),
+                (
+                    SystemId::Snes,
+                    SystemSettings::Snes(SnesSettings::default()),
+                ),
+            ]),
             ..Default::default()
         }
     }
@@ -625,7 +632,9 @@ video:
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap() else {
+            panic!("expected NES settings");
+        };
         nes.video.filter = NesVideoFilter::NtscRgb;
 
         let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
@@ -641,7 +650,9 @@ video:
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap() else {
+            panic!("expected NES settings");
+        };
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);

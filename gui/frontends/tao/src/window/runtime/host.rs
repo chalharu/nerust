@@ -448,6 +448,7 @@ impl HostState {
 
         match settings::spawn_settings_helper(
             self.session.settings_snapshot().clone(),
+            self.session.input_topology_descriptor().system,
             self.user_event_proxy.clone(),
         ) {
             Ok(helper) => {
