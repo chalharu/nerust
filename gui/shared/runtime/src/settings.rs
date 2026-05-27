@@ -852,7 +852,8 @@ video:
     #[test]
     fn settings_paths_can_be_built_from_an_explicit_root() {
         let root = PathBuf::from("/tmp/nerust-android");
-        let paths = super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
+        let paths =
+            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
 
         assert_eq!(paths.config_dir, root.join("config"));
         assert_eq!(paths.data_dir, root.join("data"));

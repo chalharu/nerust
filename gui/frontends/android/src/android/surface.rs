@@ -1,6 +1,8 @@
 use nerust_backend_wgpu::RenderSurfaceTarget;
 use nerust_screen_wgpu::surface::SurfaceSize;
-use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+use raw_window_handle::{
+    HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+};
 use std::sync::Arc;
 use winit::window::Window;
 

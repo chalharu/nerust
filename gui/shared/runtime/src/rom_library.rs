@@ -84,7 +84,9 @@ impl RomLibrary {
                     ..document
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => RomLibraryDocument::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                RomLibraryDocument::default()
+            }
             Err(error) => return Err(error.into()),
         };
         Ok(Self { paths, document })
@@ -142,7 +144,12 @@ impl RomLibrary {
     }
 
     pub fn remove(&mut self, id: &str) -> Result<bool, RomLibraryError> {
-        let Some(index) = self.document.entries.iter().position(|entry| entry.id == id) else {
+        let Some(index) = self
+            .document
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+        else {
             return Ok(false);
         };
         let entry = self.document.entries.remove(index);
@@ -209,7 +216,9 @@ mod tests {
         let paths = RomLibraryPaths::new(root.clone());
         let mut library = RomLibrary::open(paths.clone()).unwrap();
 
-        let entry = library.import_bytes("Mega Man", ".NES", b"rom-bytes").unwrap();
+        let entry = library
+            .import_bytes("Mega Man", ".NES", b"rom-bytes")
+            .unwrap();
 
         assert_eq!(library.entries(), &[entry.clone()]);
         assert!(entry.file_name.ends_with(".nes"));
@@ -220,7 +229,10 @@ mod tests {
 
         let reopened = RomLibrary::open(paths).unwrap();
         assert_eq!(reopened.entries(), &[entry.clone()]);
-        assert_eq!(reopened.load_bytes(&entry.id).unwrap(), Some(b"rom-bytes".to_vec()));
+        assert_eq!(
+            reopened.load_bytes(&entry.id).unwrap(),
+            Some(b"rom-bytes".to_vec())
+        );
 
         let _ = fs::remove_dir_all(root);
     }
