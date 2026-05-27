@@ -2,10 +2,17 @@ package io.github.chalharu.nerust
 
 import android.app.AlertDialog
 import android.app.NativeActivity
+import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -30,13 +37,29 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.ViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.launch
 
+private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
@@ -46,15 +69,58 @@ private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
 
-class MainActivity : NativeActivity() {
+class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val registryController = SavedStateRegistryController.create(this)
+    private val store = ViewModelStore()
+
+    override val lifecycle: Lifecycle
+        get() = lifecycleRegistry
+
+    override val savedStateRegistry: SavedStateRegistry
+        get() = registryController.savedStateRegistry
+
+    override val viewModelStore: ViewModelStore
+        get() = store
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        registryController.performAttach()
+        registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         window.decorView.post(::ensureMenuChromeAttached)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
     }
 
     override fun onResume() {
         super.onResume()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         window.decorView.post(::ensureMenuChromeAttached)
+    }
+
+    override fun onPause() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        super.onPause()
+    }
+
+    override fun onStop() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        super.onStop()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        registryController.performSave(outState)
+    }
+
+    override fun onDestroy() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        store.clear()
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")
@@ -209,10 +275,34 @@ class MainActivity : NativeActivity() {
 
     private fun ensureMenuChromeAttached() {
         val root = contentRoot() ?: return
+        installComposeOwners(root)
+        val controls = root.findViewWithTag<View>(CONTROLS_OVERLAY_TAG)
+            ?: createControlsOverlay().also(root::addView)
         val button = root.findViewWithTag<View>(MENU_BUTTON_TAG) ?: createMenuButtonOverlay().also(root::addView)
+        controls.bringToFront()
         button.bringToFront()
         root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)?.bringToFront()
     }
+
+    private fun installComposeOwners(root: View) {
+        listOf(window.decorView, root).forEach { view ->
+            ViewTreeLifecycleOwner.set(view, this)
+            ViewTreeSavedStateRegistryOwner.set(view, this)
+            ViewTreeViewModelStoreOwner.set(view, this)
+        }
+    }
+
+    private fun createControlsOverlay(): View =
+        ControlsOverlayView(this).apply {
+            tag = CONTROLS_OVERLAY_TAG
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
 
     private fun createMenuButtonOverlay(): ComposeView =
         ComposeView(this).apply {
@@ -268,6 +358,7 @@ class MainActivity : NativeActivity() {
     private fun contentRoot(): ViewGroup? = findViewById(android.R.id.content)
 
     private fun dispatchMenuAction(action: String) {
+        removeDrawerOverlay()
         onMenuAction(action)
     }
 
@@ -306,10 +397,19 @@ private fun NerustDrawerOverlay(
     onMenuAction: (String) -> Unit,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Open)
+    val actionPending = remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(drawerState.currentValue) {
-        if (drawerState.currentValue == DrawerValue.Closed) {
+    fun closeAndRun(action: String) {
+        actionPending.value = true
+        scope.launch {
+            drawerState.close()
+            onMenuAction(action)
+        }
+    }
+
+    LaunchedEffect(drawerState.currentValue, actionPending.value) {
+        if (drawerState.currentValue == DrawerValue.Closed && !actionPending.value) {
             onDismissRequest()
         }
     }
@@ -331,56 +431,38 @@ private fun NerustDrawerOverlay(
                 DrawerActionItem(
                     label = "ROM Library",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_OPEN_LIBRARY)
-                        }
+                        closeAndRun(MENU_ACTION_OPEN_LIBRARY)
                     },
                 )
                 DrawerActionItem(
                     label = "Settings",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_OPEN_SETTINGS)
-                        }
+                        closeAndRun(MENU_ACTION_OPEN_SETTINGS)
                     },
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 DrawerActionItem(
                     label = "Pause / Resume",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_TOGGLE_PAUSE)
-                        }
+                        closeAndRun(MENU_ACTION_TOGGLE_PAUSE)
                     },
                 )
                 DrawerActionItem(
                     label = "Save State",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_SAVE_STATE)
-                        }
+                        closeAndRun(MENU_ACTION_SAVE_STATE)
                     },
                 )
                 DrawerActionItem(
                     label = "Load State",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_LOAD_STATE)
-                        }
+                        closeAndRun(MENU_ACTION_LOAD_STATE)
                     },
                 )
                 DrawerActionItem(
                     label = "Reset",
                     onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onMenuAction(MENU_ACTION_RESET)
-                        }
+                        closeAndRun(MENU_ACTION_RESET)
                     },
                 )
             }
@@ -402,4 +484,95 @@ private fun DrawerActionItem(label: String, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
     )
+}
+
+private class ControlsOverlayView(context: Context) : View(context) {
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(48, 255, 255, 255)
+        style = Paint.Style.FILL
+    }
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(160, 255, 255, 255)
+        strokeWidth = 2f
+        style = Paint.Style.STROKE
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 255, 255, 255)
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val viewWidth = width.toFloat()
+        val viewHeight = height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f) {
+            return
+        }
+
+        val controlTop = viewHeight * 0.52f
+        val controlHeight = viewHeight - controlTop
+        val dpadLeft = viewWidth * 0.06f
+        val dpadSize = viewWidth * 0.30f
+        val actionSize = viewWidth * 0.16f
+        val actionRight = viewWidth * 0.76f
+        val faceTop = controlTop + controlHeight * 0.10f
+        val centerTop = controlTop + controlHeight * 0.38f
+
+        drawZone(
+            canvas,
+            dpadLeft + dpadSize * 0.25f,
+            controlTop + controlHeight * 0.05f,
+            dpadSize * 0.50f,
+            dpadSize * 0.28f,
+            "UP",
+        )
+        drawZone(
+            canvas,
+            dpadLeft + dpadSize * 0.25f,
+            controlTop + controlHeight * 0.47f,
+            dpadSize * 0.50f,
+            dpadSize * 0.28f,
+            "DOWN",
+        )
+        drawZone(
+            canvas,
+            dpadLeft,
+            controlTop + controlHeight * 0.26f,
+            dpadSize * 0.28f,
+            dpadSize * 0.36f,
+            "LEFT",
+        )
+        drawZone(
+            canvas,
+            dpadLeft + dpadSize * 0.47f,
+            controlTop + controlHeight * 0.26f,
+            dpadSize * 0.28f,
+            dpadSize * 0.36f,
+            "RIGHT",
+        )
+        drawZone(canvas, actionRight - actionSize * 1.1f, faceTop + actionSize * 0.55f, actionSize, actionSize, "B")
+        drawZone(canvas, actionRight, faceTop, actionSize, actionSize, "A")
+        drawZone(canvas, viewWidth * 0.36f, centerTop, viewWidth * 0.12f, viewHeight * 0.05f, "SELECT")
+        drawZone(canvas, viewWidth * 0.52f, centerTop, viewWidth * 0.12f, viewHeight * 0.05f, "START")
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean = false
+
+    private fun drawZone(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        label: String,
+    ) {
+        val rect = RectF(x, y, x + width, y + height)
+        val radius = min(width, height) * 0.20f
+        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        canvas.drawRoundRect(rect, radius, radius, strokePaint)
+        textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
+        val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(label, rect.centerX(), centerY, textPaint)
+    }
 }

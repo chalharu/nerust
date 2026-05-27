@@ -1,4 +1,3 @@
-use nerust_gui_session::commands::SessionCommand;
 use nerust_input_nes::topology::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
@@ -29,16 +28,8 @@ impl TouchRect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TouchFrontendAction {
-    OpenLibrary,
-    OpenSettings,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchOverlayAction {
     Input(DigitalInputEvent),
-    Session(SessionCommand),
-    Frontend(TouchFrontendAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,12 +42,6 @@ pub enum TouchTarget {
     B,
     Start,
     Select,
-    Pause,
-    Reset,
-    Save,
-    Load,
-    Library,
-    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -154,60 +139,6 @@ impl PortraitTouchOverlay {
                     height: height * 0.05,
                 },
             },
-            TouchZone {
-                target: TouchTarget::Pause,
-                bounds: TouchRect {
-                    x: width * 0.72,
-                    y: control_top + control_height * 0.72,
-                    width: width * 0.10,
-                    height: height * 0.05,
-                },
-            },
-            TouchZone {
-                target: TouchTarget::Reset,
-                bounds: TouchRect {
-                    x: width * 0.84,
-                    y: control_top + control_height * 0.72,
-                    width: width * 0.10,
-                    height: height * 0.05,
-                },
-            },
-            TouchZone {
-                target: TouchTarget::Save,
-                bounds: TouchRect {
-                    x: width * 0.72,
-                    y: control_top + control_height * 0.82,
-                    width: width * 0.10,
-                    height: height * 0.05,
-                },
-            },
-            TouchZone {
-                target: TouchTarget::Load,
-                bounds: TouchRect {
-                    x: width * 0.84,
-                    y: control_top + control_height * 0.82,
-                    width: width * 0.10,
-                    height: height * 0.05,
-                },
-            },
-            TouchZone {
-                target: TouchTarget::Library,
-                bounds: TouchRect {
-                    x: width * 0.06,
-                    y: control_top + control_height * 0.82,
-                    width: width * 0.14,
-                    height: height * 0.05,
-                },
-            },
-            TouchZone {
-                target: TouchTarget::Settings,
-                bounds: TouchRect {
-                    x: width * 0.22,
-                    y: control_top + control_height * 0.82,
-                    width: width * 0.14,
-                    height: height * 0.05,
-                },
-            },
         ];
 
         Self { zones }
@@ -249,44 +180,14 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
         TouchTarget::B => vec![input(NES_CONTROL_B)],
         TouchTarget::Start => vec![input(NES_CONTROL_START)],
         TouchTarget::Select => vec![input(NES_CONTROL_SELECT)],
-        TouchTarget::Pause if pressed => {
-            vec![TouchOverlayAction::Session(SessionCommand::TogglePause)]
-        }
-        TouchTarget::Reset if pressed => vec![TouchOverlayAction::Session(SessionCommand::Reset)],
-        TouchTarget::Save if pressed => {
-            vec![TouchOverlayAction::Session(
-                SessionCommand::SaveActiveSlotOrNew,
-            )]
-        }
-        TouchTarget::Load if pressed => {
-            vec![TouchOverlayAction::Session(SessionCommand::LoadActiveSlot)]
-        }
-        TouchTarget::Library if pressed => {
-            vec![TouchOverlayAction::Frontend(
-                TouchFrontendAction::OpenLibrary,
-            )]
-        }
-        TouchTarget::Settings if pressed => {
-            vec![TouchOverlayAction::Frontend(
-                TouchFrontendAction::OpenSettings,
-            )]
-        }
-        TouchTarget::Pause
-        | TouchTarget::Reset
-        | TouchTarget::Save
-        | TouchTarget::Load
-        | TouchTarget::Library
-        | TouchTarget::Settings => Vec::new(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        PortraitTouchOverlay, TouchFrontendAction, TouchOverlayAction, TouchPoint, TouchTarget,
-        actions_for_target,
+        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
     };
-    use nerust_gui_session::commands::SessionCommand;
     use nerust_input_nes::topology::{
         NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
     };
@@ -310,23 +211,14 @@ mod tests {
             }),
             Some(TouchTarget::A)
         );
-        // Library is at x=[64.8, 216], y≈[1754, 1850]
+        assert_eq!(overlay.hit_test(TouchPoint { x: 50.0, y: 200.0 }), None);
         assert_eq!(
             overlay.hit_test(TouchPoint {
                 x: 120.0,
                 y: 1760.0
             }),
-            Some(TouchTarget::Library)
+            None
         );
-        // Settings is at x=[237.6, 388.8], same y band
-        assert_eq!(
-            overlay.hit_test(TouchPoint {
-                x: 300.0,
-                y: 1760.0
-            }),
-            Some(TouchTarget::Settings)
-        );
-        assert_eq!(overlay.hit_test(TouchPoint { x: 50.0, y: 200.0 }), None);
     }
 
     #[test]
@@ -355,42 +247,9 @@ mod tests {
     }
 
     #[test]
-    fn non_hold_targets_emit_actions_only_on_press() {
-        assert_eq!(
-            actions_for_target(TouchTarget::Pause, true),
-            vec![TouchOverlayAction::Session(SessionCommand::TogglePause)]
-        );
-        assert!(actions_for_target(TouchTarget::Pause, false).is_empty());
-        assert_eq!(
-            actions_for_target(TouchTarget::Library, true),
-            vec![TouchOverlayAction::Frontend(
-                TouchFrontendAction::OpenLibrary
-            )]
-        );
-    }
-
-    #[test]
-    fn settings_target_emits_open_settings_on_press_only() {
-        assert_eq!(
-            actions_for_target(TouchTarget::Settings, true),
-            vec![TouchOverlayAction::Frontend(
-                TouchFrontendAction::OpenSettings
-            )]
-        );
-        assert!(actions_for_target(TouchTarget::Settings, false).is_empty());
-    }
-
-    #[test]
-    fn portrait_overlay_includes_settings_zone() {
+    fn portrait_overlay_exposes_only_gamepad_zones() {
         let overlay = PortraitTouchOverlay::new(1080.0, 1920.0);
         let zones = overlay.zones();
-        assert!(
-            zones.iter().any(|z| z.target == TouchTarget::Settings),
-            "expected a Settings zone in the portrait overlay"
-        );
-        assert!(
-            zones.iter().any(|z| z.target == TouchTarget::Library),
-            "expected a Library zone in the portrait overlay"
-        );
+        assert_eq!(zones.len(), 8);
     }
 }
