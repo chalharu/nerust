@@ -1,48 +1,49 @@
 package io.github.chalharu.nerust
 
-import android.content.Context
-import android.content.Intent
-import androidx.test.core.app.ApplicationProvider
+import android.view.View
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.By
-import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.Until
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MainActivityE2eTest {
+    @get:Rule
+    val composeRule = createAndroidComposeRule<MainActivity>()
+
     @Test
     fun appStartsAndDrawerMenuIsAvailable() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val device = UiDevice.getInstance(instrumentation)
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val launchIntent =
-            requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
-                "Launch intent for ${context.packageName} was not found"
+        composeRule.runOnUiThread {
+            val menuButton = requireNotNull(
+                composeRule.activity.window.decorView.findViewWithTag<View>(MENU_BUTTON_TAG),
+            ) {
+                "Menu button should be attached after startup"
             }
 
-        device.pressHome()
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        context.startActivity(launchIntent)
-
-        val menuButton = device.wait(Until.findObject(By.desc("Menu")), STARTUP_TIMEOUT_MS)
-            ?: device.wait(Until.findObject(By.text("Menu")), ACCESSIBILITY_TIMEOUT_MS)
-        if (menuButton != null) {
-            menuButton.click()
-        } else {
-            device.click(
-                (device.displayWidth * MENU_BUTTON_X_RATIO).toInt(),
-                (device.displayHeight * MENU_BUTTON_Y_RATIO).toInt(),
-            )
+            assertEquals("Menu", menuButton.contentDescription?.toString())
+            assertTrue("Menu button should be visible", menuButton.isShown)
+            assertTrue("Menu button should handle clicks", menuButton.performClick())
+        }
+        composeRule.waitForIdle()
+        composeRule.waitUntil(DRAWER_TIMEOUT_MS) {
+            drawerOverlayVisible()
         }
 
-        requireNotNull(device.wait(Until.findObject(By.text("Nerust")), DRAWER_TIMEOUT_MS)) {
-            "Drawer title should be visible after tapping Menu; menuAccessibilityNodeFound=${menuButton != null}; display=${device.displayWidth}x${device.displayHeight}"
+        composeRule.runOnUiThread {
+            val drawerOverlay = requireNotNull(
+                composeRule.activity.window.decorView.findViewWithTag<View>(DRAWER_OVERLAY_TAG),
+            ) {
+                "Drawer overlay should be attached after tapping Menu"
+            }
+            assertTrue("Drawer overlay should be visible", drawerOverlay.isShown)
         }
 
+        composeRule.onNodeWithText("Nerust", useUnmergedTree = true).assertIsDisplayed()
         listOf(
             "ROM Library",
             "Settings",
@@ -51,18 +52,23 @@ class MainActivityE2eTest {
             "Load State",
             "Reset",
         ).forEach { label ->
-            assertTrue(
-                "Drawer item '$label' should be visible",
-                device.wait(Until.hasObject(By.desc(label)), DRAWER_TIMEOUT_MS),
-            )
+            composeRule.onNodeWithText(label, useUnmergedTree = true).assertIsDisplayed()
         }
     }
 
+    private fun drawerOverlayVisible(): Boolean {
+        var visible = false
+        composeRule.runOnUiThread {
+            visible = composeRule.activity.window.decorView
+                .findViewWithTag<View>(DRAWER_OVERLAY_TAG)
+                ?.isShown == true
+        }
+        return visible
+    }
+
     private companion object {
-        const val STARTUP_TIMEOUT_MS = 60_000L
-        const val ACCESSIBILITY_TIMEOUT_MS = 10_000L
+        const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
-        const val MENU_BUTTON_X_RATIO = 0.16
-        const val MENU_BUTTON_Y_RATIO = 0.08
+        const val MENU_BUTTON_TAG = "nerust-menu-button"
     }
 }
