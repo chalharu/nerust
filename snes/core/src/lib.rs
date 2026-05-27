@@ -320,4 +320,42 @@ mod tests {
         assert_eq!(core.peek(0x7E0000), 0x00);
         assert_eq!(core.peek(0x004218), 0x00);
     }
+
+    #[test]
+    fn core_can_pulse_joyout_and_observe_the_seventeenth_joyser0_read() {
+        let mut rom = build_lorom(0x8000);
+        let program = [
+            0xA9, 0x01, // LDA #$01
+            0x8D, 0x16, 0x40, // STA $4016
+            0xA9, 0x00, // LDA #$00
+            0x8D, 0x16, 0x40, // STA $4016
+            0xAD, 0x16, 0x40, // 1
+            0xAD, 0x16, 0x40, // 2
+            0xAD, 0x16, 0x40, // 3
+            0xAD, 0x16, 0x40, // 4
+            0xAD, 0x16, 0x40, // 5
+            0xAD, 0x16, 0x40, // 6
+            0xAD, 0x16, 0x40, // 7
+            0xAD, 0x16, 0x40, // 8
+            0xAD, 0x16, 0x40, // 9
+            0xAD, 0x16, 0x40, // 10
+            0xAD, 0x16, 0x40, // 11
+            0xAD, 0x16, 0x40, // 12
+            0xAD, 0x16, 0x40, // 13
+            0xAD, 0x16, 0x40, // 14
+            0xAD, 0x16, 0x40, // 15
+            0xAD, 0x16, 0x40, // 16
+            0xAD, 0x16, 0x40, // 17
+            0x8D, 0x00, 0x00, // STA $0000
+            0xDB, // STP
+        ];
+        rom[..program.len()].copy_from_slice(&program);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.peek(0x7E0000), 0x01);
+    }
 }
