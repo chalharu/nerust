@@ -9,6 +9,9 @@ use nerust_snes_core::{Core, PresentedBackdropLine};
 
 const MODE0_BG1_CGRAM_BASE: usize = 0;
 const VISIBLE_BG_Y_OFFSET: usize = 1;
+const OBJ_TILE_SIZE: u8 = 8;
+const OBJ_SPRITES_PER_SCANLINE_LIMIT: usize = 32;
+const OBJ_TILE_SLIVERS_PER_SCANLINE_LIMIT: usize = 34;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
@@ -176,71 +179,130 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
 fn render_obj(core: &Core, brightness: u8, rgba: &mut [u8]) {
     let obsel = core.peek(0x002101);
     let (small_size, large_size) = obj_size_pair((obsel >> 5) & 0x07);
+    let sprites = collect_obj_sprites(core, small_size, large_size);
 
-    for sprite_index in (0..128).rev() {
-        let base = sprite_index * 4;
-        let x_low = core.peek_oam(base);
-        let y = core.peek_oam(base + 1);
-        let tile = core.peek_oam(base + 2);
-        let attributes = core.peek_oam(base + 3);
-        let extra = core.peek_oam(512 + sprite_index / 4);
-        let pair_shift = (sprite_index % 4) * 2;
-        let x_high = (extra >> pair_shift) & 0x01 != 0;
-        let large = (extra >> (pair_shift + 1)) & 0x01 != 0;
-        let size = if large { large_size } else { small_size };
-
-        let x = if x_high {
-            i16::from(x_low) - 256
-        } else {
-            i16::from(x_low)
-        };
-        let mut y = i16::from(y);
-        if y >= SCREEN_HEIGHT as i16 {
-            y -= 256;
+    for screen_y in 0..SCREEN_HEIGHT {
+        let slivers = obj_slivers_for_scanline(&sprites, screen_y);
+        for sliver in slivers.iter().rev() {
+            render_obj_sliver(core, obsel, brightness, rgba, screen_y, *sliver);
         }
+    }
+}
 
-        for sprite_y in 0..size.height {
-            let target_y = y + sprite_y as i16;
-            if !(0..SCREEN_HEIGHT as i16).contains(&target_y) {
-                continue;
-            }
+fn collect_obj_sprites(core: &Core, small_size: ObjSize, large_size: ObjSize) -> Vec<ObjSprite> {
+    (0..128)
+        .map(|sprite_index| {
+            let base = sprite_index * 4;
+            let x_low = core.peek_oam(base);
+            let y = core.peek_oam(base + 1);
+            let tile = core.peek_oam(base + 2);
+            let attributes = core.peek_oam(base + 3);
+            let extra = core.peek_oam(512 + sprite_index / 4);
+            let pair_shift = (sprite_index % 4) * 2;
+            let x_high = (extra >> pair_shift) & 0x01 != 0;
+            let large = (extra >> (pair_shift + 1)) & 0x01 != 0;
+            let size = if large { large_size } else { small_size };
 
-            let source_y = if attributes & 0x80 != 0 {
-                size.height - 1 - sprite_y
+            let x = if x_high {
+                i16::from(x_low) - 256
             } else {
-                sprite_y
+                i16::from(x_low)
             };
-            let tile_row = usize::from(source_y / 8);
-            let pixel_y = usize::from(source_y % 8);
-
-            for sprite_x in 0..size.width {
-                let target_x = x + sprite_x as i16;
-                if !(0..SCREEN_WIDTH as i16).contains(&target_x) {
-                    continue;
-                }
-
-                let source_x = if attributes & 0x40 != 0 {
-                    size.width - 1 - sprite_x
-                } else {
-                    sprite_x
-                };
-                let tile_column = usize::from(source_x / 8);
-                let pixel_x = usize::from(source_x % 8);
-                let tile_number = (usize::from(tile) | (usize::from(attributes & 0x01) << 8))
-                    + tile_column
-                    + tile_row * 16;
-                let tile_addr = obj_tile_address(obsel, tile_number);
-                let color = chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y);
-                if color == 0 {
-                    continue;
-                }
-
-                let palette = usize::from((attributes >> 1) & 0x07);
-                let color =
-                    cgram_color_rgba(core, 128 + palette * 16 + usize::from(color), brightness);
-                put_pixel(rgba, target_x as usize, target_y as usize, color);
+            let mut y = i16::from(y);
+            if y >= SCREEN_HEIGHT as i16 {
+                y -= 256;
             }
+
+            ObjSprite {
+                x,
+                y,
+                tile,
+                attributes,
+                size,
+            }
+        })
+        .collect()
+}
+
+fn obj_slivers_for_scanline(sprites: &[ObjSprite], screen_y: usize) -> Vec<ObjSliver> {
+    let mut selected_sprites = 0;
+    let mut slivers = Vec::new();
+
+    for &sprite in sprites {
+        if !obj_contains_scanline(sprite, screen_y) {
+            continue;
         }
+        if selected_sprites == OBJ_SPRITES_PER_SCANLINE_LIMIT {
+            break;
+        }
+        selected_sprites += 1;
+
+        let columns = sprite.size.width / OBJ_TILE_SIZE;
+        for tile_column in 0..columns {
+            if slivers.len() == OBJ_TILE_SLIVERS_PER_SCANLINE_LIMIT {
+                return slivers;
+            }
+            slivers.push(ObjSliver {
+                sprite,
+                tile_column,
+            });
+        }
+    }
+
+    slivers
+}
+
+fn obj_contains_scanline(sprite: ObjSprite, screen_y: usize) -> bool {
+    let screen_y = screen_y as i16;
+    let height = i16::from(sprite.size.height);
+    screen_y >= sprite.y && screen_y < sprite.y + height
+}
+
+fn render_obj_sliver(
+    core: &Core,
+    obsel: u8,
+    brightness: u8,
+    rgba: &mut [u8],
+    screen_y: usize,
+    sliver: ObjSliver,
+) {
+    let sprite_y = screen_y as i16 - sliver.sprite.y;
+    let source_y = if sliver.sprite.attributes & 0x80 != 0 {
+        sliver.sprite.size.height - 1 - sprite_y as u8
+    } else {
+        sprite_y as u8
+    };
+    let tile_row = usize::from(source_y / OBJ_TILE_SIZE);
+    let pixel_y = usize::from(source_y % OBJ_TILE_SIZE);
+    let sliver_x_start = sliver.tile_column * OBJ_TILE_SIZE;
+
+    for pixel_in_sliver in 0..OBJ_TILE_SIZE {
+        let sprite_x = sliver_x_start + pixel_in_sliver;
+        let target_x = sliver.sprite.x + i16::from(sprite_x);
+        if !(0..SCREEN_WIDTH as i16).contains(&target_x) {
+            continue;
+        }
+
+        let source_x = if sliver.sprite.attributes & 0x40 != 0 {
+            sliver.sprite.size.width - 1 - sprite_x
+        } else {
+            sprite_x
+        };
+        let tile_column = usize::from(source_x / OBJ_TILE_SIZE);
+        let pixel_x = usize::from(source_x % OBJ_TILE_SIZE);
+        let tile_number = (usize::from(sliver.sprite.tile)
+            | (usize::from(sliver.sprite.attributes & 0x01) << 8))
+            + tile_column
+            + tile_row * 16;
+        let tile_addr = obj_tile_address(obsel, tile_number);
+        let color = chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y);
+        if color == 0 {
+            continue;
+        }
+
+        let palette = usize::from((sliver.sprite.attributes >> 1) & 0x07);
+        let color = cgram_color_rgba(core, 128 + palette * 16 + usize::from(color), brightness);
+        put_pixel(rgba, target_x as usize, screen_y, color);
     }
 }
 
@@ -432,11 +494,27 @@ impl ObjSize {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ObjSprite {
+    x: i16,
+    y: i16,
+    tile: u8,
+    attributes: u8,
+    size: ObjSize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ObjSliver {
+    sprite: ObjSprite,
+    tile_column: u8,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_2bpp_pixel, decode_4bpp_pixel, decode_8bpp_pixel, obj_tile_address,
-        opaque_black_screen, render_screen, scale_channel,
+        ObjSize, ObjSprite, decode_2bpp_pixel, decode_4bpp_pixel, decode_8bpp_pixel,
+        obj_slivers_for_scanline, obj_tile_address, opaque_black_screen, render_screen,
+        scale_channel,
     };
     use nerust_snes_core::{Core, CpuState};
 
@@ -516,6 +594,58 @@ mod tests {
     fn obj_tile_address_applies_gap_to_secondary_page() {
         assert_eq!(obj_tile_address(0b0000_1000, 0x00FF), 0x1FE0);
         assert_eq!(obj_tile_address(0b0000_1000, 0x0100), 0x4000);
+    }
+
+    #[test]
+    fn obj_scanline_selection_keeps_only_first_thirty_two_sprites() {
+        let sprites = (0..36)
+            .map(|index| test_obj(index, 0, 8, 8))
+            .collect::<Vec<_>>();
+
+        let slivers = obj_slivers_for_scanline(&sprites, 0);
+
+        assert_eq!(slivers.len(), 32);
+        assert_eq!(slivers.first().unwrap().sprite.tile, 0);
+        assert_eq!(slivers.last().unwrap().sprite.tile, 31);
+    }
+
+    #[test]
+    fn obj_scanline_selection_keeps_only_first_thirty_four_tile_slivers() {
+        let sprites = (0..12)
+            .map(|index| test_obj(index, 0, 32, 32))
+            .collect::<Vec<_>>();
+
+        let slivers = obj_slivers_for_scanline(&sprites, 0);
+
+        assert_eq!(slivers.len(), 34);
+        assert_eq!(slivers[31].sprite.tile, 7);
+        assert_eq!(slivers[31].tile_column, 3);
+        assert_eq!(slivers[32].sprite.tile, 8);
+        assert_eq!(slivers[32].tile_column, 0);
+        assert_eq!(slivers[33].sprite.tile, 8);
+        assert_eq!(slivers[33].tile_column, 1);
+    }
+
+    #[test]
+    fn obj_scanline_selection_counts_offscreen_sprite_tile_slivers() {
+        let sprites = (0..9)
+            .map(|index| test_obj(index, -256, 32, 32))
+            .collect::<Vec<_>>();
+
+        let slivers = obj_slivers_for_scanline(&sprites, 0);
+
+        assert_eq!(slivers.len(), 34);
+        assert_eq!(slivers.last().unwrap().sprite.tile, 8);
+    }
+
+    fn test_obj(index: usize, x: i16, width: u8, height: u8) -> ObjSprite {
+        ObjSprite {
+            x,
+            y: 0,
+            tile: index as u8,
+            attributes: 0,
+            size: ObjSize::new(width, height),
+        }
     }
 
     #[test]
