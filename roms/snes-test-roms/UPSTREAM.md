@@ -7,6 +7,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
 - Included generated ROMs:
   - `bin/examples/hdma-to-cgram.sfc`
   - `bin/examples/vram-writes-without-dma.sfc`
+  - `bin/effects/inidisp_extend_vblank.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
   - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc`

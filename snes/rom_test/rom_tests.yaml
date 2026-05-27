@@ -240,6 +240,35 @@ cases:
       - kind: oam_u16
         address: "0x0202"
         expected: "0x5555"
+  - id: inidisp-extend-vblank-300k-screen-state
+    description: >
+      The undisbeliever extend-VBlank demo reaches a deterministic 300000-step
+      screen state with the current IRQ-driven forced-blank flow, and should
+      keep matching that rendered frame hash when screenshots are captured from
+      the final checked state.
+    rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x2F605F796DA9D7E0"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x09"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x11"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x31"
+      - kind: bus_u16
+        address: "0x004207"
+        expected: "0x00F0"
+      - kind: bus_u16
+        address: "0x004209"
+        expected: "0x00D6"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
