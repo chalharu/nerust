@@ -132,6 +132,34 @@ cases:
       - kind: vram_u8
         address: "0x001E"
         expected: "0x81"
+  - id: vmain-4bpp-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 4bpp remapping ROM renders the deterministic
+      radial test image at 8500000 steps after writing its remapped tile buffer
+      through $2118/$2119.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x97DCE715B9555BA2"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+  - id: vmain-8bpp-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 8bpp remapping ROM renders the deterministic
+      radial test image at 8500000 steps after writing its remapped tile buffer
+      through $2118/$2119.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xFDED1B889D95799F"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
   - id: inidisp-forgot-to-force-blank-final-state
     description: >
       The undisbeliever INIDISP force-blank hardware test reaches its steady

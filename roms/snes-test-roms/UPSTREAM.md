@@ -26,6 +26,8 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/hardware-tests/vram-mid-scanline-test.sfc`
   - `bin/hardware-tests/wrmpyb-in-flight.sfc`
   - `bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc`
 - Local build inputs: upstream sources plus the already vendored `bass-untech`
   toolchain from this repository and the Python environment prepared in this
   session for asset generation.
