@@ -45,6 +45,7 @@ pub(crate) struct HostState {
     settings_helper: Option<settings::SettingsHelperHandle>,
     settings_open: bool,
     resume_after_settings: bool,
+    pending_fullscreen_sync: Option<bool>,
 }
 
 impl HostState {
@@ -63,6 +64,7 @@ impl HostState {
             settings_helper: None,
             settings_open: false,
             resume_after_settings: false,
+            pending_fullscreen_sync: None,
         }
     }
 
@@ -83,23 +85,25 @@ impl HostState {
             return;
         }
 
-        let window = Arc::new(
-            create_window_builder(self.startup_window_size(), self.session.window_title())
-                .build(event_loop)
-                .unwrap(),
-        );
-        self.app_menu.init_for_window(&window);
-        if self
+        let fullscreen = self
             .session
             .settings_snapshot()
             .local
             .video
             .window
-            .fullscreen_default
-        {
-            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
+            .fullscreen_default;
+        let window = Arc::new(
+            create_window_builder(
+                self.startup_window_size(),
+                self.session.window_title(),
+                fullscreen,
+            )
+            .build(event_loop)
+            .unwrap(),
+        );
+        self.app_menu.init_for_window(&window);
         self.window = Some(window);
+        self.sync_fullscreen_from_settings();
         self.sync_menu_state();
         self.request_redraw();
         self.refresh_window_title();
@@ -208,7 +212,38 @@ impl HostState {
         let _ = self.session.clear_input();
     }
 
+    pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let fullscreen = window_is_fullscreen(window);
+        let sync = derive_native_fullscreen_sync(
+            self.pending_fullscreen_sync,
+            fullscreen,
+            self.session
+                .settings_snapshot()
+                .local
+                .video
+                .window
+                .fullscreen_default,
+        );
+        self.pending_fullscreen_sync = sync.pending_target;
+        if !sync.persist_setting {
+            return;
+        }
+        match self.session.set_fullscreen_default(fullscreen) {
+            Ok(plan) if plan.fullscreen_default_changed => {
+                self.sync_menu_state();
+                self.refresh_window_title();
+                self.request_redraw();
+            }
+            Ok(_) => (),
+            Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
+        }
+    }
+
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
+        self.sync_fullscreen_default_from_window();
         let now = Instant::now();
         self.maybe_refresh_window_title(now);
 
@@ -269,8 +304,21 @@ impl HostState {
         settings: SettingsSnapshot,
     ) -> Result<SettingsApplyPlan, String> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.window_settings_changed {
+        let fullscreen_default = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        if plan.fullscreen_default_changed && !fullscreen_default {
+            self.sync_fullscreen_from_settings();
+        }
+        if plan.scaling_changed {
             self.update_window_size_for_scaling();
+        }
+        if plan.fullscreen_default_changed && fullscreen_default {
+            self.sync_fullscreen_from_settings();
         }
         self.sync_menu_state();
         self.refresh_window_title();
@@ -372,13 +420,17 @@ impl HostState {
     }
 
     fn toggle_fullscreen(&mut self) {
-        let Some(window) = self.window.as_ref() else {
+        let fullscreen = if let Some(window) = self.window.as_ref() {
+            !window_is_fullscreen(window)
+        } else {
             return;
         };
-        if window.fullscreen().is_some() {
-            window.set_fullscreen(None);
-        } else {
-            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        if let Err(error) = self.persist_fullscreen_default(fullscreen) {
+            log::warn!("failed to persist fullscreen setting: {error}");
+            if let Some(window) = self.window.as_ref() {
+                set_window_fullscreen(window, fullscreen);
+            }
+            self.request_redraw();
         }
     }
 
@@ -437,6 +489,37 @@ impl HostState {
         window.set_inner_size(logical_window_size(self.session.window_size(), Some(scale)));
     }
 
+    fn sync_fullscreen_from_settings(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let fullscreen = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        if window_is_fullscreen(window) == fullscreen {
+            self.pending_fullscreen_sync = None;
+            return;
+        }
+        self.pending_fullscreen_sync = Some(fullscreen);
+        set_window_fullscreen(window, fullscreen);
+    }
+
+    fn persist_fullscreen_default(
+        &mut self,
+        fullscreen: bool,
+    ) -> Result<SettingsApplyPlan, String> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        self.sync_fullscreen_from_settings();
+        self.sync_menu_state();
+        self.refresh_window_title();
+        self.request_redraw();
+        Ok(plan)
+    }
+
     fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
         self.session
             .settings_snapshot()
@@ -448,7 +531,7 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        if window.fullscreen().is_some()
+        if window_is_fullscreen(window)
             || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
@@ -468,8 +551,53 @@ impl HostState {
     }
 }
 
-fn create_window_builder(size: TaoLogicalSize<f64>, title: String) -> WindowBuilder {
-    WindowBuilder::new().with_title(title).with_inner_size(size)
+fn create_window_builder(
+    size: TaoLogicalSize<f64>,
+    title: String,
+    fullscreen: bool,
+) -> WindowBuilder {
+    WindowBuilder::new()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_fullscreen(fullscreen_mode(fullscreen))
+}
+
+fn window_is_fullscreen(window: &TaoWindow) -> bool {
+    window.fullscreen().is_some()
+}
+
+fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
+    window.set_fullscreen(fullscreen_mode(fullscreen));
+}
+
+fn fullscreen_mode(fullscreen: bool) -> Option<Fullscreen> {
+    fullscreen.then_some(Fullscreen::Borderless(None))
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct NativeFullscreenSync {
+    pending_target: Option<bool>,
+    persist_setting: bool,
+}
+
+fn derive_native_fullscreen_sync(
+    pending_target: Option<bool>,
+    fullscreen: bool,
+    persisted_fullscreen: bool,
+) -> NativeFullscreenSync {
+    if let Some(expected) = pending_target
+        && fullscreen != expected
+    {
+        return NativeFullscreenSync {
+            pending_target: Some(expected),
+            persist_setting: false,
+        };
+    }
+
+    NativeFullscreenSync {
+        pending_target: None,
+        persist_setting: fullscreen != persisted_fullscreen,
+    }
 }
 
 fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
@@ -568,9 +696,12 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::keycode_controller_input;
+    use super::{
+        NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
+        keycode_controller_input,
+    };
     use nerust_contract_settings::input::KeyboardKey;
-    use tao::keyboard::KeyCode;
+    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
@@ -597,6 +728,58 @@ mod tests {
         assert_eq!(
             keycode_controller_input(KeyCode::Digit1),
             Some(KeyboardKey::Digit1)
+        );
+    }
+
+    #[test]
+    fn window_builder_requests_initial_fullscreen_when_enabled() {
+        let builder =
+            create_window_builder(TaoLogicalSize::new(960.0, 720.0), "nerust".into(), true);
+
+        assert_eq!(
+            builder.window.fullscreen,
+            Some(Fullscreen::Borderless(None))
+        );
+    }
+
+    #[test]
+    fn window_builder_skips_initial_fullscreen_when_disabled() {
+        let builder =
+            create_window_builder(TaoLogicalSize::new(960.0, 720.0), "nerust".into(), false);
+
+        assert_eq!(builder.window.fullscreen, None);
+    }
+
+    #[test]
+    fn fullscreen_sync_ignores_transient_state_while_transition_is_pending() {
+        assert_eq!(
+            derive_native_fullscreen_sync(Some(true), false, true),
+            NativeFullscreenSync {
+                pending_target: Some(true),
+                persist_setting: false,
+            }
+        );
+    }
+
+    #[test]
+    fn fullscreen_sync_clears_pending_transition_once_window_matches_target() {
+        assert_eq!(
+            derive_native_fullscreen_sync(Some(true), true, true),
+            NativeFullscreenSync {
+                pending_target: None,
+                persist_setting: false,
+            }
+        );
+    }
+
+    #[test]
+    fn fullscreen_sync_persists_native_changes_once_no_transition_is_pending() {
+        assert_eq!(
+            derive_native_fullscreen_sync(None, false, true),
+            NativeFullscreenSync {
+                pending_target: None,
+                persist_setting: true,
+            }
         );
     }
 }

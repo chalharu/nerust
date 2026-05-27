@@ -14,7 +14,7 @@ use nerust_contract_mirror::MirrorMode;
 use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_contract_rom::{RomFormat, RomIdentity};
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
@@ -652,4 +652,50 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     assert_eq!(counts.mapper_save_imports, 0);
 
     let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn set_fullscreen_default_updates_snapshot_and_plan() {
+    let mut session = test_session();
+
+    session
+        .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, true)
+        .unwrap();
+
+    let plan = session.set_fullscreen_default(true).unwrap();
+
+    assert_eq!(
+        plan,
+        SettingsApplyPlan {
+            window_settings_changed: true,
+            fullscreen_default_changed: true,
+            ..SettingsApplyPlan::default()
+        }
+    );
+    assert!(
+        session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default
+    );
+    let frame = decode_input_state(
+        &session
+            .runtime
+            .current_input_state()
+            .expect("input state should export"),
+    )
+    .expect("input state should decode");
+    assert_eq!(
+        frame,
+        NesInputFrame {
+            player_one: Buttons::A,
+            player_two: Buttons::empty(),
+            microphone: false,
+        }
+    );
+
+    let second = session.set_fullscreen_default(true).unwrap();
+    assert_eq!(second, SettingsApplyPlan::default());
 }
