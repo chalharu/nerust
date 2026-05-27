@@ -1,12 +1,14 @@
 mod library;
 mod picker;
 mod renderer;
+mod settings;
 mod storage;
 mod surface;
 
 use self::library::LibraryDialogResult;
 use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
+use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
@@ -33,6 +35,7 @@ use winit::window::{Window, WindowId};
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     picker::bind_app(&app);
     library::bind_app(&app);
+    settings::bind_app(&app);
     let frontend_app = app.clone();
     let storage_root = app
         .internal_data_path()
@@ -168,6 +171,35 @@ impl AndroidFrontend {
         }
     }
 
+    fn handle_settings_result(&mut self, result: SettingsDialogResult) {
+        let SettingsDialogResult::Applied(raw) = result else {
+            return;
+        };
+        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw) else {
+            log::error!("Android settings dialog returned an unrecognisable result: {raw:?}");
+            return;
+        };
+        let mut next = self.session.settings_snapshot().clone();
+        android_settings.apply_to_snapshot(&mut next);
+        match self.session.apply_settings(next) {
+            Ok(plan) => {
+                if plan.renderer_rebuild_required {
+                    // If Android has already dropped the surface, keep the renderer absent here;
+                    // `ensure_window` will rebuild it on the next resume with the updated settings.
+                    self.renderer = self
+                        .window
+                        .as_ref()
+                        .cloned()
+                        .map(|window| WgpuRenderer::new(window, &self.session));
+                }
+                self.request_redraw();
+            }
+            Err(error) => {
+                log::error!("failed to apply Android settings: {error}");
+            }
+        }
+    }
+
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if self.window.is_some() {
             return Ok(());
@@ -268,6 +300,18 @@ impl AndroidFrontend {
                         }
                     }
                 }
+                TouchOverlayAction::Frontend(TouchFrontendAction::OpenSettings) => {
+                    let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+                    match settings::request_show_settings_dialog(&self.app, &current) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            log::warn!("Android settings dialog ignored while it is already open");
+                        }
+                        Err(error) => {
+                            log::error!("{error}");
+                        }
+                    }
+                }
             }
         }
     }
@@ -320,6 +364,7 @@ impl ApplicationHandler for AndroidFrontend {
         let _ = self.session.clear_input();
         picker::reset();
         library::reset();
+        settings::reset();
         self.renderer = None;
         self.window = None;
         self.window_id = None;
@@ -368,6 +413,9 @@ impl ApplicationHandler for AndroidFrontend {
         }
         if let Some(result) = picker::take_result() {
             self.handle_picker_result(result);
+        }
+        if let Some(result) = settings::take_result() {
+            self.handle_settings_result(result);
         }
         self.maybe_refresh_title(Instant::now());
         if let Some(window) = self.window.as_ref()

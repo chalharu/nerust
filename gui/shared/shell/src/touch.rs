@@ -31,6 +31,7 @@ impl TouchRect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchFrontendAction {
     OpenLibrary,
+    OpenSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,7 @@ pub enum TouchTarget {
     Save,
     Load,
     Library,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -193,7 +195,16 @@ impl PortraitTouchOverlay {
                 bounds: TouchRect {
                     x: width * 0.06,
                     y: control_top + control_height * 0.82,
-                    width: width * 0.18,
+                    width: width * 0.14,
+                    height: height * 0.05,
+                },
+            },
+            TouchZone {
+                target: TouchTarget::Settings,
+                bounds: TouchRect {
+                    x: width * 0.22,
+                    y: control_top + control_height * 0.82,
+                    width: width * 0.14,
                     height: height * 0.05,
                 },
             },
@@ -255,11 +266,17 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
                 TouchFrontendAction::OpenLibrary,
             )]
         }
+        TouchTarget::Settings if pressed => {
+            vec![TouchOverlayAction::Frontend(
+                TouchFrontendAction::OpenSettings,
+            )]
+        }
         TouchTarget::Pause
         | TouchTarget::Reset
         | TouchTarget::Save
         | TouchTarget::Load
-        | TouchTarget::Library => Vec::new(),
+        | TouchTarget::Library
+        | TouchTarget::Settings => Vec::new(),
     }
 }
 
@@ -293,12 +310,21 @@ mod tests {
             }),
             Some(TouchTarget::A)
         );
+        // Library is at x=[64.8, 216], y≈[1754, 1850]
         assert_eq!(
             overlay.hit_test(TouchPoint {
                 x: 120.0,
                 y: 1760.0
             }),
             Some(TouchTarget::Library)
+        );
+        // Settings is at x=[237.6, 388.8], same y band
+        assert_eq!(
+            overlay.hit_test(TouchPoint {
+                x: 300.0,
+                y: 1760.0
+            }),
+            Some(TouchTarget::Settings)
         );
         assert_eq!(overlay.hit_test(TouchPoint { x: 50.0, y: 200.0 }), None);
     }
@@ -340,6 +366,31 @@ mod tests {
             vec![TouchOverlayAction::Frontend(
                 TouchFrontendAction::OpenLibrary
             )]
+        );
+    }
+
+    #[test]
+    fn settings_target_emits_open_settings_on_press_only() {
+        assert_eq!(
+            actions_for_target(TouchTarget::Settings, true),
+            vec![TouchOverlayAction::Frontend(
+                TouchFrontendAction::OpenSettings
+            )]
+        );
+        assert!(actions_for_target(TouchTarget::Settings, false).is_empty());
+    }
+
+    #[test]
+    fn portrait_overlay_includes_settings_zone() {
+        let overlay = PortraitTouchOverlay::new(1080.0, 1920.0);
+        let zones = overlay.zones();
+        assert!(
+            zones.iter().any(|z| z.target == TouchTarget::Settings),
+            "expected a Settings zone in the portrait overlay"
+        );
+        assert!(
+            zones.iter().any(|z| z.target == TouchTarget::Library),
+            "expected a Library zone in the portrait overlay"
         );
     }
 }
