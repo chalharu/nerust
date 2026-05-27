@@ -286,11 +286,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         val root = contentRoot() ?: return
         installComposeOwners(root)
         val controls = root.findViewWithTag<View>(CONTROLS_OVERLAY_TAG)
-            ?: createControlsOverlay().also(root::addView)
-        val button = root.findViewWithTag<View>(MENU_BUTTON_TAG) ?: createMenuButtonOverlay().also(root::addView)
+            ?: createControlsOverlay().also(::addOverlayView)
+        val button = root.findViewWithTag<View>(MENU_BUTTON_TAG)
+            ?: createMenuButtonOverlay().also(::addOverlayView)
         controls.bringToFront()
         button.bringToFront()
         root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)?.bringToFront()
+    }
+
+    private fun addOverlayView(view: View) {
+        if (view.parent == null) {
+            addContentView(view, view.layoutParams)
+        }
     }
 
     private fun installComposeOwners(root: View) {
@@ -353,7 +360,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 }
             }
         }
-        root.addView(overlay)
+        addOverlayView(overlay)
         overlay.bringToFront()
     }
 
