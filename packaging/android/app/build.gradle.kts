@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val versionNameOverride = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
@@ -56,13 +55,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
