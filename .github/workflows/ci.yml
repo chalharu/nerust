@@ -257,8 +257,9 @@ jobs:
         env:
           ANDROID_ABI_FILTERS: x86_64
         with:
-          api-level: 35
+          api-level: 30
           arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: |
             chmod +x packaging/android/e2e.sh packaging/android/gradlew
             packaging/android/e2e.sh

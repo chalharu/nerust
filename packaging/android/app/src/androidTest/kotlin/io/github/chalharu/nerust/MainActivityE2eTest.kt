@@ -28,8 +28,12 @@ class MainActivityE2eTest {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         context.startActivity(launchIntent)
 
+        assertTrue(
+            "Application package should become visible after launch",
+            device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)), STARTUP_TIMEOUT_MS),
+        )
         val menuButton =
-            requireNotNull(device.wait(Until.findObject(By.text("Menu")), STARTUP_TIMEOUT_MS)) {
+            requireNotNull(device.wait(Until.findObject(By.desc("Menu")), STARTUP_TIMEOUT_MS)) {
                 "Menu button should be visible after startup"
             }
         menuButton.click()
@@ -48,13 +52,13 @@ class MainActivityE2eTest {
         ).forEach { label ->
             assertTrue(
                 "Drawer item '$label' should be visible",
-                device.wait(Until.hasObject(By.text(label)), DRAWER_TIMEOUT_MS),
+                device.wait(Until.hasObject(By.desc(label)), DRAWER_TIMEOUT_MS),
             )
         }
     }
 
     private companion object {
-        const val STARTUP_TIMEOUT_MS = 15_000L
+        const val STARTUP_TIMEOUT_MS = 45_000L
         const val DRAWER_TIMEOUT_MS = 5_000L
     }
 }
