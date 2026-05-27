@@ -1,6 +1,17 @@
 const VRAM_LEN: usize = 64 * 1024;
 const OAM_LEN: usize = 544;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mode7Registers {
+    pub m7sel: u8,
+    pub a: i16,
+    pub b: i16,
+    pub c: i16,
+    pub d: i16,
+    pub x: i16,
+    pub y: i16,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Ppu1 {
     registers: [u8; 0x40],
@@ -13,6 +24,8 @@ pub(crate) struct Ppu1 {
     bg1_hofs_latch: u8,
     bg1_hofs: u16,
     bg1_vofs: u16,
+    mode7: Mode7Registers,
+    mode7_latch: u8,
 }
 
 impl Default for Ppu1 {
@@ -28,6 +41,8 @@ impl Default for Ppu1 {
             bg1_hofs_latch: 0,
             bg1_hofs: 0,
             bg1_vofs: 0,
+            mode7: Mode7Registers::default(),
+            mode7_latch: 0,
         }
     }
 }
@@ -99,7 +114,17 @@ impl Ppu1 {
                 self.write_vram_byte(true, value, allow_vram_port_write);
                 true
             }
-            0x2101 | 0x2105..=0x210C | 0x210F..=0x2114 | 0x211A..=0x2120 => {
+            0x211A => {
+                self.store_register(offset, value);
+                self.mode7.m7sel = value;
+                true
+            }
+            0x211B..=0x2120 => {
+                self.store_register(offset, value);
+                self.write_mode7_word(offset, value);
+                true
+            }
+            0x2101 | 0x2105..=0x210C | 0x210F..=0x2114 => {
                 self.store_register(offset, value);
                 true
             }
@@ -148,6 +173,10 @@ impl Ppu1 {
 
     pub(crate) fn bg1_vofs(&self) -> u16 {
         self.bg1_vofs
+    }
+
+    pub(crate) fn mode7_registers(&self) -> Mode7Registers {
+        self.mode7
     }
 
     #[cfg(test)]
@@ -203,6 +232,20 @@ impl Ppu1 {
     fn write_bg1_vofs(&mut self, value: u8) {
         self.bg1_vofs = ((u16::from(value) << 8) | u16::from(self.bgofs_latch)) & 0x03FF;
         self.bgofs_latch = value;
+    }
+
+    fn write_mode7_word(&mut self, offset: u16, value: u8) {
+        let word = i16::from_le_bytes([self.mode7_latch, value]);
+        match offset {
+            0x211B => self.mode7.a = word,
+            0x211C => self.mode7.b = word,
+            0x211D => self.mode7.c = word,
+            0x211E => self.mode7.d = word,
+            0x211F => self.mode7.x = word,
+            0x2120 => self.mode7.y = word,
+            _ => unreachable!(),
+        }
+        self.mode7_latch = value;
     }
 }
 
@@ -361,5 +404,48 @@ mod tests {
 
         assert_eq!(ppu1.bg1_hofs(), 0x0234);
         assert_eq!(ppu1.bg1_vofs(), 0x0178);
+    }
+
+    #[test]
+    fn mode7_registers_preserve_two_write_words_and_raw_peeks() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x211A, 0x80));
+        assert!(ppu1.write(0x211B, 0x34));
+        assert!(ppu1.write(0x211B, 0x12));
+        assert!(ppu1.write(0x211C, 0x00));
+        assert!(ppu1.write(0x211C, 0xFF));
+        assert!(ppu1.write(0x211D, 0x78));
+        assert!(ppu1.write(0x211D, 0x56));
+        assert!(ppu1.write(0x211E, 0x00));
+        assert!(ppu1.write(0x211E, 0x01));
+        assert!(ppu1.write(0x211F, 0xFE));
+        assert!(ppu1.write(0x211F, 0xFF));
+        assert!(ppu1.write(0x2120, 0x02));
+        assert!(ppu1.write(0x2120, 0x00));
+
+        let mode7 = ppu1.mode7_registers();
+        assert_eq!(mode7.m7sel, 0x80);
+        assert_eq!(mode7.a, 0x1234);
+        assert_eq!(mode7.b, -256);
+        assert_eq!(mode7.c, 0x5678);
+        assert_eq!(mode7.d, 0x0100);
+        assert_eq!(mode7.x, -2);
+        assert_eq!(mode7.y, 2);
+        assert_eq!(ppu1.peek(0x211A), Some(0x80));
+        assert_eq!(ppu1.peek(0x211B), Some(0x12));
+        assert_eq!(ppu1.peek(0x211F), Some(0xFF));
+    }
+
+    #[test]
+    fn mode7_registers_share_the_previous_byte_latch() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x211B, 0x34));
+        assert!(ppu1.write(0x211C, 0x12));
+
+        let mode7 = ppu1.mode7_registers();
+        assert_eq!(mode7.a, 0x3400);
+        assert_eq!(mode7.b, 0x1234);
     }
 }

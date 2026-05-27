@@ -15,6 +15,7 @@ mod ppu2;
 pub use cartridge::{Cartridge, CartridgeError, CartridgeHeader};
 pub use cpu::{CpuState, CpuStatus, Registers};
 pub use mapper::MapperKind;
+pub use ppu1::Mode7Registers;
 
 use bus::Bus;
 use cpu::{Cpu, CpuFault};
@@ -129,6 +130,10 @@ impl Core {
 
     pub fn bg1_vofs(&self) -> u16 {
         self.bus.ppu1.bg1_vofs()
+    }
+
+    pub fn mode7_registers(&self) -> Mode7Registers {
+        self.bus.ppu1.mode7_registers()
     }
 
     pub fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {

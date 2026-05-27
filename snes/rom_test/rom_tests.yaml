@@ -160,6 +160,83 @@ cases:
       - kind: cgram_u16
         address: "0x0002"
         expected: "0x7FFF"
+  - id: vmain-mode7-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 no-remapping ROM renders the deterministic
+      diagonal line image at 8500000 steps after writing tilemap bytes through
+      VMDATAL and tile pixels through VMDATAH.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-8bit-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 8-bit remapping ROM renders the same
+      deterministic diagonal image through remapped VMDATAH row uploads.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-8bit-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-10bit-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 10-bit remapping ROM renders the same
+      deterministic diagonal image through remapped VMDATAH column uploads.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-10bit-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-tilemap-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 tilemap-image ROM renders a deterministic
+      radial image by using tilemap bytes as chunky pixel data.
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x33FCFA7866C77176"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: inidisp-forgot-to-force-blank-final-state
     description: >
       The undisbeliever INIDISP force-blank hardware test reaches its steady
