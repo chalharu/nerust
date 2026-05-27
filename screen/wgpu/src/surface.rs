@@ -43,7 +43,7 @@ pub struct RenderSurface<T> {
 
 impl<T: SurfaceTargetSource> RenderSurface<T> {
     pub fn new(target: T) -> Result<Self, String> {
-        let instance = Instance::default();
+        let instance = default_instance();
         let surface = create_surface(&instance, &target)?;
         Ok(Self {
             surface,
@@ -68,6 +68,18 @@ impl<T: SurfaceTargetSource> RenderSurface<T> {
     pub fn instance(&self) -> &Instance {
         &self.instance
     }
+}
+
+#[cfg(all(target_os = "android", target_arch = "x86_64"))]
+fn default_instance() -> Instance {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::GL;
+    Instance::new(descriptor)
+}
+
+#[cfg(not(all(target_os = "android", target_arch = "x86_64")))]
+fn default_instance() -> Instance {
+    Instance::default()
 }
 
 fn create_surface<T: SurfaceTargetSource>(
