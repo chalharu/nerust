@@ -85,10 +85,21 @@ impl HostState {
             return;
         }
 
+        let fullscreen = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
         let window = Arc::new(
-            create_window_builder(self.startup_window_size(), self.session.window_title())
-                .build(event_loop)
-                .unwrap(),
+            create_window_builder(
+                self.startup_window_size(),
+                self.session.window_title(),
+                fullscreen,
+            )
+            .build(event_loop)
+            .unwrap(),
         );
         self.app_menu.init_for_window(&window);
         self.window = Some(window);
@@ -540,8 +551,15 @@ impl HostState {
     }
 }
 
-fn create_window_builder(size: TaoLogicalSize<f64>, title: String) -> WindowBuilder {
-    WindowBuilder::new().with_title(title).with_inner_size(size)
+fn create_window_builder(
+    size: TaoLogicalSize<f64>,
+    title: String,
+    fullscreen: bool,
+) -> WindowBuilder {
+    WindowBuilder::new()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_fullscreen(fullscreen_mode(fullscreen))
 }
 
 fn window_is_fullscreen(window: &TaoWindow) -> bool {
@@ -549,7 +567,11 @@ fn window_is_fullscreen(window: &TaoWindow) -> bool {
 }
 
 fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
-    window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    window.set_fullscreen(fullscreen_mode(fullscreen));
+}
+
+fn fullscreen_mode(fullscreen: bool) -> Option<Fullscreen> {
+    fullscreen.then_some(Fullscreen::Borderless(None))
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -674,9 +696,12 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeFullscreenSync, derive_native_fullscreen_sync, keycode_controller_input};
+    use super::{
+        NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
+        keycode_controller_input,
+    };
     use nerust_contract_settings::input::KeyboardKey;
-    use tao::keyboard::KeyCode;
+    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
@@ -704,6 +729,25 @@ mod tests {
             keycode_controller_input(KeyCode::Digit1),
             Some(KeyboardKey::Digit1)
         );
+    }
+
+    #[test]
+    fn window_builder_requests_initial_fullscreen_when_enabled() {
+        let builder =
+            create_window_builder(TaoLogicalSize::new(960.0, 720.0), "nerust".into(), true);
+
+        assert_eq!(
+            builder.window.fullscreen,
+            Some(Fullscreen::Borderless(None))
+        );
+    }
+
+    #[test]
+    fn window_builder_skips_initial_fullscreen_when_disabled() {
+        let builder =
+            create_window_builder(TaoLogicalSize::new(960.0, 720.0), "nerust".into(), false);
+
+        assert_eq!(builder.window.fullscreen, None);
     }
 
     #[test]
