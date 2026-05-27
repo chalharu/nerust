@@ -1,19 +1,23 @@
+mod picker;
 mod renderer;
 mod storage;
 mod surface;
 
+use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::storage::AndroidStorage;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::SessionCommand;
+use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::SessionHandle;
 use nerust_gui_shell::touch::{
     PortraitTouchOverlay, TouchFrontendAction, TouchOverlayAction, TouchPoint, TouchTarget,
     actions_for_target,
 };
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -25,6 +29,8 @@ use winit::platform::android::activity::AndroidApp;
 use winit::window::{Window, WindowId};
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
+    picker::bind_app(&app);
+    let frontend_app = app.clone();
     let storage_root = app
         .internal_data_path()
         .ok_or_else(|| "Android internal data path is unavailable".to_string())?;
@@ -37,13 +43,14 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(storage);
+    let mut state = AndroidFrontend::new(frontend_app, storage);
     event_loop
         .run_app(&mut state)
         .map_err(|error| format!("Android event loop failed: {error}"))
 }
 
 struct AndroidFrontend {
+    app: AndroidApp,
     session: SessionHandle,
     storage: AndroidStorage,
     shell: NativeShellState,
@@ -55,8 +62,9 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    fn new(storage: AndroidStorage) -> Self {
+    fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
         Self {
+            app,
             session: SessionHandle::new_with_settings_manager(
                 HostBackendIdentity::android_wgpu(),
                 storage.settings.clone(),
@@ -68,6 +76,52 @@ impl AndroidFrontend {
             renderer: None,
             overlay: None,
             active_touches: HashMap::new(),
+        }
+    }
+
+    fn import_rom_from_uri(&mut self, uri: &str) -> Result<(), String> {
+        let bytes = picker::read_uri_bytes(&self.app, uri)?;
+        let (display_name, extension) = infer_import_metadata(uri);
+        let entry = self
+            .storage
+            .rom_library
+            .import_bytes(&display_name, &extension, &bytes)
+            .map_err(|error| format!("failed to import Android ROM into library: {error}"))?;
+        let path = self
+            .storage
+            .rom_library
+            .rom_path(&entry.id)
+            .ok_or_else(|| {
+                format!(
+                    "imported Android ROM {} is missing its stored file",
+                    entry.id
+                )
+            })?;
+        if let Err(error) = self
+            .session
+            .load(MediaObject::new(Some(path), bytes), LoadRequest::Auto)
+        {
+            if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
+                log::error!(
+                    "failed to roll back Android ROM import {} after load error: {remove_error}",
+                    entry.id
+                );
+            }
+            return Err(format!(
+                "failed to load imported Android ROM {}: {error}",
+                entry.display_name
+            ));
+        }
+        self.request_redraw();
+        Ok(())
+    }
+
+    fn handle_picker_result(&mut self, result: RomPickerResult) {
+        let RomPickerResult::Selected(uri) = result else {
+            return;
+        };
+        if let Err(error) = self.import_rom_from_uri(&uri) {
+            log::error!("{error}");
         }
     }
 
@@ -156,7 +210,17 @@ impl AndroidFrontend {
                     }
                 }
                 TouchOverlayAction::Frontend(TouchFrontendAction::OpenLibrary) => {
-                    log::warn!("ROM library UI is not wired into the Android frontend yet");
+                    match picker::request_open_document(&self.app) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            log::warn!(
+                                "Android ROM picker request ignored while it is already open"
+                            );
+                        }
+                        Err(error) => {
+                            log::error!("{error}");
+                        }
+                    }
                 }
             }
         }
@@ -208,6 +272,7 @@ impl ApplicationHandler for AndroidFrontend {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         let _ = self.session.clear_input();
+        picker::reset();
         self.renderer = None;
         self.window = None;
         self.window_id = None;
@@ -251,6 +316,9 @@ impl ApplicationHandler for AndroidFrontend {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(result) = picker::take_result() {
+            self.handle_picker_result(result);
+        }
         self.maybe_refresh_title(Instant::now());
         if let Some(window) = self.window.as_ref()
             && self
@@ -260,4 +328,27 @@ impl ApplicationHandler for AndroidFrontend {
             window.request_redraw();
         }
     }
+}
+
+fn infer_import_metadata(uri: &str) -> (String, String) {
+    let candidate = uri
+        .rsplit('/')
+        .next()
+        .and_then(|segment| segment.split('?').next())
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("Imported ROM")
+        .replace("%20", " ");
+    let path = Path::new(&candidate);
+    let display_name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("Imported ROM")
+        .to_string();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_string();
+    (display_name, extension)
 }

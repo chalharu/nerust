@@ -71,6 +71,7 @@ gl = { version = "=0.14.0" }
 gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
 iced = { version = "=0.14.0" }
+jni = { version = "=0.22.4" }
 lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.30", default-features = false }
