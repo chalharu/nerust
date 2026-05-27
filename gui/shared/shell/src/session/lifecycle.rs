@@ -1,4 +1,6 @@
-use crate::descriptor::{RuntimeHostServices, SystemSettingsPageModel};
+use crate::descriptor::{
+    RuntimeHostServices, SystemSettingsPageModel, system_definition_for_id, system_id_for_media,
+};
 use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
@@ -127,6 +129,14 @@ impl SessionHandle {
     }
 
     pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
+        let target_system = match request {
+            LoadRequest::Auto => system_id_for_media(&media),
+            LoadRequest::Explicit { system_id, .. } => system_id,
+        };
+        if target_system != self.descriptor.system_id {
+            self.flush_mapper_save()?;
+            self.switch_system(target_system)?;
+        }
         let resolved = self.resolve_load_request(request, &media)?;
         self.flush_mapper_save()?;
         self.runtime.load(&media, &resolved)?;
@@ -296,6 +306,27 @@ impl SessionHandle {
         }
         self.definition
             .resolve_load_request(&self.settings_snapshot, options)
+    }
+
+    fn switch_system(&mut self, system_id: nerust_input_schema::SystemId) -> Result<(), String> {
+        let definition = system_definition_for_id(system_id)?;
+        let descriptor = definition.descriptor();
+        let runtime = definition.create_runtime(
+            &RuntimeHostServices {
+                host_backend: self.host_backend,
+            },
+            &self.settings_snapshot,
+        )?;
+        let input_adapter = definition.create_input_adapter(&self.settings_snapshot);
+        self.definition = definition;
+        self.descriptor = descriptor;
+        self.runtime = runtime;
+        self.input_adapter = input_adapter;
+        self.loaded_media = None;
+        self.persistence = Default::default();
+        self.pressed_keys.clear();
+        self.sync_input_from_runtime();
+        Ok(())
     }
 
     fn rebuild_for_settings(

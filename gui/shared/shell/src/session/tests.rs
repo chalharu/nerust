@@ -516,6 +516,17 @@ fn session_flushes_keyboard_input_into_controller_state() {
     );
 }
 
+fn build_snes_lorom() -> Vec<u8> {
+    const HEADER_OFFSET: usize = 0x7FC0;
+    const RESET_VECTOR_OFFSET: usize = 0x7FFC;
+    let mut rom = vec![0; 0x10000];
+    rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"TEST GUI SNES ROM    ");
+    rom[0x7FD5] = 0x30;
+    rom[0x7FD7] = 0x08;
+    rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2].copy_from_slice(&0x8000u16.to_le_bytes());
+    rom
+}
+
 #[test]
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
@@ -534,6 +545,25 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
             .unwrap(),
         None
     );
+}
+
+#[test]
+fn auto_load_switches_to_snes_runtime_for_sfc_media() {
+    let mut session = test_session();
+
+    session
+        .load(
+            MediaObject::new(Some(PathBuf::from("game.sfc")), build_snes_lorom()),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+
+    let snapshot = session.snapshot();
+    assert_eq!(snapshot.system_id, Some(SystemId::Snes));
+    assert!(snapshot.metrics.loaded);
+    assert!(snapshot.metrics.paused);
+    assert_eq!(snapshot.video_frame.unwrap().bytes().len(), 256 * 224 * 4);
+    assert_eq!(session.input_topology_descriptor().system, SystemId::Snes);
 }
 
 #[test]

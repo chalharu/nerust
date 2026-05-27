@@ -3191,6 +3191,8 @@ dependencies = [
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
+ "nerust_screen_physical",
+ "nerust_snes_core",
  "nerust_sound_openal",
  "nerust_sound_traits",
  "nerust_timer",
