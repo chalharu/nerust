@@ -27,6 +27,7 @@ pub(crate) struct Ppu1 {
     bg_vofs: [u16; BG_LAYER_COUNT],
     mode7: Mode7Registers,
     mode7_latch: u8,
+    mode7_multiply_operand: i8,
 }
 
 impl Default for Ppu1 {
@@ -44,6 +45,7 @@ impl Default for Ppu1 {
             bg_vofs: [0; BG_LAYER_COUNT],
             mode7: Mode7Registers::default(),
             mode7_latch: 0,
+            mode7_multiply_operand: 0,
         }
     }
 }
@@ -145,7 +147,7 @@ impl Ppu1 {
 
     pub(crate) fn read(&mut self, offset: u16) -> Option<u8> {
         match offset {
-            0x2134..=0x2136 => Some(0),
+            0x2134..=0x2136 => Some(self.mode7_multiply_result_byte(offset)),
             0x2138 => {
                 let value = self.oam[usize::from(self.oam_byte_addr % OAM_LEN as u16)];
                 self.oam_byte_addr = (self.oam_byte_addr + 1) % OAM_LEN as u16;
@@ -161,7 +163,7 @@ impl Ppu1 {
     pub(crate) fn peek(&self, offset: u16) -> Option<u8> {
         match offset {
             0x2101..=0x2120 => Some(self.registers[register_index(offset)]),
-            0x2134..=0x2136 => Some(0),
+            0x2134..=0x2136 => Some(self.mode7_multiply_result_byte(offset)),
             0x2138 => Some(self.oam[usize::from(self.oam_byte_addr % OAM_LEN as u16)]),
             0x2139 => Some(self.read_vram_peek(false)),
             0x213A => Some(self.read_vram_peek(true)),
@@ -281,7 +283,10 @@ impl Ppu1 {
         let word = i16::from_le_bytes([self.mode7_latch, value]);
         match offset {
             0x211B => self.mode7.a = word,
-            0x211C => self.mode7.b = word,
+            0x211C => {
+                self.mode7.b = word;
+                self.mode7_multiply_operand = value as i8;
+            }
             0x211D => self.mode7.c = word,
             0x211E => self.mode7.d = word,
             0x211F => self.mode7.x = word,
@@ -289,6 +294,11 @@ impl Ppu1 {
             _ => unreachable!(),
         }
         self.mode7_latch = value;
+    }
+
+    fn mode7_multiply_result_byte(&self, offset: u16) -> u8 {
+        let product = i32::from(self.mode7.a) * i32::from(self.mode7_multiply_operand);
+        ((product as u32) >> ((offset - 0x2134) * 8)) as u8
     }
 }
 
@@ -516,5 +526,27 @@ mod tests {
         let mode7 = ppu1.mode7_registers();
         assert_eq!(mode7.a, 0x3400);
         assert_eq!(mode7.b, 0x1234);
+    }
+
+    #[test]
+    fn mode7_multiply_reads_return_signed_24_bit_product() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x211B, 0x34));
+        assert!(ppu1.write(0x211B, 0x12));
+        assert!(ppu1.write(0x211C, 0x00));
+        assert!(ppu1.write(0x211C, 0xFF));
+
+        assert_eq!(ppu1.read(0x2134), Some(0xCC));
+        assert_eq!(ppu1.read(0x2135), Some(0xED));
+        assert_eq!(ppu1.read(0x2136), Some(0xFF));
+
+        assert!(ppu1.write(0x211B, 0xFE));
+        assert!(ppu1.write(0x211B, 0xFF));
+        assert!(ppu1.write(0x211C, 0x7F));
+
+        assert_eq!(ppu1.peek(0x2134), Some(0x02));
+        assert_eq!(ppu1.peek(0x2135), Some(0xFF));
+        assert_eq!(ppu1.peek(0x2136), Some(0xFF));
     }
 }
