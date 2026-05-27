@@ -13,6 +13,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/effects/inidisp_extend_vblank.sfc`
   - `bin/effects/inidisp_fadein_fadeout.sfc`
   - `bin/effects/hdma-textbox-wipe.sfc`
+  - `bin/effects/window-shapes-single.sfc`
   - `bin/effects/vmain-1bpp-tiles-0.sfc`
   - `bin/effects/vmain-1bpp-tiles-1.sfc`
   - `bin/effects/vmain-horizontal-scrolling.sfc`
