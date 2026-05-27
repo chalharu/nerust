@@ -5,34 +5,40 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::manifest::{Assertion, ManifestError, RomCase};
-use crate::results::{CaseOutcome, Validation};
+use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH, encode_screenshot_png, screen_hash_rgba};
+use crate::render::render_screen;
+use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use std::fs;
 
 pub fn validate_case(case: &RomCase) -> CaseOutcome {
+    validate_case_with_options(case, ValidationOptions::testing())
+}
+
+pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
     let rom = match fs::read(case.rom_path()) {
         Ok(rom) => rom,
         Err(error) => {
-            return CaseOutcome::InternalError {
-                case_id: case.id.clone(),
-                message: format!(
+            return internal_error(
+                case,
+                format!(
                     "failed to read ROM `{}`: {error}",
                     case.rom_path().display()
                 ),
-            };
+            );
         }
     };
 
     let mut core = match Core::from_rom_bytes(&rom) {
         Ok(core) => core,
         Err(error) => {
-            return CaseOutcome::InternalError {
-                case_id: case.id.clone(),
-                message: format!(
+            return internal_error(
+                case,
+                format!(
                     "failed to construct SNES core from `{}`: {error}",
                     case.rom_path().display()
                 ),
-            };
+            );
         }
     };
 
@@ -43,28 +49,21 @@ pub fn validate_case(case: &RomCase) -> CaseOutcome {
                 steps_executed += 1;
             }
             Err(error) => {
-                return CaseOutcome::InternalError {
-                    case_id: case.id.clone(),
-                    message: format!("core error after {steps_executed} steps: {error}"),
-                };
+                return internal_error(
+                    case,
+                    format!("core error after {steps_executed} steps: {error}"),
+                );
             }
         }
 
         if steps_executed.is_multiple_of(case.check_interval_steps) {
             match assertion_failures(case, &core) {
                 Ok(failures) if failures.is_empty() => {
-                    return CaseOutcome::Completed(Validation {
-                        case_id: case.id.clone(),
-                        steps_executed,
-                        failures,
-                    });
+                    return finalize_validation(case, steps_executed, failures, &core, options);
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    return CaseOutcome::InternalError {
-                        case_id: case.id.clone(),
-                        message: error.to_string(),
-                    };
+                    return internal_error(case, error.to_string());
                 }
             }
         }
@@ -72,30 +71,70 @@ pub fn validate_case(case: &RomCase) -> CaseOutcome {
 
     match assertion_failures(case, &core) {
         Ok(mut failures) => {
-            if failures.is_empty() {
-                CaseOutcome::Completed(Validation {
-                    case_id: case.id.clone(),
-                    steps_executed,
-                    failures,
-                })
-            } else {
+            if !failures.is_empty() {
                 let reason = if core.current_state() == CpuState::Stopped {
                     format!("core stopped after {steps_executed} steps before expectations matched")
                 } else {
                     format!("expectations did not match within {} steps", case.max_steps)
                 };
                 failures.insert(0, reason);
-                CaseOutcome::Completed(Validation {
-                    case_id: case.id.clone(),
-                    steps_executed,
-                    failures,
-                })
+            }
+            finalize_validation(case, steps_executed, failures, &core, options)
+        }
+        Err(error) => internal_error(case, error.to_string()),
+    }
+}
+
+fn finalize_validation(
+    case: &RomCase,
+    steps_executed: u64,
+    failures: Vec<String>,
+    core: &Core,
+    options: ValidationOptions,
+) -> CaseOutcome {
+    let rendered = match render_screen(core) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            return internal_error(
+                case,
+                format!("failed to render final screen after {steps_executed} steps: {error}"),
+            );
+        }
+    };
+    let final_screen_hash = screen_hash_rgba(&rendered.rgba);
+    let screenshot_png = if options.capture_screenshot_png {
+        match encode_screenshot_png(&rendered.rgba, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                return internal_error(
+                    case,
+                    format!(
+                        "failed to encode final screenshot after {steps_executed} steps: {error}"
+                    ),
+                );
             }
         }
-        Err(error) => CaseOutcome::InternalError {
-            case_id: case.id.clone(),
-            message: error.to_string(),
-        },
+    } else {
+        None
+    };
+
+    CaseOutcome::Completed(Validation {
+        case_id: case.id.clone(),
+        description: case.description.clone(),
+        rom: case.rom_path().display().to_string(),
+        steps_executed,
+        final_screen_hash,
+        screenshot_png,
+        failures,
+    })
+}
+
+fn internal_error(case: &RomCase, message: String) -> CaseOutcome {
+    CaseOutcome::InternalError {
+        case_id: case.id.clone(),
+        description: case.description.clone(),
+        rom: case.rom_path().display().to_string(),
+        message,
     }
 }
 

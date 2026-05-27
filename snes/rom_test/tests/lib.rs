@@ -34,13 +34,16 @@ fn run_generated_manifest_case(case_id: &str) {
         CaseOutcome::Completed(validation) if validation.passed() => {}
         CaseOutcome::Completed(validation) => {
             panic!(
-                "{} ({} steps):\n{}",
+                "{} ({} steps, final screen hash 0x{:016X}):\n{}",
                 validation.case_id,
                 validation.steps_executed,
+                validation.final_screen_hash,
                 validation.failures.join("\n")
             );
         }
-        CaseOutcome::InternalError { case_id, message } => {
+        CaseOutcome::InternalError {
+            case_id, message, ..
+        } => {
             panic!("{case_id}: {message}");
         }
     }

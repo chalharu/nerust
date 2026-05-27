@@ -9,6 +9,10 @@ pub(crate) struct Ppu1 {
     vmain: u8,
     vmadd: u16,
     oam_byte_addr: u16,
+    bgofs_latch: u8,
+    bg1_hofs_latch: u8,
+    bg1_hofs: u16,
+    bg1_vofs: u16,
 }
 
 impl Default for Ppu1 {
@@ -20,6 +24,10 @@ impl Default for Ppu1 {
             vmain: 0,
             vmadd: 0,
             oam_byte_addr: 0,
+            bgofs_latch: 0,
+            bg1_hofs_latch: 0,
+            bg1_hofs: 0,
+            bg1_vofs: 0,
         }
     }
 }
@@ -47,6 +55,16 @@ impl Ppu1 {
                 self.oam_byte_addr = (self.oam_byte_addr + 1) % OAM_LEN as u16;
                 true
             }
+            0x210D => {
+                self.store_register(offset, value);
+                self.write_bg1_hofs(value);
+                true
+            }
+            0x210E => {
+                self.store_register(offset, value);
+                self.write_bg1_vofs(value);
+                true
+            }
             0x2115 => {
                 self.store_register(offset, value);
                 self.vmain = value;
@@ -72,7 +90,7 @@ impl Ppu1 {
                 self.write_vram_byte(true, value);
                 true
             }
-            0x2101 | 0x2105..=0x2114 | 0x211A..=0x2120 => {
+            0x2101 | 0x2105..=0x210C | 0x210F..=0x2114 | 0x211A..=0x2120 => {
                 self.store_register(offset, value);
                 true
             }
@@ -115,6 +133,14 @@ impl Ppu1 {
         self.oam[address % OAM_LEN]
     }
 
+    pub(crate) fn bg1_hofs(&self) -> u16 {
+        self.bg1_hofs
+    }
+
+    pub(crate) fn bg1_vofs(&self) -> u16 {
+        self.bg1_vofs
+    }
+
     #[cfg(test)]
     pub(crate) fn vmadd(&self) -> u16 {
         self.vmadd
@@ -152,6 +178,20 @@ impl Ppu1 {
     fn should_increment_after(&self, high: bool) -> bool {
         let increment_after_high = self.vmain & 0x80 != 0;
         if increment_after_high { high } else { !high }
+    }
+
+    fn write_bg1_hofs(&mut self, value: u8) {
+        self.bg1_hofs = ((u16::from(value) << 8)
+            | u16::from(self.bgofs_latch & 0xF8)
+            | u16::from(self.bg1_hofs_latch & 0x07))
+            & 0x03FF;
+        self.bgofs_latch = value;
+        self.bg1_hofs_latch = value;
+    }
+
+    fn write_bg1_vofs(&mut self, value: u8) {
+        self.bg1_vofs = ((u16::from(value) << 8) | u16::from(self.bgofs_latch)) & 0x03FF;
+        self.bgofs_latch = value;
     }
 }
 
@@ -297,5 +337,18 @@ mod tests {
         assert_eq!(ppu1.read(0x2138), Some(0x34));
         assert_eq!(ppu1.read(0x2138), Some(0x56));
         assert_eq!(ppu1.read(0x2138), Some(0x78));
+    }
+
+    #[test]
+    fn bg1_scroll_registers_track_common_two_write_sequences() {
+        let mut ppu1 = Ppu1::new();
+
+        assert!(ppu1.write(0x210D, 0x34));
+        assert!(ppu1.write(0x210D, 0x02));
+        assert!(ppu1.write(0x210E, 0x78));
+        assert!(ppu1.write(0x210E, 0x01));
+
+        assert_eq!(ppu1.bg1_hofs(), 0x0234);
+        assert_eq!(ppu1.bg1_vofs(), 0x0178);
     }
 }
