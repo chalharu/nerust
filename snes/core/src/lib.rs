@@ -43,6 +43,12 @@ impl From<CpuFault> for CoreError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentedBackdropLine {
+    pub inidisp: u8,
+    pub color0: u16,
+}
+
 pub struct Core {
     cpu: Cpu,
     bus: Bus,
@@ -123,6 +129,10 @@ impl Core {
 
     pub fn bg1_vofs(&self) -> u16 {
         self.bus.ppu1.bg1_vofs()
+    }
+
+    pub fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
+        self.bus.presented_backdrop_line(line)
     }
 }
 

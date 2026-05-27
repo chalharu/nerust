@@ -1,5 +1,5 @@
 use crate::cartridge::ADDRESS_MASK;
-use crate::{Cartridge, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
+use crate::{Cartridge, PresentedBackdropLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2};
 
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
 const DMA_REGISTER_COUNT: usize = 0x80;
@@ -19,6 +19,7 @@ const VBLANK_STUB_ACTIVE_START: u16 =
 #[cfg(test)]
 const AUTO_JOYPAD_START: u16 = VBLANK_STUB_ACTIVE_START + AUTO_JOYPAD_START_SUBTICK;
 const HCOUNTER_DOTS_PER_LINE: u16 = 341;
+const PRESENTED_SCANLINE_COUNT: usize = 224;
 
 #[derive(Clone, Copy)]
 struct StandardControllerPort {
@@ -108,6 +109,7 @@ pub(crate) struct Bus {
     hdma_repeat: [bool; DMA_CHANNEL_COUNT],
     hdma_do_transfer: [bool; DMA_CHANNEL_COUNT],
     hdma_indirect: [bool; DMA_CHANNEL_COUNT],
+    presented_backdrop_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
 }
 
 impl Bus {
@@ -143,6 +145,7 @@ impl Bus {
             hdma_repeat: [false; DMA_CHANNEL_COUNT],
             hdma_do_transfer: [false; DMA_CHANNEL_COUNT],
             hdma_indirect: [false; DMA_CHANNEL_COUNT],
+            presented_backdrop_lines: [None; PRESENTED_SCANLINE_COUNT],
         }
     }
 
@@ -174,6 +177,7 @@ impl Bus {
         self.hdma_repeat = [false; DMA_CHANNEL_COUNT];
         self.hdma_do_transfer = [false; DMA_CHANNEL_COUNT];
         self.hdma_indirect = [false; DMA_CHANNEL_COUNT];
+        self.presented_backdrop_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
 
     pub(crate) fn tick_video_stub(&mut self) {
@@ -200,9 +204,11 @@ impl Bus {
             self.auto_joy_active = false;
             self.auto_joy_subticks_remaining = 0;
             self.reload_hdma_channels();
+            self.presented_backdrop_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
             self.step_hdma_line();
+            self.capture_presented_scanline();
         }
     }
 
@@ -239,6 +245,10 @@ impl Bus {
 
     fn current_subtick(&self) -> u16 {
         self.video_phase % VBLANK_STUB_SUBTICKS_PER_SCANLINE
+    }
+
+    pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
+        self.presented_backdrop_lines.get(line).copied().flatten()
     }
 
     fn auto_joy_start_reachable(&self) -> bool {
@@ -911,6 +921,18 @@ impl Bus {
         }
     }
 
+    fn capture_presented_scanline(&mut self) {
+        let scanline = usize::from(self.current_scanline());
+        if scanline >= PRESENTED_SCANLINE_COUNT {
+            return;
+        }
+
+        let color0 =
+            u16::from_le_bytes([self.ppu2.peek_cgram(0), self.ppu2.peek_cgram(1)]) & 0x7FFF;
+        let inidisp = self.ppu2.peek(0x2100).unwrap_or(0);
+        self.presented_backdrop_lines[scanline] = Some(PresentedBackdropLine { inidisp, color0 });
+    }
+
     fn read_ppu_register(&mut self, offset: u16) -> u8 {
         match offset {
             0x2137 => {
@@ -1088,7 +1110,7 @@ mod tests {
         STANDARD_CONTROLLER_PAYLOAD_BITS, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
         VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
-    use crate::Cartridge;
+    use crate::{Cartridge, PresentedBackdropLine};
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
@@ -1395,6 +1417,45 @@ mod tests {
         for _ in 0..count {
             bus.tick_video_stub();
         }
+    }
+
+    #[test]
+    fn presented_backdrop_lines_capture_scanline_color0_and_inidisp() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2121, 0x00);
+        bus.write(0x00_2122, 0xFF);
+        bus.write(0x00_2122, 0x7F);
+        bus.write(0x00_2100, 0x0F);
+
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(
+            bus.presented_backdrop_line(0),
+            Some(PresentedBackdropLine {
+                inidisp: 0x0F,
+                color0: 0x7FFF,
+            })
+        );
+
+        bus.write(0x00_2121, 0x00);
+        bus.write(0x00_2122, 0x1F);
+        bus.write(0x00_2122, 0x00);
+
+        tick_scanline(&mut bus);
+        assert_eq!(
+            bus.presented_backdrop_line(1),
+            Some(PresentedBackdropLine {
+                inidisp: 0x0F,
+                color0: 0x001F,
+            })
+        );
+
+        tick_subticks(&mut bus, VBLANK_STUB_PERIOD);
+        assert_eq!(
+            bus.presented_backdrop_line(2),
+            None,
+            "uncaptured lines from a new frame should not retain stale data"
+        );
     }
 
     /// DMA ch0, pattern 1 (two-register: VMDATAL/VMDATAH), increment source.
