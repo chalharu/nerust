@@ -24,7 +24,7 @@ jobs:
         run: bash packaging/release/release_flow.sh release-notes "${VERSION}" --output release-notes.md
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
           TARGET_SHA: ${{ github.sha }}
         run: |

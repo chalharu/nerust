@@ -2,8 +2,9 @@ name: Release artifacts
 on:
   pull_request:
     branches: [master, release]
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Publish release"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       ref:
@@ -33,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.pull_request.head.sha }}
       - name: Resolve artifact context
         id: context
         env:
@@ -43,9 +44,13 @@ jobs:
           PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
           PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
-          RELEASE_TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
         run: |
           should_run=true
+          if [[ "${EVENT_NAME}" == "workflow_run" && "${WORKFLOW_RUN_CONCLUSION}" != "success" ]]; then
+            should_run=false
+          fi
+
           if [[ "${EVENT_NAME}" == "pull_request" && "${PR_BASE_REF}" == "master" ]]; then
             should_run=false
             while IFS= read -r path; do
@@ -83,11 +88,11 @@ jobs:
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
           case "${EVENT_NAME}" in
-            release)
-              tag_name="${RELEASE_TAG_NAME}"
-              ;;
             workflow_dispatch)
               tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
+              ;;
+            workflow_run)
+              tag_name="${workspace_tag_name}"
               ;;
             pull_request)
               if [[ "${PR_BASE_REF}" == "release" ]]; then
@@ -301,7 +306,9 @@ jobs:
           targets: aarch64-linux-android
           toolchain: stable
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked --version 4.1.2
+        run: |
+          chmod +x packaging/android/install-cargo-ndk.sh
+          packaging/android/install-cargo-ndk.sh
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -321,22 +328,11 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-android-
-      - name: Decode signing keystore
-        env:
-          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
-        run: |
-          if [[ -z "${ANDROID_SIGNING_KEY:-}" ]]; then
-            exit 0
-          fi
-          KEYSTORE_FILE="${RUNNER_TEMP}/release.jks"
-          echo "${ANDROID_SIGNING_KEY}" | base64 --decode > "${KEYSTORE_FILE}"
-          echo "ANDROID_KEY_STORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
       - name: Package Android APK
         env:
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
-          ANDROID_KEY_STORE_PATH: ${{ env.ANDROID_KEY_STORE_PATH }}
+          ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
+          ANDROID_PRIVATE_KEY: ${{ secrets.ANDROID_PRIVATE_KEY }}
+          ANDROID_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_PRIVATE_KEY_PASSWORD }}
           ANDROID_VERSION_CODE: ${{ github.run_number }}
           ANDROID_VERSION_NAME: ${{ needs.prepare-context.outputs.version }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -415,7 +411,7 @@ jobs:
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
           if-no-files-found: error
   publish-assets:
-    if: ${{ github.event_name == 'release' }}
+    if: ${{ github.event_name == 'workflow_run' }}
     name: Publish release assets
     needs: [assemble-assets, prepare-context]
     runs-on: ubuntu-latest
@@ -430,23 +426,42 @@ jobs:
           path: release-assets/
       - name: Upload assets to GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
-          gh release upload "${TAG_NAME}" \
-            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz" \
-            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256" \
-            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz" \
-            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz.sha256" \
-            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip" \
-            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip.sha256" \
-            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk" \
-            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk.sha256" \
-            --repo "${GH_REPO}" \
-            --clobber
+          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --repo "${GH_REPO}" --json assets --jq '.assets[].name')
+          release_files=(
+            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz"
+            "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256"
+            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz"
+            "release-assets/nerust-${TAG_NAME}-linux-aarch64.tar.gz.sha256"
+            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip"
+            "release-assets/nerust-${TAG_NAME}-macos-aarch64.app.zip.sha256"
+            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk"
+            "release-assets/nerust-${TAG_NAME}-android-arm64-v8a.apk.sha256"
+          )
+          upload_args=()
+          for file in "${release_files[@]}"; do
+            asset_name="$(basename "${file}")"
+            already_uploaded=false
+            for existing_asset in "${existing_assets[@]}"; do
+              if [[ "${existing_asset}" == "${asset_name}" ]]; then
+                already_uploaded=true
+                break
+              fi
+            done
+            if [[ "${already_uploaded}" == "true" ]]; then
+              continue
+            fi
+            upload_args+=("${file}")
+          done
+          if [[ "${#upload_args[@]}" -eq 0 ]]; then
+            exit 0
+          fi
+          gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
   sync-release:
-    if: ${{ github.event_name == 'release' }}
+    if: ${{ github.event_name == 'workflow_run' }}
     name: Sync release back to master
     needs: [publish-assets, prepare-context]
     runs-on: ubuntu-latest
@@ -460,7 +475,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - name: Verify release branch tip matches published commit
         run: |
           git fetch origin release
@@ -470,7 +484,7 @@ jobs:
           fi
       - name: Create or update sync PR
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
           git fetch origin master

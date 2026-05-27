@@ -156,7 +156,9 @@ jobs:
           targets: aarch64-linux-android
           toolchain: stable
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked --version 4.1.2
+        run: |
+          chmod +x packaging/android/install-cargo-ndk.sh
+          packaging/android/install-cargo-ndk.sh
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
