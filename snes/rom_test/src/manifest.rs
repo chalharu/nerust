@@ -42,6 +42,9 @@ pub struct RomCase {
     pub max_steps: u64,
     #[serde(default = "default_check_interval_steps")]
     pub check_interval_steps: u64,
+    #[serde(default)]
+    pub expected_screen_hash: Option<String>,
+    #[serde(default)]
     pub assertions: Vec<Assertion>,
     #[serde(skip)]
     resolved_rom_path: PathBuf,
@@ -165,6 +168,13 @@ impl RomCase {
         &self.resolved_rom_path
     }
 
+    pub fn expected_screen_hash(&self) -> Result<Option<u64>, ManifestError> {
+        self.expected_screen_hash
+            .as_deref()
+            .map(|value| parse_value(value, "expected_screen_hash"))
+            .transpose()
+    }
+
     fn resolve(&mut self, rom_root: &Path) -> Result<(), ManifestError> {
         if self.max_steps == 0 {
             return Err(ManifestError::Invalid {
@@ -176,9 +186,12 @@ impl RomCase {
                 message: format!("ROM case `{}` must have check_interval_steps > 0", self.id),
             });
         }
-        if self.assertions.is_empty() {
+        if self.assertions.is_empty() && self.expected_screen_hash.is_none() {
             return Err(ManifestError::Invalid {
-                message: format!("ROM case `{}` must contain at least one assertion", self.id),
+                message: format!(
+                    "ROM case `{}` must contain at least one assertion or expected_screen_hash",
+                    self.id
+                ),
             });
         }
 
@@ -196,6 +209,13 @@ impl RomCase {
         for assertion in &self.assertions {
             assertion.validate(&self.id)?;
         }
+        self.expected_screen_hash()
+            .map_err(|error| ManifestError::Invalid {
+                message: format!(
+                    "ROM case `{}` has invalid expected_screen_hash: {error}",
+                    self.id
+                ),
+            })?;
 
         Ok(())
     }
@@ -329,6 +349,7 @@ mod tests {
             rom: PathBuf::from(format!("{id}.sfc")),
             max_steps: 1,
             check_interval_steps: 1,
+            expected_screen_hash: None,
             assertions: vec![Assertion::BusU8 {
                 address: "0x00".to_string(),
                 expected: "0x00".to_string(),
@@ -371,6 +392,17 @@ mod tests {
                 .map(|case| case.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["alpha", "beta"]
+        );
+    }
+
+    #[test]
+    fn expected_screen_hash_parses_hex_u64_values() {
+        let mut case = dummy_case("hash");
+        case.expected_screen_hash = Some("0x2F605F796DA9D7E0".to_string());
+
+        assert_eq!(
+            case.expected_screen_hash().unwrap(),
+            Some(0x2F60_5F79_6DA9_D7E0)
         );
     }
 }
