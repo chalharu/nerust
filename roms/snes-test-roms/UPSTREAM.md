@@ -31,6 +31,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/effects/vmain-vertical-scrolling.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
+  - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc`
   - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc`
   - `bin/hardware-tests/auto-joypad/joypad-latch-clear-during-autojoy.sfc`
   - `bin/hardware-tests/auto-joypad/joypad-latch-set-during-autojoy.sfc`
