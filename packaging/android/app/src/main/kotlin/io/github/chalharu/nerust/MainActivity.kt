@@ -49,12 +49,12 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.ViewTreeLifecycleOwner
-import androidx.lifecycle.ViewTreeViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.launch
@@ -286,9 +286,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private fun installComposeOwners(root: View) {
         listOf(window.decorView, root).forEach { view ->
-            ViewTreeLifecycleOwner.set(view, this)
-            ViewTreeSavedStateRegistryOwner.set(view, this)
-            ViewTreeViewModelStoreOwner.set(view, this)
+            view.setViewTreeLifecycleOwner(this)
+            view.setViewTreeSavedStateRegistryOwner(this)
+            view.setViewTreeViewModelStoreOwner(this)
         }
     }
 
