@@ -24,6 +24,8 @@ pub enum CartridgeError {
     UnsupportedMapMode(u8),
     #[error("unsupported SNES cartridge RAM size code 0x{0:02X}")]
     UnsupportedRamSizeCode(u8),
+    #[error("invalid SNES save RAM size: expected {expected} bytes, got {actual}")]
+    InvalidSaveRamSize { expected: usize, actual: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +185,18 @@ impl Cartridge {
     pub fn save_ram(&self) -> &[u8] {
         &self.save_ram
     }
+
+    pub fn load_save_ram(&mut self, save_ram: &[u8]) -> Result<(), CartridgeError> {
+        if save_ram.len() != self.save_ram.len() {
+            return Err(CartridgeError::InvalidSaveRamSize {
+                expected: self.save_ram.len(),
+                actual: save_ram.len(),
+            });
+        }
+
+        self.save_ram.copy_from_slice(save_ram);
+        Ok(())
+    }
 }
 
 fn strip_copier_header(bytes: &[u8]) -> Result<(&[u8], bool), CartridgeError> {
@@ -300,6 +314,32 @@ mod tests {
         assert_eq!(cartridge.read(0x216123), Some(0xA5));
         assert_eq!(cartridge.read(0xA06123), Some(0xA5));
         assert!(!cartridge.write(0x208000, 0xC3));
+    }
+
+    #[test]
+    fn save_ram_can_be_restored_from_persisted_bytes() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+        let mut save_ram = vec![0x5A; cartridge.save_ram().len()];
+        save_ram[0x0123] = 0xC3;
+
+        cartridge.load_save_ram(&save_ram).unwrap();
+
+        assert_eq!(cartridge.save_ram()[0x0123], 0xC3);
+        assert_eq!(cartridge.read(0x700123), Some(0xC3));
+        assert_eq!(cartridge.read(0x702123), Some(0xC3));
+    }
+
+    #[test]
+    fn save_ram_restore_rejects_size_mismatch() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert_eq!(
+            cartridge.load_save_ram(&[0x5A]).unwrap_err(),
+            CartridgeError::InvalidSaveRamSize {
+                expected: 8 * 1024,
+                actual: 1
+            }
+        );
     }
 
     #[test]
