@@ -16,6 +16,9 @@ pub(crate) trait CpuBus {
     fn poll_nmi(&mut self) -> bool {
         false
     }
+    fn poll_irq(&mut self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct Bus {
@@ -31,6 +34,7 @@ pub(crate) struct Bus {
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
     /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
     nmi_pending: bool,
+    irq_flag: bool,
     hdma_active_mask: u8,
     hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
@@ -55,6 +59,7 @@ impl Bus {
             video_phase: 0,
             nmi_flag: false,
             nmi_pending: false,
+            irq_flag: false,
             hdma_active_mask: 0,
             hdma_table_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_addr: [0; DMA_CHANNEL_COUNT],
@@ -74,6 +79,7 @@ impl Bus {
         self.video_phase = 0;
         self.nmi_flag = false;
         self.nmi_pending = false;
+        self.irq_flag = false;
         self.hdma_active_mask = 0;
         self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
@@ -96,6 +102,9 @@ impl Bus {
                 self.nmi_pending = true;
             }
         }
+        if self.vcounter_irq_enabled() && self.video_phase == self.vtime_target() {
+            self.irq_flag = true;
+        }
         if was_in_vblank && !in_vblank {
             self.reload_hdma_channels();
         }
@@ -109,10 +118,23 @@ impl Bus {
         self.cpu_io_registers[0x00] & 0x80 != 0
     }
 
+    fn vcounter_irq_enabled(&self) -> bool {
+        self.cpu_io_registers[0x00] & 0x20 != 0
+    }
+
+    fn vtime_target(&self) -> u16 {
+        u16::from(self.cpu_io_registers[0x09])
+            | (u16::from(self.cpu_io_registers[0x0A] & 0x01) << 8)
+    }
+
     /// Consume and return the pending-NMI flag.  Called by the CPU each cycle
     /// while in WAI state.
     pub(crate) fn poll_nmi(&mut self) -> bool {
         core::mem::take(&mut self.nmi_pending)
+    }
+
+    pub(crate) fn poll_irq(&mut self) -> bool {
+        self.irq_flag && self.vcounter_irq_enabled()
     }
 
     pub(crate) fn peek(&self, address: u32) -> u8 {
@@ -172,6 +194,13 @@ impl Bus {
                     0x00
                 }
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4211) => {
+                if self.irq_flag {
+                    0x80
+                } else {
+                    0x00
+                }
+            }
             (0x00..=0x3F | 0x80..=0xBF, 0x4212) => {
                 if self.in_vblank() {
                     0x80
@@ -217,11 +246,14 @@ impl Bus {
             // immediately if the NMI flag is already latched (i.e. we are mid-vblank
             // and the program enables NMI after clearing RDNMI).
             (0x00..=0x3F | 0x80..=0xBF, 0x4200) => {
-                let was_enabled = self.cpu_io_registers[0x00] & 0x80 != 0;
+                let was_nmi_enabled = self.cpu_io_registers[0x00] & 0x80 != 0;
                 self.cpu_io_registers[0x00] = value;
-                let now_enabled = value & 0x80 != 0;
-                if !was_enabled && now_enabled && self.nmi_flag {
+                let now_nmi_enabled = value & 0x80 != 0;
+                if !was_nmi_enabled && now_nmi_enabled && self.nmi_flag {
                     self.nmi_pending = true;
+                }
+                if value & 0x20 != 0 && self.video_phase == self.vtime_target() {
+                    self.irq_flag = true;
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
@@ -510,6 +542,11 @@ impl Bus {
                 self.nmi_flag = false;
                 val
             }
+            0x4211 => {
+                let val = if self.irq_flag { 0x80 } else { 0x00 };
+                self.irq_flag = false;
+                val
+            }
             0x4212 => {
                 if self.in_vblank() {
                     0x80
@@ -538,6 +575,10 @@ impl CpuBus for Bus {
 
     fn poll_nmi(&mut self) -> bool {
         Bus::poll_nmi(self)
+    }
+
+    fn poll_irq(&mut self) -> bool {
+        Bus::poll_irq(self)
     }
 }
 
@@ -947,6 +988,53 @@ mod tests {
         assert_eq!(bus.ppu2.peek_cgram(3), 0x56);
     }
 
+    #[test]
+    fn dma_pattern0_increment_writes_to_oam() {
+        let mut bus = Bus::new(test_cartridge());
+
+        for (offset, value) in [0x40, 0x50, 0x00, 0x30, 0x60, 0x50, 0x04, 0x30]
+            .into_iter()
+            .enumerate()
+        {
+            bus.write(0x7E_0600 + offset as u32, value);
+        }
+
+        bus.write(0x00_2102, 0x00);
+        bus.write(0x00_2103, 0x00);
+        setup_dma_ch0(&mut bus, 0x00, 0x04, 0x7E_0600, 8);
+
+        bus.write(0x00_420B, 0x01);
+
+        assert_eq!(bus.ppu1.peek_oam(0), 0x40);
+        assert_eq!(bus.ppu1.peek_oam(1), 0x50);
+        assert_eq!(bus.ppu1.peek_oam(2), 0x00);
+        assert_eq!(bus.ppu1.peek_oam(3), 0x30);
+        assert_eq!(bus.ppu1.peek_oam(4), 0x60);
+        assert_eq!(bus.ppu1.peek_oam(5), 0x50);
+        assert_eq!(bus.ppu1.peek_oam(6), 0x04);
+        assert_eq!(bus.ppu1.peek_oam(7), 0x30);
+    }
+
+    #[test]
+    fn dma_pattern0_increment_can_target_oam_high_table() {
+        let mut bus = Bus::new(test_cartridge());
+
+        for offset in 0..4 {
+            bus.write(0x7E_0700 + offset, 0xAA);
+        }
+
+        bus.write(0x00_2102, 0x00);
+        bus.write(0x00_2103, 0x01);
+        setup_dma_ch0(&mut bus, 0x00, 0x04, 0x7E_0700, 4);
+
+        bus.write(0x00_420B, 0x01);
+
+        assert_eq!(bus.ppu1.peek_oam(512), 0xAA);
+        assert_eq!(bus.ppu1.peek_oam(513), 0xAA);
+        assert_eq!(bus.ppu1.peek_oam(514), 0xAA);
+        assert_eq!(bus.ppu1.peek_oam(515), 0xAA);
+    }
+
     // -----------------------------------------------------------------------
     // NMI / RDNMI tests
     // -----------------------------------------------------------------------
@@ -1043,5 +1131,64 @@ mod tests {
         assert_eq!(bus.peek(0x004210), 0x80);
         assert!(bus.nmi_flag, "peek must not clear the NMI flag");
         assert_eq!(bus.peek(0x004210), 0x80);
+    }
+
+    #[test]
+    fn timeup_flag_is_set_when_vcounter_irq_fires_and_cleared_by_read() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 40);
+        bus.write(0x00420A, 0);
+        bus.write(0x004200, 0x20);
+
+        for _ in 0..40 {
+            bus.tick_video_stub();
+        }
+
+        assert!(bus.irq_flag);
+        assert_eq!(bus.peek(0x004211), 0x80);
+        assert_eq!(bus.read(0x004211), 0x80);
+        assert!(!bus.irq_flag);
+        assert_eq!(bus.read(0x004211), 0x00);
+    }
+
+    #[test]
+    fn poll_irq_stays_asserted_until_timeup_is_acknowledged() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 40);
+        bus.write(0x00420A, 0);
+        bus.write(0x004200, 0x20);
+
+        for _ in 0..40 {
+            bus.tick_video_stub();
+        }
+
+        assert!(bus.poll_irq());
+        assert!(bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
+        assert!(!bus.poll_irq());
+    }
+
+    #[test]
+    fn disabling_vcounter_irq_cancels_pending_delivery() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004209, 40);
+        bus.write(0x00420A, 0);
+        bus.write(0x004200, 0x20);
+
+        for _ in 0..40 {
+            bus.tick_video_stub();
+        }
+
+        assert!(bus.irq_flag);
+        assert!(bus.poll_irq());
+
+        bus.write(0x004200, 0x00);
+
+        assert!(bus.irq_flag);
+        assert!(!bus.poll_irq());
+        assert_eq!(bus.read(0x004211), 0x80);
     }
 }

@@ -132,3 +132,35 @@ cases:
       - kind: vram_u8
         address: "0x001E"
         expected: "0x81"
+  - id: inidisp-forgot-to-force-blank-final-state
+    description: >
+      The undisbeliever INIDISP force-blank hardware test reaches its steady
+      IRQ-driven loop after loading VRAM, OAM, and CGRAM assets.
+    rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
+    max_steps: 30000
+    check_interval_steps: 30000
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x0000"
+        expected: "0x18"
+      - kind: vram_u8
+        address: "0x0004"
+        expected: "0x1A"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x7F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"

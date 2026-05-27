@@ -112,6 +112,10 @@ impl Core {
     pub fn peek_cgram(&self, index: usize) -> u8 {
         self.bus.ppu2.peek_cgram(index)
     }
+
+    pub fn peek_oam(&self, address: usize) -> u8 {
+        self.bus.ppu1.peek_oam(address)
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +124,7 @@ mod tests {
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
+    const IRQ_VECTOR_OFFSET: usize = 0x7FFE;
 
     fn build_lorom(reset_vector: u16) -> Vec<u8> {
         let mut rom = vec![0; 0x10000];
@@ -222,6 +227,25 @@ mod tests {
         }
         assert_eq!(core.current_state(), CpuState::Waiting);
         assert_eq!(core.current_opcode(), 0xCB);
+    }
+
+    #[test]
+    fn core_vcounter_irq_wakes_wai_and_returns_through_timeup_handler() {
+        let mut rom = build_lorom(0x8000);
+        rom[IRQ_VECTOR_OFFSET..IRQ_VECTOR_OFFSET + 2].copy_from_slice(&0x9000u16.to_le_bytes());
+        rom[0x0000..0x000C].copy_from_slice(&[
+            0xA0, 0x28, 0x8C, 0x09, 0x42, 0xA9, 0x20, 0x8D, 0x00, 0x42, 0x58, 0xCB,
+        ]);
+        rom[0x000C] = 0xDB; // STP after WAI returns
+        rom[0x1000..0x1004].copy_from_slice(&[0xAD, 0x11, 0x42, 0x40]); // LDA $4211 ; RTI
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        assert_eq!(core.current_state(), CpuState::Stopped);
+        assert_eq!(core.current_opcode(), 0xDB);
+        assert_eq!(core.registers().pc(), 0x800D);
+        assert_eq!(core.peek(0x004211), 0x00);
     }
 
     #[test]
