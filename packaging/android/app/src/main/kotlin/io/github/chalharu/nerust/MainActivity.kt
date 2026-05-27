@@ -62,6 +62,7 @@ import kotlin.math.min
 import kotlinx.coroutines.launch
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
+private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
@@ -70,6 +71,18 @@ private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
+private const val DRAWER_TITLE = "Nerust"
+
+private data class DrawerAction(val label: String, val action: String)
+
+private val DRAWER_ACTIONS = listOf(
+    DrawerAction("ROM Library", MENU_ACTION_OPEN_LIBRARY),
+    DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
+    DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
+    DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
+    DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
+    DrawerAction("Reset", MENU_ACTION_RESET),
+)
 
 class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -347,8 +360,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return
         }
 
-        val overlay = ComposeView(this).apply {
+        val overlay = FrameLayout(this).apply {
             tag = DRAWER_OVERLAY_TAG
+            setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        val drawerContent = ComposeView(this).apply {
+            tag = DRAWER_COMPOSE_TAG
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -363,6 +384,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 }
             }
         }
+        overlay.addView(drawerContent)
         addOverlayView(overlay)
         overlay.bringToFront()
     }
@@ -384,6 +406,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
         return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
     }
+
+    private fun drawerContentDescription(): String =
+        (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
 
     private fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
@@ -434,7 +459,7 @@ private fun NerustDrawerOverlay(
         drawerContent = {
             ModalDrawerSheet(modifier = Modifier.statusBarsPadding()) {
                 Text(
-                    text = "Nerust",
+                    text = DRAWER_TITLE,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
                 )
@@ -443,43 +468,17 @@ private fun NerustDrawerOverlay(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
                 )
-                DrawerActionItem(
-                    label = "ROM Library",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_OPEN_LIBRARY)
-                    },
-                )
-                DrawerActionItem(
-                    label = "Settings",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_OPEN_SETTINGS)
-                    },
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                DrawerActionItem(
-                    label = "Pause / Resume",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_TOGGLE_PAUSE)
-                    },
-                )
-                DrawerActionItem(
-                    label = "Save State",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_SAVE_STATE)
-                    },
-                )
-                DrawerActionItem(
-                    label = "Load State",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_LOAD_STATE)
-                    },
-                )
-                DrawerActionItem(
-                    label = "Reset",
-                    onClick = {
-                        closeAndRun(MENU_ACTION_RESET)
-                    },
-                )
+                DRAWER_ACTIONS.forEachIndexed { index, action ->
+                    DrawerActionItem(
+                        label = action.label,
+                        onClick = {
+                            closeAndRun(action.action)
+                        },
+                    )
+                    if (index == 1) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                }
             }
         },
     ) {
