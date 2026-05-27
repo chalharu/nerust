@@ -109,7 +109,8 @@ pub(crate) struct Bus {
     hdma_repeat: [bool; DMA_CHANNEL_COUNT],
     hdma_do_transfer: [bool; DMA_CHANNEL_COUNT],
     hdma_indirect: [bool; DMA_CHANNEL_COUNT],
-    presented_backdrop_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
+    presented_backdrop_current_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
+    presented_backdrop_completed_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
 }
 
 impl Bus {
@@ -145,7 +146,8 @@ impl Bus {
             hdma_repeat: [false; DMA_CHANNEL_COUNT],
             hdma_do_transfer: [false; DMA_CHANNEL_COUNT],
             hdma_indirect: [false; DMA_CHANNEL_COUNT],
-            presented_backdrop_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_backdrop_current_lines: [None; PRESENTED_SCANLINE_COUNT],
+            presented_backdrop_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
         }
     }
 
@@ -177,7 +179,8 @@ impl Bus {
         self.hdma_repeat = [false; DMA_CHANNEL_COUNT];
         self.hdma_do_transfer = [false; DMA_CHANNEL_COUNT];
         self.hdma_indirect = [false; DMA_CHANNEL_COUNT];
-        self.presented_backdrop_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
+        self.presented_backdrop_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
     }
 
     pub(crate) fn tick_video_stub(&mut self) {
@@ -187,6 +190,7 @@ impl Bus {
         // Rising edge of vblank: latch the NMI flag and optionally queue a
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
         if !was_in_vblank && in_vblank {
+            self.presented_backdrop_completed_lines = self.presented_backdrop_current_lines;
             self.nmi_flag = true;
             if self.nmi_enabled() {
                 self.nmi_pending = true;
@@ -204,7 +208,7 @@ impl Bus {
             self.auto_joy_active = false;
             self.auto_joy_subticks_remaining = 0;
             self.reload_hdma_channels();
-            self.presented_backdrop_lines = [None; PRESENTED_SCANLINE_COUNT];
+            self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
         if self.current_subtick() == 0 && !in_vblank {
             self.step_hdma_line();
@@ -248,7 +252,16 @@ impl Bus {
     }
 
     pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
-        self.presented_backdrop_lines.get(line).copied().flatten()
+        self.presented_backdrop_completed_lines
+            .get(line)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                self.presented_backdrop_current_lines
+                    .get(line)
+                    .copied()
+                    .flatten()
+            })
     }
 
     fn auto_joy_start_reachable(&self) -> bool {
@@ -930,7 +943,8 @@ impl Bus {
         let color0 =
             u16::from_le_bytes([self.ppu2.peek_cgram(0), self.ppu2.peek_cgram(1)]) & 0x7FFF;
         let inidisp = self.ppu2.peek(0x2100).unwrap_or(0);
-        self.presented_backdrop_lines[scanline] = Some(PresentedBackdropLine { inidisp, color0 });
+        self.presented_backdrop_current_lines[scanline] =
+            Some(PresentedBackdropLine { inidisp, color0 });
     }
 
     fn read_ppu_register(&mut self, offset: u16) -> u8 {
@@ -1450,11 +1464,32 @@ mod tests {
             })
         );
 
-        tick_subticks(&mut bus, VBLANK_STUB_PERIOD);
+        bus.write(0x00_2121, 0x00);
+        bus.write(0x00_2122, 0xE0);
+        bus.write(0x00_2122, 0x03);
+        bus.video_phase = VBLANK_STUB_ACTIVE_START - 1;
+        bus.tick_video_stub();
+        tick_into_new_active_frame(&mut bus);
+        assert_eq!(
+            bus.presented_backdrop_line(0),
+            Some(PresentedBackdropLine {
+                inidisp: 0x0F,
+                color0: 0x7FFF,
+            }),
+            "completed-frame lines take priority over the current partial frame"
+        );
+        assert_eq!(
+            bus.presented_backdrop_line(1),
+            Some(PresentedBackdropLine {
+                inidisp: 0x0F,
+                color0: 0x001F,
+            }),
+            "the API should keep serving the last completed frame until the next one finishes"
+        );
         assert_eq!(
             bus.presented_backdrop_line(2),
             None,
-            "uncaptured lines from a new frame should not retain stale data"
+            "the completed frame should not invent uncaptured lines"
         );
     }
 
