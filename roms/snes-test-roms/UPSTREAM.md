@@ -33,7 +33,11 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/hardware-tests/vram-mid-scanline-test.sfc`
   - `bin/hardware-tests/wrmpyb-in-flight.sfc`
   - `bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-no-remapping-word.sfc`
   - `bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-with-remapping-word.sfc`
+  - `bin/vmain-address-remapping/vmain-8bpp-no-remapping.sfc`
   - `bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc`
   - `bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc`
   - `bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc`
