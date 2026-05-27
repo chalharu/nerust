@@ -346,6 +346,8 @@ impl Bus {
     }
 
     fn start_auto_joypad(&mut self) {
+        let sampled_ports = self.sample_standard_controller_ports();
+        self.load_standard_controller_ports(sampled_ports, 0);
         self.auto_joy_active = true;
         self.auto_joy_subticks_remaining = AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS;
     }
@@ -1167,6 +1169,37 @@ mod tests {
 
         assert_eq!(bus.read(0x004016), 0x00);
         assert_eq!(bus.read(0x004017), 0x1C);
+    }
+
+    #[test]
+    fn auto_joy_start_reloads_manual_joyser_state_during_active_window() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.load_standard_controller_ports([0, 0], STANDARD_CONTROLLER_PAYLOAD_BITS);
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(&mut bus, AUTO_JOYPAD_START + 1);
+
+        assert_eq!(bus.read(0x004212) & 0x01, 0x01);
+        assert_eq!(bus.read(0x004016), 0x00);
+    }
+
+    #[test]
+    fn joyout_relatched_manual_reading_still_works_after_auto_joy_completion() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(
+            &mut bus,
+            AUTO_JOYPAD_START + u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS),
+        );
+
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        for read_index in 0..STANDARD_CONTROLLER_PAYLOAD_BITS {
+            assert_eq!(bus.read(0x004016), 0x00, "read {}", read_index + 1);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
     }
 
     #[test]
