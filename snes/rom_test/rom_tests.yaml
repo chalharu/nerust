@@ -304,6 +304,43 @@ cases:
       - kind: bus_u16
         address: "0x004209"
         expected: "0x00D6"
+  - id: inidisp-fadein-fadeout-300k-screen-state
+    description: >
+      The undisbeliever INIDISP fade demo renders a deterministic low-brightness
+      map image at 300000 steps, covering VBlank brightness updates while the
+      screen remains enabled.
+    rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x7120AFB77ACEB8FB"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: inidisp-fadein-fadeout-1000k-screen-state
+    description: >
+      The undisbeliever INIDISP fade demo renders a deterministic higher
+      brightness map image at 1000000 steps, covering the software fade-in loop.
+    rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
+    max_steps: 1000000
+    check_interval_steps: 1000000
+    expected_screen_hash: "0x878C0690E98FEFBB"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x03"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
   - id: vmain-1bpp-tiles-0-300k-screen-state
     description: >
       The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at
