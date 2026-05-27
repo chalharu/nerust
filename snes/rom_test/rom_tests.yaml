@@ -139,6 +139,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
     max_steps: 30000
     check_interval_steps: 30000
+    expected_screen_hash: "0x173A1A92F44C3947"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -151,7 +152,13 @@ cases:
         expected: "0x1A"
       - kind: vram_u8
         address: "0x2003"
-        expected: "0x7F"
+        expected: "0x00"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x00"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x00"
       - kind: oam_u16
         address: "0x0000"
         expected: "0x5040"
@@ -249,7 +256,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x2F605F796DA9D7E0"
+    expected_screen_hash: "0xC2BEE8517488369F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -322,6 +329,46 @@ cases:
       - kind: cgram_u16
         address: "0x0002"
         expected: "0xFFFF"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: vram-mid-scanline-100k-white-screen-state
+    description: >
+      The undisbeliever mid-scanline VRAM write hardware test keeps its BG1 tile
+      data intact and renders a deterministic white screen at 100000 steps while
+      active-display writes through $2118/$2119 stay ignored.
+    rom: snes-test-roms/bin/hardware-tests/vram-mid-scanline-test.sfc
+    max_steps: 100000
+    check_interval_steps: 100000
+    expected_screen_hash: "0xA7140ABD926FF413"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002115"
+        expected: "0x80"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: cgram_u16
+        address: "0x0006"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0xFF"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0xFF"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0xFF"
       - kind: oam_u16
         address: "0x0000"
         expected: "0xF080"

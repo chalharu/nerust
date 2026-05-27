@@ -18,6 +18,7 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/hardware-tests/inidisp_forgot_to_force_blank.sfc`
   - `bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc`
   - `bin/hardware-tests/joypad_rapid_read_test.sfc`
+  - `bin/hardware-tests/vram-mid-scanline-test.sfc`
   - `bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc`
 - Local build inputs: upstream sources plus the already vendored `bass-untech`
   toolchain from this repository and the Python environment prepared in this
