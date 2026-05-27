@@ -25,6 +25,9 @@ nerust_sound_openal.workspace = true
 nerust_sound_traits.workspace = true
 nerust_timer.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+nerust_sound_android.workspace = true
+
 [dev-dependencies]
 nerust_contract_mirror.workspace = true
 nerust_contract_rom.workspace = true
