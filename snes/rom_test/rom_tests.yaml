@@ -418,6 +418,19 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+  - id: reset-position-300k-screen-state
+    description: >
+      The undisbeliever reset-position hardware test reaches a deterministic
+      text output at 300000 steps, covering software counter latch, OPHCT/OPVCT
+      byte order, and coarse HVBJOY H/V timing from reset.
+    rom: snes-test-roms/bin/hardware-tests/reset-position-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x88096126D80D300E"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: joypad-rapid-read-no-input-final-state
     description: >
       The undisbeliever joypad rapid read hardware test reaches a stable
