@@ -2964,6 +2964,7 @@ dependencies = [
 name = "nerust_android"
 version = "0.1.0"
 dependencies = [
+ "jni 0.22.4",
  "log",
  "nerust_backend_wgpu",
  "nerust_gui_runtime",
