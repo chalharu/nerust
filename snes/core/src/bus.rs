@@ -10,12 +10,56 @@ const VBLANK_STUB_PERIOD: u16 = VBLANK_STUB_SCANLINES * VBLANK_STUB_SUBTICKS_PER
 const VBLANK_STUB_ACTIVE_START_LINE: u16 = 225;
 const AUTO_JOYPAD_START_SUBTICK: u16 = 1;
 const AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS: u8 = 12;
+const STANDARD_CONTROLLER_PORT_COUNT: usize = 2;
+const STANDARD_CONTROLLER_PAYLOAD_BITS: u8 = 16;
+const JOYSER1_STANDARD_HIGH_BITS: u8 = 0x1C;
 #[cfg(test)]
 const VBLANK_STUB_ACTIVE_START: u16 =
     VBLANK_STUB_ACTIVE_START_LINE * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
 #[cfg(test)]
 const AUTO_JOYPAD_START: u16 = VBLANK_STUB_ACTIVE_START + AUTO_JOYPAD_START_SUBTICK;
 const HCOUNTER_DOTS_PER_LINE: u16 = 341;
+
+#[derive(Clone, Copy)]
+struct StandardControllerPort {
+    latched_buttons: u16,
+    serial_position: u8,
+}
+
+impl Default for StandardControllerPort {
+    fn default() -> Self {
+        Self {
+            latched_buttons: 0,
+            serial_position: STANDARD_CONTROLLER_PAYLOAD_BITS,
+        }
+    }
+}
+
+impl StandardControllerPort {
+    fn load_sample(&mut self, buttons: u16, serial_position: u8) {
+        self.latched_buttons = buttons;
+        self.serial_position = serial_position;
+    }
+
+    fn read_serial_bit(&mut self) -> u8 {
+        let bit = self.peek_serial_bit();
+        if self.serial_position < STANDARD_CONTROLLER_PAYLOAD_BITS {
+            self.serial_position += 1;
+        }
+        bit
+    }
+
+    fn peek_serial_bit(&self) -> u8 {
+        if self.serial_position < STANDARD_CONTROLLER_PAYLOAD_BITS {
+            ((self.latched_buttons
+                >> (u16::from(STANDARD_CONTROLLER_PAYLOAD_BITS - 1)
+                    - u16::from(self.serial_position)))
+                & 0x01) as u8
+        } else {
+            1
+        }
+    }
+}
 
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
@@ -52,6 +96,8 @@ pub(crate) struct Bus {
     auto_joy_armed: bool,
     auto_joy_active: bool,
     auto_joy_subticks_remaining: u8,
+    joyout_latch_high: bool,
+    controller_ports: [StandardControllerPort; STANDARD_CONTROLLER_PORT_COUNT],
     hdma_active_mask: u8,
     hdma_table_addr: [u16; DMA_CHANNEL_COUNT],
     hdma_data_addr: [u16; DMA_CHANNEL_COUNT],
@@ -84,6 +130,8 @@ impl Bus {
             auto_joy_armed: false,
             auto_joy_active: false,
             auto_joy_subticks_remaining: 0,
+            joyout_latch_high: false,
+            controller_ports: [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT],
             hdma_active_mask: 0,
             hdma_table_addr: [0; DMA_CHANNEL_COUNT],
             hdma_data_addr: [0; DMA_CHANNEL_COUNT],
@@ -112,6 +160,8 @@ impl Bus {
         self.auto_joy_armed = false;
         self.auto_joy_active = false;
         self.auto_joy_subticks_remaining = 0;
+        self.joyout_latch_high = false;
+        self.controller_ports = [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT];
         self.hdma_active_mask = 0;
         self.hdma_table_addr = [0; DMA_CHANNEL_COUNT];
         self.hdma_data_addr = [0; DMA_CHANNEL_COUNT];
@@ -317,12 +367,95 @@ impl Bus {
     }
 
     fn complete_auto_joypad(&mut self) {
-        let registers = self.sample_auto_joypad_registers();
+        let sampled_ports = self.sample_standard_controller_ports();
+        let registers = self.sample_auto_joypad_registers(sampled_ports);
         self.cpu_io_registers[0x18..0x20].copy_from_slice(&registers);
+        self.load_standard_controller_ports(sampled_ports, STANDARD_CONTROLLER_PAYLOAD_BITS);
     }
 
-    fn sample_auto_joypad_registers(&self) -> [u8; 8] {
-        [0; 8]
+    fn sample_auto_joypad_registers(
+        &self,
+        sampled_ports: [u16; STANDARD_CONTROLLER_PORT_COUNT],
+    ) -> [u8; 8] {
+        let [port1, port2] = sampled_ports;
+        [
+            port1 as u8,
+            (port1 >> 8) as u8,
+            port2 as u8,
+            (port2 >> 8) as u8,
+            0,
+            0,
+            0,
+            0,
+        ]
+    }
+
+    fn sample_standard_controller_ports(&self) -> [u16; STANDARD_CONTROLLER_PORT_COUNT] {
+        [
+            self.sample_standard_controller_port(0),
+            self.sample_standard_controller_port(1),
+        ]
+    }
+
+    fn sample_standard_controller_port(&self, _port: usize) -> u16 {
+        0
+    }
+
+    fn load_standard_controller_ports(
+        &mut self,
+        sampled_ports: [u16; STANDARD_CONTROLLER_PORT_COUNT],
+        serial_position: u8,
+    ) {
+        for (port, sampled_buttons) in self.controller_ports.iter_mut().zip(sampled_ports) {
+            port.load_sample(sampled_buttons, serial_position);
+        }
+    }
+
+    fn current_b_button(&self, port: usize) -> u8 {
+        ((self.sample_standard_controller_port(port)
+            >> u16::from(STANDARD_CONTROLLER_PAYLOAD_BITS - 1))
+            & 0x01) as u8
+    }
+
+    fn read_joyser0(&mut self) -> u8 {
+        self.read_standard_controller_port(0)
+    }
+
+    fn read_joyser1(&mut self) -> u8 {
+        JOYSER1_STANDARD_HIGH_BITS | self.read_standard_controller_port(1)
+    }
+
+    fn peek_joyser0(&self) -> u8 {
+        self.peek_standard_controller_port(0)
+    }
+
+    fn peek_joyser1(&self) -> u8 {
+        JOYSER1_STANDARD_HIGH_BITS | self.peek_standard_controller_port(1)
+    }
+
+    fn read_standard_controller_port(&mut self, port: usize) -> u8 {
+        if self.joyout_latch_high {
+            self.current_b_button(port)
+        } else {
+            self.controller_ports[port].read_serial_bit()
+        }
+    }
+
+    fn peek_standard_controller_port(&self, port: usize) -> u8 {
+        if self.joyout_latch_high {
+            self.current_b_button(port)
+        } else {
+            self.controller_ports[port].peek_serial_bit()
+        }
+    }
+
+    fn write_joyout(&mut self, value: u8) {
+        let was_latch_high = self.joyout_latch_high;
+        self.joyout_latch_high = value & 0x01 != 0;
+        if was_latch_high && !self.joyout_latch_high {
+            let sampled_ports = self.sample_standard_controller_ports();
+            self.load_standard_controller_ports(sampled_ports, 0);
+        }
     }
 
     fn read_resolved(&mut self, address: u32) -> u8 {
@@ -338,6 +471,8 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 self.memory.read_mmio(offset).unwrap_or(0)
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4016) => self.read_joyser0(),
+            (0x00..=0x3F | 0x80..=0xBF, 0x4017) => self.read_joyser1(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => self.read_cpu_io(offset),
             (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => {
                 self.dma_registers[usize::from(offset - 0x4300)]
@@ -359,6 +494,8 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 self.memory.peek_mmio(offset).unwrap_or(0)
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4016) => self.peek_joyser0(),
+            (0x00..=0x3F | 0x80..=0xBF, 0x4017) => self.peek_joyser1(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4210) => {
                 if self.nmi_flag {
                     0x80
@@ -400,6 +537,8 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 let _ = self.memory.write_mmio(offset, value);
             }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4016) => self.write_joyout(value),
+            (0x00..=0x3F | 0x80..=0xBF, 0x4017) => {}
             // MDMAEN ($420B): store then execute selected DMA channels immediately.
             (0x00..=0x3F | 0x80..=0xBF, 0x420B) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
@@ -847,8 +986,9 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, VBLANK_STUB_ACTIVE_START,
-        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus,
+        STANDARD_CONTROLLER_PAYLOAD_BITS, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
+        VBLANK_STUB_SUBTICKS_PER_SCANLINE,
     };
     use crate::Cartridge;
 
@@ -936,6 +1076,97 @@ mod tests {
                 "JOY register {offset:04X}"
             );
         }
+    }
+
+    #[test]
+    fn joyout_latch_pulse_resets_the_serial_read_sequence() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        for _ in 0..STANDARD_CONTROLLER_PAYLOAD_BITS {
+            assert_eq!(bus.read(0x004016), 0x00);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
+
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        assert_eq!(bus.read(0x004016), 0x00);
+    }
+
+    #[test]
+    fn joyser0_returns_sixteen_zero_bits_then_ones_for_a_no_input_controller() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        for read_index in 0..STANDARD_CONTROLLER_PAYLOAD_BITS {
+            assert_eq!(bus.read(0x004016), 0x00, "read {}", read_index + 1);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
+        assert_eq!(bus.read(0x004016), 0x01);
+    }
+
+    #[test]
+    fn manual_read_sequence_uses_standard_controller_bit_order() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.load_standard_controller_ports([0x8080, 0], 0);
+
+        assert_eq!(bus.read(0x004016), 0x01);
+        for _ in 0..7 {
+            assert_eq!(bus.read(0x004016), 0x00);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
+    }
+
+    #[test]
+    fn joyser1_returns_fixed_high_bits_mask_plus_the_serial_bit() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        for read_index in 0..STANDARD_CONTROLLER_PAYLOAD_BITS {
+            assert_eq!(bus.read(0x004017), 0x1C, "read {}", read_index + 1);
+        }
+        assert_eq!(bus.read(0x004017), 0x1D);
+        assert_eq!(bus.peek(0x004017), 0x1D);
+    }
+
+    #[test]
+    fn latch_high_reads_do_not_advance_the_serial_position() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004016, 0x01);
+        for _ in 0..4 {
+            assert_eq!(bus.read(0x004016), 0x00);
+            assert_eq!(bus.read(0x004017), 0x1C);
+        }
+
+        bus.write(0x004016, 0x00);
+        for read_index in 0..STANDARD_CONTROLLER_PAYLOAD_BITS {
+            assert_eq!(bus.read(0x004016), 0x00, "read {}", read_index + 1);
+        }
+        assert_eq!(bus.read(0x004016), 0x01);
+    }
+
+    #[test]
+    fn auto_joy_completion_leaves_manual_reads_exhausted_until_relatched() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004200, 0x01);
+
+        tick_subticks(
+            &mut bus,
+            AUTO_JOYPAD_START + u16::from(AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS),
+        );
+
+        assert_eq!(bus.read(0x004016), 0x01);
+        assert_eq!(bus.read(0x004017), 0x1D);
+
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        assert_eq!(bus.read(0x004016), 0x00);
+        assert_eq!(bus.read(0x004017), 0x1C);
     }
 
     #[test]
