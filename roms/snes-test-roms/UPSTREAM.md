@@ -12,6 +12,8 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/effects/vmain-1bpp-tiles-0.sfc`
   - `bin/effects/vmain-1bpp-tiles-1.sfc`
   - `bin/effects/vmain-horizontal-scrolling.sfc`
+  - `bin/effects/vmain-mode7-tilemap-columns.sfc`
+  - `bin/effects/vmain-mode7-tilemap-rows.sfc`
   - `bin/effects/vmain-vertical-scrolling.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`
   - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
