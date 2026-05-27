@@ -89,6 +89,8 @@ pub(crate) struct Bus {
     dma_registers: [u8; DMA_REGISTER_COUNT],
     video_phase: u16,
     video_master_clock_accumulator: u32,
+    math_quotient: u16,
+    math_result: u16,
     /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210.
     nmi_flag: bool,
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
@@ -131,6 +133,8 @@ impl Bus {
             dma_registers: [0; DMA_REGISTER_COUNT],
             video_phase: 0,
             video_master_clock_accumulator: 0,
+            math_quotient: 0,
+            math_result: 0,
             nmi_flag: false,
             nmi_pending: false,
             irq_flag: false,
@@ -164,6 +168,8 @@ impl Bus {
     pub(crate) fn reset_ephemeral_state(&mut self) {
         self.video_phase = 0;
         self.video_master_clock_accumulator = 0;
+        self.math_quotient = 0;
+        self.math_result = 0;
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
@@ -560,6 +566,10 @@ impl Bus {
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x4212) => self.hvbjoy_value(),
+            (0x00..=0x3F | 0x80..=0xBF, 0x4214) => self.math_quotient as u8,
+            (0x00..=0x3F | 0x80..=0xBF, 0x4215) => (self.math_quotient >> 8) as u8,
+            (0x00..=0x3F | 0x80..=0xBF, 0x4216) => self.math_result as u8,
+            (0x00..=0x3F | 0x80..=0xBF, 0x4217) => (self.math_result >> 8) as u8,
             (0x00..=0x3F | 0x80..=0xBF, 0x4218) => self.cpu_io_registers[0x18],
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => {
                 self.cpu_io_registers[usize::from(offset - 0x4200)]
@@ -631,6 +641,28 @@ impl Bus {
                 self.cpu_io_registers[0x01] = value;
                 if previous & 0x40 != 0 && value & 0x40 == 0 {
                     self.latch_counters();
+                }
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4202) => {
+                self.cpu_io_registers[0x02] = value;
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4203) => {
+                self.cpu_io_registers[0x03] = value;
+                self.math_result = u16::from(self.cpu_io_registers[0x02]) * u16::from(value);
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4204..=0x4205) => {
+                self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x4206) => {
+                self.cpu_io_registers[0x06] = value;
+                let dividend =
+                    u16::from_le_bytes([self.cpu_io_registers[0x04], self.cpu_io_registers[0x05]]);
+                if value == 0 {
+                    self.math_quotient = 0xFFFF;
+                    self.math_result = dividend;
+                } else {
+                    self.math_quotient = dividend / u16::from(value);
+                    self.math_result = dividend % u16::from(value);
                 }
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x420C) => {
@@ -1056,6 +1088,10 @@ impl Bus {
                 val
             }
             0x4212 => self.hvbjoy_value(),
+            0x4214 => self.math_quotient as u8,
+            0x4215 => (self.math_quotient >> 8) as u8,
+            0x4216 => self.math_result as u8,
+            0x4217 => (self.math_result >> 8) as u8,
             0x4218 => self.cpu_io_registers[0x18],
             _ => self.cpu_io_registers[usize::from(offset - 0x4200)],
         }
@@ -1195,6 +1231,45 @@ mod tests {
 
         bus.write(0x7F0001, 0x99);
         assert_eq!(bus.read(0x7F0001), 0x99);
+    }
+
+    #[test]
+    fn multiply_registers_update_rdmpy_on_wrmpyb_write() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004202, 0x12);
+        bus.write(0x004203, 0x34);
+
+        assert_eq!(bus.read(0x004216), 0xA8);
+        assert_eq!(bus.read(0x004217), 0x03);
+    }
+
+    #[test]
+    fn divide_registers_update_rddiv_and_rdmpy_on_wrdivb_write() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004204, 0x34);
+        bus.write(0x004205, 0x12);
+        bus.write(0x004206, 0x12);
+
+        assert_eq!(bus.read(0x004214), 0x02);
+        assert_eq!(bus.read(0x004215), 0x01);
+        assert_eq!(bus.read(0x004216), 0x10);
+        assert_eq!(bus.read(0x004217), 0x00);
+    }
+
+    #[test]
+    fn divide_by_zero_returns_full_quotient_and_dividend_remainder() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x004204, 0xAD);
+        bus.write(0x004205, 0xDE);
+        bus.write(0x004206, 0x00);
+
+        assert_eq!(bus.read(0x004214), 0xFF);
+        assert_eq!(bus.read(0x004215), 0xFF);
+        assert_eq!(bus.read(0x004216), 0xAD);
+        assert_eq!(bus.read(0x004217), 0xDE);
     }
 
     #[test]
