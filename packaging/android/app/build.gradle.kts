@@ -7,6 +7,11 @@ fun envOrNull(name: String): String? = System.getenv(name)?.takeUnless(String::i
 
 val versionNameOverride = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
 val versionCodeOverride = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 1
+val abiFiltersOverride =
+    envOrNull("ANDROID_ABI_FILTERS")
+        ?.split(",")
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
 val keystoreFilePath = envOrNull("ANDROID_KEY_STORE_PATH")
 val keystoreAlias = envOrNull("ANDROID_KEY_ALIAS")
 val keystoreStorePassword = envOrNull("ANDROID_KEY_STORE_PASSWORD")
@@ -20,10 +25,11 @@ android {
         applicationId = "io.github.chalharu.nerust"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = versionCodeOverride
         versionName = versionNameOverride
         ndk {
-            abiFilters += "arm64-v8a"
+            abiFilters += abiFiltersOverride ?: listOf("arm64-v8a")
         }
     }
 
@@ -85,4 +91,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-viewmodel:$lifecycleVersion")
     implementation("androidx.savedstate:savedstate:1.5.0")
+
+    androidTestImplementation("androidx.test:core:1.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
+    androidTestImplementation("junit:junit:4.13.2")
 }
