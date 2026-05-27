@@ -10,17 +10,25 @@ use nerust_snes_core::{Core, Mode7Registers};
 use super::{
     VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
+    use_presented_bg1_scroll,
 };
 
 pub(super) fn render_mode7_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) {
-    let context = Mode7RenderContext {
-        registers: core.mode7_registers(),
-        hofs: i32::from(core.bg1_hofs()),
-        vofs: i32::from(core.bg1_vofs()),
-        brightness,
-    };
+    let registers = core.mode7_registers();
+    let current_hofs = i32::from(core.bg1_hofs());
+    let current_vofs = i32::from(core.bg1_vofs());
+    let use_presented_scroll = use_presented_bg1_scroll(core);
 
     for screen_y in 0..SCREEN_HEIGHT {
+        let presented = use_presented_scroll
+            .then(|| core.presented_bg1_line(screen_y))
+            .flatten();
+        let context = Mode7RenderContext {
+            registers,
+            hofs: presented.map_or(current_hofs, |line| i32::from(line.hofs)),
+            vofs: presented.map_or(current_vofs, |line| i32::from(line.vofs)),
+            brightness,
+        };
         let mode7_screen_y = (screen_y + VISIBLE_BG_Y_OFFSET) as i32;
         for screen_x in 0..SCREEN_WIDTH {
             if let Some(color) = mode7_pixel(core, &context, screen_x as i32, mode7_screen_y) {

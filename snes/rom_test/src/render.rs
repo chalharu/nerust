@@ -19,6 +19,59 @@ use obj::render_obj;
 
 pub(super) const VISIBLE_BG_Y_OFFSET: usize = 1;
 
+pub(super) fn use_presented_bg1_scroll(core: &Core) -> bool {
+    if !hdma_targets_bg1_scroll(core) {
+        return false;
+    }
+
+    let mut first = None;
+    for line in 0..crate::media::SCREEN_HEIGHT {
+        let Some(scroll) = core.presented_bg1_line(line) else {
+            continue;
+        };
+        let Some(first_scroll) = first else {
+            first = Some(scroll);
+            continue;
+        };
+        if scroll != first_scroll {
+            return true;
+        }
+    }
+    false
+}
+
+fn hdma_targets_bg1_scroll(core: &Core) -> bool {
+    let hdmaen = core.peek(0x00420C);
+    for channel in 0..8 {
+        if hdmaen & (1 << channel) == 0 {
+            continue;
+        }
+
+        let base = 0x004300 + channel * 0x10;
+        let dmap = core.peek(base);
+        let bbad = core.peek(base + 0x01);
+        for offset in dma_transfer_offsets(dmap) {
+            let target = bbad.wrapping_add(*offset);
+            if matches!(target, 0x0D | 0x0E) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn dma_transfer_offsets(dmap: u8) -> &'static [u8] {
+    match dmap & 0x07 {
+        0 => &[0],
+        1 => &[0, 1],
+        2 | 6 => &[0, 0],
+        3 | 7 => &[0, 0, 1, 1],
+        4 => &[0, 1, 2, 3],
+        5 => &[0, 1, 0, 1],
+        _ => &[0],
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error(

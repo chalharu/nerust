@@ -12,6 +12,7 @@ use super::{
     color::{cgram_color_rgba, put_pixel},
     mode7::render_mode7_bg1,
     tile::{bg_chr_2bpp_pixel, bg_chr_8bpp_pixel, chr_4bpp_pixel, read_tilemap_entry},
+    use_presented_bg1_scroll,
 };
 
 const MODE0_BG1_CGRAM_BASE: usize = 0;
@@ -38,10 +39,19 @@ pub(super) fn render_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) -> Result
     let tilemap_height_tiles = if bg1sc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
     let tilemap_height_pixels = tilemap_height_tiles * context.tile_size;
-    let hofs = usize::from(core.bg1_hofs()) % tilemap_width_pixels.max(1);
-    let vofs = (usize::from(core.bg1_vofs()) + VISIBLE_BG_Y_OFFSET) % tilemap_height_pixels.max(1);
+    let current_hofs = usize::from(core.bg1_hofs());
+    let current_vofs = usize::from(core.bg1_vofs());
+    let use_presented_scroll = use_presented_bg1_scroll(core);
 
     for screen_y in 0..SCREEN_HEIGHT {
+        let presented = use_presented_scroll
+            .then(|| core.presented_bg1_line(screen_y))
+            .flatten();
+        let hofs = presented.map_or(current_hofs, |line| usize::from(line.hofs))
+            % tilemap_width_pixels.max(1);
+        let vofs = (presented.map_or(current_vofs, |line| usize::from(line.vofs))
+            + VISIBLE_BG_Y_OFFSET)
+            % tilemap_height_pixels.max(1);
         let bg_y = (screen_y + vofs) % tilemap_height_pixels;
         for screen_x in 0..SCREEN_WIDTH {
             let bg_x = (screen_x + hofs) % tilemap_width_pixels;
