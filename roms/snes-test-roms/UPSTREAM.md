@@ -33,6 +33,10 @@ Source: <https://github.com/undisbeliever/snes-test-roms>
   - `bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc`
   - `bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc`
   - `bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-with-10bit-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-with-8bit-remapping.sfc`
 - Local build inputs: upstream sources plus the already vendored `bass-untech`
   toolchain from this repository and the Python environment prepared in this
   session for asset generation.

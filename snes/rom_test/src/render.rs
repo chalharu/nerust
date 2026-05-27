@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use nerust_snes_core::{Core, PresentedBackdropLine};
+use nerust_snes_core::{Core, Mode7Registers, PresentedBackdropLine};
 
 const MODE0_BG1_CGRAM_BASE: usize = 0;
 const VISIBLE_BG_Y_OFFSET: usize = 1;
@@ -16,7 +16,7 @@ const OBJ_TILE_SLIVERS_PER_SCANLINE_LIMIT: usize = 34;
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error(
-        "unsupported BG mode {mode}; SNES rom_test currently supports BG1 rendering for modes 0, 1, and 3"
+        "unsupported BG mode {mode}; SNES rom_test currently supports BG1 rendering for modes 0, 1, 3, and 7"
     )]
     UnsupportedBgMode { mode: u8 },
 }
@@ -103,10 +103,16 @@ fn opaque_black_screen() -> Vec<u8> {
 fn render_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) -> Result<(), RenderError> {
     let bgmode = core.peek(0x002105);
     let mode = bgmode & 0x07;
+    let mode = Bg1RenderMode::from_bgmode(mode)?;
+    if mode == Bg1RenderMode::Mode7 {
+        render_mode7_bg1(core, brightness, rgba);
+        return Ok(());
+    }
+
     let bg1sc = core.peek(0x002107);
     let bg12nba = core.peek(0x00210B);
     let context = Bg1RenderContext {
-        mode: Bg1RenderMode::from_bgmode(mode)?,
+        mode,
         tilemap_base: (usize::from(bg1sc & 0xFC)) << 9,
         chr_base: usize::from(bg12nba & 0x0F) << 13,
         tile_size: if bgmode & 0x10 != 0 { 16 } else { 8 },
@@ -162,6 +168,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         Bg1RenderMode::Mode0 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
         Bg1RenderMode::Mode1 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
         Bg1RenderMode::Mode3 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        Bg1RenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
     if color == 0 {
         return None;
@@ -172,8 +179,46 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         Bg1RenderMode::Mode0 => MODE0_BG1_CGRAM_BASE + palette * 4 + usize::from(color),
         Bg1RenderMode::Mode1 => palette * 16 + usize::from(color),
         Bg1RenderMode::Mode3 => usize::from(color),
+        Bg1RenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
     Some(cgram_color_rgba(core, color_index, context.brightness))
+}
+
+fn render_mode7_bg1(core: &Core, brightness: u8, rgba: &mut [u8]) {
+    let context = Mode7RenderContext {
+        registers: core.mode7_registers(),
+        hofs: i32::from(core.bg1_hofs()),
+        vofs: i32::from(core.bg1_vofs()),
+        brightness,
+    };
+
+    for screen_y in 0..SCREEN_HEIGHT {
+        let mode7_screen_y = (screen_y + VISIBLE_BG_Y_OFFSET) as i32;
+        for screen_x in 0..SCREEN_WIDTH {
+            if let Some(color) = mode7_pixel(core, &context, screen_x as i32, mode7_screen_y) {
+                put_pixel(rgba, screen_x, screen_y, color);
+            }
+        }
+    }
+}
+
+fn mode7_pixel(
+    core: &Core,
+    context: &Mode7RenderContext,
+    screen_x: i32,
+    screen_y: i32,
+) -> Option<[u8; 4]> {
+    let (source_x, source_y) = mode7_source_coordinates(context, screen_x, screen_y);
+    let color = mode7_vram_pixel(core, source_x, source_y);
+    if color == 0 {
+        return None;
+    }
+
+    Some(cgram_color_rgba(
+        core,
+        usize::from(color),
+        context.brightness,
+    ))
 }
 
 fn render_obj(core: &Core, brightness: u8, rgba: &mut [u8]) {
@@ -323,6 +368,44 @@ fn read_tilemap_entry(
     ])
 }
 
+fn mode7_source_coordinates(
+    context: &Mode7RenderContext,
+    screen_x: i32,
+    screen_y: i32,
+) -> (usize, usize) {
+    let registers = context.registers;
+    let center_x = i32::from(registers.x);
+    let center_y = i32::from(registers.y);
+    let source_x = screen_x + context.hofs - center_x;
+    let source_y = screen_y + context.vofs - center_y;
+    let transformed_x =
+        (i32::from(registers.a) * source_x + i32::from(registers.b) * source_y) / 256 + center_x;
+    let transformed_y =
+        (i32::from(registers.c) * source_x + i32::from(registers.d) * source_y) / 256 + center_y;
+
+    (
+        transformed_x.rem_euclid(1024) as usize,
+        transformed_y.rem_euclid(1024) as usize,
+    )
+}
+
+fn mode7_vram_pixel(core: &Core, source_x: usize, source_y: usize) -> u8 {
+    let tile_x = (source_x / 8) & 0x7F;
+    let tile_y = (source_y / 8) & 0x7F;
+    let pixel_x = source_x & 0x07;
+    let pixel_y = source_y & 0x07;
+    let tile_number = usize::from(core.peek_vram((tile_y * 128 + tile_x) * 2));
+    core.peek_vram((tile_number * 64 + pixel_y * 8 + pixel_x) * 2 + 1)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Mode7RenderContext {
+    registers: Mode7Registers,
+    hofs: i32,
+    vofs: i32,
+    brightness: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Bg1RenderContext {
     mode: Bg1RenderMode,
@@ -333,11 +416,12 @@ struct Bg1RenderContext {
     brightness: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Bg1RenderMode {
     Mode0,
     Mode1,
     Mode3,
+    Mode7,
 }
 
 impl Bg1RenderMode {
@@ -346,6 +430,7 @@ impl Bg1RenderMode {
             0 => Ok(Self::Mode0),
             1 => Ok(Self::Mode1),
             3 => Ok(Self::Mode3),
+            7 => Ok(Self::Mode7),
             _ => Err(RenderError::UnsupportedBgMode { mode }),
         }
     }
@@ -355,6 +440,7 @@ impl Bg1RenderMode {
             Self::Mode0 => 16,
             Self::Mode1 => 32,
             Self::Mode3 => 64,
+            Self::Mode7 => 0,
         }
     }
 }
@@ -512,11 +598,11 @@ struct ObjSliver {
 #[cfg(test)]
 mod tests {
     use super::{
-        ObjSize, ObjSprite, decode_2bpp_pixel, decode_4bpp_pixel, decode_8bpp_pixel,
-        obj_slivers_for_scanline, obj_tile_address, opaque_black_screen, render_screen,
-        scale_channel,
+        Mode7RenderContext, ObjSize, ObjSprite, decode_2bpp_pixel, decode_4bpp_pixel,
+        decode_8bpp_pixel, mode7_source_coordinates, obj_slivers_for_scanline, obj_tile_address,
+        opaque_black_screen, render_screen, scale_channel,
     };
-    use nerust_snes_core::{Core, CpuState};
+    use nerust_snes_core::{Core, CpuState, Mode7Registers};
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
@@ -655,6 +741,30 @@ mod tests {
     }
 
     #[test]
+    fn mode7_source_coordinates_apply_identity_scale_and_wrapping() {
+        let mut context = Mode7RenderContext {
+            registers: Mode7Registers {
+                a: 0x0100,
+                d: 0x0100,
+                ..Mode7Registers::default()
+            },
+            hofs: 0,
+            vofs: 0,
+            brightness: 0x0F,
+        };
+
+        assert_eq!(mode7_source_coordinates(&context, 3, 4), (3, 4));
+
+        context.registers.a = 0x0200;
+        context.registers.d = 0x0200;
+        assert_eq!(mode7_source_coordinates(&context, 3, 4), (6, 8));
+
+        context.hofs = -1;
+        context.vofs = -2;
+        assert_eq!(mode7_source_coordinates(&context, 0, 0), (1022, 1020));
+    }
+
+    #[test]
     fn opaque_black_screen_uses_opaque_pixels() {
         let rgba = opaque_black_screen();
 
@@ -700,5 +810,26 @@ mod tests {
             &rendered.rgba[rendered.rgba.len() - 4..],
             &[0xFF, 0xFF, 0xFF, 0xFF]
         );
+    }
+
+    #[test]
+    fn mode7_bg1_uses_tilemap_low_bytes_and_tile_pixels_high_bytes() {
+        let program = [
+            0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA9, 0x8F, 0x8D, 0x00, 0x21, 0xA9, 0x07, 0x8D,
+            0x05, 0x21, 0xA9, 0x01, 0x8D, 0x2C, 0x21, 0x9C, 0x1A, 0x21, 0x9C, 0x1B, 0x21, 0xA9,
+            0x01, 0x8D, 0x1B, 0x21, 0x9C, 0x1E, 0x21, 0xA9, 0x01, 0x8D, 0x1E, 0x21, 0x9C, 0x15,
+            0x21, 0x9C, 0x16, 0x21, 0x9C, 0x17, 0x21, 0xA9, 0x02, 0x8D, 0x18, 0x21, 0xA9, 0x88,
+            0x8D, 0x16, 0x21, 0x9C, 0x17, 0x21, 0xA9, 0x05, 0x8D, 0x19, 0x21, 0xA9, 0x05, 0x8D,
+            0x21, 0x21, 0xA9, 0x1F, 0x8D, 0x22, 0x21, 0x9C, 0x22, 0x21, 0xA9, 0x0F, 0x8D, 0x00,
+            0x21, 0xDB,
+        ];
+        let mut rom = build_lorom(0x8000);
+        rom[..program.len()].copy_from_slice(&program);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        let rendered = render_screen(&core).unwrap();
+        assert_eq!(&rendered.rgba[..4], &[0xFF, 0x00, 0x00, 0xFF]);
     }
 }
