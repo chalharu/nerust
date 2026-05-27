@@ -103,6 +103,10 @@ impl Ppu2 {
         self.cgram[index % CGRAM_LEN]
     }
 
+    pub(crate) fn force_blank(&self) -> bool {
+        self.inidisp & 0x80 != 0
+    }
+
     fn store_register(&mut self, offset: u16, value: u8) {
         self.registers[register_index(offset)] = value;
     }

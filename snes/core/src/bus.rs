@@ -885,8 +885,18 @@ impl Bus {
         }
     }
 
+    fn vram_port_accessible(&self) -> bool {
+        self.in_vblank() || self.ppu2.force_blank()
+    }
+
     fn write_ppu_register(&mut self, offset: u16, value: u8) -> bool {
-        self.ppu1.write(offset, value) || self.ppu2.write(offset, value)
+        match offset {
+            0x2118 | 0x2119 => {
+                self.ppu1
+                    .write_with_vram_access(offset, value, self.vram_port_accessible())
+            }
+            _ => self.ppu1.write(offset, value) || self.ppu2.write(offset, value),
+        }
     }
 
     fn read_cpu_io(&mut self, offset: u16) -> u8 {
@@ -1315,6 +1325,7 @@ mod tests {
         bus.write(0x7E_0103, 0x44);
 
         // VMAIN = 0x80: increment after high-byte write, step = 1 word
+        bus.write(0x00_2100, 0x80);
         bus.write(0x00_2115, 0x80);
         // VMADD = 0
         bus.write(0x00_2116, 0x00);
@@ -1344,6 +1355,32 @@ mod tests {
         // DAS zeroed
         assert_eq!(bus.read(0x00_4305), 0x00, "DASL zeroed");
         assert_eq!(bus.read(0x00_4306), 0x00, "DASH zeroed");
+    }
+
+    #[test]
+    fn active_display_vram_port_writes_are_ignored_until_force_blank() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x00_2115, 0x80);
+        bus.write(0x00_2116, 0x00);
+        bus.write(0x00_2117, 0x00);
+
+        bus.write(0x00_2118, 0x34);
+        bus.write(0x00_2119, 0x12);
+
+        assert_eq!(bus.ppu1.peek_vram(0), 0x00);
+        assert_eq!(bus.ppu1.peek_vram(1), 0x00);
+        assert_eq!(bus.ppu1.vmadd(), 0x0001);
+
+        bus.write(0x00_2100, 0x80);
+        bus.write(0x00_2116, 0x00);
+        bus.write(0x00_2117, 0x00);
+        bus.write(0x00_2118, 0x78);
+        bus.write(0x00_2119, 0x56);
+
+        assert_eq!(bus.ppu1.peek_vram(0), 0x78);
+        assert_eq!(bus.ppu1.peek_vram(1), 0x56);
+        assert_eq!(bus.ppu1.vmadd(), 0x0001);
     }
 
     /// DMA ch0, pattern 0, fixed source → WRAM port ($2180).

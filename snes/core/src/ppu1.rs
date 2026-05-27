@@ -38,6 +38,15 @@ impl Ppu1 {
     }
 
     pub(crate) fn write(&mut self, offset: u16, value: u8) -> bool {
+        self.write_with_vram_access(offset, value, true)
+    }
+
+    pub(crate) fn write_with_vram_access(
+        &mut self,
+        offset: u16,
+        value: u8,
+        allow_vram_port_write: bool,
+    ) -> bool {
         match offset {
             0x2102 => {
                 self.store_register(offset, value);
@@ -82,12 +91,12 @@ impl Ppu1 {
             }
             0x2118 => {
                 self.store_register(offset, value);
-                self.write_vram_byte(false, value);
+                self.write_vram_byte(false, value, allow_vram_port_write);
                 true
             }
             0x2119 => {
                 self.store_register(offset, value);
-                self.write_vram_byte(true, value);
+                self.write_vram_byte(true, value, allow_vram_port_write);
                 true
             }
             0x2101 | 0x2105..=0x210C | 0x210F..=0x2114 | 0x211A..=0x2120 => {
@@ -150,9 +159,11 @@ impl Ppu1 {
         self.registers[register_index(offset)] = value;
     }
 
-    fn write_vram_byte(&mut self, high: bool, value: u8) {
-        let byte_index = self.vram_byte_index(high);
-        self.vram[byte_index] = value;
+    fn write_vram_byte(&mut self, high: bool, value: u8, allow_store: bool) {
+        if allow_store {
+            let byte_index = self.vram_byte_index(high);
+            self.vram[byte_index] = value;
+        }
         if self.should_increment_after(high) {
             self.vmadd = self.vmadd.wrapping_add(vram_increment_words(self.vmain));
         }
