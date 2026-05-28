@@ -7,6 +7,8 @@ import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -116,11 +118,24 @@ class MainActivityE2eTest {
         }
         launchIntent.addFlags(launchFlags)
         context.startActivity(launchIntent)
-        val activity = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
-            "MainActivity should be launched"
-        }
+        val activity =
+            (monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity)
+                ?: resumedMainActivity(instrumentation)
+                ?: throw IllegalArgumentException("MainActivity should be launched")
         instrumentation.waitForIdleSync()
         assertMenuButtonAvailable(instrumentation, activity)
+        return activity
+    }
+
+    private fun resumedMainActivity(instrumentation: Instrumentation): MainActivity? {
+        var activity: MainActivity? = null
+        instrumentation.runOnMainSync {
+            activity =
+                ActivityLifecycleMonitorRegistry
+                    .getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .firstOrNull { it is MainActivity } as? MainActivity
+        }
         return activity
     }
 
