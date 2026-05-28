@@ -256,7 +256,7 @@ impl Cartridge {
     pub fn write(&mut self, address: u32, value: u8) -> bool {
         if self
             .enhancement
-            .write(&self.header, address, value, &mut self.save_ram)
+            .write(&self.header, address, value, &self.rom, &mut self.save_ram)
         {
             return true;
         }
@@ -801,7 +801,89 @@ mod tests {
         assert!(cartridge.write(0x007F40, 0x66));
         assert_eq!(cartridge.read(0x007F40), Some(0x66));
         assert_eq!(cartridge.read(0x807F40), Some(0x66));
+        assert!(cartridge.write(0x006000, 0x42));
+        assert_eq!(cartridge.read(0x006000), Some(0x42));
+        assert_eq!(cartridge.read(0x806000), Some(0x42));
+        assert_eq!(cartridge.read(0x007F5E), Some(0x00));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn cx4_executes_core_math_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 COMMANDS",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_u24(&mut cartridge, 0x007F80, 0x000123);
+        write_u24(&mut cartridge, 0x007F83, 0x000004);
+        assert!(cartridge.write(0x007F4F, 0x25));
+        assert_eq!(read_u24(&mut cartridge, 0x007F80), 0x00048C);
+
+        write_word(&mut cartridge, 0x007F80, 3);
+        write_word(&mut cartridge, 0x007F83, 4);
+        assert!(cartridge.write(0x007F4F, 0x15));
+        assert_eq!(read_word(&mut cartridge, 0x007F80), 5);
+
+        for offset in 0..0x800 {
+            assert!(cartridge.write(0x006000 + offset, 1));
+        }
+        assert!(cartridge.write(0x007F4F, 0x40));
+        assert_eq!(read_word(&mut cartridge, 0x007F80), 0x0800);
+
+        assert!(cartridge.write(0x007F4D, 0x0E));
+        assert!(cartridge.write(0x007F4F, 0x20));
+        assert_eq!(cartridge.read(0x007F80), Some(0x08));
+
+        assert!(cartridge.write(0x007F4F, 0x89));
+        assert_eq!(read_u24(&mut cartridge, 0x007F80), 0x054336);
+    }
+
+    #[test]
+    fn cx4_loads_lorom_data_into_internal_ram() {
+        let mut rom = build_lorom_with_header("CX4 LOAD", 0x20, 0xF3, Some(0x10), 0x0A);
+        rom[0x8123] = 0xAA;
+        rom[0x8124] = 0xBB;
+        rom[0x8125] = 0xCC;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        write_u24(&mut cartridge, 0x007F40, 0x018123);
+        write_word(&mut cartridge, 0x007F43, 3);
+        write_word(&mut cartridge, 0x007F45, 0x6008);
+        assert!(cartridge.write(0x007F47, 0x00));
+
+        assert_eq!(cartridge.read(0x006008), Some(0xAA));
+        assert_eq!(cartridge.read(0x006009), Some(0xBB));
+        assert_eq!(cartridge.read(0x00600A), Some(0xCC));
+    }
+
+    fn write_word(cartridge: &mut Cartridge, address: u32, word: u16) {
+        let [low, high] = word.to_le_bytes();
+        assert!(cartridge.write(address, low));
+        assert!(cartridge.write(address + 1, high));
+    }
+
+    fn read_word(cartridge: &mut Cartridge, address: u32) -> u16 {
+        u16::from_le_bytes([
+            cartridge.read(address).unwrap(),
+            cartridge.read(address + 1).unwrap(),
+        ])
+    }
+
+    fn write_u24(cartridge: &mut Cartridge, address: u32, value: u32) {
+        assert!(cartridge.write(address, value as u8));
+        assert!(cartridge.write(address + 1, (value >> 8) as u8));
+        assert!(cartridge.write(address + 2, (value >> 16) as u8));
+    }
+
+    fn read_u24(cartridge: &mut Cartridge, address: u32) -> u32 {
+        u32::from(cartridge.read(address).unwrap())
+            | (u32::from(cartridge.read(address + 1).unwrap()) << 8)
+            | (u32::from(cartridge.read(address + 2).unwrap()) << 16)
     }
 
     #[test]
