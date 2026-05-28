@@ -245,6 +245,9 @@ impl Cartridge {
 
     fn read_mapped(&self, address: u32) -> Option<u8> {
         if let EnhancementState::Sa1(state) = &self.enhancement {
+            if is_sa1_cpu_bitmap_bank(address) {
+                return state.read_sa1_cpu_bwram(address, &self.save_ram);
+            }
             if let Some(index) = state.sa1_bwram_index(address, self.save_ram.len()) {
                 return Some(self.save_ram[index]);
             }
@@ -264,6 +267,9 @@ impl Cartridge {
 
     fn read_mapped_mut(&mut self, address: u32) -> Option<u8> {
         if let EnhancementState::Sa1(state) = &mut self.enhancement {
+            if is_sa1_cpu_bitmap_bank(address) {
+                return state.read_sa1_cpu_bwram(address, &self.save_ram);
+            }
             if let Some(value) = state.read_sa1_bwram(address, &self.save_ram) {
                 return Some(value);
             }
@@ -290,6 +296,11 @@ impl Cartridge {
         {
             self.save_ram[index] = value;
             return true;
+        }
+        if let EnhancementState::Sa1(state) = &self.enhancement
+            && is_sa1_cpu_bitmap_bank(address)
+        {
+            return state.write_sa1_cpu_bwram(address, value, &mut self.save_ram);
         }
         if let EnhancementState::Sa1(state) = &self.enhancement
             && let Some(index) = state.sa1_bwram_index(address, self.save_ram.len())
@@ -394,6 +405,11 @@ fn ram_size_bytes(code: u8) -> Result<usize, CartridgeError> {
     }
 
     Ok(1024usize << code)
+}
+
+fn is_sa1_cpu_bitmap_bank(address: u32) -> bool {
+    let bank = ((address >> 16) & 0xFF) as u8;
+    matches!(bank, 0x60..=0x6F)
 }
 
 #[cfg(test)]
@@ -966,6 +982,21 @@ mod tests {
         write_u24(&mut cartridge, 0x002259, 0x600000);
         assert_eq!(cartridge.read(0x00230C), Some(0x0B));
         assert_eq!(cartridge.read(0x00230D), Some(0x0A));
+    }
+
+    #[test]
+    fn sa1_bitmap_banks_write_pixels_even_when_bmap_is_linear() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002227, 0x80));
+        assert!(cartridge.write(0x00223F, 0x00));
+        assert!(cartridge.write(0x002225, 0x00));
+
+        assert!(cartridge.write(0x600001, 0x0A));
+        assert_eq!(cartridge.save_ram()[0], 0xA0);
+        assert_eq!(cartridge.read(0x600000), Some(0x00));
+        assert_eq!(cartridge.read(0x600001), Some(0x0A));
+        assert_eq!(cartridge.read(0x006000), Some(0xA0));
     }
 
     #[test]

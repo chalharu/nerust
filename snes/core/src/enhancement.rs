@@ -387,7 +387,7 @@ impl Sa1State {
         }
     }
 
-    fn read_sa1_cpu_bwram(&self, address: u32, save_ram: &[u8]) -> Option<u8> {
+    pub(crate) fn read_sa1_cpu_bwram(&self, address: u32, save_ram: &[u8]) -> Option<u8> {
         if save_ram.is_empty() {
             return None;
         }
@@ -398,6 +398,26 @@ impl Sa1State {
                 Some(self.read_bwram_bitmap_pixel(pixel_address, save_ram))
             }
         }
+    }
+
+    pub(crate) fn write_sa1_cpu_bwram(&self, address: u32, value: u8, save_ram: &mut [u8]) -> bool {
+        if save_ram.is_empty() {
+            return false;
+        }
+        let Some(access) = self.sa1_cpu_bwram_access(address) else {
+            return false;
+        };
+        if !self.can_write_sa1_cpu_bwram(access) {
+            return true;
+        }
+
+        match access {
+            Sa1BwramAccess::Linear(linear) => save_ram[linear % save_ram.len()] = value,
+            Sa1BwramAccess::Bitmap(pixel_address) => {
+                self.write_bwram_bitmap_pixel(pixel_address, value, save_ram);
+            }
+        }
+        true
     }
 
     fn sa1_cpu_bwram_access(&self, address: u32) -> Option<Sa1BwramAccess> {
@@ -422,6 +442,21 @@ impl Sa1State {
         }
     }
 
+    fn can_write_sa1_cpu_bwram(&self, access: Sa1BwramAccess) -> bool {
+        let byte_address = match access {
+            Sa1BwramAccess::Linear(linear) => linear,
+            Sa1BwramAccess::Bitmap(pixel_address) => {
+                if self.bwram_bitmap_2bpp {
+                    pixel_address >> 2
+                } else {
+                    pixel_address >> 1
+                }
+            }
+        };
+        let protection_address = byte_address & 0x3FFFF;
+        self.cwen || protection_address >= (0x100usize << self.bwp)
+    }
+
     fn read_bwram_bitmap_pixel(&self, pixel_address: usize, save_ram: &[u8]) -> u8 {
         if self.bwram_bitmap_2bpp {
             let shift = (pixel_address & 0x03) * 2;
@@ -429,6 +464,18 @@ impl Sa1State {
         } else {
             let shift = (pixel_address & 0x01) * 4;
             (save_ram[(pixel_address >> 1) % save_ram.len()] >> shift) & 0x0F
+        }
+    }
+
+    fn write_bwram_bitmap_pixel(&self, pixel_address: usize, value: u8, save_ram: &mut [u8]) {
+        if self.bwram_bitmap_2bpp {
+            let shift = (pixel_address & 0x03) * 2;
+            let index = (pixel_address >> 2) % save_ram.len();
+            save_ram[index] = (save_ram[index] & !(0x03 << shift)) | ((value & 0x03) << shift);
+        } else {
+            let shift = (pixel_address & 0x01) * 4;
+            let index = (pixel_address >> 1) % save_ram.len();
+            save_ram[index] = (save_ram[index] & !(0x0F << shift)) | ((value & 0x0F) << shift);
         }
     }
 
@@ -889,6 +936,83 @@ impl Sa1State {
         let remainder = dividend.rem_euclid(divisor);
         let quotient = (dividend - remainder) / divisor;
         self.mr = (u64::from(remainder as u16) << 16) | u64::from(quotient as i16 as u16);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SA1_BBF, SA1_BMAP, SA1_CBWE, SA1_SBWE, Sa1State};
+
+    fn write_register(state: &mut Sa1State, save_ram: &mut [u8], offset: u16, value: u8) {
+        assert!(state.write(u32::from(offset), value, &[], save_ram));
+    }
+
+    #[test]
+    fn sa1_cpu_bmap_linear_writes_use_sa1_bank() {
+        let mut state = Sa1State::new();
+        let mut save_ram = vec![0; 0x4000];
+        save_ram[0] = 0x11;
+
+        write_register(&mut state, &mut save_ram, SA1_BMAP, 0x01);
+        write_register(&mut state, &mut save_ram, SA1_CBWE, 0x80);
+
+        assert!(state.write_sa1_cpu_bwram(0x006000, 0x55, &mut save_ram));
+        assert_eq!(save_ram[0], 0x11);
+        assert_eq!(save_ram[0x2000], 0x55);
+        assert_eq!(state.read_sa1_cpu_bwram(0x006000, &save_ram), Some(0x55));
+    }
+
+    #[test]
+    fn sa1_cpu_writes_require_sa1_write_enable_for_protected_bwram() {
+        let mut state = Sa1State::new();
+        let mut save_ram = vec![0; 0x2000];
+
+        write_register(&mut state, &mut save_ram, SA1_SBWE, 0x80);
+        assert!(state.write_sa1_cpu_bwram(0x006000, 0x12, &mut save_ram));
+        assert_eq!(save_ram[0], 0x00);
+
+        write_register(&mut state, &mut save_ram, SA1_CBWE, 0x80);
+        assert!(state.write_sa1_cpu_bwram(0x006000, 0x34, &mut save_ram));
+        assert_eq!(save_ram[0], 0x34);
+    }
+
+    #[test]
+    fn sa1_cpu_bmap_bitmap_writes_pack_4bpp_pixels() {
+        let mut state = Sa1State::new();
+        let mut save_ram = vec![0; 0x2000];
+        save_ram[0] = 0xAB;
+
+        write_register(&mut state, &mut save_ram, SA1_CBWE, 0x80);
+        write_register(&mut state, &mut save_ram, SA1_BBF, 0x00);
+        write_register(&mut state, &mut save_ram, SA1_BMAP, 0x80);
+
+        assert!(state.write_sa1_cpu_bwram(0x006000, 0x07, &mut save_ram));
+        assert_eq!(save_ram[0], 0xA7);
+        assert_eq!(state.read_sa1_cpu_bwram(0x006000, &save_ram), Some(0x07));
+        assert_eq!(state.read_sa1_cpu_bwram(0x006001, &save_ram), Some(0x0A));
+
+        assert!(state.write_sa1_cpu_bwram(0x006001, 0x03, &mut save_ram));
+        assert_eq!(save_ram[0], 0x37);
+        assert_eq!(state.read_sa1_cpu_bwram(0x006000, &save_ram), Some(0x07));
+        assert_eq!(state.read_sa1_cpu_bwram(0x006001, &save_ram), Some(0x03));
+    }
+
+    #[test]
+    fn sa1_cpu_bmap_bitmap_writes_pack_2bpp_pixels() {
+        let mut state = Sa1State::new();
+        let mut save_ram = vec![0; 0x2000];
+
+        write_register(&mut state, &mut save_ram, SA1_CBWE, 0x80);
+        write_register(&mut state, &mut save_ram, SA1_BBF, 0x80);
+        write_register(&mut state, &mut save_ram, SA1_BMAP, 0x80);
+
+        assert!(state.write_sa1_cpu_bwram(0x006001, 0x03, &mut save_ram));
+        assert_eq!(save_ram[0], 0x0C);
+        assert_eq!(state.read_sa1_cpu_bwram(0x006001, &save_ram), Some(0x03));
+
+        assert!(state.write_sa1_cpu_bwram(0x006003, 0x02, &mut save_ram));
+        assert_eq!(save_ram[0], 0x8C);
+        assert_eq!(state.read_sa1_cpu_bwram(0x006003, &save_ram), Some(0x02));
     }
 }
 
