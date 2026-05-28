@@ -758,6 +758,10 @@ mod tests {
         0xF1, 0x0C, 0x02, 0xB0, 0x31, 0xFD, 0xDC, 0x00, 0x9D, 0xF0, 0xEF, 0xBE, 0xF1, 0x12, 0x02,
         0xB0, 0x31, 0x00, 0x01, 0x01,
     ];
+    const GSU_SPRITE_SCALER_PROGRAM: &[u8] = include_bytes!(
+        "../../../roms/snes-coprocessor-tests/hirom-gsu-test/build/sprite_scaler.bin"
+    );
+    const GSU_BITMASK_LUT: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
     #[test]
     fn super_fx_game_ram_maps_full_direct_banks_and_starts_programs() {
@@ -872,6 +876,42 @@ mod tests {
         assert_eq!(cartridge.read(0x70020D), Some(0x00));
         assert_eq!(cartridge.read(0x700212), Some(0x00));
         assert_eq!(cartridge.read(0x700213), Some(0x00));
+    }
+
+    #[test]
+    fn super_fx_runs_sprite_scaler_fixture() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU SCALER",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in [8, 8, 8, 8, 0x00, 0x04, 1, 1, 0x00, 0x01, 0x00, 0x01]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(cartridge.write(0x700000 + offset as u32, value));
+        }
+        for (offset, value) in GSU_BITMASK_LUT.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700060 + offset as u32, value));
+        }
+        for (offset, value) in GSU_DEMO_TILE_4BPP.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700400 + offset as u32, value));
+        }
+        for (offset, value) in GSU_SPRITE_SCALER_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700100 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x01));
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        for (offset, expected) in GSU_DEMO_TILE_4BPP.iter().copied().enumerate() {
+            assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
+        }
     }
 
     #[test]
