@@ -318,7 +318,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     fun showRomLibraryDialog(entryNames: Array<String>, entryIds: Array<String>) {
         var resultSent = false
         showComposeDialog(
-            tag = ROM_LIBRARY_DIALOG_TAG,
+            dialogTag = ROM_LIBRARY_DIALOG_TAG,
             contentDescription = romLibraryContentDescription(entryNames.asList()),
             onDismiss = {
                 if (!resultSent) {
@@ -383,7 +383,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         var resultSent = false
 
         showComposeDialog(
-            tag = SETTINGS_DIALOG_TAG,
+            dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
             onDismiss = {
                 if (!resultSent) {
