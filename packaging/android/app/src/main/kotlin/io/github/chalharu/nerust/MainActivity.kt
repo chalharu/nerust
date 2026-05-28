@@ -1,6 +1,6 @@
 package io.github.chalharu.nerust
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
@@ -17,18 +17,28 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.ArrayAdapter
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.ListView
 import android.widget.PopupWindow
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -36,13 +46,20 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -60,12 +77,14 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.launch
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
+private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
@@ -74,9 +93,21 @@ private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
+private const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
+private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
 
 private data class DrawerAction(val label: String, val action: String)
+
+private data class AndroidSetting(val key: String, val label: String, val choices: List<String>)
+
+internal data class OverlayZoneSpec(
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+    val label: String,
+)
 
 private val DRAWER_ACTIONS = listOf(
     DrawerAction("ROM Library", MENU_ACTION_OPEN_LIBRARY),
@@ -98,18 +129,24 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
-    private val ensureMenuChromeAttachedRunnable = Runnable { ensureMenuChromeAttached() }
-    private var menuChromeAttachAttempts = 0
+    private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
+    private var chromeAttachAttempts = 0
     private var chromeAttachEnabled = false
     private var controlsOverlayPopup: PopupWindow? = null
     private var controlsOverlayView: View? = null
-    private var menuButtonPopup: PopupWindow? = null
-    private var menuChromeContainer: FrameLayout? = null
-    private var menuButtonView: View? = null
+    private var drawerChromePopup: PopupWindow? = null
+    private var drawerChromeContainer: FrameLayout? = null
+    private var drawerEdgeHandleView: View? = null
     private var drawerShowing = false
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
+    private var composeDialog: Dialog? = null
+    private var composeDialogRootView: View? = null
+    private var composeDialogComposeView: View? = null
+    private var composeDialogTag: String? = null
+    private var composeDialogDismissCallback: (() -> Unit)? = null
     private var lastDrawerStateForTest = "not requested"
+    private var lastDialogStateForTest = "not requested"
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -125,7 +162,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        scheduleMenuChromeAttach()
+        scheduleChromeAttach()
     }
 
     override fun onStart() {
@@ -137,13 +174,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         super.onResume()
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-        scheduleMenuChromeAttach()
+        scheduleChromeAttach()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            scheduleMenuChromeAttach()
+            scheduleChromeAttach()
         }
     }
 
@@ -197,10 +234,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri != null) {
-            val takeFlags = data?.flags
-                ?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                ?.takeIf { it != 0 }
-                ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+            val takeFlags =
+                data?.flags
+                    ?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    ?.takeIf { it != 0 }
+                    ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
             try {
                 contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (error: SecurityException) {
@@ -215,71 +253,94 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         when (tag) {
             CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
                 controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerShowing && menuButtonPopup?.isShowing == true &&
+            DRAWER_COMPOSE_TAG -> drawerShowing && drawerChromePopup?.isShowing == true &&
                 drawerComposeView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerShowing && menuButtonPopup?.isShowing == true &&
+            DRAWER_EDGE_HANDLE_TAG -> !drawerShowing && drawerChromePopup?.isShowing == true &&
+                drawerEdgeHandleView.isShownInWindowForTest()
+            DRAWER_OVERLAY_TAG -> drawerShowing && drawerChromePopup?.isShowing == true &&
                 drawerOverlayView.isShownInWindowForTest()
-            MENU_BUTTON_TAG -> menuButtonPopup?.isShowing == true &&
-                menuButtonView.isShownInWindowForTest()
-            else -> false
+            ROM_LIBRARY_DIALOG_TAG,
+            SETTINGS_DIALOG_TAG,
+            ->
+                composeDialogTag == tag &&
+                    composeDialog?.isShowing == true &&
+                    composeDialogRootView.isShownInWindowForTest()
+            else -> window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
         }
 
     fun findChromeViewForTest(tag: String): View? =
         when (tag) {
             CONTROLS_OVERLAY_TAG -> controlsOverlayView
             DRAWER_COMPOSE_TAG -> drawerComposeView
+            DRAWER_EDGE_HANDLE_TAG -> drawerEdgeHandleView
             DRAWER_OVERLAY_TAG -> drawerOverlayView
-            MENU_BUTTON_TAG -> menuButtonView
+            ROM_LIBRARY_DIALOG_TAG,
+            SETTINGS_DIALOG_TAG,
+            ->
+                composeDialogRootView.takeIf { composeDialogTag == tag }
             else -> window.decorView.findViewWithTag(tag)
         }
 
     fun chromeDebugStateForTest(tag: String): String =
         "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, chromeAttachEnabled=$chromeAttachEnabled, " +
-            "attachAttempts=$menuChromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
+            "attachAttempts=$chromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
             "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
-            "menuPopup=${menuButtonPopup.debugPopupState()}, menuView=${menuButtonView.debugViewState()}, " +
+            "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
             "drawerShowing=$drawerShowing, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
-            "drawerCompose=${drawerComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest"
+            "drawerCompose=${drawerComposeView.debugViewState()}, dialogTag=$composeDialogTag, " +
+            "dialog=${composeDialog.debugDialogState()}, dialogRoot=${composeDialogRootView.debugViewState()}, " +
+            "dialogCompose=${composeDialogComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest, " +
+            "lastDialog=$lastDialogStateForTest"
 
     fun dispatchMenuActionForTest(action: String) {
         dispatchMenuAction(action)
+    }
+
+    fun openDrawerForTest() {
+        showDrawerOverlay()
+    }
+
+    fun dismissComposeDialogForTest() {
+        dismissComposeDialog(notifyDismiss = false)
     }
 
     /**
      * Show a modal ROM library dialog.
      *
      * The first item is always "Import new ROM…"; the remaining items are the
-     * provided library entries in order.  When the user makes a selection this
+     * provided library entries in order. When the user makes a selection this
      * method calls [onRomLibrarySelected] with the appropriate id and then
-     * returns control to Rust.  On cancel/dismiss it calls
+     * returns control to Rust. On cancel/dismiss it calls
      * [onRomLibrarySelected] with `null`.
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
     fun showRomLibraryDialog(entryNames: Array<String>, entryIds: Array<String>) {
-        val items = ArrayList<String>(entryNames.size + 1)
-        items.add("Import new ROM\u2026")
-        items.addAll(entryNames)
         var resultSent = false
-
-        AlertDialog.Builder(this)
-            .setTitle("ROM Library")
-            .setItems(items.toTypedArray()) { _, which ->
-                resultSent = true
-                if (which == 0) {
-                    // User wants to import – tell Rust first, which will
-                    // trigger the SAF picker on its own next event-loop turn.
-                    onRomLibrarySelected(IMPORT_ACTION_ID)
-                } else {
-                    onRomLibrarySelected(entryIds[which - 1])
-                }
-            }
-            .setOnDismissListener {
+        showComposeDialog(
+            tag = ROM_LIBRARY_DIALOG_TAG,
+            contentDescription = romLibraryContentDescription(entryNames.asList()),
+            onDismiss = {
                 if (!resultSent) {
                     onRomLibrarySelected(null)
                 }
-            }
-            .show()
+            },
+        ) { dismiss ->
+            NerustRomLibraryDialogCard(
+                entryNames = entryNames.asList(),
+                onDismissRequest = dismiss,
+                onImport = {
+                    resultSent = true
+                    onRomLibrarySelected(IMPORT_ACTION_ID)
+                    dismiss()
+                },
+                onSelectEntry = { index ->
+                    resultSent = true
+                    onRomLibrarySelected(entryIds[index])
+                    dismiss()
+                },
+            )
+        }
     }
 
     /**
@@ -287,15 +348,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
      *
      * Presents an Android-relevant subset of settings. Each setting is backed
      * by a tab-separated list of choices; the current selection is identified
-     * by index.  Tapping a row in the list opens a single-choice sub-dialog.
-     * Tapping "Save" calls [onSettingsDialogResult] with a comma-separated
-     * string of the final choice indices.  Cancel/dismiss calls it with `null`.
-     *
-     * @param keys           Stable setting identifiers (kept for documentation
-     *                       clarity and potential future use).
-     * @param labels         Human-readable label for each setting.
-     * @param choiceStrings  Tab-separated choice labels for each setting.
-     * @param currentIndices Current choice index as a string for each setting.
+     * by index. Tapping a row in the list opens a choice picker rendered in
+     * Compose. Tapping "Save" calls [onSettingsDialogResult] with a
+     * comma-separated string of the final choice indices. Cancel/dismiss calls
+     * it with `null`.
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
@@ -305,93 +361,85 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
     ) {
-        val selectedIndices = IntArray(labels.size) { i ->
-            currentIndices.getOrNull(i)?.toIntOrNull() ?: 0
-        }
-        val choiceArrays: Array<Array<String>> = Array(choiceStrings.size) { i ->
-            choiceStrings[i].split('\t').toTypedArray()
-        }
-
-        fun itemText(i: Int): String =
-            "${labels[i]}: ${choiceArrays[i].getOrElse(selectedIndices[i]) { "?" }}"
-
-        val displayItems = Array(labels.size) { i -> itemText(i) }
-        val listView = ListView(this)
-        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, displayItems)
-        listView.adapter = adapter
-
+        val settings =
+            labels.indices.map { index ->
+                AndroidSetting(
+                    key = keys.getOrNull(index) ?: "setting_$index",
+                    label = labels[index],
+                    choices =
+                        choiceStrings
+                            .getOrNull(index)
+                            ?.split('\t')
+                            ?.filter(String::isNotEmpty)
+                            ?.ifEmpty { listOf("?") }
+                            ?: listOf("?"),
+                )
+            }
+        val initialSelections =
+            settings.mapIndexed { index, setting ->
+                val maxIndex = max(0, setting.choices.lastIndex)
+                (currentIndices.getOrNull(index)?.toIntOrNull() ?: 0).coerceIn(0, maxIndex)
+            }
         var resultSent = false
 
-        val parentDialog = AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(listView)
-            .setPositiveButton("Save") { _, _ ->
-                resultSent = true
-                onSettingsDialogResult(selectedIndices.joinToString(","))
-            }
-            .setNegativeButton("Cancel") { _, _ ->
-                resultSent = true
-                onSettingsDialogResult(null)
-            }
-            .setOnDismissListener {
+        showComposeDialog(
+            tag = SETTINGS_DIALOG_TAG,
+            contentDescription = settingsContentDescription(settings, initialSelections),
+            onDismiss = {
                 if (!resultSent) {
                     onSettingsDialogResult(null)
                 }
-            }
-            .create()
-
-        listView.setOnItemClickListener { _, _, which, _ ->
-            AlertDialog.Builder(this)
-                .setTitle(labels[which])
-                .setSingleChoiceItems(choiceArrays[which], selectedIndices[which]) { subDialog, choice ->
-                    selectedIndices[which] = choice
-                    displayItems[which] = itemText(which)
-                    adapter.notifyDataSetChanged()
-                    subDialog.dismiss()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+            },
+        ) { dismiss ->
+            NerustSettingsDialogCard(
+                settings = settings,
+                initialSelections = initialSelections,
+                onDismissRequest = dismiss,
+                onSave = { selections ->
+                    resultSent = true
+                    onSettingsDialogResult(selections.joinToString(","))
+                    dismiss()
+                },
+            )
         }
-
-        parentDialog.show()
     }
 
-    private fun scheduleMenuChromeAttach() {
+    private fun scheduleChromeAttach() {
         if (!chromeAttachEnabled || isFinishing || isDestroyed) {
             return
         }
-        menuChromeAttachAttempts = 0
-        ensureMenuChromeAttached()
-        window.decorView.post(ensureMenuChromeAttachedRunnable)
+        chromeAttachAttempts = 0
+        ensureChromeAttached()
+        window.decorView.post(ensureChromeAttachedRunnable)
     }
 
-    private fun ensureMenuChromeAttached() {
+    private fun ensureChromeAttached() {
         if (!chromeAttachEnabled || isFinishing || isDestroyed) {
             return
         }
         val anchor = popupAnchor() ?: run {
-            retryMenuChromeAttach()
+            retryChromeAttach()
             return
         }
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
-        val buttonAttached = ensureMenuButtonPopup(anchor)
-        if (!controlsAttached || !buttonAttached) {
-            retryMenuChromeAttach()
+        val drawerAttached = ensureDrawerChromePopup(anchor)
+        if (!controlsAttached || !drawerAttached) {
+            retryChromeAttach()
         }
     }
 
-    private fun retryMenuChromeAttach() {
-        if (menuChromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
-            Log.w(TAG, "Menu chrome attach skipped because Android window token was unavailable")
+    private fun retryChromeAttach() {
+        if (chromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
+            Log.w(TAG, "Chrome attach skipped because Android window token was unavailable")
             return
         }
-        menuChromeAttachAttempts += 1
-        window.decorView.postDelayed(ensureMenuChromeAttachedRunnable, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
+        chromeAttachAttempts += 1
+        window.decorView.postDelayed(ensureChromeAttachedRunnable, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
     }
 
     private fun removePendingChromeAttachCallbacks() {
-        window.decorView.removeCallbacks(ensureMenuChromeAttachedRunnable)
+        window.decorView.removeCallbacks(ensureChromeAttachedRunnable)
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
@@ -402,17 +450,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         controlsOverlayPopup?.dismiss()
         val view = createControlsOverlay()
-        val popup = PopupWindow(
-            view,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            false,
-        ).apply {
-            isTouchable = false
-            isClippingEnabled = false
-            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        }
+        val popup =
+            PopupWindow(
+                view,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                false,
+            ).apply {
+                isTouchable = false
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
 
         controlsOverlayView = view
         controlsOverlayPopup = popup
@@ -424,38 +473,39 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         return false
     }
 
-    private fun ensureMenuButtonPopup(anchor: View): Boolean {
-        val existing = menuButtonPopup
-        if (existing?.isShowing == true && (menuButtonView != null || drawerShowing)) {
+    private fun ensureDrawerChromePopup(anchor: View): Boolean {
+        val existing = drawerChromePopup
+        if (existing?.isShowing == true && (drawerEdgeHandleView != null || drawerShowing)) {
             return true
         }
 
-        menuButtonPopup?.dismiss()
+        drawerChromePopup?.dismiss()
         val container = FrameLayout(this)
-        val view = createMenuButtonOverlay()
-        container.addView(view)
-        val popup = PopupWindow(
-            container,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            false,
-        ).apply {
-            isClippingEnabled = false
-            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-            elevation = dp(8).toFloat()
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        }
+        val edgeHandle = createDrawerEdgeHandleOverlay()
+        container.addView(edgeHandle)
+        val popup =
+            PopupWindow(
+                container,
+                dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                false,
+            ).apply {
+                isTouchable = true
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                elevation = dp(8).toFloat()
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
 
-        menuChromeContainer = container
-        menuButtonView = view
-        menuButtonPopup = popup
-        val margin = dp(16)
-        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, margin, statusBarHeight() + margin)) {
+        drawerChromeContainer = container
+        drawerEdgeHandleView = edgeHandle
+        drawerChromePopup = popup
+        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
             return true
         }
-        menuButtonPopup = null
-        menuChromeContainer = null
-        menuButtonView = null
+        drawerChromePopup = null
+        drawerChromeContainer = null
+        drawerEdgeHandleView = null
         return false
     }
 
@@ -470,27 +520,26 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun createControlsOverlay(): View =
         ControlsOverlayView(this).apply {
             tag = CONTROLS_OVERLAY_TAG
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
+            layoutParams =
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
             isClickable = false
             isFocusable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-    private fun createMenuButtonOverlay(): Button =
-        Button(this).apply {
-            tag = MENU_BUTTON_TAG
-            text = "Menu"
-            contentDescription = "Menu"
-            setAllCaps(false)
-            setOnClickListener { showDrawerOverlay() }
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.START,
-            )
+    private fun createDrawerEdgeHandleOverlay(): View =
+        DrawerEdgeSwipeHandleView(this, ::showDrawerOverlay).apply {
+            tag = DRAWER_EDGE_HANDLE_TAG
+            contentDescription = "Open navigation drawer"
+            layoutParams =
+                FrameLayout.LayoutParams(
+                    dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.START,
+                )
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
@@ -499,12 +548,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
             return
         }
-        val popup = menuButtonPopup ?: run {
-            lastDrawerStateForTest = "menu popup unavailable"
+        val popup = drawerChromePopup ?: run {
+            lastDrawerStateForTest = "drawer popup unavailable"
             return
         }
-        val container = menuChromeContainer ?: run {
-            lastDrawerStateForTest = "menu container unavailable"
+        val container = drawerChromeContainer ?: run {
+            lastDrawerStateForTest = "drawer container unavailable"
             return
         }
         if (drawerShowing) {
@@ -513,30 +562,34 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
         lastDrawerStateForTest = "creating"
 
-        val overlay = ComposeOwnerFrameLayout(this).apply {
-            tag = DRAWER_OVERLAY_TAG
-            setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-        }
-        val drawerContent = ComposeView(this).apply {
-            tag = DRAWER_COMPOSE_TAG
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent {
-                MaterialTheme {
-                    NerustDrawerOverlay(
-                        onDismissRequest = { removeDrawerOverlay() },
-                        onMenuAction = ::dispatchMenuAction,
+        val overlay =
+            ComposeOwnerFrameLayout(this).apply {
+                tag = DRAWER_OVERLAY_TAG
+                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
                     )
+            }
+        val drawerContent =
+            ComposeView(this).apply {
+                tag = DRAWER_COMPOSE_TAG
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+                setContent {
+                    MaterialTheme {
+                        NerustDrawerOverlay(
+                            onDismissRequest = { removeDrawerOverlay() },
+                            onMenuAction = ::dispatchMenuAction,
+                        )
+                    }
                 }
             }
-        }
         installComposeOwners(overlay)
         installComposeOwners(drawerContent)
         overlay.addView(drawerContent)
@@ -545,14 +598,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         container.addView(overlay)
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
+        drawerEdgeHandleView = null
         drawerShowing = true
-        menuButtonView = null
-        val shown = updateMenuChromePopupForDrawer(popup)
+        val shown = updateDrawerChromePopupForDrawer(popup)
         lastDrawerStateForTest =
-            "showInMenuPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
+            "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
         if (!shown) {
             clearDrawerWindowReferences()
-            restoreMenuButtonOverlay()
+            restoreDrawerEdgeHandleOverlay()
         }
     }
 
@@ -561,7 +614,95 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return false
         }
         clearDrawerWindowReferences()
-        return restoreMenuButtonOverlay()
+        return restoreDrawerEdgeHandleOverlay()
+    }
+
+    private fun showComposeDialog(
+        tag: String,
+        contentDescription: String,
+        onDismiss: () -> Unit,
+        content: @Composable (dismiss: () -> Unit) -> Unit,
+    ) {
+        dismissComposeDialog(notifyDismiss = true)
+
+        lateinit var dialog: Dialog
+        val root =
+            ComposeOwnerFrameLayout(this).apply {
+                tag = tag
+                setTag(R.id.nerust_dialog_content_probe, contentDescription)
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+            }
+        val composeView =
+            ComposeView(this).apply {
+                tag = "$tag-compose"
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            }
+        dialog =
+            Dialog(this).apply {
+                window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                setCancelable(true)
+                setCanceledOnTouchOutside(true)
+            }
+
+        composeView.setContent {
+            MaterialTheme {
+                content { dialog.dismiss() }
+            }
+        }
+
+        installComposeOwners(root)
+        installComposeOwners(composeView)
+        root.addView(composeView)
+        dialog.setContentView(root)
+
+        composeDialog = dialog
+        composeDialogRootView = root
+        composeDialogComposeView = composeView
+        composeDialogTag = tag
+        composeDialogDismissCallback = onDismiss
+        dialog.setOnDismissListener {
+            val dismissCallback = composeDialogDismissCallback
+            clearComposeDialogWindowReferences()
+            dismissCallback?.invoke()
+        }
+        try {
+            dialog.show()
+            dialog.window?.setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            lastDialogStateForTest = "showing $tag"
+        } catch (_: WindowManager.BadTokenException) {
+            dialog.setOnDismissListener(null)
+            clearComposeDialogWindowReferences()
+            lastDialogStateForTest = "show failed for $tag: bad token"
+            onDismiss()
+        } catch (_: IllegalStateException) {
+            dialog.setOnDismissListener(null)
+            clearComposeDialogWindowReferences()
+            lastDialogStateForTest = "show failed for $tag: illegal state"
+            onDismiss()
+        }
+    }
+
+    private fun dismissComposeDialog(notifyDismiss: Boolean) {
+        val dialog = composeDialog ?: return
+        val dismissCallback = composeDialogDismissCallback
+        dialog.setOnDismissListener(null)
+        clearComposeDialogWindowReferences()
+        dialog.dismiss()
+        if (notifyDismiss) {
+            dismissCallback?.invoke()
+        }
     }
 
     private fun popupAnchor(): View? =
@@ -583,23 +724,28 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         }
 
-    private fun updateMenuChromePopupForDrawer(popup: PopupWindow): Boolean =
-        updatePopupWindow(popup, 0, 0, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    private fun updateDrawerChromePopupForDrawer(popup: PopupWindow): Boolean =
+        updatePopupWindow(
+            popup,
+            0,
+            0,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        )
 
-    private fun restoreMenuButtonOverlay(): Boolean {
-        val popup = menuButtonPopup ?: return false
-        val container = menuChromeContainer ?: return false
+    private fun restoreDrawerEdgeHandleOverlay(): Boolean {
+        val popup = drawerChromePopup ?: return false
+        val container = drawerChromeContainer ?: return false
         container.removeAllViews()
-        val button = createMenuButtonOverlay()
-        container.addView(button)
-        menuButtonView = button
-        val margin = dp(16)
+        val edgeHandle = createDrawerEdgeHandleOverlay()
+        container.addView(edgeHandle)
+        drawerEdgeHandleView = edgeHandle
         return updatePopupWindow(
             popup,
-            margin,
-            statusBarHeight() + margin,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            0,
+            0,
+            dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
+            ViewGroup.LayoutParams.MATCH_PARENT,
         )
     }
 
@@ -621,6 +767,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         drawerComposeView = null
     }
 
+    private fun clearComposeDialogWindowReferences() {
+        composeDialog = null
+        composeDialogRootView = null
+        composeDialogComposeView = null
+        composeDialogTag = null
+        composeDialogDismissCallback = null
+    }
+
     private fun View?.isShownInWindowForTest(): Boolean =
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
 
@@ -631,15 +785,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
 
+    private fun Dialog?.debugDialogState(): String =
+        if (this == null) "null" else "showing=$isShowing"
+
     private fun PopupWindow?.debugPopupState(): String =
         if (this == null) "null" else "showing=$isShowing"
 
     private fun dismissChromePopups() {
         clearDrawerWindowReferences()
-        menuButtonPopup?.dismiss()
-        menuButtonPopup = null
-        menuChromeContainer = null
-        menuButtonView = null
+        dismissComposeDialog(notifyDismiss = true)
+        drawerChromePopup?.dismiss()
+        drawerChromePopup = null
+        drawerChromeContainer = null
+        drawerEdgeHandleView = null
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
@@ -648,13 +806,23 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
-    private fun statusBarHeight(): Int {
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
-    }
-
     private fun drawerContentDescription(): String =
         (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
+
+    private fun romLibraryContentDescription(entryNames: List<String>): String =
+        (listOf("ROM Library", "Import new ROM…") + entryNames).joinToString("\n")
+
+    private fun settingsContentDescription(
+        settings: List<AndroidSetting>,
+        selections: List<Int>,
+    ): String =
+        buildList {
+            add("Settings")
+            settings.forEachIndexed { index, setting ->
+                val value = setting.choices.getOrElse(selections.getOrElse(index) { 0 }) { "?" }
+                add("${setting.label}: $value")
+            }
+        }.joinToString("\n")
 
     private fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
@@ -679,9 +847,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     companion object {
         private const val TAG = "Nerust"
-        private const val ROM_PICKER_REQUEST_CODE = 0x4E45
+        private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
+        private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
 
@@ -741,9 +910,10 @@ private fun NerustDrawerOverlay(
         },
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(WindowInsets.safeDrawing.asPaddingValues()),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
         )
     }
 }
@@ -754,27 +924,247 @@ private fun DrawerActionItem(label: String, onClick: () -> Unit) {
         label = { Text(label) },
         selected = false,
         onClick = onClick,
-        modifier = Modifier
-            .semantics { contentDescription = label }
-            .padding(NavigationDrawerItemDefaults.ItemPadding),
+        modifier =
+            Modifier
+                .semantics { contentDescription = label }
+                .padding(NavigationDrawerItemDefaults.ItemPadding),
     )
 }
 
+@Composable
+private fun NerustDialogHost(content: @Composable () -> Unit) {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun NerustDialogCard(
+    title: String,
+    buttons: @Composable RowScope.() -> Unit,
+    body: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        tonalElevation = 6.dp,
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) {
+            Text(text = title, style = MaterialTheme.typography.headlineSmall)
+            Spacer(modifier = Modifier.height(16.dp))
+            body()
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                content = buttons,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NerustRomLibraryDialogCard(
+    entryNames: List<String>,
+    onDismissRequest: () -> Unit,
+    onImport: () -> Unit,
+    onSelectEntry: (Int) -> Unit,
+) {
+    NerustDialogHost {
+        NerustDialogCard(
+            title = "ROM Library",
+            buttons = {
+                TextButton(onClick = onDismissRequest) {
+                    Text("Cancel")
+                }
+            },
+        ) {
+            LazyColumn(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp),
+            ) {
+                item {
+                    DialogListButton(label = "Import new ROM…", onClick = onImport)
+                    if (entryNames.isNotEmpty()) {
+                        HorizontalDivider()
+                    }
+                }
+                itemsIndexed(entryNames) { index, entryName ->
+                    DialogListButton(label = entryName) { onSelectEntry(index) }
+                    if (index < entryNames.lastIndex) {
+                        HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NerustSettingsDialogCard(
+    settings: List<AndroidSetting>,
+    initialSelections: List<Int>,
+    onDismissRequest: () -> Unit,
+    onSave: (List<Int>) -> Unit,
+) {
+    val selections =
+        remember(settings, initialSelections) {
+            mutableStateListOf<Int>().apply {
+                settings.forEachIndexed { index, setting ->
+                    val maxIndex = max(0, setting.choices.lastIndex)
+                    add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
+                }
+            }
+        }
+    var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
+
+    NerustDialogHost {
+        Box(contentAlignment = Alignment.Center) {
+            NerustDialogCard(
+                title = "Settings",
+                buttons = {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("Cancel")
+                    }
+                    TextButton(onClick = { onSave(selections.toList()) }) {
+                        Text("Save")
+                    }
+                },
+            ) {
+                LazyColumn(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp),
+                ) {
+                    itemsIndexed(settings) { index, setting ->
+                        val selectedValue = setting.choices.getOrElse(selections[index]) { "?" }
+                        DialogSettingButton(
+                            label = setting.label,
+                            value = selectedValue,
+                            key = setting.key,
+                        ) {
+                            activeSettingIndex = index
+                        }
+                        if (index < settings.lastIndex) {
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+
+            activeSettingIndex?.let { settingIndex ->
+                NerustDialogCard(
+                    title = settings[settingIndex].label,
+                    buttons = {
+                        TextButton(onClick = { activeSettingIndex = null }) {
+                            Text("Cancel")
+                        }
+                    },
+                ) {
+                    LazyColumn(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp),
+                    ) {
+                        itemsIndexed(settings[settingIndex].choices) { choiceIndex, choiceLabel ->
+                            DialogChoiceButton(
+                                label = choiceLabel,
+                                selected = selections[settingIndex] == choiceIndex,
+                            ) {
+                                selections[settingIndex] = choiceIndex
+                                activeSettingIndex = null
+                            }
+                            if (choiceIndex < settings[settingIndex].choices.lastIndex) {
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DialogListButton(label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = label },
+    ) {
+        Text(text = label, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun DialogSettingButton(
+    label: String,
+    value: String,
+    key: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 16.dp)
+                .semantics { contentDescription = "$key: $label: $value" },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = label, modifier = Modifier.weight(1f))
+        Text(text = value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp)
+                .semantics { contentDescription = label },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = label, modifier = Modifier.weight(1f))
+        RadioButton(selected = selected, onClick = null)
+    }
+}
+
 private class ControlsOverlayView(context: Context) : View(context) {
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(48, 255, 255, 255)
-        style = Paint.Style.FILL
-    }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(160, 255, 255, 255)
-        strokeWidth = 2f
-        style = Paint.Style.STROKE
-    }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(220, 255, 255, 255)
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
+    private val fillPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(48, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
+    private val strokePaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(160, 255, 255, 255)
+            strokeWidth = 2f
+            style = Paint.Style.STROKE
+        }
+    private val textPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(220, 255, 255, 255)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -784,51 +1174,9 @@ private class ControlsOverlayView(context: Context) : View(context) {
             return
         }
 
-        val controlTop = viewHeight * 0.52f
-        val controlHeight = viewHeight - controlTop
-        val dpadLeft = viewWidth * 0.06f
-        val dpadSize = viewWidth * 0.30f
-        val actionSize = viewWidth * 0.16f
-        val actionRight = viewWidth * 0.76f
-        val faceTop = controlTop + controlHeight * 0.10f
-        val centerTop = controlTop + controlHeight * 0.38f
-
-        drawZone(
-            canvas,
-            dpadLeft + dpadSize * 0.25f,
-            controlTop + controlHeight * 0.05f,
-            dpadSize * 0.50f,
-            dpadSize * 0.28f,
-            "UP",
-        )
-        drawZone(
-            canvas,
-            dpadLeft + dpadSize * 0.25f,
-            controlTop + controlHeight * 0.47f,
-            dpadSize * 0.50f,
-            dpadSize * 0.28f,
-            "DOWN",
-        )
-        drawZone(
-            canvas,
-            dpadLeft,
-            controlTop + controlHeight * 0.26f,
-            dpadSize * 0.28f,
-            dpadSize * 0.36f,
-            "LEFT",
-        )
-        drawZone(
-            canvas,
-            dpadLeft + dpadSize * 0.47f,
-            controlTop + controlHeight * 0.26f,
-            dpadSize * 0.28f,
-            dpadSize * 0.36f,
-            "RIGHT",
-        )
-        drawZone(canvas, actionRight - actionSize * 1.1f, faceTop + actionSize * 0.55f, actionSize, actionSize, "B")
-        drawZone(canvas, actionRight, faceTop, actionSize, actionSize, "A")
-        drawZone(canvas, viewWidth * 0.36f, centerTop, viewWidth * 0.12f, viewHeight * 0.05f, "SELECT")
-        drawZone(canvas, viewWidth * 0.52f, centerTop, viewWidth * 0.12f, viewHeight * 0.05f, "START")
+        portraitControlsLayout(viewWidth, viewHeight).forEach { zone ->
+            drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean = false
@@ -849,4 +1197,140 @@ private class ControlsOverlayView(context: Context) : View(context) {
         val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText(label, rect.centerX(), centerY, textPaint)
     }
+}
+
+private class DrawerEdgeSwipeHandleView(
+    context: Context,
+    private val onDrawerOpen: () -> Unit,
+) : View(context) {
+    private val swipeThresholdPx = context.resources.displayMetrics.density * 24f
+    private val verticalTolerancePx = context.resources.displayMetrics.density * 32f
+    private var downX = 0f
+    private var downY = 0f
+    private var trackingSwipe = false
+
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                trackingSwipe = true
+                true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!trackingSwipe) {
+                    false
+                } else {
+                    val deltaX = event.x - downX
+                    val deltaY = abs(event.y - downY)
+                    if (deltaY > verticalTolerancePx) {
+                        trackingSwipe = false
+                    } else if (deltaX >= swipeThresholdPx) {
+                        trackingSwipe = false
+                        performClick()
+                        onDrawerOpen()
+                    }
+                    true
+                }
+            }
+
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL,
+            -> {
+                trackingSwipe = false
+                true
+            }
+
+            else -> super.onTouchEvent(event)
+        }
+
+    override fun performClick(): Boolean = super.performClick()
+}
+
+internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
+    val controlTop = height * 0.54f
+    val controlHeight = height - controlTop
+    val dpadLeft = width * 0.08f
+    val dpadSize = width * 0.28f
+    val dpadCenterX = dpadLeft + dpadSize * 0.5f
+    val dpadCenterY = controlTop + controlHeight * 0.58f
+    val dpadArm = dpadSize * 0.28f
+    val dpadExtent = dpadSize * 0.38f
+    val actionSize = width * 0.14f
+    val actionGap = width * 0.04f
+    val actionLeft = width * 0.64f
+    val actionTop = dpadCenterY - actionSize * 0.5f
+    val centerButtonWidth = width * 0.10f
+    val centerButtonHeight = height * 0.038f
+    val centerGap = width * 0.03f
+    val centerRowWidth = centerButtonWidth * 2f + centerGap
+    val centerLeftBound = dpadLeft + dpadSize + width * 0.03f
+    val centerRightBound = actionLeft - width * 0.03f
+    val centeredStart = (centerLeftBound + centerRightBound - centerRowWidth) * 0.5f
+    val centerStartX =
+        centeredStart.coerceIn(
+            centerLeftBound,
+            max(centerLeftBound, centerRightBound - centerRowWidth),
+        )
+    val centerTop = controlTop + controlHeight * 0.16f
+
+    return listOf(
+        OverlayZoneSpec(
+            x = dpadCenterX - dpadArm * 0.5f,
+            y = dpadCenterY - dpadExtent,
+            width = dpadArm,
+            height = dpadExtent - dpadArm * 0.5f,
+            label = "UP",
+        ),
+        OverlayZoneSpec(
+            x = dpadCenterX - dpadArm * 0.5f,
+            y = dpadCenterY + dpadArm * 0.5f,
+            width = dpadArm,
+            height = dpadExtent - dpadArm * 0.5f,
+            label = "DOWN",
+        ),
+        OverlayZoneSpec(
+            x = dpadCenterX - dpadExtent,
+            y = dpadCenterY - dpadArm * 0.5f,
+            width = dpadExtent - dpadArm * 0.5f,
+            height = dpadArm,
+            label = "LEFT",
+        ),
+        OverlayZoneSpec(
+            x = dpadCenterX + dpadArm * 0.5f,
+            y = dpadCenterY - dpadArm * 0.5f,
+            width = dpadExtent - dpadArm * 0.5f,
+            height = dpadArm,
+            label = "RIGHT",
+        ),
+        OverlayZoneSpec(
+            x = actionLeft,
+            y = actionTop,
+            width = actionSize,
+            height = actionSize,
+            label = "B",
+        ),
+        OverlayZoneSpec(
+            x = actionLeft + actionSize + actionGap,
+            y = actionTop,
+            width = actionSize,
+            height = actionSize,
+            label = "A",
+        ),
+        OverlayZoneSpec(
+            x = centerStartX,
+            y = centerTop,
+            width = centerButtonWidth,
+            height = centerButtonHeight,
+            label = "SELECT",
+        ),
+        OverlayZoneSpec(
+            x = centerStartX + centerButtonWidth + centerGap,
+            y = centerTop,
+            width = centerButtonWidth,
+            height = centerButtonHeight,
+            label = "START",
+        ),
+    )
 }
