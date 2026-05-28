@@ -687,6 +687,28 @@ mod tests {
     }
 
     #[test]
+    fn sa1_bwram_maps_direct_and_system_windows() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "SA1 BWRAM",
+            0x23,
+            0x34,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert!(cartridge.write(0x006000, 0x5A));
+        assert_eq!(cartridge.read(0x006000), Some(0x5A));
+        assert_eq!(cartridge.read(0x806000), Some(0x5A));
+        assert_eq!(cartridge.read(0x400000), Some(0x5A));
+
+        assert!(cartridge.write(0x407FFF, 0xC3));
+        assert_eq!(cartridge.read(0x007FFF), Some(0xC3));
+        assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
     fn super_fx_register_window_is_accessible() {
         let mut cartridge =
             Cartridge::from_bytes(&build_lorom_with_header("GSU MMIO", 0x20, 0x13, None, 0x0A))
