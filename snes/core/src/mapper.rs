@@ -190,12 +190,13 @@ pub(crate) fn sa1_ram_index(address: u32, ram_len: usize) -> Option<usize> {
     let bank = ((address >> 16) & 0xFF) as u8;
     let offset = (address & 0xFFFF) as u16;
 
-    if !matches!(bank, 0x40..=0x4F) {
-        return None;
-    }
-
-    let page = usize::from(bank & 0x0F);
-    let linear = page * 0x10000 + usize::from(offset);
+    let linear = match bank {
+        0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
+            usize::from(offset - 0x6000)
+        }
+        0x40..=0x4F => usize::from(bank & 0x0F) * 0x10000 + usize::from(offset),
+        _ => return None,
+    };
     Some(linear % ram_len)
 }
 
@@ -286,10 +287,15 @@ mod tests {
 
     #[test]
     fn sa1_bwram_banks_map_to_linear_ram_storage() {
+        assert_eq!(sa1_ram_index(0x006000, 0x2000), Some(0x0000));
+        assert_eq!(sa1_ram_index(0x007FFF, 0x2000), Some(0x1FFF));
+        assert_eq!(sa1_ram_index(0x806000, 0x2000), Some(0x0000));
         assert_eq!(sa1_ram_index(0x400000, 0x20000), Some(0x00000));
         assert_eq!(sa1_ram_index(0x40FFFF, 0x20000), Some(0x0FFFF));
         assert_eq!(sa1_ram_index(0x410000, 0x20000), Some(0x10000));
         assert_eq!(sa1_ram_index(0x4F1234, 0x20000), Some(0x11234));
+        assert_eq!(sa1_ram_index(0x005FFF, 0x20000), None);
+        assert_eq!(sa1_ram_index(0x008000, 0x20000), None);
         assert_eq!(sa1_ram_index(0xC00000, 0x20000), None);
         assert_eq!(sa1_ram_index(0x700000, 0x20000), None);
     }
