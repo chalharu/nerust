@@ -233,6 +233,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             else -> window.decorView.findViewWithTag(tag)
         }
 
+    fun dismissChromeForTest() {
+        dismissChromePopups()
+    }
+
     fun chromeDebugStateForTest(tag: String): String =
         "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, chromeAttachEnabled=$chromeAttachEnabled, " +
             "attachAttempts=$menuChromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
