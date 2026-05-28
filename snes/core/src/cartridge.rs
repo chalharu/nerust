@@ -228,7 +228,7 @@ impl Cartridge {
         ) {
             return Some(value);
         }
-        self.read_mapped(address)
+        self.read_mapped_mut(address)
     }
 
     fn peek(&self, address: u32) -> Option<u8> {
@@ -260,6 +260,19 @@ impl Cartridge {
         }
 
         self.mapper.read(&self.rom, &self.save_ram, address)
+    }
+
+    fn read_mapped_mut(&mut self, address: u32) -> Option<u8> {
+        if let EnhancementState::Sa1(state) = &mut self.enhancement {
+            if let Some(value) = state.read_sa1_bwram(address, &self.save_ram) {
+                return Some(value);
+            }
+            return state
+                .sa1_banked_rom_index(address, self.rom.len())
+                .map(|index| self.rom[index]);
+        }
+
+        self.read_mapped(address)
     }
 
     pub fn write(&mut self, address: u32, value: u8) -> bool {
@@ -944,6 +957,28 @@ mod tests {
         }
         assert_eq!(cartridge.read(0x003302), Some(0xAA));
         assert_eq!(cartridge.read(0x003303), Some(0xAA));
+    }
+
+    #[test]
+    fn sa1_character_conversion_type1_buffers_bwram_rows_on_read() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x400000, 0x99));
+        assert!(cartridge.write(0x400001, 0x99));
+        write_u24(&mut cartridge, 0x002232, 0x000000);
+        assert!(cartridge.write(0x002235, 0x00));
+        assert!(cartridge.write(0x002231, 0x02));
+        assert!(cartridge.write(0x002230, 0xB0));
+        assert!(cartridge.write(0x002236, 0x03));
+
+        assert_eq!(cartridge.read_mut(0x400000), Some(0xAA));
+        assert_eq!(cartridge.read_mut(0x400001), Some(0x55));
+        assert_eq!(cartridge.read(0x003300), Some(0xAA));
+        assert_eq!(cartridge.read(0x003301), Some(0x55));
+
+        assert!(cartridge.write(0x002231, 0x82));
+        assert_eq!(cartridge.read_mut(0x400000), Some(0x99));
     }
 
     #[test]
