@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
-import android.view.View
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -21,6 +20,22 @@ import org.junit.runners.MethodSorters
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
     @Test
+    fun romPickerIntentUsesSafPersistableReadAccess() {
+        val intent = MainActivity.createRomPickerIntentForTest()
+
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
+        assertEquals("*/*", intent.type)
+        assertTrue(
+            "ROM picker should only return openable documents",
+            intent.categories?.contains(Intent.CATEGORY_OPENABLE) == true,
+        )
+        assertTrue(
+            "ROM picker should request read and persistable URI grants",
+            intent.flags and ROM_PICKER_REQUIRED_FLAGS == ROM_PICKER_REQUIRED_FLAGS,
+        )
+    }
+
+    @Test
     fun appStartsAndDrawerMenuIsAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -32,40 +47,38 @@ class MainActivityE2eTest {
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
-                val decorView = activity.window.decorView
                 val menuButton = requireNotNull(
-                    decorView.findViewWithTag<View>(MENU_BUTTON_TAG),
+                    activity.findChromeViewForTest(MENU_BUTTON_TAG),
                 ) {
                     "Menu button should be attached after startup"
                 }
 
                 assertEquals("Menu", menuButton.contentDescription?.toString())
-                assertTrue("Menu button should be visible", menuButton.isVisibleForTest())
+                assertTrue("Menu button should be showing", activity.isChromeViewShowingForTest(MENU_BUTTON_TAG))
                 assertTrue("Menu button should handle clicks", menuButton.performClick())
             }
             instrumentation.waitForIdleSync()
 
             assertTrue("Drawer overlay should be attached after tapping Menu", waitUntil(DRAWER_TIMEOUT_MS) {
-                taggedView(instrumentation, activity, DRAWER_OVERLAY_TAG)?.isVisibleForTest() == true
+                chromeViewIsShowing(instrumentation, activity, DRAWER_OVERLAY_TAG)
             })
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive after opening Menu" }
-                val decorView = activity.window.decorView
                 val drawerOverlay = requireNotNull(
-                    decorView.findViewWithTag<View>(DRAWER_OVERLAY_TAG),
+                    activity.findChromeViewForTest(DRAWER_OVERLAY_TAG),
                 ) {
                     "Drawer overlay should be attached after tapping Menu"
                 }
-                assertTrue("Drawer overlay should be visible", drawerOverlay.isVisibleForTest())
+                assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
                 assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
 
                 val drawerComposeView = requireNotNull(
-                    decorView.findViewWithTag<View>(DRAWER_COMPOSE_TAG),
+                    activity.findChromeViewForTest(DRAWER_COMPOSE_TAG),
                 ) {
                     "Drawer ComposeView should be attached after tapping Menu"
                 }
-                assertTrue("Drawer ComposeView should be visible", drawerComposeView.isVisibleForTest())
+                assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
             }
         } finally {
             instrumentation.removeMonitor(monitor)
@@ -160,24 +173,22 @@ class MainActivityE2eTest {
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
         assertTrue("Menu button should be attached after startup", waitUntil(STARTUP_TIMEOUT_MS) {
-            taggedView(instrumentation, activity, MENU_BUTTON_TAG)?.isVisibleForTest() == true
+            chromeViewIsShowing(instrumentation, activity, MENU_BUTTON_TAG)
         })
     }
 
-    private fun View.isVisibleForTest(): Boolean = visibility == View.VISIBLE
-
-    private fun taggedView(
+    private fun chromeViewIsShowing(
         instrumentation: Instrumentation,
         activity: MainActivity,
         tag: String,
-    ): View? {
-        var view: View? = null
+    ): Boolean {
+        var showing = false
         instrumentation.runOnMainSync {
             if (!activity.isDestroyed) {
-                view = activity.window.decorView.findViewWithTag(tag)
+                showing = activity.isChromeViewShowingForTest(tag)
             }
         }
-        return view
+        return showing
     }
 
     private fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
@@ -199,6 +210,8 @@ class MainActivityE2eTest {
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val POLL_INTERVAL_MS = 50L
         const val RELAUNCH_SETTLE_MS = 1_000L
+        const val ROM_PICKER_REQUIRED_FLAGS =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val STARTUP_TIMEOUT_MS = 60_000L
     }
 }
