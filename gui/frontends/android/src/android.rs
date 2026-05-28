@@ -441,7 +441,7 @@ impl ApplicationHandler for AndroidFrontend {
 
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -450,11 +450,7 @@ impl ApplicationHandler for AndroidFrontend {
         }
 
         match event {
-            WindowEvent::CloseRequested => {
-                self.save_lifecycle_state();
-                event_loop.exit();
-            }
-            WindowEvent::Destroyed => {
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 self.save_lifecycle_state();
                 self.release_window_resources();
             }
