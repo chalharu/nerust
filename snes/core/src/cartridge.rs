@@ -1,3 +1,4 @@
+use crate::enhancement::EnhancementState;
 use crate::mapper::{HiRomMapper, LoRomMapper, Mapper, MapperKind, Sa1Mapper};
 
 const COPIER_HEADER_LEN: usize = 512;
@@ -101,6 +102,7 @@ pub struct Cartridge {
     save_ram: Box<[u8]>,
     header: CartridgeHeader,
     mapper: Mapper,
+    enhancement: EnhancementState,
 }
 
 impl Cartridge {
@@ -118,11 +120,14 @@ impl Cartridge {
 
         let save_ram = vec![0; ram_size_bytes(header.ram_size_code)?].into_boxed_slice();
 
+        let enhancement = EnhancementState::from_header(&header);
+
         Ok(Self {
             rom: rom.to_vec().into_boxed_slice(),
             save_ram,
             header,
             mapper,
+            enhancement,
         })
     }
 
@@ -221,10 +226,18 @@ impl Cartridge {
     }
 
     pub fn read(&self, address: u32) -> Option<u8> {
+        if let Some(value) = self.enhancement.read(&self.header, address) {
+            return Some(value);
+        }
+
         self.mapper.read(&self.rom, &self.save_ram, address)
     }
 
     pub fn write(&mut self, address: u32, value: u8) -> bool {
+        if self.enhancement.write(&self.header, address, value) {
+            return true;
+        }
+
         self.mapper.write_ram(&mut self.save_ram, address, value)
     }
 
@@ -631,5 +644,92 @@ mod tests {
         .unwrap();
 
         assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
+    }
+
+    #[test]
+    fn sa1_register_and_iram_windows_are_accessible_without_hiding_rom() {
+        let mut cartridge =
+            Cartridge::from_bytes(&build_lorom_with_header("SA1 MMIO", 0x23, 0x34, None, 0x0A))
+                .unwrap();
+
+        assert_eq!(cartridge.read(0x002200), Some(0x00));
+        assert!(cartridge.write(0x002200, 0x5A));
+        assert_eq!(cartridge.read(0x002200), Some(0x5A));
+        assert_eq!(cartridge.read(0x802200), Some(0x5A));
+
+        assert_eq!(cartridge.read(0x003000), Some(0x00));
+        assert!(cartridge.write(0x003000, 0xC3));
+        assert_eq!(cartridge.read(0x003000), Some(0xC3));
+
+        assert_eq!(cartridge.read(0xC08000), Some(0xA2));
+    }
+
+    #[test]
+    fn super_fx_register_window_is_accessible() {
+        let mut cartridge =
+            Cartridge::from_bytes(&build_lorom_with_header("GSU MMIO", 0x20, 0x13, None, 0x0A))
+                .unwrap();
+
+        assert_eq!(cartridge.read(0x003000), Some(0x00));
+        assert!(cartridge.write(0x003000, 0x24));
+        assert_eq!(cartridge.read(0x003000), Some(0x24));
+        assert_eq!(cartridge.read(0x803000), Some(0x24));
+        assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn cx4_register_window_is_accessible() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 MMIO",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.read(0x007F40), Some(0x00));
+        assert!(cartridge.write(0x007F40, 0x66));
+        assert_eq!(cartridge.read(0x007F40), Some(0x66));
+        assert_eq!(cartridge.read(0x807F40), Some(0x66));
+        assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn dsp1_lorom_register_window_reports_ready_status() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 MMIO",
+            0x20,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.read(0x208000), Some(0x00));
+        assert_eq!(cartridge.read(0x208001), Some(0x80));
+        assert!(cartridge.write(0x208000, 0x99));
+        assert_eq!(cartridge.read(0x208000), Some(0x99));
+        assert_eq!(cartridge.read(0xA08001), Some(0x80));
+        assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn dsp1_hirom_register_window_reports_ready_status() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "DSP1B MMIO",
+            0x21,
+            0x05,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert_eq!(cartridge.read(0x006001), Some(0x80));
+        assert!(cartridge.write(0x006000, 0x77));
+        assert_eq!(cartridge.read(0x006000), Some(0x77));
+        assert_eq!(cartridge.read(0x806001), Some(0x80));
+        assert_eq!(cartridge.read(0xC08000), Some(0xEA));
     }
 }

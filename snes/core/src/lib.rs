@@ -7,6 +7,7 @@
 mod bus;
 mod cartridge;
 mod cpu;
+mod enhancement;
 mod mapper;
 mod memory;
 mod ppu1;
