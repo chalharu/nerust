@@ -74,6 +74,14 @@ pub(crate) fn register_main_activity_natives(
 }
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
+    // Register native methods using the app-provided VM which has the correct
+    // classloader context.  This reliably succeeds even when JNI_OnLoad's
+    // early registration failed (classloader not yet ready at load time).
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+    if let Err(error) = vm.attach_current_thread(register_main_activity_natives) {
+        log::error!("failed to register JNI natives in run(): {error:?}");
+    }
+
     picker::bind_app(&app);
     library::bind_app(&app);
     menu::bind_app(&app);

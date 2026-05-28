@@ -27,18 +27,22 @@ pub fn android_main(app: AndroidApp) {
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
+/// # Safety
+///
+/// Called by the JVM when the native library is loaded.  `vm` must be a valid
+/// pointer to the `JavaVM` instance provided by the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,
 ) -> jint {
     let vm = unsafe { JavaVM::from_raw(vm) };
-    match vm.attach_current_thread(|env| android::register_main_activity_natives(env)) {
-        Ok(()) => JNI_VERSION_1_6,
-        Err(error) => {
-            eprintln!("failed to register Android JNI callbacks: {error:?}");
-            0
-        }
+    // Best-effort registration; reliable registration happens in android::run().
+    // Always return the version so the JVM considers the library loaded and
+    // standard JNI symbol lookup can find exported native methods.
+    if let Err(error) = vm.attach_current_thread(android::register_main_activity_natives) {
+        eprintln!("JNI_OnLoad: deferred native registration (will retry): {error:?}");
     }
+    JNI_VERSION_1_6
 }
 
 #[cfg(not(target_os = "android"))]
