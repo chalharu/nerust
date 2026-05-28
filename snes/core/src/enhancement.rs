@@ -637,6 +637,23 @@ struct Cx4Point {
     z: i16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cx4OamCursor {
+    oam: usize,
+    oam_hi: usize,
+    size_offset: u8,
+    sprite_slots: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cx4OamEntry {
+    x: i16,
+    y: i16,
+    name: u8,
+    attributes: u8,
+    large: bool,
+}
+
 const CX4_RAM_START: u16 = 0x6000;
 const CX4_RAM_LEN: usize = 0x2000;
 const CX4_LOAD_TRIGGER: u16 = 0x7F47;
@@ -755,6 +772,7 @@ impl Cx4State {
 
     fn command_sprite(&mut self, rom: &[u8]) {
         match self.ram[CX4_COMMAND_MODE] {
+            0x00 => self.command_build_oam(rom),
             0x03 => self.command_scale_rotate(0),
             0x05 => self.command_transform_lines(),
             0x07 => self.command_scale_rotate(64),
@@ -762,6 +780,125 @@ impl Cx4State {
             0x0B => self.command_disintegrate(),
             0x0C => self.command_bitplane_wave(),
             _ => {}
+        }
+    }
+
+    fn command_build_oam(&mut self, rom: &[u8]) {
+        let oam = usize::from(self.ram[0x0626]) << 2;
+        let mut clear = 0x01FDusize;
+        while clear > oam {
+            self.ram[clear] = 0xE0;
+            if clear < 4 {
+                break;
+            }
+            clear -= 4;
+        }
+
+        let global_x = self.read_u16(0x0621);
+        let global_y = self.read_u16(0x0623);
+        let oam_hi = 0x0200 + (usize::from(self.ram[0x0626]) >> 2);
+        if self.ram[0x0620] == 0 {
+            return;
+        }
+
+        let mut cursor = Cx4OamCursor {
+            oam,
+            oam_hi,
+            size_offset: (self.ram[0x0626] & 0x03) * 2,
+            sprite_slots: 128u8.saturating_sub(self.ram[0x0626]),
+        };
+        let mut source = 0x0220usize;
+        for _ in 0..self.ram[0x0620] {
+            if cursor.sprite_slots == 0 || source + 15 >= self.ram.len() {
+                break;
+            }
+
+            let sprite_x = self.read_u16(source).wrapping_sub(global_x) as i16;
+            let sprite_y = self.read_u16(source + 2).wrapping_sub(global_y) as i16;
+            let name = self.ram[source + 5];
+            let attributes = self.ram[source + 4] | self.ram[source + 6];
+            let mut sprite_data = self.read_u24(source + 7);
+
+            let sprite_count = cx4_rom_read(rom, sprite_data);
+            if sprite_count != 0 {
+                sprite_data = sprite_data.wrapping_add(1);
+                for _ in 0..sprite_count {
+                    if cursor.sprite_slots == 0 {
+                        break;
+                    }
+                    let flags = cx4_rom_read(rom, sprite_data);
+                    let mut x = i16::from(cx4_rom_read(rom, sprite_data.wrapping_add(1)) as i8);
+                    if attributes & 0x40 != 0 {
+                        x = -x - if flags & 0x20 != 0 { 16 } else { 8 };
+                    }
+                    x = x.wrapping_add(sprite_x);
+                    if (-16..=272).contains(&i32::from(x)) {
+                        let mut y = i16::from(cx4_rom_read(rom, sprite_data.wrapping_add(2)) as i8);
+                        if attributes & 0x80 != 0 {
+                            y = -y - if flags & 0x20 != 0 { 16 } else { 8 };
+                        }
+                        y = y.wrapping_add(sprite_y);
+                        if (-16..=224).contains(&i32::from(y)) {
+                            self.write_oam_entry(
+                                &mut cursor,
+                                Cx4OamEntry {
+                                    x,
+                                    y,
+                                    name: name.wrapping_add(cx4_rom_read(
+                                        rom,
+                                        sprite_data.wrapping_add(3),
+                                    )),
+                                    attributes: attributes ^ (flags & 0xC0),
+                                    large: flags & 0x20 != 0,
+                                },
+                            );
+                        }
+                    }
+                    sprite_data = sprite_data.wrapping_add(4);
+                }
+            } else {
+                self.write_oam_entry(
+                    &mut cursor,
+                    Cx4OamEntry {
+                        x: sprite_x,
+                        y: sprite_y,
+                        name,
+                        attributes,
+                        large: true,
+                    },
+                );
+            }
+
+            source += 16;
+        }
+    }
+
+    fn write_oam_entry(&mut self, cursor: &mut Cx4OamCursor, entry: Cx4OamEntry) {
+        if cursor.sprite_slots == 0
+            || cursor.oam + 3 >= self.ram.len()
+            || cursor.oam_hi >= self.ram.len()
+        {
+            return;
+        }
+
+        self.ram[cursor.oam] = entry.x as u8;
+        self.ram[cursor.oam + 1] = entry.y as u8;
+        self.ram[cursor.oam + 2] = entry.name;
+        self.ram[cursor.oam + 3] = entry.attributes;
+        let mask = 0x03 << cursor.size_offset;
+        self.ram[cursor.oam_hi] &= !mask;
+        if entry.x & 0x0100 != 0 {
+            self.ram[cursor.oam_hi] |= 0x01 << cursor.size_offset;
+        }
+        if entry.large {
+            self.ram[cursor.oam_hi] |= 0x02 << cursor.size_offset;
+        }
+
+        cursor.oam += 4;
+        cursor.sprite_slots = cursor.sprite_slots.saturating_sub(1);
+        cursor.size_offset = (cursor.size_offset + 2) & 0x06;
+        if cursor.size_offset == 0 {
+            cursor.oam_hi += 1;
         }
     }
 
