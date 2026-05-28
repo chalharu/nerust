@@ -745,6 +745,10 @@ mod tests {
         0x33, 0x1E, 0x01, 0x3C, 0x03, 0x78, 0x07, 0xF0, 0x0F, 0xE1, 0x1F, 0xC3, 0x3F, 0x87, 0x7F,
         0x0F, 0xFF,
     ];
+    const GSU_RAM_LOAD_STORE_PROGRAM: [u8; 30] = [
+        0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x3D, 0x41, 0xF2, 0x10, 0x01, 0xB0, 0x3D, 0x32,
+        0x41, 0xF3, 0x20, 0x01, 0xB0, 0x33, 0xFD, 0x30, 0x01, 0xB0, 0x3D, 0x3D, 0x00, 0x01, 0x01,
+    ];
 
     #[test]
     fn super_fx_game_ram_maps_full_direct_banks_and_starts_programs() {
@@ -793,6 +797,35 @@ mod tests {
             assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
         }
         assert_eq!(cartridge.read(0xC08000), Some(0xEA));
+    }
+
+    #[test]
+    fn super_fx_alt_loads_and_byte_stores_game_ram() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU RAM OPS",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in GSU_RAM_LOAD_STORE_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x80));
+        assert!(cartridge.write(0x00301F, 0x00));
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        assert_eq!(cartridge.read(0x700100), Some(0xEF));
+        assert_eq!(cartridge.read(0x700101), Some(0xBE));
+        assert_eq!(cartridge.read(0x700110), Some(0xEF));
+        assert_eq!(cartridge.read(0x700111), Some(0x00));
+        assert_eq!(cartridge.read(0x700120), Some(0xEF));
+        assert_eq!(cartridge.read(0x700121), Some(0xBE));
+        assert_eq!(cartridge.read(0x700130), Some(0xEF));
+        assert_eq!(cartridge.read(0x700131), Some(0x00));
     }
 
     #[test]
