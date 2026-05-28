@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.app.Instrumentation
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import android.view.View
 import androidx.test.core.app.ApplicationProvider
@@ -10,10 +11,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.runners.MethodSorters
 
 @RunWith(AndroidJUnit4::class)
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
     @Test
     fun appStartsAndDrawerMenuIsAvailable() {
@@ -76,7 +81,11 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun activityDestroyAndRelaunchKeepsMenuAvailable() {
+    fun lifecycleDestroyAndRelaunchKeepsMenuAvailable() {
+        assumeTrue(
+            "NativeActivity finish/relaunch e2e is covered on the latest API emulator",
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM,
+        )
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         var firstActivity: MainActivity? = null
