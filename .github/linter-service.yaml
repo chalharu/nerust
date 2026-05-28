@@ -1,0 +1,4 @@
+---
+linters:
+  cargo-coupling:
+    min_grade: C
