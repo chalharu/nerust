@@ -218,11 +218,9 @@ class MainActivityE2eTest {
         activity: MainActivity,
         tag: String,
     ): String {
-        var state = "activity destroyed"
+        var state = "activity state unavailable"
         instrumentation.runOnMainSync {
-            if (!activity.isDestroyed) {
-                state = activity.chromeDebugStateForTest(tag)
-            }
+            state = activity.chromeDebugStateForTest(tag)
         }
         return state
     }

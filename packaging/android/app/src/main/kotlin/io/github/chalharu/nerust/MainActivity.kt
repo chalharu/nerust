@@ -234,7 +234,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     fun chromeDebugStateForTest(tag: String): String =
-        "tag=$tag, chromeAttachEnabled=$chromeAttachEnabled, " +
+        "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, chromeAttachEnabled=$chromeAttachEnabled, " +
             "attachAttempts=$menuChromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
             "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
             "menuPopup=${menuButtonPopup.debugPopupState()}, menuView=${menuButtonView.debugViewState()}, " +
