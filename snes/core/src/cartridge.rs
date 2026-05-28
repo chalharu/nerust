@@ -1297,6 +1297,11 @@ mod tests {
         0x03, 0x31, 0x3E, 0xFB, 0x0E, 0x03, 0xF0, 0x00, 0x40, 0xF6, 0x00, 0x40, 0xB0, 0x9F, 0xF1,
         0x10, 0x03, 0x31, 0xF0, 0x00, 0x40, 0x3D, 0x9F, 0xF1, 0x12, 0x03, 0x31, 0x00, 0x01,
     ];
+    const GSU_BITMAP_2BPP_RPIX_PROGRAM: &[u8] = &[
+        0xF0, 0x03, 0x00, 0x4E, 0x4C, 0xF1, 0x00, 0x00, 0x3D, 0x4C, 0xF1, 0x00, 0x01, 0x31, 0x00,
+        0x01,
+    ];
+    const GSU_BITMAP_8BPP_PROGRAM: &[u8] = &[0xF0, 0xA5, 0x00, 0x4E, 0x4C, 0x00, 0x01];
     const GSU_ROM_STORE_PROGRAM: [u8; 8] = [0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x00];
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
@@ -1353,6 +1358,7 @@ mod tests {
             assert!(cartridge.write(0x700200 + offset as u32, value));
         }
         assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x00303A, 0x01));
         start_super_fx_program(&mut cartridge, 0x70, 0x0200);
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
@@ -1521,6 +1527,7 @@ mod tests {
             assert!(cartridge.write(0x700200 + offset as u32, value));
         }
         assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x00303A, 0x01));
         start_super_fx_program(&mut cartridge, 0x70, 0x0200);
 
         for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
@@ -1528,6 +1535,56 @@ mod tests {
             assert_eq!(cartridge.read(0x710C00 + offset as u32), Some(0x00));
         }
         assert_eq!(cartridge.read(0x00303C), Some(0x01));
+    }
+
+    #[test]
+    fn super_fx_bitmap_modes_plot_and_read_pixels() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU BITMAP 2",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in GSU_BITMAP_2BPP_RPIX_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x00303A, 0x00));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x700C00), Some(0x80));
+        assert_eq!(cartridge.read(0x700C01), Some(0x80));
+        assert_eq!(cartridge.read(0x700C10), Some(0x00));
+        assert_eq!(cartridge.read(0x700100), Some(0x03));
+        assert_eq!(cartridge.read(0x700101), Some(0x00));
+
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU BITMAP 8",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in GSU_BITMAP_8BPP_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x00303A, 0x03));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x700C00), Some(0x80));
+        assert_eq!(cartridge.read(0x700C01), Some(0x00));
+        assert_eq!(cartridge.read(0x700C10), Some(0x80));
+        assert_eq!(cartridge.read(0x700C11), Some(0x00));
+        assert_eq!(cartridge.read(0x700C20), Some(0x00));
+        assert_eq!(cartridge.read(0x700C21), Some(0x80));
+        assert_eq!(cartridge.read(0x700C30), Some(0x00));
+        assert_eq!(cartridge.read(0x700C31), Some(0x80));
     }
 
     #[test]
@@ -1714,6 +1771,7 @@ mod tests {
         for (offset, value) in GSU_SPRITE_SCALER_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700100 + offset as u32, value));
         }
+        assert!(cartridge.write(0x00303A, 0x01));
         start_super_fx_program(&mut cartridge, 0x70, 0x0100);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
