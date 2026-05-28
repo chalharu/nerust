@@ -1230,6 +1230,30 @@ mod tests {
         assert_eq!(read_word(&mut cartridge, 0x00660D), 0x40);
     }
 
+    #[test]
+    fn cx4_draws_wireframe_from_rom() {
+        let mut rom = build_lorom_with_header("CX4 WIREFRAME", 0x20, 0xF3, Some(0x10), 0x0A);
+        rom[0x0100..0x0105].copy_from_slice(&[0x81, 0x10, 0x81, 0x16, 0x03]);
+        rom[0x0110..0x0116].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        rom[0x0116..0x011C].copy_from_slice(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x00]);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        write_u24(&mut cartridge, 0x007F80, 0x008100);
+        assert!(cartridge.write(0x006295, 1));
+        assert!(cartridge.write(0x007F90, 0x80));
+
+        assert!(cartridge.write(0x007F4F, 0x01));
+        assert_eq!(cartridge.read(0x0067E0), Some(0xF8));
+        assert_eq!(cartridge.read(0x0067E1), Some(0xF8));
+
+        assert!(cartridge.write(0x0067E0, 0));
+        assert!(cartridge.write(0x0067E1, 0));
+        assert!(cartridge.write(0x007F4D, 0x08));
+        assert!(cartridge.write(0x007F4F, 0x00));
+        assert_eq!(cartridge.read(0x0067E0), Some(0xF8));
+        assert_eq!(cartridge.read(0x0067E1), Some(0xF8));
+    }
+
     fn write_cx4_packed_pattern(cartridge: &mut Cartridge) {
         for row in 0..8u32 {
             for (column_pair, byte) in CX4_PACKED_NIBBLE_PATTERN.into_iter().enumerate() {

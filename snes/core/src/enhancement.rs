@@ -630,6 +630,13 @@ pub(crate) struct Cx4State {
     ram: Box<[u8; CX4_RAM_LEN]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cx4Point {
+    x: i16,
+    y: i16,
+    z: i16,
+}
+
 const CX4_RAM_START: u16 = 0x6000;
 const CX4_RAM_LEN: usize = 0x2000;
 const CX4_LOAD_TRIGGER: u16 = 0x7F47;
@@ -685,7 +692,7 @@ impl Cx4State {
         self.ram[index] = value;
         match offset {
             CX4_LOAD_TRIGGER => self.load_rom_window(rom),
-            CX4_COMMAND_TRIGGER => self.execute_command(value),
+            CX4_COMMAND_TRIGGER => self.execute_command(value, rom),
             _ => {}
         }
         true
@@ -712,14 +719,15 @@ impl Cx4State {
         }
     }
 
-    fn execute_command(&mut self, command: u8) {
+    fn execute_command(&mut self, command: u8, rom: &[u8]) {
         if self.ram[CX4_COMMAND_MODE] == 0x0E && command < 0x40 && command & 0x03 == 0 {
             self.ram[CX4_DATA_START] = command >> 2;
             return;
         }
 
         match command {
-            0x00 => self.command_sprite(),
+            0x00 => self.command_sprite(rom),
+            0x01 => self.command_draw_wireframe_clear(rom),
             0x05 => self.command_propulsion(),
             0x0D => self.command_set_vector_length(),
             0x10 => self.command_polar_to_rectangular(true),
@@ -745,11 +753,12 @@ impl Cx4State {
         }
     }
 
-    fn command_sprite(&mut self) {
+    fn command_sprite(&mut self, rom: &[u8]) {
         match self.ram[CX4_COMMAND_MODE] {
             0x03 => self.command_scale_rotate(0),
             0x05 => self.command_transform_lines(),
             0x07 => self.command_scale_rotate(64),
+            0x08 => self.command_draw_wireframe(rom),
             0x0B => self.command_disintegrate(),
             0x0C => self.command_bitplane_wave(),
             _ => {}
@@ -942,6 +951,103 @@ impl Cx4State {
             self.write_u16(output, distance);
             self.write_i16(output + 2, step_x);
             self.write_i16(output + 5, step_y);
+        }
+    }
+
+    fn command_draw_wireframe_clear(&mut self, rom: &[u8]) {
+        for byte in self.ram[0x0300..0x0C00].iter_mut() {
+            *byte = 0;
+        }
+        self.command_draw_wireframe(rom);
+    }
+
+    fn command_draw_wireframe(&mut self, rom: &[u8]) {
+        let mut line = self.read_u24(CX4_DATA_START);
+        for _ in 0..self.ram[0x0295] {
+            let point1 = if cx4_rom_read(rom, line) == 0xFF
+                && cx4_rom_read(rom, line.wrapping_add(1)) == 0xFF
+            {
+                let mut previous = line.wrapping_sub(5);
+                while cx4_rom_read(rom, previous.wrapping_add(2)) == 0xFF
+                    && cx4_rom_read(rom, previous.wrapping_add(3)) == 0xFF
+                    && previous >= 5
+                {
+                    previous = previous.wrapping_sub(5);
+                }
+                u32::from(self.ram[CX4_DATA_START + 2]) << 16
+                    | (u32::from(cx4_rom_read(rom, previous.wrapping_add(2))) << 8)
+                    | u32::from(cx4_rom_read(rom, previous.wrapping_add(3)))
+            } else {
+                u32::from(self.ram[CX4_DATA_START + 2]) << 16
+                    | (u32::from(cx4_rom_read(rom, line)) << 8)
+                    | u32::from(cx4_rom_read(rom, line.wrapping_add(1)))
+            };
+            let point2 = u32::from(self.ram[CX4_DATA_START + 2]) << 16
+                | (u32::from(cx4_rom_read(rom, line.wrapping_add(2))) << 8)
+                | u32::from(cx4_rom_read(rom, line.wrapping_add(3)));
+            let color = cx4_rom_read(rom, line.wrapping_add(4));
+            self.draw_wireframe_line(
+                cx4_rom_read_point(rom, point1),
+                cx4_rom_read_point(rom, point2),
+                color,
+            );
+            line = line.wrapping_add(5);
+        }
+    }
+
+    fn draw_wireframe_line(&mut self, start: Cx4Point, end: Cx4Point, color: u8) {
+        let (x1, y1) = cx4_transform_wireframe_2(
+            start.x,
+            start.y,
+            start.z,
+            self.ram[CX4_DATA_START + 6],
+            self.ram[CX4_DATA_START + 7],
+            self.ram[CX4_DATA_START + 8],
+            self.ram[CX4_DATA_START + 16],
+        );
+        let (x2, y2) = cx4_transform_wireframe_2(
+            end.x,
+            end.y,
+            end.z,
+            self.ram[CX4_DATA_START + 6],
+            self.ram[CX4_DATA_START + 7],
+            self.ram[CX4_DATA_START + 8],
+            self.ram[CX4_DATA_START + 16],
+        );
+
+        let mut x = (i32::from(x1) + 48) << 8;
+        let mut y = (i32::from(y1) + 48) << 8;
+        let end_x = (i32::from(x2) + 48) << 8;
+        let end_y = (i32::from(y2) + 48) << 8;
+        let (distance, step_x, step_y) = cx4_calc_wireframe(
+            (x >> 8) as i16,
+            (y >> 8) as i16,
+            (end_x >> 8) as i16,
+            (end_y >> 8) as i16,
+        );
+
+        for _ in 0..distance {
+            if x > 0xFF && y > 0xFF && x < 0x6000 && y < 0x6000 {
+                let pixel_x = (x >> 8) as usize;
+                let pixel_y = (y >> 8) as usize;
+                let address = ((pixel_y >> 3) << 8) - ((pixel_y >> 3) << 6)
+                    + ((pixel_x >> 3) << 4)
+                    + (pixel_y & 7) * 2
+                    + 0x0300;
+                let mask = 0x80 >> (pixel_x & 7);
+                if address + 1 < self.ram.len() {
+                    self.ram[address] &= !mask;
+                    self.ram[address + 1] &= !mask;
+                    if color & 0x01 != 0 {
+                        self.ram[address] |= mask;
+                    }
+                    if color & 0x02 != 0 {
+                        self.ram[address + 1] |= mask;
+                    }
+                }
+            }
+            x += i32::from(step_x);
+            y += i32::from(step_y);
         }
     }
 
@@ -1240,6 +1346,38 @@ fn cx4_transform_wireframe(
     )
 }
 
+fn cx4_transform_wireframe_2(
+    x: i16,
+    y: i16,
+    z: i16,
+    rotate_x: u8,
+    rotate_y: u8,
+    rotate_z: u8,
+    scale: u8,
+) -> (i16, i16) {
+    let c4x = f64::from(x);
+    let c4y = f64::from(y);
+    let c4z = f64::from(z);
+
+    let angle_x = -cx4_angle128(rotate_x);
+    let y2 = c4y * angle_x.cos() - c4z * angle_x.sin();
+    let z2 = c4y * angle_x.sin() + c4z * angle_x.cos();
+
+    let angle_y = -cx4_angle128(rotate_y);
+    let x2 = c4x * angle_y.cos() + z2 * angle_y.sin();
+    let _z = c4x * -angle_y.sin() + z2 * angle_y.cos();
+
+    let angle_z = -cx4_angle128(rotate_z);
+    let x = x2 * angle_z.cos() - y2 * angle_z.sin();
+    let y = x2 * angle_z.sin() + y2 * angle_z.cos();
+
+    let projection = f64::from(scale) / 256.0;
+    (
+        cx4_saturating_trunc_i16(x * projection),
+        cx4_saturating_trunc_i16(y * projection),
+    )
+}
+
 fn cx4_saturating_trunc_i16(value: f64) -> i16 {
     if value.is_nan() {
         0
@@ -1267,6 +1405,27 @@ fn cx4_calc_wireframe(x1: i16, y1: i16, x2: i16, y2: i16) -> (u16, i16, i16) {
     };
 
     (distance.max(1) as u16, dx as i16, dy as i16)
+}
+
+fn cx4_rom_read(rom: &[u8], address: u32) -> u8 {
+    lorom_rom_index(address, rom.len())
+        .map(|index| rom[index])
+        .unwrap_or(0)
+}
+
+fn cx4_rom_read_be_i16(rom: &[u8], address: u32) -> i16 {
+    i16::from_be_bytes([
+        cx4_rom_read(rom, address),
+        cx4_rom_read(rom, address.wrapping_add(1)),
+    ])
+}
+
+fn cx4_rom_read_point(rom: &[u8], address: u32) -> Cx4Point {
+    Cx4Point {
+        x: cx4_rom_read_be_i16(rom, address),
+        y: cx4_rom_read_be_i16(rom, address.wrapping_add(2)),
+        z: cx4_rom_read_be_i16(rom, address.wrapping_add(4)),
+    }
 }
 
 fn cx4_angle512(value: u16) -> f64 {
