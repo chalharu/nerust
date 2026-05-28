@@ -472,7 +472,9 @@ impl Cx4State {
             0x13 => self.command_polar_to_rectangular(false),
             0x15 => self.command_pythagorean(),
             0x1F => self.command_atan(),
+            0x22 => self.command_trapezoid(),
             0x25 => self.command_multiply(),
+            0x2D => self.command_transform_coordinates(),
             0x40 => self.command_sum(),
             0x54 => self.command_square(),
             0x89 => {
@@ -546,10 +548,55 @@ impl Cx4State {
         self.write_u16(CX4_DATA_START + 6, angle as u16);
     }
 
+    fn command_trapezoid(&mut self) {
+        let angle1 = cx4_angle512(self.read_u16(CX4_DATA_START + 12) & 0x01FF);
+        let angle2 = cx4_angle512(self.read_u16(CX4_DATA_START + 15) & 0x01FF);
+        let tan1 = cx4_tan(angle1);
+        let tan2 = cx4_tan(angle2);
+
+        let initial_y = i32::from(self.read_i16(CX4_DATA_START + 3))
+            - i32::from(self.read_i16(CX4_DATA_START + 9));
+        let origin_x = i32::from(self.read_i16(CX4_DATA_START));
+        let center_x = i32::from(self.read_i16(CX4_DATA_START + 6));
+        let width = i32::from(self.read_i16(CX4_DATA_START + 19));
+
+        for (line, y) in (0..225).zip(initial_y..) {
+            let (left, right) = if y < 0 {
+                (1, 0)
+            } else {
+                let left = (tan1 * f64::from(y)) as i32 - origin_x + center_x;
+                let right = (tan2 * f64::from(y)) as i32 - origin_x + center_x + width;
+                cx4_clip_trapezoid_span(left, right)
+            };
+            self.ram[0x0800 + line] = left;
+            self.ram[0x0900 + line] = right;
+        }
+    }
+
     fn command_multiply(&mut self) {
         let left = self.read_u24(CX4_DATA_START);
         let right = self.read_u24(CX4_DATA_START + 3);
         self.write_u24(CX4_DATA_START, left.wrapping_mul(right));
+    }
+
+    fn command_transform_coordinates(&mut self) {
+        let mut x = f64::from(self.read_i16(CX4_DATA_START + 1));
+        let y = f64::from(self.read_i16(CX4_DATA_START + 4));
+        let z = f64::from(self.read_i16(CX4_DATA_START + 7));
+        let rotate_x = -cx4_angle128(self.ram[CX4_DATA_START + 9]);
+        let rotate_y = -cx4_angle128(self.ram[CX4_DATA_START + 10]);
+        let rotate_z = -cx4_angle128(self.ram[CX4_DATA_START + 11]);
+        let scale = f64::from(self.read_u16(CX4_DATA_START + 16));
+
+        let y2 = y * rotate_x.cos() - z * rotate_x.sin();
+        let z2 = y * rotate_x.sin() + z * rotate_x.cos();
+
+        let x2 = x * rotate_y.cos() + z2 * rotate_y.sin();
+        let y = x2 * rotate_z.sin() + y2 * rotate_z.cos();
+        x = x2 * rotate_z.cos() - y2 * rotate_z.sin();
+
+        self.write_i16(CX4_DATA_START, (x * scale / 256.0) as i16);
+        self.write_i16(CX4_DATA_START + 3, (y * scale / 256.0) as i16);
     }
 
     fn command_sum(&mut self) {
@@ -604,6 +651,34 @@ impl Cx4State {
         self.ram[index + 1] = (value >> 8) as u8;
         self.ram[index + 2] = (value >> 16) as u8;
     }
+}
+
+fn cx4_angle128(value: u8) -> f64 {
+    f64::from(value) * std::f64::consts::TAU / 128.0
+}
+
+fn cx4_angle512(value: u16) -> f64 {
+    f64::from(value) * std::f64::consts::TAU / 512.0
+}
+
+fn cx4_tan(angle: f64) -> f64 {
+    let cosine = angle.cos();
+    if cosine.abs() < f64::EPSILON {
+        f64::from(i32::MIN)
+    } else {
+        angle.sin() / cosine
+    }
+}
+
+fn cx4_clip_trapezoid_span(left: i32, right: i32) -> (u8, u8) {
+    if left < 0 && right < 0 {
+        return (1, 0);
+    }
+    if left > 255 && right > 255 {
+        return (255, 254);
+    }
+
+    (left.clamp(0, 255) as u8, right.clamp(0, 255) as u8)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

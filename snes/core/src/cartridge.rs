@@ -831,6 +831,50 @@ mod tests {
     }
 
     #[test]
+    fn cx4_executes_geometry_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 GEOMETRY",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_word(&mut cartridge, 0x007F81, 10);
+        write_word(&mut cartridge, 0x007F84, (-20_i16) as u16);
+        write_word(&mut cartridge, 0x007F87, 7);
+        assert!(cartridge.write(0x007F89, 0));
+        assert!(cartridge.write(0x007F8A, 0));
+        assert!(cartridge.write(0x007F8B, 0));
+        write_word(&mut cartridge, 0x007F90, 0x0100);
+        assert!(cartridge.write(0x007F4F, 0x2D));
+        assert_eq!(read_word(&mut cartridge, 0x007F80), 10);
+        assert_eq!(read_word(&mut cartridge, 0x007F83), (-20_i16) as u16);
+
+        write_word(&mut cartridge, 0x007F80, 5);
+        write_word(&mut cartridge, 0x007F83, 10);
+        write_word(&mut cartridge, 0x007F86, 20);
+        write_word(&mut cartridge, 0x007F89, 8);
+        write_word(&mut cartridge, 0x007F8C, 0);
+        write_word(&mut cartridge, 0x007F8F, 0);
+        write_word(&mut cartridge, 0x007F93, 30);
+        assert!(cartridge.write(0x007F4F, 0x22));
+        assert_eq!(cartridge.read(0x006800), Some(15));
+        assert_eq!(cartridge.read(0x006900), Some(45));
+        assert_eq!(cartridge.read(0x0068E0), Some(15));
+        assert_eq!(cartridge.read(0x0069E0), Some(45));
+
+        write_word(&mut cartridge, 0x007F83, 7);
+        write_word(&mut cartridge, 0x007F89, 8);
+        assert!(cartridge.write(0x007F4F, 0x22));
+        assert_eq!(cartridge.read(0x006800), Some(1));
+        assert_eq!(cartridge.read(0x006900), Some(0));
+        assert_eq!(cartridge.read(0x006801), Some(15));
+        assert_eq!(cartridge.read(0x006901), Some(45));
+    }
+
+    #[test]
     fn cx4_loads_lorom_data_into_internal_ram() {
         let mut rom = build_lorom_with_header("CX4 LOAD", 0x20, 0xF3, Some(0x10), 0x0A);
         rom[0x8123] = 0xAA;
