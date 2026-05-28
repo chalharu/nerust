@@ -104,6 +104,8 @@ pub(crate) struct Sa1State {
     swen: bool,
     cwen: bool,
     bwp: u8,
+    siwp: u8,
+    ciwp: u8,
     vbr_auto_increment: bool,
     vbr_shift: u8,
     vbr_bits: u8,
@@ -137,6 +139,8 @@ const SA1_BMAPS: u16 = 0x2224;
 const SA1_SBWE: u16 = 0x2226;
 const SA1_CBWE: u16 = 0x2227;
 const SA1_BWPA: u16 = 0x2228;
+const SA1_SIWP: u16 = 0x2229;
+const SA1_CIWP: u16 = 0x222A;
 const SA1_MCNT: u16 = 0x2250;
 const SA1_MAL: u16 = 0x2251;
 const SA1_MAH: u16 = 0x2252;
@@ -188,6 +192,8 @@ impl Sa1State {
             swen: false,
             cwen: false,
             bwp: 0x0F,
+            siwp: 0,
+            ciwp: 0,
             vbr_auto_increment: false,
             vbr_shift: 16,
             vbr_bits: 0,
@@ -255,7 +261,7 @@ impl Sa1State {
             return true;
         }
 
-        self.iram.write(address_offset, value)
+        self.write_iram(address_offset, value)
     }
 
     pub(crate) fn sa1_banked_rom_index(&self, address: u32, rom_len: usize) -> Option<usize> {
@@ -340,6 +346,17 @@ impl Sa1State {
         }
     }
 
+    fn write_iram(&mut self, address_offset: u16, value: u8) -> bool {
+        let Some(index) = self.iram.index(address_offset) else {
+            return false;
+        };
+        let page = (index >> 8) & 0x07;
+        if self.siwp & (1u8 << page) != 0 {
+            self.iram.bytes[index] = value;
+        }
+        true
+    }
+
     fn write_mapper_register(
         &mut self,
         address_offset: u16,
@@ -368,6 +385,8 @@ impl Sa1State {
             SA1_SBWE => self.swen = value & 0x80 != 0,
             SA1_CBWE => self.cwen = value & 0x80 != 0,
             SA1_BWPA => self.bwp = value & 0x0F,
+            SA1_SIWP => self.siwp = value,
+            SA1_CIWP => self.ciwp = value,
             SA1_VBD => {
                 self.vbr_auto_increment = value & 0x80 != 0;
                 self.vbr_shift = value & 0x0F;
