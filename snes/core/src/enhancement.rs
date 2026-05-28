@@ -692,6 +692,7 @@ pub(crate) struct Dsp1State {
     input_words: Vec<u16>,
     output_words: Vec<u16>,
     output_index: usize,
+    matrices: [[[i16; 3]; 3]; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -711,6 +712,10 @@ enum Dsp1Operation {
     Radius,
     Range,
     Range2,
+    SetMatrix(Dsp1MatrixKind),
+    ObjectiveMatrix(Dsp1MatrixKind),
+    SubjectiveMatrix(Dsp1MatrixKind),
+    ScalarProduct(Dsp1MatrixKind),
     Trigonometric,
     Rotate2d,
     Rotate3d,
@@ -718,6 +723,23 @@ enum Dsp1Operation {
     MemoryDump,
     Unsupported,
     Freeze,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dsp1MatrixKind {
+    A,
+    B,
+    C,
+}
+
+impl Dsp1MatrixKind {
+    fn index(self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+            Self::C => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -744,6 +766,7 @@ impl Dsp1State {
             input_words: Vec::new(),
             output_words: Vec::new(),
             output_index: 0,
+            matrices: [[[0; 3]; 3]; 3],
         }
     }
 
@@ -882,6 +905,22 @@ impl Dsp1State {
             Dsp1Operation::Radius => dsp1_radius(&self.input_words),
             Dsp1Operation::Range => vec![dsp1_range(&self.input_words, 0)],
             Dsp1Operation::Range2 => vec![dsp1_range(&self.input_words, 1)],
+            Dsp1Operation::SetMatrix(kind) => {
+                self.matrices[kind.index()] = dsp1_attitude_matrix(&self.input_words);
+                Vec::new()
+            }
+            Dsp1Operation::ObjectiveMatrix(kind) => {
+                dsp1_objective_matrix(&self.matrices[kind.index()], &self.input_words)
+            }
+            Dsp1Operation::SubjectiveMatrix(kind) => {
+                dsp1_subjective_matrix(&self.matrices[kind.index()], &self.input_words)
+            }
+            Dsp1Operation::ScalarProduct(kind) => {
+                vec![dsp1_scalar_product(
+                    &self.matrices[kind.index()],
+                    &self.input_words,
+                )]
+            }
             Dsp1Operation::Trigonometric => dsp1_trigonometric(&self.input_words),
             Dsp1Operation::Rotate2d => dsp1_rotate_2d(&self.input_words),
             Dsp1Operation::Rotate3d => dsp1_rotate_3d(&self.input_words),
@@ -920,21 +959,30 @@ impl Dsp1State {
 }
 
 fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
+    use Dsp1MatrixKind as Matrix;
     use Dsp1Operation as Op;
 
     let (reads, writes, operation) = match command {
         0x00 => (2, 1, Op::Multiply),
-        0x01 | 0x05 | 0x11 | 0x15 | 0x21 | 0x25 | 0x31 | 0x35 => (4, 0, Op::Unsupported),
+        0x01 | 0x05 | 0x31 | 0x35 => (4, 0, Op::SetMatrix(Matrix::A)),
+        0x11 | 0x15 => (4, 0, Op::SetMatrix(Matrix::B)),
+        0x21 | 0x25 => (4, 0, Op::SetMatrix(Matrix::C)),
         0x02 | 0x12 | 0x22 | 0x32 => (7, 4, Op::Unsupported),
-        0x03 | 0x13 | 0x23 | 0x33 => (3, 3, Op::Unsupported),
+        0x03 | 0x33 => (3, 3, Op::SubjectiveMatrix(Matrix::A)),
+        0x13 => (3, 3, Op::SubjectiveMatrix(Matrix::B)),
+        0x23 => (3, 3, Op::SubjectiveMatrix(Matrix::C)),
         0x04 | 0x24 => (2, 2, Op::Trigonometric),
         0x06 | 0x16 | 0x26 | 0x36 => (3, 3, Op::Unsupported),
-        0x07 | 0x09 | 0x17 | 0x1A | 0x27 | 0x2A | 0x37 | 0x3A => (0, 0, Op::Freeze),
+        0x07 | 0x17 | 0x1A | 0x27 | 0x2A | 0x37 | 0x3A => (0, 0, Op::Freeze),
         0x08 => (3, 2, Op::Radius),
         0x0A => (1, 4, Op::Unsupported),
-        0x0B | 0x1B => (3, 1, Op::Unsupported),
+        0x0B | 0x3B => (3, 1, Op::ScalarProduct(Matrix::A)),
+        0x1B => (3, 1, Op::ScalarProduct(Matrix::B)),
+        0x2B => (3, 1, Op::ScalarProduct(Matrix::C)),
         0x0C | 0x2C => (3, 2, Op::Rotate2d),
-        0x0D | 0x1D | 0x2D | 0x3D => (3, 3, Op::Unsupported),
+        0x09 | 0x0D | 0x39 | 0x3D => (3, 3, Op::ObjectiveMatrix(Matrix::A)),
+        0x19 | 0x1D => (3, 3, Op::ObjectiveMatrix(Matrix::B)),
+        0x29 | 0x2D => (3, 3, Op::ObjectiveMatrix(Matrix::C)),
         0x0E | 0x2E => (2, 2, Op::Unsupported),
         0x0F => (1, 1, Op::MemoryTest),
         0x10 | 0x30 => (2, 2, Op::Unsupported),
@@ -984,6 +1032,70 @@ fn dsp1_range(input_words: &[u16], round: i64) -> u16 {
         .sum::<i64>();
     let radius = i64::from(input_words.get(3).copied().unwrap_or(0) as i16);
     (((sum - radius * radius) >> 15) + round) as i16 as u16
+}
+
+fn dsp1_attitude_matrix(input_words: &[u16]) -> [[i16; 3]; 3] {
+    let scale = f64::from((input_words[0] as i16) >> 1);
+    let z_angle = dsp1_angle(input_words[1]);
+    let y_angle = dsp1_angle(input_words[2]);
+    let x_angle = dsp1_angle(input_words[3]);
+    let sin_z = z_angle.sin();
+    let cos_z = z_angle.cos();
+    let sin_y = y_angle.sin();
+    let cos_y = y_angle.cos();
+    let sin_x = x_angle.sin();
+    let cos_x = x_angle.cos();
+
+    [
+        [
+            dsp1_saturating_i16_value(scale * cos_z * cos_y),
+            dsp1_saturating_i16_value(-(scale * sin_z * cos_y)),
+            dsp1_saturating_i16_value(scale * sin_y),
+        ],
+        [
+            dsp1_saturating_i16_value(scale * sin_z * cos_x + scale * cos_z * sin_x * sin_y),
+            dsp1_saturating_i16_value(scale * cos_z * cos_x - scale * sin_z * sin_x * sin_y),
+            dsp1_saturating_i16_value(-(scale * sin_x * cos_y)),
+        ],
+        [
+            dsp1_saturating_i16_value(scale * sin_z * sin_x - scale * cos_z * cos_x * sin_y),
+            dsp1_saturating_i16_value(scale * cos_z * sin_x + scale * sin_z * cos_x * sin_y),
+            dsp1_saturating_i16_value(scale * cos_x * cos_y),
+        ],
+    ]
+}
+
+fn dsp1_objective_matrix(matrix: &[[i16; 3]; 3], input_words: &[u16]) -> Vec<u16> {
+    let vector = dsp1_vector3(input_words);
+    matrix
+        .iter()
+        .map(|row| {
+            let sum: i64 = (0..3)
+                .map(|index| i64::from(vector[index]) * i64::from(row[index]))
+                .sum();
+            dsp1_saturating_i16_i64(sum >> 15)
+        })
+        .collect()
+}
+
+fn dsp1_subjective_matrix(matrix: &[[i16; 3]; 3], input_words: &[u16]) -> Vec<u16> {
+    let vector = dsp1_vector3(input_words);
+    (0..3)
+        .map(|column| {
+            let sum: i64 = (0..3)
+                .map(|row| i64::from(vector[row]) * i64::from(matrix[row][column]))
+                .sum();
+            dsp1_saturating_i16_i64(sum >> 15)
+        })
+        .collect()
+}
+
+fn dsp1_scalar_product(matrix: &[[i16; 3]; 3], input_words: &[u16]) -> u16 {
+    let vector = dsp1_vector3(input_words);
+    let sum: i64 = (0..3)
+        .map(|index| i64::from(vector[index]) * i64::from(matrix[0][index]))
+        .sum();
+    dsp1_saturating_i16_i64(sum >> 15)
 }
 
 fn dsp1_trigonometric(input_words: &[u16]) -> Vec<u16> {
@@ -1041,14 +1153,30 @@ fn dsp1_vector_length(input_words: &[u16]) -> u16 {
     dsp1_saturating_i16(sum.sqrt())
 }
 
+fn dsp1_vector3(input_words: &[u16]) -> [i16; 3] {
+    [
+        input_words[0] as i16,
+        input_words[1] as i16,
+        input_words[2] as i16,
+    ]
+}
+
 fn dsp1_angle(value: u16) -> f64 {
     f64::from(value as i16) * std::f64::consts::TAU / 65536.0
 }
 
 fn dsp1_saturating_i16(value: f64) -> u16 {
+    dsp1_saturating_i16_value(value) as u16
+}
+
+fn dsp1_saturating_i16_value(value: f64) -> i16 {
     value
         .round()
-        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16 as u16
+        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
+fn dsp1_saturating_i16_i64(value: i64) -> u16 {
+    value.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16 as u16
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
