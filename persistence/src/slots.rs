@@ -14,6 +14,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+const AUTOSAVE_SLOT_ENTRY: &str = ".autosave_slot";
+const AUTOSAVE_SLOT_ID: u64 = 0;
 const NEXT_SLOT_ID_ENTRY: &str = ".next_slot_id";
 
 pub fn scan_state_slots(states_dir: &Path) -> Result<Vec<StateSlotSummary>, PersistenceError> {
@@ -49,6 +51,10 @@ pub fn state_slot_path(states_dir: &Path, slot_id: u64) -> PathBuf {
     states_dir.join(format!("{slot_id}.state"))
 }
 
+pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
+    states_dir.join(AUTOSAVE_SLOT_ENTRY)
+}
+
 pub fn write_state_slot(
     states_dir: &Path,
     slot_id: u64,
@@ -56,13 +62,56 @@ pub fn write_state_slot(
     identity: PersistenceIdentity,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
-    fs::create_dir_all(states_dir)?;
+    write_state_slot_to_path(
+        state_slot_path(states_dir, slot_id),
+        slot_id,
+        machine_state,
+        identity,
+        preview,
+    )
+}
+
+pub fn write_autosave_state_slot(
+    states_dir: &Path,
+    machine_state: &[u8],
+    identity: PersistenceIdentity,
+    preview: Option<&ThumbnailSource>,
+) -> Result<StateSlotSummary, PersistenceError> {
+    write_state_slot_to_path(
+        autosave_state_slot_path(states_dir),
+        AUTOSAVE_SLOT_ID,
+        machine_state,
+        identity,
+        preview,
+    )
+}
+
+pub fn load_state_slot_for_identity(
+    path: &Path,
+    identity: PersistenceIdentity,
+) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+    let archive = load_state_archive(path)?;
+    if !crate::metadata::slot_matches_identity(&archive.metadata, identity) {
+        return Ok(None);
+    }
+    Ok(Some(loaded_state_slot_from_archive(path, archive)))
+}
+
+fn write_state_slot_to_path(
+    path: PathBuf,
+    slot_id: u64,
+    machine_state: &[u8],
+    identity: PersistenceIdentity,
+    preview: Option<&ThumbnailSource>,
+) -> Result<StateSlotSummary, PersistenceError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
     let has_thumbnail = preview.is_some();
     let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let archive_bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
-    let path = state_slot_path(states_dir, slot_id);
     write_atomic(&path, &archive_bytes)?;
     Ok(summary_from_metadata(
         path,
@@ -74,6 +123,13 @@ pub fn write_state_slot(
 
 pub fn load_state_slot(path: &Path) -> Result<LoadedStateSlot, PersistenceError> {
     let archive = load_state_archive(path)?;
+    Ok(loaded_state_slot_from_archive(path, archive))
+}
+
+pub(crate) fn loaded_state_slot_from_archive(
+    path: &Path,
+    archive: crate::archive::LoadedArchive,
+) -> LoadedStateSlot {
     let has_thumbnail = archive.thumbnail_png.is_some();
     let summary = summary_from_metadata(
         path.to_path_buf(),
@@ -81,11 +137,11 @@ pub fn load_state_slot(path: &Path) -> Result<LoadedStateSlot, PersistenceError>
         &archive.metadata,
         has_thumbnail,
     );
-    Ok(LoadedStateSlot {
+    LoadedStateSlot {
         summary,
         machine_state: archive.machine_state,
         thumbnail_png: archive.thumbnail_png,
-    })
+    }
 }
 
 pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {

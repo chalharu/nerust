@@ -19,6 +19,7 @@ use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
 use nerust_input_schema::{DigitalInputEvent, SystemId};
+use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::fs;
@@ -650,6 +651,65 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let counts = imports.0.lock().unwrap();
     assert_eq!(counts.state_imports, 1);
     assert_eq!(counts.mapper_save_imports, 0);
+
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn hidden_lifecycle_state_round_trips_without_visible_slot() {
+    let temp_dir = unique_temp_dir("hidden-lifecycle-state");
+    let rom_path = temp_dir.join("test.nes");
+    let imports = ImportCounters::default();
+    let identity = CanonicalMediaIdentity::rom(test_rom_identity());
+    let definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
+        imports: imports.clone(),
+        identity,
+    });
+    let runtime = definition
+        .create_runtime(
+            &RuntimeHostServices {
+                host_backend: HostBackendIdentity::android_wgpu(),
+            },
+            &SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
+        )
+        .unwrap();
+    let mut session =
+        SessionHandle::from_runtime(HostBackendIdentity::android_wgpu(), runtime, definition);
+
+    session
+        .load(
+            MediaObject::new(Some(rom_path), vec![0; 16]),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+
+    assert!(session.save_hidden_lifecycle_state());
+    let autosave_path = autosave_state_slot_path(
+        &session
+            .persistence
+            .sidecars
+            .as_ref()
+            .expect("load should configure sidecars")
+            .states_dir,
+    );
+    assert!(autosave_path.is_file());
+    assert!(session.slots().is_empty());
+    assert_eq!(session.active_slot_id(), None);
+
+    assert!(session.load_hidden_lifecycle_state());
+    let counts = imports.0.lock().unwrap();
+    assert_eq!(counts.state_imports, 1);
+    assert_eq!(session.slots().len(), 0);
+    assert_eq!(session.active_slot_id(), None);
+
+    drop(counts);
+    session.clear_hidden_lifecycle_state();
+    assert!(!autosave_path.exists());
+    assert!(!session.load_hidden_lifecycle_state());
 
     let _ = fs::remove_dir_all(temp_dir);
 }
