@@ -1075,8 +1075,15 @@ impl SuperFxState {
             self.registers.read(SUPERFX_R15 + 1).unwrap_or(0),
         ]);
         let pbr = self.registers.read(SUPERFX_PBR).unwrap_or(0) & 0x7F;
+        let rombr = self.registers.read(SUPERFX_ROMBR).unwrap_or(0) & 0x7F;
+        let rambr = self.registers.read(SUPERFX_RAMBR).unwrap_or(0) & 0x01 != 0;
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
-        GsuInterpreter::new(r15, pbr, screen_base, rom, save_ram).run();
+        let mut interpreter =
+            GsuInterpreter::new(r15, pbr, rombr, rambr, screen_base, rom, save_ram);
+        interpreter.run();
+        self.registers.write(SUPERFX_ROMBR, interpreter.rombr);
+        self.registers
+            .write(SUPERFX_RAMBR, u8::from(interpreter.rambr));
 
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0) & !SUPERFX_GO_FLAG;
         self.registers.write(SUPERFX_SFR, sfr);
@@ -1089,6 +1096,8 @@ struct GsuInterpreter<'a> {
     registers: [u16; 16],
     pc: u16,
     pbr: u8,
+    rombr: u8,
+    rambr: bool,
     source: usize,
     destination: Option<usize>,
     alt_mode: u8,
@@ -1099,7 +1108,15 @@ struct GsuInterpreter<'a> {
 }
 
 impl<'a> GsuInterpreter<'a> {
-    fn new(entry: u16, pbr: u8, screen_base: usize, rom: &'a [u8], ram: &'a mut [u8]) -> Self {
+    fn new(
+        entry: u16,
+        pbr: u8,
+        rombr: u8,
+        rambr: bool,
+        screen_base: usize,
+        rom: &'a [u8],
+        ram: &'a mut [u8],
+    ) -> Self {
         let mut registers = [0; 16];
         registers[15] = entry;
         Self {
@@ -1108,6 +1125,8 @@ impl<'a> GsuInterpreter<'a> {
             registers,
             pc: entry,
             pbr,
+            rombr,
+            rambr,
             source: 0,
             destination: None,
             alt_mode: 0,
@@ -1281,6 +1300,14 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 self.source = usize::from(opcode & 0x0F);
             }
+            (_, 0xDF) => {
+                self.sync_program_counter();
+                self.getc_ramb_romb(alt_mode);
+            }
+            (_, 0xEF) => {
+                self.sync_program_counter();
+                self.getb(alt_mode);
+            }
             (_, 0xD0..=0xDF) => {
                 self.sync_program_counter();
                 let register = usize::from(opcode & 0x0F);
@@ -1341,7 +1368,7 @@ impl<'a> GsuInterpreter<'a> {
         }
 
         let ram_address = (usize::from(self.pbr & 0x01) << 16) | usize::from(self.pc);
-        self.read_ram_usize(ram_address)
+        self.read_ram_raw_usize(ram_address)
     }
 
     fn sync_program_counter(&mut self) {
@@ -1470,6 +1497,34 @@ impl<'a> GsuInterpreter<'a> {
         self.write_result(result);
     }
 
+    fn getc_ramb_romb(&mut self, alt_mode: u8) {
+        match alt_mode {
+            2 => self.rambr = self.registers[self.source] & 0x01 != 0,
+            3 => self.rombr = self.registers[self.source] as u8 & 0x7F,
+            _ => self.color = self.read_rom_buffer() & 0x0F,
+        }
+        self.destination = None;
+    }
+
+    fn getb(&mut self, alt_mode: u8) {
+        let value = self.read_rom_buffer();
+        let source = self.registers[self.source];
+        let result = match alt_mode {
+            1 => (u16::from(value) << 8) | (source & 0x00FF),
+            2 => (source & 0xFF00) | u16::from(value),
+            3 => value as i8 as i16 as u16,
+            _ => u16::from(value),
+        };
+        self.write_result(result);
+    }
+
+    fn read_rom_buffer(&self) -> u8 {
+        let address = (u32::from(self.rombr) << 16) | u32::from(self.registers[14]);
+        superfx_rom_index(address, self.rom.len())
+            .map(|index| self.rom[index])
+            .unwrap_or(0)
+    }
+
     fn write_result(&mut self, result: u16) {
         let destination = self.destination.take().unwrap_or(0);
         self.set_register(destination, result);
@@ -1521,13 +1576,13 @@ impl<'a> GsuInterpreter<'a> {
         let bit = 0x80 >> (x & 0x07);
         for plane in 0..4 {
             let byte_offset = tile_base + row * 2 + (plane & 0x01) + (plane / 2) * 16;
-            let mut value = self.read_ram_usize(byte_offset);
+            let mut value = self.read_ram_raw_usize(byte_offset);
             if self.color & (1 << plane) != 0 {
                 value |= bit;
             } else {
                 value &= !bit;
             }
-            self.write_ram_usize(byte_offset, value);
+            self.write_ram_raw_usize(byte_offset, value);
         }
         self.registers[1] = self.registers[1].wrapping_add(1);
         self.source = 1;
@@ -1539,6 +1594,11 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn read_ram_usize(&self, address: usize) -> u8 {
+        let address = (usize::from(self.rambr) << 16) | address;
+        self.read_ram_raw_usize(address)
+    }
+
+    fn read_ram_raw_usize(&self, address: usize) -> u8 {
         if self.ram.is_empty() {
             0
         } else {
@@ -1551,6 +1611,11 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn write_ram_usize(&mut self, address: usize, value: u8) {
+        let address = (usize::from(self.rambr) << 16) | address;
+        self.write_ram_raw_usize(address, value);
+    }
+
+    fn write_ram_raw_usize(&mut self, address: usize, value: u8) {
         if !self.ram.is_empty() {
             self.ram[address % self.ram.len()] = value;
         }
