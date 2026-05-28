@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -185,33 +184,21 @@ class MainActivityE2eTest {
             sharedActivity
                 ?.takeUnless { it.isDestroyed || it.isFinishing }
                 ?.let { activity ->
-                    try {
-                        runOnActivityThread(activity) {
-                            activity.resetChromeStateForTest()
-                        }
-                        assertDrawerHandleAvailable(activity)
+                    if (prepareReusableActivity(activity)) {
                         return activity
-                    } catch (_: Throwable) {
-                        sharedActivity = null
                     }
+                    sharedActivity = null
                 }
             MainActivity.currentActivityForTest()?.let { activity ->
                 sharedActivity = activity
-                try {
-                    runOnActivityThread(activity) {
-                        activity.resetChromeStateForTest()
-                    }
-                    assertDrawerHandleAvailable(activity)
+                if (prepareReusableActivity(activity)) {
                     return activity
-                } catch (_: Throwable) {
-                    sharedActivity = null
                 }
+                sharedActivity = null
             }
         }
 
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         val launchIntent =
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
@@ -223,28 +210,58 @@ class MainActivityE2eTest {
                 Intent.FLAG_ACTIVITY_NEW_TASK
             }
         launchIntent.addFlags(launchFlags)
+        val preLaunchActivity = MainActivity.currentActivityForTest()
 
-        try {
-            context.startActivity(launchIntent)
-            val activity =
-                (monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity)
-                    ?: if (!clearTask) {
-                        MainActivity.currentActivityForTest()?.also {
-                            runOnActivityThread(it) {
-                                it.resetChromeStateForTest()
-                            }
-                        }
-                    } else {
-                        null
+        context.startActivity(launchIntent)
+        if (!clearTask) {
+            preLaunchActivity?.let { activity ->
+                try {
+                    runOnActivityThread(activity) {
+                        activity.resetChromeStateForTest()
                     }
-                    ?: throw IllegalArgumentException("MainActivity should be launched")
-            sharedActivity = activity
-            assertDrawerHandleAvailable(activity)
-            return activity
-        } finally {
-            instrumentation.removeMonitor(monitor)
+                } catch (_: Throwable) {
+                    // Ignore stale or no-longer-responsive instances here; the launch poll below
+                    // will either observe a usable activity or fail with current chrome state.
+                }
+            }
         }
+        val activity =
+            if (clearTask) {
+                waitUntilValue(STARTUP_TIMEOUT_MS) {
+                    MainActivity.currentActivityForTest()?.takeIf { it !== preLaunchActivity }
+                }
+            } else {
+                waitUntilValue(STARTUP_TIMEOUT_MS) {
+                    val current = MainActivity.currentActivityForTest() ?: return@waitUntilValue null
+                    when {
+                        current !== preLaunchActivity -> current
+                        safeChromeViewIsShowing(current, DRAWER_EDGE_HANDLE_TAG) -> current
+                        else -> null
+                    }
+                }
+            }
+        if (activity == null) {
+            val current = MainActivity.currentActivityForTest()
+            if (!clearTask && current != null) {
+                fail("MainActivity relaunch did not restore the drawer handle; ${safeChromeDebugState(current, DRAWER_EDGE_HANDLE_TAG)}")
+            }
+            throw IllegalArgumentException("MainActivity should be launched")
+        }
+        sharedActivity = activity
+        assertDrawerHandleAvailable(activity)
+        return activity
     }
+
+    private fun prepareReusableActivity(activity: MainActivity): Boolean =
+        try {
+            runOnActivityThread(activity) {
+                activity.resetChromeStateForTest()
+            }
+            assertDrawerHandleAvailable(activity)
+            true
+        } catch (_: Throwable) {
+            false
+        }
 
     private fun assertDrawerHandleAvailable(activity: MainActivity) {
         assertChromeViewAvailable(
@@ -275,10 +292,10 @@ class MainActivityE2eTest {
         timeoutMs: Long,
         failureMessage: String,
     ) {
-        if (waitUntil(timeoutMs) { chromeViewIsShowing(activity, tag) }) {
+        if (waitUntil(timeoutMs) { safeChromeViewIsShowing(activity, tag) }) {
             return
         }
-        fail("$failureMessage; ${chromeDebugState(activity, tag)}")
+        fail("$failureMessage; ${safeChromeDebugState(activity, tag)}")
     }
 
     private fun chromeViewIsShowing(activity: MainActivity, tag: String): Boolean {
@@ -298,6 +315,20 @@ class MainActivityE2eTest {
         }
         return state
     }
+
+    private fun safeChromeViewIsShowing(activity: MainActivity, tag: String): Boolean =
+        try {
+            chromeViewIsShowing(activity, tag)
+        } catch (_: Throwable) {
+            false
+        }
+
+    private fun safeChromeDebugState(activity: MainActivity, tag: String): String =
+        try {
+            chromeDebugState(activity, tag)
+        } catch (error: Throwable) {
+            "debug unavailable: ${error.message ?: error::class.java.simpleName}"
+        }
 
     private fun runOnActivityThread(activity: MainActivity, action: () -> Unit) {
         val completion = CountDownLatch(1)
@@ -327,6 +358,15 @@ class MainActivityE2eTest {
             SystemClock.sleep(POLL_INTERVAL_MS)
         }
         return condition()
+    }
+
+    private fun <T> waitUntilValue(timeoutMs: Long, supplier: () -> T?): T? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() <= deadline) {
+            supplier()?.let { return it }
+            SystemClock.sleep(POLL_INTERVAL_MS)
+        }
+        return supplier()
     }
 
     private companion object {
