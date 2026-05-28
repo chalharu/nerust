@@ -1046,6 +1046,93 @@ mod tests {
     }
 
     #[test]
+    fn dsp1_lorom_executes_matrix_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 MATRICES",
+            0x20,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x208000, 0x01));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+
+        assert!(cartridge.write(0x208000, 0x0D));
+        write_dsp1_word(&mut cartridge, 0x208000, 40);
+        write_dsp1_word(&mut cartridge, 0x208000, (-80_i16) as u16);
+        write_dsp1_word(&mut cartridge, 0x208000, 120);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 10);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), (-20_i16) as u16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 30);
+
+        assert!(cartridge.write(0x208000, 0x03));
+        write_dsp1_word(&mut cartridge, 0x208000, 40);
+        write_dsp1_word(&mut cartridge, 0x208000, (-80_i16) as u16);
+        write_dsp1_word(&mut cartridge, 0x208000, 120);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 10);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), (-20_i16) as u16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 30);
+
+        assert!(cartridge.write(0x208000, 0x0B));
+        write_dsp1_word(&mut cartridge, 0x208000, 40);
+        write_dsp1_word(&mut cartridge, 0x208000, (-80_i16) as u16);
+        write_dsp1_word(&mut cartridge, 0x208000, 120);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 10);
+
+        assert!(cartridge.write(0x208000, 0x11));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert!(cartridge.write(0x208000, 0x1D));
+        write_dsp1_word(&mut cartridge, 0x208000, 64);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+
+        assert!(cartridge.write(0x208000, 0x21));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert!(cartridge.write(0x208000, 0x2D));
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 64);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+
+        assert!(cartridge.write(0x208000, 0x01));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x2000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert!(cartridge.write(0x208000, 0x09));
+        write_dsp1_word(&mut cartridge, 0x208000, 4);
+        write_dsp1_word(&mut cartridge, 0x208000, 4);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 1);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+
+        assert!(cartridge.write(0x208000, 0x03));
+        write_dsp1_word(&mut cartridge, 0x208000, 4);
+        write_dsp1_word(&mut cartridge, 0x208000, 4);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 1);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+    }
+
+    #[test]
     fn dsp1_freeze_command_clears_ready_status() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "DSP1 FREEZE",
