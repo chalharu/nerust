@@ -1105,6 +1105,45 @@ mod tests {
         assert_eq!(cartridge.read(0x006BFF), Some(0xFE));
     }
 
+    #[test]
+    fn cx4_disintegrates_packed_pixels_to_bitplanes() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 DISINTEGRATE",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_word(&mut cartridge, 0x007F80, 4);
+        write_word(&mut cartridge, 0x007F83, 4);
+        write_word(&mut cartridge, 0x007F86, 0x0100);
+        assert!(cartridge.write(0x007F89, 8));
+        assert!(cartridge.write(0x007F8C, 8));
+        write_word(&mut cartridge, 0x007F8F, 0x0100);
+
+        for row in 0..8 {
+            for (column_pair, byte) in [0x10, 0x32, 0x54, 0x76].into_iter().enumerate() {
+                assert!(cartridge.write(0x006600 + row * 4 + column_pair as u32, byte));
+            }
+        }
+
+        assert!(cartridge.write(0x007F4D, 0x0B));
+        assert!(cartridge.write(0x007F4F, 0x00));
+
+        for (offset, expected) in [
+            0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33,
+            0x55, 0x33, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00,
+            0x0F, 0x00, 0x0F, 0x00,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(cartridge.read(0x006000 + offset as u32), Some(expected));
+        }
+    }
+
     fn write_word(cartridge: &mut Cartridge, address: u32, word: u16) {
         let [low, high] = word.to_le_bytes();
         assert!(cartridge.write(address, low));
