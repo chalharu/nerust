@@ -1361,6 +1361,8 @@ mod tests {
     const GSU_MOVES_OVERFLOW_SET_PROGRAM: [u8; 6] = [0xF1, 0x80, 0x00, 0x20, 0xB1, 0x00];
     const GSU_MOVES_OVERFLOW_CLEAR_PROGRAM: [u8; 6] = [0xF1, 0x01, 0x00, 0x20, 0xB1, 0x00];
     const GSU_IMMEDIATE_LOAD_FLAGS_PROGRAM: [u8; 4] = [0xF1, 0x00, 0x00, 0x00];
+    const GSU_IBT_SIGN_EXTENSION_PROGRAM: [u8; 9] =
+        [0xA1, 0x80, 0x21, 0x10, 0xF1, 0x40, 0x01, 0x31, 0x00];
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
     const GSU_GETB_PROGRAM: [u8; 9] = [0xFE, 0x23, 0x81, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00];
@@ -1554,6 +1556,26 @@ mod tests {
         start_super_fx_program(&mut cartridge, 0x70, 0x0080);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x1A, 0x08);
+    }
+
+    #[test]
+    fn super_fx_ibt_sign_extends_immediate_operand() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU IBT SIGN",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in GSU_IBT_SIGN_EXTENSION_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x700140), Some(0x80));
+        assert_eq!(cartridge.read(0x700141), Some(0xFF));
     }
 
     #[test]
