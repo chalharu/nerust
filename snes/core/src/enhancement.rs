@@ -120,6 +120,7 @@ const SUPERFX_R15: u16 = 0x301E;
 const SUPERFX_R15_HIGH: u16 = 0x301F;
 const SUPERFX_SCBR: u16 = 0x3038;
 const SUPERFX_GO_FLAG: u8 = 0x20;
+const GSU_MAX_INTERPRETER_STEPS: usize = 256 * 1024;
 
 impl SuperFxState {
     fn new() -> Self {
@@ -198,7 +199,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn run(&mut self) {
-        for _ in 0..4096 {
+        for _ in 0..GSU_MAX_INTERPRETER_STEPS {
             if self.halted {
                 break;
             }
@@ -326,7 +327,7 @@ impl<'a> GsuInterpreter<'a> {
             (_, 0xA0..=0xAF) => {
                 let value = self.fetch();
                 self.sync_program_counter();
-                self.set_register(usize::from(opcode & 0x0F), u16::from(value));
+                self.load_register(usize::from(opcode & 0x0F), u16::from(value));
             }
             (_, 0xB0..=0xBF) => {
                 self.sync_program_counter();
@@ -351,7 +352,7 @@ impl<'a> GsuInterpreter<'a> {
                 let low = self.fetch();
                 let high = self.fetch();
                 self.sync_program_counter();
-                self.set_register(usize::from(opcode & 0x0F), u16::from_le_bytes([low, high]));
+                self.load_register(usize::from(opcode & 0x0F), u16::from_le_bytes([low, high]));
             }
             _ => return false,
         }
@@ -383,6 +384,11 @@ impl<'a> GsuInterpreter<'a> {
         self.zero = value == 0;
         self.source = register;
         self.destination = None;
+    }
+
+    fn load_register(&mut self, register: usize, value: u16) {
+        self.registers[register] = value;
+        self.zero = value == 0;
     }
 
     fn compare_register(&mut self, register: usize) {
@@ -442,7 +448,7 @@ impl<'a> GsuInterpreter<'a> {
 
     fn store_word(&mut self, register: usize) {
         let address = self.registers[register];
-        let value = self.registers[self.source].to_le_bytes();
+        let value = self.registers[0].to_le_bytes();
         self.write_ram(address, value[0]);
         self.write_ram(address.wrapping_add(1), value[1]);
         self.destination = None;
@@ -450,7 +456,7 @@ impl<'a> GsuInterpreter<'a> {
 
     fn store_byte(&mut self, register: usize) {
         let address = self.registers[register];
-        self.write_ram(address, self.registers[self.source] as u8);
+        self.write_ram(address, self.registers[0] as u8);
         self.destination = None;
     }
 
@@ -460,12 +466,21 @@ impl<'a> GsuInterpreter<'a> {
             self.read_ram(address),
             self.read_ram(address.wrapping_add(1)),
         ]);
-        self.set_register(0, value);
+        self.write_load_result(value);
     }
 
     fn load_byte(&mut self, register: usize) {
         let value = u16::from(self.read_ram(self.registers[register]));
-        self.set_register(0, value);
+        self.write_load_result(value);
+    }
+
+    fn write_load_result(&mut self, value: u16) {
+        if let Some(destination) = self.destination.take() {
+            self.registers[destination] = value;
+            self.zero = value == 0;
+        } else {
+            self.set_register(0, value);
+        }
     }
 
     fn plot(&mut self) {
