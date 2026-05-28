@@ -23,7 +23,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.chalharu.nerust"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = versionCodeOverride

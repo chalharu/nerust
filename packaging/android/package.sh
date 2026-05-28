@@ -12,7 +12,7 @@ JNI_LIBS_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 APK_SRC="${SCRIPT_DIR}/app/build/outputs/apk/release/app-release.apk"
 APK_NAME="nerust-${TAG_NAME}-android-arm64-v8a.apk"
 SIGNING_TEMP_DIR=""
-export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-26}"
+export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-28}"
 
 cleanup() {
     if [[ -n "${SIGNING_TEMP_DIR}" && -d "${SIGNING_TEMP_DIR}" ]]; then

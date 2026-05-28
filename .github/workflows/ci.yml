@@ -203,11 +203,15 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
   android-e2e:
-    name: Android e2e (x86_64 emulator)
+    name: Android e2e (API ${{ matrix.api-level }}, x86_64 emulator)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [28, 35]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -241,7 +245,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-android-e2e-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-android-e2e-
       - name: Restore Gradle cache
         id: gradle-cache
@@ -250,14 +254,14 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-android-e2e-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
+          key: ${{ runner.os }}-gradle-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-android-e2e-
       - name: Run emulator e2e tests
         uses: ReactiveCircus/android-emulator-runner@324029e2f414c084d8b15ba075288885e74aef9c # v2.34.0
         env:
           ANDROID_ABI_FILTERS: x86_64
         with:
-          api-level: 35
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: |
