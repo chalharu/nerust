@@ -24,7 +24,7 @@ use nerust_gui_shell::touch::{
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{Touch, TouchPhase, WindowEvent};
@@ -32,6 +32,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::platform::android::activity::AndroidApp;
 use winit::window::{Window, WindowId};
+
+const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
+const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
+const FOREGROUND_RETRY_MAX_ATTEMPTS: u32 = 20;
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     picker::bind_app(&app);
@@ -67,6 +71,13 @@ struct AndroidFrontend {
     renderer: Option<WgpuRenderer>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
+    is_resumed: bool,
+    foreground_resume_pending: bool,
+    foreground_retry_attempts: u32,
+    foreground_retry_at: Option<Instant>,
+    last_foreground_error: Option<String>,
+    lifecycle_auto_paused: bool,
+    lifecycle_restore_pending: bool,
 }
 
 impl AndroidFrontend {
@@ -84,6 +95,13 @@ impl AndroidFrontend {
             renderer: None,
             overlay: None,
             active_touches: HashMap::new(),
+            is_resumed: false,
+            foreground_resume_pending: false,
+            foreground_retry_attempts: 0,
+            foreground_retry_at: None,
+            last_foreground_error: None,
+            lifecycle_auto_paused: false,
+            lifecycle_restore_pending: false,
         };
         if let Err(error) = frontend.restore_last_session() {
             log::warn!("{error}");
@@ -132,6 +150,8 @@ impl AndroidFrontend {
         } else {
             self.session.clear_hidden_lifecycle_state();
         }
+        self.lifecycle_auto_paused = false;
+        self.lifecycle_restore_pending = false;
         self.request_redraw();
         Ok(())
     }
@@ -243,14 +263,20 @@ impl AndroidFrontend {
     }
 
     fn save_lifecycle_state(&mut self) {
+        if !self.lifecycle_auto_paused && !self.session.paused() {
+            let _ = self.session.run_command(SessionCommand::Pause);
+            self.lifecycle_auto_paused = true;
+        }
         if let Err(error) = self.session.clear_input() {
             log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
+            self.lifecycle_restore_pending = false;
             self.session.clear_hidden_lifecycle_state();
             self.session.flush_before_exit();
             return;
         }
         self.active_touches.clear();
-        if !self.session.save_hidden_lifecycle_state() {
+        self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
+        if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
         }
         self.session.flush_before_exit();
@@ -272,6 +298,9 @@ impl AndroidFrontend {
     fn handle_surface_close(&mut self) {
         self.save_lifecycle_state();
         self.release_window_resources();
+        if self.is_resumed {
+            self.begin_foreground_resume();
+        }
     }
 
     fn request_library_dialog(&mut self) {
@@ -350,6 +379,75 @@ impl AndroidFrontend {
         self.shell.needs_redraw = true;
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
+        }
+    }
+
+    fn begin_foreground_resume(&mut self) {
+        self.foreground_resume_pending = true;
+        self.foreground_retry_attempts = 0;
+        self.foreground_retry_at = None;
+        self.last_foreground_error = None;
+    }
+
+    fn schedule_foreground_retry(&mut self) -> bool {
+        if !self.is_resumed || !self.foreground_resume_pending {
+            return false;
+        }
+        if self.foreground_retry_attempts >= FOREGROUND_RETRY_MAX_ATTEMPTS {
+            self.foreground_resume_pending = false;
+            log::error!(
+                "giving up after {} Android window initialization attempts",
+                FOREGROUND_RETRY_MAX_ATTEMPTS
+            );
+            return false;
+        }
+
+        let delay = FOREGROUND_RETRY_BASE_DELAY
+            .saturating_mul(1_u32 << self.foreground_retry_attempts.min(3))
+            .min(FOREGROUND_RETRY_MAX_DELAY);
+        self.foreground_retry_attempts += 1;
+        self.foreground_retry_at = Some(Instant::now() + delay);
+        true
+    }
+
+    fn try_resume_foreground(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.is_resumed || !self.foreground_resume_pending {
+            return;
+        }
+        if let Some(retry_at) = self.foreground_retry_at {
+            if Instant::now() < retry_at {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
+                return;
+            }
+            self.foreground_retry_at = None;
+        }
+        match self.ensure_window(event_loop) {
+            Ok(()) => {
+                self.last_foreground_error = None;
+                self.foreground_resume_pending = false;
+                self.foreground_retry_attempts = 0;
+                self.foreground_retry_at = None;
+                if self.lifecycle_restore_pending {
+                    self.session.load_hidden_lifecycle_state();
+                    self.lifecycle_restore_pending = false;
+                }
+                if self.lifecycle_auto_paused {
+                    let _ = self.session.run_command(SessionCommand::Resume);
+                    self.lifecycle_auto_paused = false;
+                }
+                self.request_redraw();
+            }
+            Err(error) => {
+                if self.last_foreground_error.as_deref() != Some(error.as_str()) {
+                    log::warn!("{error}");
+                }
+                self.last_foreground_error = Some(error);
+                if self.schedule_foreground_retry()
+                    && let Some(retry_at) = self.foreground_retry_at
+                {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
+                }
+            }
         }
     }
 
@@ -442,17 +540,17 @@ impl AndroidFrontend {
 
 impl ApplicationHandler for AndroidFrontend {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Err(error) = self.ensure_window(event_loop) {
-            log::error!("{error}");
-            event_loop.exit();
-            return;
-        }
-        self.session.load_hidden_lifecycle_state();
-        let _ = self.session.run_command(SessionCommand::Resume);
-        self.request_redraw();
+        self.is_resumed = true;
+        self.begin_foreground_resume();
+        self.try_resume_foreground(event_loop);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.is_resumed = false;
+        self.foreground_resume_pending = false;
+        self.foreground_retry_attempts = 0;
+        self.foreground_retry_at = None;
+        self.last_foreground_error = None;
         self.save_lifecycle_state();
         picker::reset();
         library::reset();
@@ -494,7 +592,9 @@ impl ApplicationHandler for AndroidFrontend {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Wait);
+        self.try_resume_foreground(event_loop);
         if let Some(result) = library::take_result() {
             self.handle_library_result(result);
         }
