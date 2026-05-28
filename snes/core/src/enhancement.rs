@@ -1,5 +1,5 @@
 use crate::cartridge::{CartridgeHeader, EnhancementChip};
-use crate::mapper::MapperKind;
+use crate::mapper::{MapperKind, lorom_rom_index};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EnhancementState {
@@ -48,13 +48,14 @@ impl EnhancementState {
         header: &CartridgeHeader,
         address: u32,
         value: u8,
+        rom: &[u8],
         save_ram: &mut [u8],
     ) -> bool {
         match self {
             Self::None => false,
             Self::Sa1(state) => state.write(address, value),
             Self::SuperFx(state) => state.write(address, value, save_ram),
-            Self::Cx4(state) => state.write(address, value),
+            Self::Cx4(state) => state.write(address, value, rom),
             Self::Dsp1(state) => state.write(header.mapper_kind(), address, value),
         }
     }
@@ -369,26 +370,224 @@ impl<'a> GsuInterpreter<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cx4State {
-    registers: ByteWindow,
+    ram: Box<[u8; CX4_RAM_LEN]>,
 }
+
+const CX4_RAM_START: u16 = 0x6000;
+const CX4_RAM_LEN: usize = 0x2000;
+const CX4_LOAD_TRIGGER: u16 = 0x7F47;
+const CX4_COMMAND_TRIGGER: u16 = 0x7F4F;
+const CX4_BUSY_STATUS: u16 = 0x7F5E;
+const CX4_DATA_START: usize = 0x1F80;
+const CX4_COMMAND_MODE: usize = 0x1F4D;
+const CX4_LOAD_SOURCE: usize = 0x1F40;
+const CX4_LOAD_LEN: usize = 0x1F43;
+const CX4_LOAD_DEST: usize = 0x1F45;
 
 impl Cx4State {
     fn new() -> Self {
         Self {
-            registers: ByteWindow::new(0x7F40, 0x0070),
+            ram: Box::new([0; CX4_RAM_LEN]),
         }
     }
 
     fn read(&self, address: u32) -> Option<u8> {
-        if is_system_bank(address) {
-            self.registers.read(offset(address))
-        } else {
-            None
+        if !is_system_bank(address) {
+            return None;
+        }
+
+        let offset = offset(address);
+        if offset == CX4_BUSY_STATUS {
+            return Some(0);
+        }
+
+        self.index(offset).map(|index| self.ram[index])
+    }
+
+    fn write(&mut self, address: u32, value: u8, rom: &[u8]) -> bool {
+        if !is_system_bank(address) {
+            return false;
+        }
+
+        let offset = offset(address);
+        let Some(index) = self.index(offset) else {
+            return false;
+        };
+
+        self.ram[index] = value;
+        match offset {
+            CX4_LOAD_TRIGGER => self.load_rom_window(rom),
+            CX4_COMMAND_TRIGGER => self.execute_command(value),
+            _ => {}
+        }
+        true
+    }
+
+    fn index(&self, address_offset: u16) -> Option<usize> {
+        let relative = address_offset.checked_sub(CX4_RAM_START)? as usize;
+        (relative < self.ram.len()).then_some(relative)
+    }
+
+    fn load_rom_window(&mut self, rom: &[u8]) {
+        let source = self.read_u24(CX4_LOAD_SOURCE);
+        let len = usize::from(self.read_u16(CX4_LOAD_LEN));
+        let dest = usize::from(self.read_u16(CX4_LOAD_DEST) & 0x1FFF);
+
+        for byte_index in 0..len {
+            let Some(source_index) =
+                lorom_rom_index(source.wrapping_add(byte_index as u32), rom.len())
+            else {
+                break;
+            };
+            let dest_index = (dest + byte_index) % self.ram.len();
+            self.ram[dest_index] = rom[source_index];
         }
     }
 
-    fn write(&mut self, address: u32, value: u8) -> bool {
-        is_system_bank(address) && self.registers.write(offset(address), value)
+    fn execute_command(&mut self, command: u8) {
+        if self.ram[CX4_COMMAND_MODE] == 0x0E && command < 0x40 && command & 0x03 == 0 {
+            self.ram[CX4_DATA_START] = command >> 2;
+            return;
+        }
+
+        match command {
+            0x05 => self.command_propulsion(),
+            0x0D => self.command_set_vector_length(),
+            0x10 => self.command_polar_to_rectangular(true),
+            0x13 => self.command_polar_to_rectangular(false),
+            0x15 => self.command_pythagorean(),
+            0x1F => self.command_atan(),
+            0x25 => self.command_multiply(),
+            0x40 => self.command_sum(),
+            0x54 => self.command_square(),
+            0x89 => {
+                self.ram[CX4_DATA_START] = 0x36;
+                self.ram[CX4_DATA_START + 1] = 0x43;
+                self.ram[CX4_DATA_START + 2] = 0x05;
+            }
+            _ => {}
+        }
+    }
+
+    fn command_propulsion(&mut self) {
+        let divisor = u32::from(self.read_u16(CX4_DATA_START + 3));
+        let quotient = 0x1_0000u32.checked_div(divisor).unwrap_or(0x1_0000);
+        let output = (quotient * u32::from(self.read_u16(CX4_DATA_START + 1))) >> 8;
+        self.write_u16(CX4_DATA_START, output as u16);
+    }
+
+    fn command_set_vector_length(&mut self) {
+        let x = f64::from(self.read_i16(CX4_DATA_START));
+        let y = f64::from(self.read_i16(CX4_DATA_START + 3));
+        let distance = f64::from(self.read_i16(CX4_DATA_START + 6));
+        let radius = (x * x + y * y).sqrt();
+        if radius == 0.0 {
+            self.write_u16(CX4_DATA_START + 9, 0);
+            self.write_u16(CX4_DATA_START + 12, 0);
+            return;
+        }
+
+        self.write_i16(CX4_DATA_START + 9, (x * distance / radius * 0.98) as i16);
+        self.write_i16(CX4_DATA_START + 12, (y * distance / radius * 0.99) as i16);
+    }
+
+    fn command_polar_to_rectangular(&mut self, signed_radius: bool) {
+        let angle =
+            f64::from(self.read_u16(CX4_DATA_START) & 0x01FF) * std::f64::consts::TAU / 512.0;
+        let raw_radius = i32::from(self.read_i16(CX4_DATA_START + 3));
+        let radius = if signed_radius {
+            (raw_radius << 1) >> 1
+        } else {
+            raw_radius
+        } as f64;
+        let scale = if signed_radius { 1.0 } else { 256.0 };
+        let x = (radius * angle.cos() * scale) as i32;
+        let mut y = (radius * angle.sin() * scale) as i32;
+        if signed_radius {
+            y -= y >> 6;
+        }
+        self.write_u24(CX4_DATA_START + 6, x as u32);
+        self.write_u24(CX4_DATA_START + 9, y as u32);
+    }
+
+    fn command_pythagorean(&mut self) {
+        let x = f64::from(self.read_i16(CX4_DATA_START));
+        let y = f64::from(self.read_i16(CX4_DATA_START + 3));
+        self.write_i16(CX4_DATA_START, (x.hypot(y)) as i16);
+    }
+
+    fn command_atan(&mut self) {
+        let x = f64::from(self.read_i16(CX4_DATA_START));
+        let y = f64::from(self.read_i16(CX4_DATA_START + 3));
+        let angle = if x == 0.0 {
+            if y > 0.0 { 0x80 } else { 0x180 }
+        } else {
+            let mut result = (y / x).atan() / std::f64::consts::TAU * 512.0;
+            if x < 0.0 {
+                result += 0x100 as f64;
+            }
+            (result as i16) & 0x01FF
+        };
+        self.write_u16(CX4_DATA_START + 6, angle as u16);
+    }
+
+    fn command_multiply(&mut self) {
+        let left = self.read_u24(CX4_DATA_START);
+        let right = self.read_u24(CX4_DATA_START + 3);
+        self.write_u24(CX4_DATA_START, left.wrapping_mul(right));
+    }
+
+    fn command_sum(&mut self) {
+        let sum = self.ram[..0x800]
+            .iter()
+            .fold(0u16, |sum, value| sum.wrapping_add(u16::from(*value)));
+        self.write_u16(CX4_DATA_START, sum);
+    }
+
+    fn command_square(&mut self) {
+        let value = i64::from(self.read_i24(CX4_DATA_START));
+        let squared = value * value;
+        self.write_u24(CX4_DATA_START + 3, squared as u32);
+        self.write_u24(CX4_DATA_START + 6, (squared >> 24) as u32);
+    }
+
+    fn read_u16(&self, index: usize) -> u16 {
+        u16::from_le_bytes([self.ram[index], self.ram[index + 1]])
+    }
+
+    fn read_i16(&self, index: usize) -> i16 {
+        i16::from_le_bytes([self.ram[index], self.ram[index + 1]])
+    }
+
+    fn read_u24(&self, index: usize) -> u32 {
+        u32::from(self.ram[index])
+            | (u32::from(self.ram[index + 1]) << 8)
+            | (u32::from(self.ram[index + 2]) << 16)
+    }
+
+    fn read_i24(&self, index: usize) -> i32 {
+        let value = self.read_u24(index) as i32;
+        if value & 0x80_0000 != 0 {
+            value | !0xFF_FFFF
+        } else {
+            value
+        }
+    }
+
+    fn write_u16(&mut self, index: usize, value: u16) {
+        let [low, high] = value.to_le_bytes();
+        self.ram[index] = low;
+        self.ram[index + 1] = high;
+    }
+
+    fn write_i16(&mut self, index: usize, value: i16) {
+        self.write_u16(index, value as u16);
+    }
+
+    fn write_u24(&mut self, index: usize, value: u32) {
+        self.ram[index] = value as u8;
+        self.ram[index + 1] = (value >> 8) as u8;
+        self.ram[index + 2] = (value >> 16) as u8;
     }
 }
 
