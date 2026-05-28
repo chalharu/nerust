@@ -883,6 +883,42 @@ mod tests {
     }
 
     #[test]
+    fn sa1_normal_dma_copies_rom_to_iram() {
+        let mut rom = build_sa1_rom(0x400000, 0x03);
+        rom[0x000000] = 0xA1;
+        rom[0x000001] = 0xB2;
+        rom[0x000002] = 0xC3;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        write_u24(&mut cartridge, 0x002232, 0xC00000);
+        assert!(cartridge.write(0x002235, 0x00));
+        write_word(&mut cartridge, 0x002238, 3);
+        assert!(cartridge.write(0x002230, 0x80));
+        assert!(cartridge.write(0x002236, 0x03));
+
+        assert_eq!(cartridge.read(0x003300), Some(0xA1));
+        assert_eq!(cartridge.read(0x003301), Some(0xB2));
+        assert_eq!(cartridge.read(0x003302), Some(0xC3));
+    }
+
+    #[test]
+    fn sa1_normal_dma_copies_iram_to_bwram() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x003010, 0x44));
+        assert!(cartridge.write(0x003011, 0x55));
+        write_u24(&mut cartridge, 0x002232, 0x000010);
+        assert!(cartridge.write(0x002235, 0x00));
+        assert!(cartridge.write(0x002236, 0x00));
+        write_word(&mut cartridge, 0x002238, 2);
+        assert!(cartridge.write(0x002230, 0x86));
+        assert!(cartridge.write(0x002237, 0x00));
+
+        assert_eq!(cartridge.read(0x400000), Some(0x44));
+        assert_eq!(cartridge.read(0x400001), Some(0x55));
+    }
+
+    #[test]
     fn sa1_arithmetic_multiplies_signed_operands() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "SA1 ARITH MUL",
