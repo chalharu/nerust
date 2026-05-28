@@ -234,6 +234,74 @@ static SETTINGS_RESULT: Mutex<Option<SettingsDialogResult>> = Mutex::new(None);
 static SETTINGS_WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
 static SETTINGS_REQUEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
+/// Pre-marshalled settings data for synchronous dialog display from JNI callbacks.
+static CACHED_SETTINGS: Mutex<CachedSettingsData> = Mutex::new(CachedSettingsData::empty());
+
+struct CachedSettingsData {
+    keys: Vec<String>,
+    labels: Vec<String>,
+    choices: Vec<String>,
+    current_indices: Vec<String>,
+}
+
+impl CachedSettingsData {
+    const fn empty() -> Self {
+        Self {
+            keys: Vec::new(),
+            labels: Vec::new(),
+            choices: Vec::new(),
+            current_indices: Vec::new(),
+        }
+    }
+}
+
+/// Update cached settings so `show_settings_dialog_sync` can present current data.
+pub(crate) fn update_cached_settings(current: &AndroidSettings) {
+    let keys: Vec<String> = AndroidSettings::dialog_keys()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let labels: Vec<String> = AndroidSettings::dialog_labels()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let choices = AndroidSettings::dialog_choices();
+    let current_indices = current.current_indices();
+    *CACHED_SETTINGS
+        .lock()
+        .expect("cached settings mutex poisoned") = CachedSettingsData {
+        keys,
+        labels,
+        choices,
+        current_indices,
+    };
+}
+
+/// Show the settings dialog synchronously from a JNI callback running on the
+/// Java main thread.  Returns `Ok(false)` if a dialog is already in flight.
+pub(crate) fn show_settings_dialog_sync(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+) -> Result<bool, String> {
+    if SETTINGS_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return Ok(false);
+    }
+    let cached = CACHED_SETTINGS
+        .lock()
+        .expect("cached settings mutex poisoned");
+    let keys = cached.keys.clone();
+    let labels = cached.labels.clone();
+    let choices = cached.choices.clone();
+    let current_indices = cached.current_indices.clone();
+    drop(cached);
+
+    if let Err(error) = show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices) {
+        SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 pub(crate) fn bind_app(app: &AndroidApp) {
     *SETTINGS_WAKER
         .lock()
@@ -305,48 +373,69 @@ fn show_settings_on_java_main_thread(
     choices: &[String],
     current_indices: &[String],
 ) -> Result<(), String> {
-    let n = keys.len();
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     vm.attach_current_thread(|env| {
-        // 4 arrays × n elements each + a few extra for the method call itself
-        env.with_local_frame(4 + n * 4 + 8, |env| {
-            let activity_raw = app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-
-            let string_class = env.find_class(jni_str!("java/lang/String"))?;
-
-            let mut make_string_array =
-                |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
-                let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
-                for (i, s) in items.iter().enumerate() {
-                    let js = env.new_string(s.as_str())?;
-                    arr.set_element(env, i, &js)?;
-                }
-                Ok(arr)
-            };
-
-            let keys_arr = make_string_array(keys)?;
-            let labels_arr = make_string_array(labels)?;
-            let choices_arr = make_string_array(choices)?;
-            let current_arr = make_string_array(current_indices)?;
-
-            env.call_method(
-                activity.as_ref(),
-                jni_str!("showSettingsDialog"),
-                jni_sig!(
-                    "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"
-                ),
-                &[
-                    JValue::Object(keys_arr.as_ref()),
-                    JValue::Object(labels_arr.as_ref()),
-                    JValue::Object(choices_arr.as_ref()),
-                    JValue::Object(current_arr.as_ref()),
-                ],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
+        let activity_raw = app.activity_as_ptr() as jobject;
+        let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+        show_settings_with_env_inner(env, activity.as_ref(), keys, labels, choices, current_indices)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
+}
+
+fn show_settings_with_env(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+    keys: &[String],
+    labels: &[String],
+    choices: &[String],
+    current_indices: &[String],
+) -> Result<(), String> {
+    let n = keys.len();
+    env.with_local_frame(4 + n * 4 + 8, |env| {
+        show_settings_with_env_inner(env, activity, keys, labels, choices, current_indices)
+    })
+    .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
+}
+
+fn show_settings_with_env_inner(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+    keys: &[String],
+    labels: &[String],
+    choices: &[String],
+    current_indices: &[String],
+) -> Result<(), jni::errors::Error> {
+    let string_class = env.find_class(jni_str!("java/lang/String"))?;
+
+    let mut make_string_array =
+        |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
+        let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
+        for (i, s) in items.iter().enumerate() {
+            let js = env.new_string(s.as_str())?;
+            arr.set_element(env, i, &js)?;
+        }
+        Ok(arr)
+    };
+
+    let keys_arr = make_string_array(keys)?;
+    let labels_arr = make_string_array(labels)?;
+    let choices_arr = make_string_array(choices)?;
+    let current_arr = make_string_array(current_indices)?;
+
+    env.call_method(
+        activity,
+        jni_str!("showSettingsDialog"),
+        jni_sig!(
+            "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"
+        ),
+        &[
+            JValue::Object(keys_arr.as_ref()),
+            JValue::Object(labels_arr.as_ref()),
+            JValue::Object(choices_arr.as_ref()),
+            JValue::Object(current_arr.as_ref()),
+        ],
+    )?;
+    Ok(())
 }
 
 fn publish_result(result: SettingsDialogResult) {

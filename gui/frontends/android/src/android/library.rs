@@ -7,6 +7,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
+/// Cached library entries for synchronous dialog display from JNI callbacks.
+static CACHED_ENTRIES: Mutex<(Vec<String>, Vec<String>)> = Mutex::new((Vec::new(), Vec::new()));
+
 /// Sent back to Rust when the user taps "Import new ROM…" in the library dialog.
 ///
 /// Must match `MainActivity.IMPORT_ACTION_ID`.
@@ -32,6 +35,33 @@ pub(crate) fn bind_app(app: &AndroidApp) {
         .lock()
         .expect("library result mutex poisoned") = None;
     LIBRARY_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+}
+
+/// Update the cached entries so `show_library_dialog_sync` can present current data.
+pub(crate) fn update_cached_entries(entries: &[RomLibraryEntry]) {
+    let names: Vec<String> = entries.iter().map(|e| e.display_name.clone()).collect();
+    let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
+    *CACHED_ENTRIES.lock().expect("cached entries mutex poisoned") = (names, ids);
+}
+
+/// Show the ROM library dialog synchronously from a JNI callback running on the
+/// Java main thread.  Returns `Ok(false)` if a dialog is already in flight.
+pub(crate) fn show_library_dialog_sync(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+) -> Result<bool, String> {
+    if LIBRARY_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return Ok(false);
+    }
+    let (names, ids) = CACHED_ENTRIES
+        .lock()
+        .expect("cached entries mutex poisoned")
+        .clone();
+    if let Err(error) = show_dialog_with_env(env, activity, &names, &ids) {
+        LIBRARY_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+        return Err(error);
+    }
+    Ok(true)
 }
 
 pub(crate) fn reset() {
@@ -81,39 +111,57 @@ fn show_dialog_on_java_main_thread(
 ) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     vm.attach_current_thread(|env| {
-        env.with_local_frame(16 + names.len() * 2, |env| {
-            let activity_raw = app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-
-            let string_class = env.find_class(jni_str!("java/lang/String"))?;
-
-            let names_array: JObjectArray<'_> =
-                env.new_object_array(names.len() as _, &string_class, JObject::null())?;
-            for (i, name) in names.iter().enumerate() {
-                let jname = env.new_string(name.as_str())?;
-                names_array.set_element(env, i, &jname)?;
-            }
-
-            let ids_array: JObjectArray<'_> =
-                env.new_object_array(ids.len() as _, &string_class, JObject::null())?;
-            for (i, id) in ids.iter().enumerate() {
-                let jid = env.new_string(id.as_str())?;
-                ids_array.set_element(env, i, &jid)?;
-            }
-
-            env.call_method(
-                activity.as_ref(),
-                jni_str!("showRomLibraryDialog"),
-                jni_sig!("([Ljava/lang/String;[Ljava/lang/String;)V"),
-                &[
-                    JValue::Object(names_array.as_ref()),
-                    JValue::Object(ids_array.as_ref()),
-                ],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
+        let activity_raw = app.activity_as_ptr() as jobject;
+        let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+        show_dialog_with_env_inner(env, activity.as_ref(), names, ids)
     })
     .map_err(|error| format!("failed to show Android ROM library dialog: {error:?}"))
+}
+
+fn show_dialog_with_env(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+    names: &[String],
+    ids: &[String],
+) -> Result<(), String> {
+    env.with_local_frame(16 + names.len() * 2, |env| {
+        show_dialog_with_env_inner(env, activity, names, ids)
+    })
+    .map_err(|error| format!("failed to show Android ROM library dialog: {error:?}"))
+}
+
+fn show_dialog_with_env_inner(
+    env: &mut jni::Env<'_>,
+    activity: &JObject<'_>,
+    names: &[String],
+    ids: &[String],
+) -> Result<(), jni::errors::Error> {
+    let string_class = env.find_class(jni_str!("java/lang/String"))?;
+
+    let names_array: JObjectArray<'_> =
+        env.new_object_array(names.len() as _, &string_class, JObject::null())?;
+    for (i, name) in names.iter().enumerate() {
+        let jname = env.new_string(name.as_str())?;
+        names_array.set_element(env, i, &jname)?;
+    }
+
+    let ids_array: JObjectArray<'_> =
+        env.new_object_array(ids.len() as _, &string_class, JObject::null())?;
+    for (i, id) in ids.iter().enumerate() {
+        let jid = env.new_string(id.as_str())?;
+        ids_array.set_element(env, i, &jid)?;
+    }
+
+    env.call_method(
+        activity,
+        jni_str!("showRomLibraryDialog"),
+        jni_sig!("([Ljava/lang/String;[Ljava/lang/String;)V"),
+        &[
+            JValue::Object(names_array.as_ref()),
+            JValue::Object(ids_array.as_ref()),
+        ],
+    )?;
+    Ok(())
 }
 
 fn publish_result(result: LibraryDialogResult) {

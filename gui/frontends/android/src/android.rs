@@ -151,6 +151,7 @@ impl AndroidFrontend {
         if let Err(error) = frontend.restore_last_session() {
             log::warn!("{error}");
         }
+        frontend.refresh_dialog_caches();
         frontend
     }
 
@@ -163,6 +164,14 @@ impl AndroidFrontend {
         }
         self.load_from_library_with_autosave(&id, true)
             .map_err(|error| format!("failed to restore Android lifecycle session: {error}"))
+    }
+
+    /// Update the cached library entries and settings so synchronous JNI
+    /// callbacks (from onMenuAction) can show up-to-date dialogs.
+    fn refresh_dialog_caches(&self) {
+        library::update_cached_entries(self.storage.rom_library.entries());
+        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        settings::update_cached_settings(&current);
     }
 
     fn load_from_library(&mut self, id: &str) -> Result<(), String> {
@@ -271,6 +280,8 @@ impl AndroidFrontend {
         if let Err(error) = self.import_rom_from_uri(&uri) {
             log::error!("{error}");
         }
+        // Library entries changed after import – refresh caches for sync dialogs.
+        library::update_cached_entries(self.storage.rom_library.entries());
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
@@ -293,6 +304,8 @@ impl AndroidFrontend {
                     }
                 }
                 self.request_redraw();
+                // Settings changed – refresh cached settings for sync dialogs.
+                settings::update_cached_settings(&android_settings);
             }
             Err(error) => {
                 log::error!("failed to apply Android settings: {error}");
