@@ -1,0 +1,402 @@
+// GSU-2 STW-based Sprite Scaler
+// Scales 4bpp source tiles to destination dimensions via fixed-point stepping.
+// Uses LDB/STB for output bitplane writes (no PLOT/pixel cache).
+//
+// NOTE: Every branch instruction (beq/bne/jmp rN) has a NOP delay slot.
+// The SuperFX pipeline executes the prefetched byte after a branch.
+//
+// Param block $0000-$000B:
+//   $00: src_w  $01: src_h  $02: dst_w  $03: dst_h
+//   $04: src_data (word)  $06: tiles_w  $07: tiles_h
+//   $08: x_step (word)  $0A: y_step (word)
+// Bitmask LUT at $0060: {$80,$40,$20,$10,$08,$04,$02,$01}
+// Output at $0C00 (SCBR=3), OBJ 16-tile-wide format.
+//
+// Register plan:
+//   R3=dst_w  R4=dst_h  R5=x_step  R6=y_step  R8=tiles_per_row  R10=src_data
+//   R14=y_accum  R2=out_y  R1=out_x  R11=pixel_color  R7,R12=scratch
+// Scratch RAM:
+//   $70: src row byte base (word)  $72: src bitmask (byte)
+//   $74: out row base (word)       $76: x_accum (word)
+//   $78: x_loop addr (word)        $7A: y_loop addr (word)
+
+arch snes.gsu
+base $000100
+
+    cache
+
+    // ---- Load parameters ----
+    ibt r9, #2
+    ldb (r9)
+    to r3
+    from r0
+    add #0                   // R3 = dst_width
+
+    ibt r9, #3
+    ldb (r9)
+    to r4
+    from r0
+    add #0                   // R4 = dst_height
+
+    iwt r9, #$0008
+    ldw (r9)
+    to r5
+    from r0
+    add #0                   // R5 = x_step
+
+    iwt r9, #$000A
+    ldw (r9)
+    to r6
+    from r0
+    add #0                   // R6 = y_step
+
+    ibt r9, #6
+    ldb (r9)
+    to r8
+    from r0
+    add #0                   // R8 = tiles_per_row
+
+    iwt r9, #$0004
+    ldw (r9)
+    to r10
+    from r0
+    add #0                   // R10 = src_data
+
+    ibt r14, #0              // y_accum = 0
+    ibt r2, #0               // out_y = 0
+
+    // Store loop addresses for jmp rN
+    iwt r0, #y_loop
+    iwt r9, #$007A
+    stw (r9)                 // $7A = y_loop addr
+
+    // ======== Y LOOP ========
+y_loop:
+    // src_y = y_accum >> 8
+    from r14
+    hib                      // R0 = src_y
+    to r7
+    from r0
+    add #0                   // R7 = src_y
+
+    // tile_row = src_y >> 3
+    from r7
+    lsr
+    lsr
+    lsr                      // R0 = tile_row
+
+    // tile_row * tiles_per_row * 32
+    mult r8
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0                   // R0 = tile_row * tiles_per_row * 32
+
+    add r10                  // R0 += src_data base
+
+    // + y_byte_off = (src_y & 7) * 2
+    to r12
+    from r0
+    add #0                   // R12 = row_tile_base
+    from r7
+    and #7
+    from r0
+    add r0                   // R0 = y_byte_off
+    add r12                  // R0 = src row byte base
+    iwt r9, #$0070
+    stw (r9)                 // $70 = src row byte base
+
+    // Compute output row base
+    from r2
+    lsr
+    lsr
+    lsr                      // R0 = out_tile_row
+    from r0
+    add r0
+    swap                     // R0 = out_tile_row * 512
+    iwt r12, #$0C00
+    add r12                  // R0 += screen base
+    to r12
+    from r0
+    add #0                   // R12 = partial
+    from r2
+    and #7
+    from r0
+    add r0                   // R0 = (out_y & 7) * 2
+    add r12                  // R0 = out_row_base
+    iwt r9, #$0074
+    stw (r9)                 // $74 = out_row_base
+
+    // Init x loop
+    ibt r0, #0
+    iwt r9, #$0076
+    stw (r9)                 // $76 = x_accum = 0
+    ibt r1, #0               // out_x = 0
+
+    // Store x_loop address
+    iwt r0, #x_loop
+    iwt r9, #$0078
+    stw (r9)                 // $78 = x_loop addr
+
+    // ======== X LOOP ========
+x_loop:
+    // src_x = x_accum >> 8
+    iwt r9, #$0076
+    ldw (r9)                 // R0 = x_accum
+    hib                      // R0 = src_x
+    to r7
+    from r0
+    add #0                   // R7 = src_x
+
+    // src_bitmask = LUT[src_x & 7]
+    from r7
+    and #7
+    iwt r12, #$0060
+    add r12
+    to r9
+    from r0
+    add #0
+    ldb (r9)                 // R0 = src_bitmask
+    iwt r9, #$0072
+    stb (r9)                 // $72 = src_bitmask
+
+    // tile_col * 32
+    from r7
+    lsr
+    lsr
+    lsr                      // R0 = tile_col
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0                   // R0 = tile_col * 32
+
+    // src_addr = src_row_base + tile_col * 32
+    iwt r9, #$0070
+    to r12
+    ldw (r9)
+    add r12                  // R0 = src byte addr
+    to r7
+    from r0
+    add #0                   // R7 = src_addr
+
+    // R12 = src_bitmask
+    iwt r9, #$0072
+    ldb (r9)
+    to r12
+    from r0
+    add #0                   // R12 = src_bitmask
+
+    // Extract 4 bitplanes -> R11
+    ibt r11, #0
+
+    // BP0 (+0)
+    to r9
+    from r7
+    add #0                   // R9 = src_addr
+    ldb (r9)
+    and r12
+    beq bp0z
+    nop                      // delay slot
+    ibt r0, #1
+bp0z:
+    with r11
+    add r0                   // R11 += bit0
+
+    // BP1 (+1)
+    from r7
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    and r12
+    beq bp1z
+    nop                      // delay slot
+    ibt r0, #2
+bp1z:
+    with r11
+    add r0                   // R11 += bit1
+
+    // BP2 (+16)
+    from r7
+    add #15
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    and r12
+    beq bp2z
+    nop                      // delay slot
+    ibt r0, #4
+bp2z:
+    with r11
+    add r0                   // R11 += bit2
+
+    // BP3 (+17)
+    from r9
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    and r12
+    beq bp3z
+    nop                      // delay slot
+    ibt r0, #8
+bp3z:
+    with r11
+    add r0                   // R11 += bit3
+
+    // Skip if transparent
+    from r11
+    add #0
+    beq skip_pixel
+    nop                      // delay slot
+
+    // ---- Write pixel to output ----
+    // out_bitmask = LUT[out_x & 7]
+    from r1
+    and #7
+    iwt r12, #$0060
+    add r12
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    to r7
+    from r0
+    add #0                   // R7 = out_bitmask
+
+    // out_byte_addr = out_row_base + (out_x >> 3) * 32
+    from r1
+    lsr
+    lsr
+    lsr                      // R0 = out_tile_col
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0
+    from r0
+    add r0                   // R0 = out_tile_col * 32
+    iwt r9, #$0074
+    to r12
+    ldw (r9)
+    add r12                  // R0 = out_byte_addr
+    to r12
+    from r0
+    add #0                   // R12 = out_byte_addr
+
+    // BP0 (color & 1)
+    from r11
+    and #1
+    beq sk0
+    nop                      // delay slot
+    to r9
+    from r12
+    add #0
+    ldb (r9)
+    or r7
+    stb (r9)
+sk0:
+    // BP1 (color & 2)
+    from r11
+    and #2
+    beq sk1
+    nop                      // delay slot
+    from r12
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    or r7
+    stb (r9)
+sk1:
+    // BP2 (color & 4)
+    from r11
+    and #4
+    beq sk2
+    nop                      // delay slot
+    from r12
+    add #15
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    or r7
+    stb (r9)
+sk2:
+    // BP3 (color & 8)
+    from r11
+    and #8
+    beq sk3
+    nop                      // delay slot
+    from r12
+    add #15
+    add #1
+    add #1
+    to r9
+    from r0
+    add #0
+    ldb (r9)
+    or r7
+    stb (r9)
+sk3:
+
+skip_pixel:
+    // x_accum += x_step
+    iwt r9, #$0076
+    ldw (r9)
+    add r5
+    stw (r9)
+
+    // out_x++; if out_x < dst_width, loop
+    inc r1
+    from r1
+    cmp r3
+    beq x_done
+    nop                      // delay slot
+    iwt r9, #$0078
+    to r13
+    ldw (r9)                 // R13 = x_loop addr
+    jmp r13
+    nop                      // delay slot
+x_done:
+
+    // y_accum += y_step
+    with r14
+    add r6
+
+    // out_y++; if out_y < dst_height, loop
+    inc r2
+    from r2
+    cmp r4
+    beq y_done
+    nop                      // delay slot
+    iwt r9, #$007A
+    to r13
+    ldw (r9)                 // R13 = y_loop addr
+    jmp r13
+    nop                      // delay slot
+y_done:
+
+    stop
+    nop

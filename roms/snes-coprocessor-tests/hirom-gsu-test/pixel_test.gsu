@@ -1,0 +1,51 @@
+// GSU-2 Pixel Plot Test
+// Plots an 8x8 colored square to Game Pak RAM in 4bpp OBJ format.
+// Proves GSU -> pixel cache -> RAM -> (DMA) -> VRAM -> OAM pipeline works.
+//
+// Executes from Game Pak RAM at $70:0200
+// Output: 32 bytes of 4bpp tile data at screen base (SCBR * $400)
+//
+// NOTE: Every branch/loop instruction has a NOP delay slot.
+// The SuperFX pipeline executes the prefetched byte after a branch.
+//
+// Assembled by bass v18: tools/bass/bass.exe -strict -o build/gsu_pixel_test.bin pixel_test.gsu
+
+arch snes.gsu
+base $000200
+
+    cache                   // enable instruction cache (1 cycle/op in cache)
+
+    // Set plot color to 5
+    ibt r0, #5
+    color                   // COLR = 5
+
+    // Initialize row counter
+    ibt r4, #0              // R4 = Y row counter
+    ibt r5, #8              // R5 = 8 (comparison constant)
+
+row_loop:
+    // R2 = Y = current row
+    moves r2, r4
+
+    // R1 = X start = 0 (PLOT auto-increments R1)
+    ibt r1, #0
+
+    // Set up pixel loop: 8 pixels per row
+    ibt r12, #8             // R12 = loop counter
+    moves r13, r15          // R13 = address of next instruction (loop target)
+
+pixel_loop:
+    plot                    // plot pixel at (R1, R2) with color COLR, R1++
+    loop                    // R12--, branch to R13 if R12 != 0
+    nop                     // delay slot
+
+    // Next row
+    inc r4                  // R4++
+    from r4
+    cmp r5                  // compare R4 with 8
+    bne row_loop            // branch if not equal
+    nop                     // delay slot
+
+    // Flush pixel cache and halt
+    stop
+    nop

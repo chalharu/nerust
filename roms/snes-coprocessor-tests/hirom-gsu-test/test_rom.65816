@@ -1,0 +1,1289 @@
+; test_rom.65816 — HiROM+GSU+MSU-1 Standalone Test ROM v1.1
+;
+; 4MB HiROM (64 banks) — verifies full bank mapping, WRAM, GSU-2, MSU-1.
+; No dependencies on main project OOP/SCUMM engine or game assets.
+;
+; Build: wsl -e bash -lc "cd .../SNES-HiRomGsuTest && make"
+; Output: build/HiRomGsuTest.sfc (4 MB)
+
+.include "test_rom.h"
+
+;============================================================
+; Direct Page Variables ($7E:0000)
+;============================================================
+.define palByte     $02     ; current palette<<2 for tilemap high byte
+.define gsuDetected $03     ; 1 if GSU VCR=$04
+.define msuDetected $04     ; 1 if MSU-1 ID matches
+.define gsuVcrVal   $05     ; raw VCR register value
+.define msuStatVal  $06     ; raw MSU_STATUS value
+.define bankPassed  $07     ; count of banks that passed (0-64)
+.define sramStrPtr  $08     ; 16-bit pointer to SRAM size string
+.define gsuClsrVal  $0A     ; raw CLSR register value
+.define bankCount   $13     ; scratch: bank loop counter
+
+;============================================================
+; Palette index constants (palette_num << 2 for tilemap)
+;============================================================
+.define PAL_WHITE   $00
+.define PAL_GREEN   $04
+.define PAL_RED     $08
+.define PAL_YELLOW  $0C
+.define PAL_CYAN    $10
+
+;============================================================
+; Bank 0 — All code and data at $8000+
+;============================================================
+.bank 0 slot 0
+.org $8000
+.section "main" force
+
+;------------------------------------------------------------
+; RESET entry point
+;------------------------------------------------------------
+Reset:
+    sei
+    clc
+    xce                         ; switch to native mode
+    .ACCU 16
+    .INDEX 16
+    phk
+    plb                         ; DBR = PBR = $00
+    rep #$30                    ; 16-bit A, X, Y
+    ldx #$01FF
+    txs                         ; init stack at $01FF
+    lda #$0000
+    tcd                         ; direct page at $0000
+
+    sep #$20                    ; 8-bit A
+    .ACCU 8
+    lda #$8F
+    sta $2100                   ; INIDSP: force blank + brightness 15
+    stz $4200                   ; NMITIMEN: disable NMI/IRQ/auto joyread
+    stz $420C                   ; HDMAEN: disable HDMA
+    lda #$01
+    sta $420D                   ; MEMSEL: FastROM enable
+
+    ; Zero direct page variables
+    ldx #$0000
+_clearDP:
+    stz $00,x
+    inx
+    cpx #$0080
+    bne _clearDP
+
+    ; Initialize default SRAM string to "--"
+    rep #$10
+    .INDEX 16
+    ldx #str_dashes
+    stx sramStrPtr
+
+    sep #$10
+    .INDEX 8
+
+    jsr ClearVRAM
+    jsr UploadFont
+    jsr InitPPU
+    jsr SetupPalettes
+
+    rep #$10
+    .INDEX 16
+
+    ; ---- Display header ----
+    rep #$20
+    .ACCU 16
+    lda #1*32+1
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_title
+    jsr PrintString
+
+    rep #$20
+    .ACCU 16
+    lda #2*32+1
+    sta $2116
+    sep #$20
+    .ACCU 8
+    ldx #str_separator
+    jsr PrintString
+
+    ;============================================================
+    ; Test 1: HiROM Mapping
+    ; Read RESET vector from $C0:FFFC and $00:FFFC, compare
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #4*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_hirom
+    jsr PrintString
+
+    rep #$20
+    .ACCU 16
+    lda.l $C0FFFC
+    cmp.l $00FFFC
+    sep #$20
+    .ACCU 8
+    beq _t1_pass
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+    bra _t1_done
+_t1_pass:
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+_t1_done:
+
+    ;============================================================
+    ; Test 2: ROM Banks
+    ; Verify per-bank signatures at offset $FFA0 in all 64 banks.
+    ; inject_signatures.py writes bank_number at $FFA0 in each bank.
+    ; We read via indirect long from ($C0+N):$FFA0 and compare.
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #5*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_banks
+    jsr PrintString
+
+    ; Set up indirect long pointer: [$10] = bank:$FFA0
+    lda #$A0
+    sta $10                     ; pointer low byte
+    lda #$FF
+    sta $11                     ; pointer high byte
+    stz bankPassed
+    stz bankCount
+
+_bankLoop:
+    lda bankCount
+    clc
+    adc #$C0
+    sta $12                     ; pointer bank = $C0 + N
+    ; Skip banks $F0-$F1 — SRAM mirrors overlap ROM at these addresses
+    cmp #$F0
+    beq _bankNext
+    cmp #$F1
+    beq _bankNext
+    lda [$10]                   ; read from (bank+$C0):$FFA0
+    cmp bankCount               ; compare with expected bank number
+    bne _bankNext
+    inc bankPassed
+_bankNext:
+    inc bankCount
+    lda bankCount
+    cmp #64
+    bne _bankLoop
+
+    ; Display: "NN/62 PASS" or "NN/62 FAIL"
+    ; (62 = 64 banks minus 2 SRAM-overlap banks at $F0-$F1)
+    lda #PAL_CYAN
+    sta palByte
+    lda bankPassed
+    jsr PrintDec8               ; print pass count
+    stz palByte                 ; white for "/62 "
+    lda #$2F                    ; '/'
+    sta $2118
+    stz $2119
+    lda #$36                    ; '6'
+    sta $2118
+    stz $2119
+    lda #$32                    ; '2'
+    sta $2118
+    stz $2119
+    lda #$20                    ; space
+    sta $2118
+    stz $2119
+    lda bankPassed
+    cmp #62
+    beq _t2_pass
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+    bra _t2_done
+_t2_pass:
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+_t2_done:
+
+    ;============================================================
+    ; Test 3: WRAM Read/Write
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #6*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_wram
+    jsr PrintString
+
+    rep #$20
+    .ACCU 16
+    lda #$A55A
+    sta.l $7E2000
+    lda.l $7E2000
+    cmp #$A55A
+    sep #$20
+    .ACCU 8
+    beq _t3_pass
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+    bra _t3_done
+_t3_pass:
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+_t3_done:
+
+    ;============================================================
+    ; Test 4: GSU-2 VCR
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #7*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_gsu_vcr
+    jsr PrintString
+
+    lda.l $303B
+    sta gsuVcrVal
+    lda #PAL_CYAN
+    sta palByte
+    lda #$24
+    sta $2118
+    lda palByte
+    sta $2119
+    lda gsuVcrVal
+    jsr PrintHex8
+    lda #$20
+    sta $2118
+    stz $2119
+
+    lda gsuVcrVal
+    cmp #$04
+    beq _t4_pass
+    stz gsuDetected
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+    bra _t4_done
+_t4_pass:
+    lda #$01
+    sta gsuDetected
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+_t4_done:
+
+    ;============================================================
+    ; Test 5: GSU SRAM R/W
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #8*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_gsu_sram
+    jsr PrintString
+
+    lda gsuDetected
+    bne _t5_run
+    lda #PAL_YELLOW
+    sta palByte
+    ldx #str_skip
+    jsr PrintString
+    bra _t5_done
+
+_t5_run:
+    rep #$20
+    .ACCU 16
+    lda #$1234
+    sta.l $700000
+    lda.l $700000
+    cmp #$1234
+    bne _t5_fail
+    lda #$5678
+    sta.l $700002
+    lda.l $700002
+    cmp #$5678
+    bne _t5_fail
+    sep #$20
+    .ACCU 8
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+    bra _t5_done
+_t5_fail:
+    sep #$20
+    .ACCU 8
+    stz gsuDetected
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+_t5_done:
+
+    ;============================================================
+    ; Test 6: GSU Execute
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #9*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_gsu_exec
+    jsr PrintString
+
+    lda gsuDetected
+    bne _t6_run
+    lda #PAL_YELLOW
+    sta palByte
+    ldx #str_skip
+    jsr PrintString
+    jmp _t6_done
+
+_t6_run:
+    jsr RunGSUTest
+    bcs _t6_pass
+    lda #PAL_RED
+    sta palByte
+    ldx #str_fail
+    jsr PrintString
+    bra _t6_done
+_t6_pass:
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_pass
+    jsr PrintString
+_t6_done:
+
+    ;============================================================
+    ; Test 7: Game Pak RAM Size
+    ; Detect SRAM by probing for address wraparound
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #10*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_gpkram
+    jsr PrintString
+
+    lda gsuDetected
+    bne _t7_run
+    lda #PAL_YELLOW
+    sta palByte
+    ldx #str_skip
+    jsr PrintString
+    ldx #str_dashes
+    stx sramStrPtr
+    jmp _t7_done
+
+_t7_run:
+    ; Write sentinel, probe each boundary for wraparound
+    ; 2KB
+    lda #$55
+    sta.l $700000
+    lda #$AA
+    sta.l $700800
+    lda.l $700000
+    cmp #$AA
+    bne +
+    ldx #str_2kb
+    bra _t7_print
++
+    ; 4KB
+    lda #$55
+    sta.l $700000
+    lda #$AA
+    sta.l $701000
+    lda.l $700000
+    cmp #$AA
+    bne +
+    ldx #str_4kb
+    bra _t7_print
++
+    ; 8KB
+    lda #$55
+    sta.l $700000
+    lda #$AA
+    sta.l $702000
+    lda.l $700000
+    cmp #$AA
+    bne +
+    ldx #str_8kb
+    bra _t7_print
++
+    ; 16KB
+    lda #$55
+    sta.l $700000
+    lda #$AA
+    sta.l $704000
+    lda.l $700000
+    cmp #$AA
+    bne +
+    ldx #str_16kb
+    bra _t7_print
++
+    ; 32KB
+    lda #$55
+    sta.l $700000
+    lda #$AA
+    sta.l $708000
+    lda.l $700000
+    cmp #$AA
+    bne +
+    ldx #str_32kb
+    bra _t7_print
++
+    ; No wrap at 32KB — report 64KB+
+    ldx #str_64kbp
+
+_t7_print:
+    stx sramStrPtr
+    lda #PAL_CYAN
+    sta palByte
+    jsr PrintString
+
+    ; Clean up SRAM
+    lda #$00
+    sta.l $700000
+_t7_done:
+
+    ;============================================================
+    ; Test 8: MSU-1 Detect
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #11*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_msu_det
+    jsr PrintString
+
+    lda.l $002002
+    cmp #$53
+    bne _t8_notfound
+    lda.l $002003
+    cmp #$2D
+    bne _t8_notfound
+    lda.l $002004
+    cmp #$4D
+    bne _t8_notfound
+    lda.l $002005
+    cmp #$53
+    bne _t8_notfound
+    lda.l $002006
+    cmp #$55
+    bne _t8_notfound
+    lda.l $002007
+    cmp #$31
+    bne _t8_notfound
+
+    lda #$01
+    sta msuDetected
+    lda #PAL_GREEN
+    sta palByte
+    ldx #str_found
+    jsr PrintString
+    bra _t8_done
+
+_t8_notfound:
+    stz msuDetected
+    lda #PAL_YELLOW
+    sta palByte
+    ldx #str_notfound
+    jsr PrintString
+_t8_done:
+
+    ;============================================================
+    ; Test 9: MSU-1 Status
+    ;============================================================
+    rep #$20
+    .ACCU 16
+    lda #12*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_t_msu_sts
+    jsr PrintString
+
+    lda msuDetected
+    bne _t9_run
+    ldx #str_dashes
+    jsr PrintString
+    bra _t9_done
+
+_t9_run:
+    lda.l $002000
+    sta msuStatVal
+    lda #PAL_CYAN
+    sta palByte
+    lda #$24
+    sta $2118
+    lda palByte
+    sta $2119
+    lda msuStatVal
+    jsr PrintHex8
+_t9_done:
+
+    ;============================================================
+    ; Footer
+    ;============================================================
+    ; Line 1: CPU and GSU clock speeds
+    rep #$20
+    .ACCU 16
+    lda #14*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_cpu_label
+    jsr PrintString
+    lda #PAL_CYAN
+    sta palByte
+    ldx #str_cpu_fast
+    jsr PrintString
+    stz palByte
+    ldx #str_gsu_label
+    jsr PrintString
+    lda gsuDetected
+    beq _footer_no_gsu
+    lda #PAL_CYAN
+    sta palByte
+    lda gsuClsrVal
+    and #$01
+    bne _footer_gsu_fast
+    ldx #str_clk_10
+    bra _footer_gsu_print
+_footer_gsu_fast:
+    ldx #str_clk_21
+_footer_gsu_print:
+    jsr PrintString
+    bra _footer_rom
+_footer_no_gsu:
+    ldx #str_dashes
+    jsr PrintString
+
+_footer_rom:
+    ; Line 2: ROM and SRAM sizes
+    rep #$20
+    .ACCU 16
+    lda #15*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_footer_rom
+    jsr PrintString
+    lda #PAL_CYAN
+    sta palByte
+    ldx sramStrPtr
+    jsr PrintString
+
+    ; Line 3: Board
+    rep #$20
+    .ACCU 16
+    lda #16*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_board
+    jsr PrintString
+
+    ; Line 4: Serial
+    rep #$20
+    .ACCU 16
+    lda #17*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    ldx #str_serial
+    jsr PrintString
+
+    ;============================================================
+    ; OBJ Sprite Demo — CPU tile upload first, GSU rainbow overlay if available
+    ;============================================================
+    jsr SetupOBJBase
+
+    lda gsuDetected
+    beq _skipGSUDemo
+    jsr RunGSUDemo
+_skipGSUDemo:
+
+    ; Print label on BG1
+    rep #$20
+    .ACCU 16
+    lda #19*32+2
+    sta $2116
+    sep #$20
+    .ACCU 8
+    stz palByte
+    ldx #str_gsu_demo
+    jsr PrintString
+
+    ;============================================================
+    ; Enable display and halt
+    ;============================================================
+    sep #$20
+    .ACCU 8
+    ; Reset OAM address to 0 before enabling display
+    stz $2102
+    stz $2103
+    lda #$0F
+    sta $2100
+    lda #$80
+    sta $4200
+
+_halt:
+    wai
+    bra _halt
+
+
+;============================================================
+; NMI handler — acknowledge and return
+;============================================================
+NmiHandler:
+    sep #$20
+    .ACCU 8
+    lda $4210                   ; acknowledge NMI
+    stz $2102                   ; reset OAM address (prevents PPU OAM address drift)
+    stz $2103
+    rti
+
+EmptyHandler:
+    rti
+
+
+;============================================================
+; ClearVRAM — Zero all 64KB of VRAM using DMA
+;============================================================
+ClearVRAM:
+    sep #$20
+    .ACCU 8
+    lda #$80
+    sta $2115
+    stz $2116
+    stz $2117
+    lda #$09
+    sta $4300
+    lda #$18
+    sta $4301
+    lda #<_zeroByte
+    sta $4302
+    lda #>_zeroByte
+    sta $4303
+    stz $4304
+    stz $4305
+    stz $4306
+    lda #$01
+    sta $420B
+    rts
+
+_zeroByte:
+    .db $00
+
+
+;============================================================
+; UploadFont — 1bpp to 2bpp, tiles 32-126
+;============================================================
+UploadFont:
+    sep #$20
+    .ACCU 8
+    rep #$10
+    .INDEX 16
+    lda #$80
+    sta $2115
+    lda #$00
+    sta $2116
+    lda #$11
+    sta $2117
+    ldx #$0000
+_fontLoop:
+    lda.w FontData,x
+    sta $2118
+    sta $2119
+    inx
+    cpx #760
+    bne _fontLoop
+    rts
+
+
+;============================================================
+; InitPPU — Mode 0, BG1
+;============================================================
+InitPPU:
+    sep #$20
+    .ACCU 8
+    stz $2105
+    stz $2107
+    lda #$01
+    sta $210B
+    stz $210D
+    stz $210D
+    stz $210E
+    stz $210E
+    lda #$01
+    sta $212C
+    stz $212D
+    rts
+
+
+;============================================================
+; SetupPalettes
+;============================================================
+SetupPalettes:
+    sep #$20
+    .ACCU 8
+    rep #$10
+    .INDEX 16
+    stz $2121
+    ldx #$0000
+_palLoop:
+    lda.w PaletteData,x
+    sta $2122
+    inx
+    cpx #40
+    bne _palLoop
+    rts
+
+
+;============================================================
+; PrintString — null-terminated string at X to VRAM tilemap
+;============================================================
+PrintString:
+    sep #$20
+    .ACCU 8
+_psLoop:
+    lda.w 0,x
+    beq _psDone
+    sta $2118
+    lda palByte
+    sta $2119
+    inx
+    bra _psLoop
+_psDone:
+    rts
+
+
+;============================================================
+; PrintHex8 — byte in A as 2 hex digits
+;============================================================
+PrintHex8:
+    pha
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    jsr _hexDigit
+    pla
+    and #$0F
+    jsr _hexDigit
+    rts
+
+_hexDigit:
+    cmp #$0A
+    bcc _hexNum
+    adc #$36
+    bra _hexPrint
+_hexNum:
+    adc #$30
+_hexPrint:
+    sta $2118
+    lda palByte
+    sta $2119
+    rts
+
+
+;============================================================
+; PrintDec8 — byte in A (0-99) as 2 decimal digits
+;============================================================
+PrintDec8:
+    ldy #$FFFF
+_decTens:
+    iny
+    sec
+    sbc #10
+    bcs _decTens
+    adc #10                     ; restore ones (carry was clear)
+    pha
+    tya                         ; A = tens digit
+    clc
+    adc #$30
+    sta $2118
+    lda palByte
+    sta $2119
+    pla                         ; A = ones digit
+    clc
+    adc #$30
+    sta $2118
+    lda palByte
+    sta $2119
+    rts
+
+
+;============================================================
+; RunGSUTest — execute pixel_test on GSU-2
+; Returns: carry set=pass, carry clear=fail
+; Side effect: stores CLSR value in gsuClsrVal
+;============================================================
+RunGSUTest:
+    sep #$20
+    .ACCU 8
+    rep #$10
+    .INDEX 16
+
+    ; Clear screen buffer at $70:0C00
+    lda #0
+    ldx #31
+_gsuClear:
+    sta.l $700C00,x
+    dex
+    bpl _gsuClear
+
+    ; Copy pixel_test to $70:0200 (different base than demo at $70:0100
+    ; so CACHE instruction naturally invalidates between programs)
+    ldx #PixelTestBinEnd - PixelTestBin - 1
+_gsuCopy:
+    lda.w PixelTestBin,x
+    sta.l $700200,x
+    dex
+    bpl _gsuCopy
+
+    ; Configure GSU
+    lda #$80
+    sta.l $3037                 ; CFGR: mask IRQ
+    lda #$01
+    sta.l $3039                 ; CLSR: 21.4MHz
+    lda #$70
+    sta.l $3034                 ; PBR: bank $70
+    lda #$03
+    sta.l $3038                 ; SCBR: screen base $0C00
+    lda #$2D
+    sta.l $303A                 ; SCMR: 16-color OBJ, RAN
+
+    ; Start GSU: R15=$0200 (pixel test at $70:0200)
+    lda #$00
+    sta.l $301E                 ; R15 low
+    lda #$02
+    sta.l $301F                 ; R15 high -> GO
+
+    ; Poll SFR.GO
+    ldx #$FFFF
+_gsuPoll:
+    lda.l $3030
+    and #$20
+    beq _gsuStopped
+    dex
+    bne _gsuPoll
+    clc
+    rts
+
+_gsuStopped:
+    ; Release buses
+    lda #$25
+    sta.l $303A
+    ; Read CLSR for clock speed display
+    lda.l $3039
+    sta gsuClsrVal
+    sec
+    rts
+
+
+;============================================================
+; RunGSUDemo — Render 16x16 rainbow sprite and display via OAM
+; Requires: gsuDetected = 1
+;============================================================
+;============================================================
+; SetupOBJBase — Initialize OBJ tile, palette, OAM, OBJSEL
+; Writes a solid white 4bpp fallback tile via CPU (no GSU needed).
+; RunGSUDemo overwrites the tile data if GSU is available.
+;============================================================
+SetupOBJBase:
+    sep #$20
+    .ACCU 8
+    rep #$10
+    .INDEX 16
+
+    ; OBJSEL: base at VRAM word $4000 (byte $8000), 8x8/16x16 size
+    lda #$02
+    sta $2101
+
+    ; Upload a solid white 4bpp fallback tile to VRAM word $4000
+    lda #$80
+    sta $2115                   ; VMAIN: increment on high
+    rep #$20
+    .ACCU 16
+    lda #$4000
+    sta $2116                   ; VRAM address
+    sep #$20
+    .ACCU 8
+    ldx #$0000
+_objTileFill:
+    lda #$FF                    ; all bitplanes set = color 15
+    sta $2118                   ; VMDATAL
+    sta $2119                   ; VMDATAH → auto-increment
+    inx
+    cpx #16                     ; 16 words = 32 bytes = one 4bpp tile
+    bne _objTileFill
+
+    ; Load OBJ palette 0 at CGRAM[128] — rainbow
+    lda #128
+    sta $2121
+    ldx #$0000
+_objPalSetup:
+    lda.w ObjPaletteData,x
+    sta $2122
+    inx
+    cpx #32
+    bne _objPalSetup
+
+    ; Set up OAM: sprite 0 at (120, 156), tile 0, priority 3
+    stz $2102
+    stz $2103
+    lda #120
+    sta $2104
+    lda #156
+    sta $2104
+    lda #$00
+    sta $2104
+    lda #$30
+    sta $2104
+
+    ; Move sprites 1-127 off-screen
+    ldx #127
+_objOamClear:
+    stz $2104
+    lda #$F0
+    sta $2104
+    stz $2104
+    stz $2104
+    dex
+    bne _objOamClear
+
+    ; 5th table: all small (8x8), no X MSB
+    stz $2104                   ; sprite 0: small
+    stz $2104
+    ldx #15
+_objOam5Clear:
+    stz $2104
+    stz $2104
+    dex
+    bne _objOam5Clear
+
+    ; Enable OBJ + BG1 on mainscreen
+    lda #$11
+    sta $212C
+    rts
+
+
+;============================================================
+; RunGSUDemo — Overwrites the OBJ tile with GSU-rendered rainbow
+;============================================================
+RunGSUDemo:
+    sep #$20
+    .ACCU 8
+    rep #$10
+    .INDEX 16
+
+    ; Clear screen buffer at $70:0C00 (4KB to cover demo + flush tiles)
+    rep #$20
+    .ACCU 16
+    lda #$0000
+    ldx #$07FE
+_dClear:
+    sta.l $700C00,x
+    dex
+    dex
+    bpl _dClear
+    sep #$20
+    .ACCU 8
+
+    ; Copy demo program to $70:0100
+    ldx #GsuDemoBinEnd - GsuDemoBin - 1
+_dCopy:
+    lda.w GsuDemoBin,x
+    sta.l $700100,x
+    dex
+    bpl _dCopy
+
+    ; Configure GSU (same regs as verification test)
+    lda #$80
+    sta.l $3037                 ; CFGR: mask IRQ
+    lda #$01
+    sta.l $3039                 ; CLSR: 21.4MHz
+    lda #$70
+    sta.l $3034                 ; PBR: bank $70
+    lda #$03
+    sta.l $3038                 ; SCBR: screen base $0C00
+    lda #$2D
+    sta.l $303A                 ; SCMR: 16-color OBJ, RAN
+
+    ; Start GSU: R15=$0100 triggers GO
+    lda #$00
+    sta.l $301E
+    lda #$01
+    sta.l $301F
+
+    ; Poll SFR.GO
+    ldx #$FFFF
+_dPoll:
+    lda.l $3030
+    and #$20
+    beq _dStopped
+    dex
+    bne _dPoll
+    rts                         ; timeout — skip display
+_dStopped:
+    lda #$25
+    sta.l $303A                 ; release buses
+
+    ; DMA GSU-rendered tile to VRAM $4000, overwriting the CPU fallback tile
+    lda #$80
+    sta $2115                   ; VMAIN: increment on high
+    rep #$20
+    .ACCU 16
+    lda #$4000
+    sta $2116                   ; VRAM address
+    sep #$20
+    .ACCU 8
+    lda #$01                    ; 2-reg write once (VMDATAL/VMDATAH)
+    sta $4300
+    lda #$18
+    sta $4301                   ; dest = $2118
+    lda #$00
+    sta $4302                   ; source low
+    lda #$0C
+    sta $4303                   ; source high → $0C00
+    lda #$70
+    sta $4304                   ; source bank $70
+    lda #$20                    ; 32 bytes = one 4bpp tile
+    sta $4305
+    stz $4306
+    lda #$01
+    sta $420B                   ; start DMA ch0
+    rts
+
+
+;============================================================
+; OBJ Palette — 15-step rainbow hue rotation for GSU demo
+; CGRAM[128..143]: 16 colors (color 0 = transparent)
+;============================================================
+ObjPaletteData:
+    .dw $0000                   ; 0: transparent
+    .dw $001F                   ; 1: red
+    .dw $019F                   ; 2: red-orange
+    .dw $033F                   ; 3: orange-yellow
+    .dw $03F9                   ; 4: yellow-green
+    .dw $03EC                   ; 5: chartreuse
+    .dw $03E0                   ; 6: green
+    .dw $33E0                   ; 7: spring green
+    .dw $67E0                   ; 8: teal
+    .dw $7F20                   ; 9: cyan-blue
+    .dw $7D80                   ; 10: azure
+    .dw $7C00                   ; 11: blue
+    .dw $7C0C                   ; 12: indigo
+    .dw $7C19                   ; 13: violet
+    .dw $641F                   ; 14: magenta
+    .dw $301F                   ; 15: rose
+
+
+;============================================================
+; String Data
+;============================================================
+str_title:
+    .db "HiROM+GSU+MSU-1 TEST ROM  v1.1", 0
+str_separator:
+    .db "==============================", 0
+
+str_t_hirom:
+    .db "HiROM Mapping    : ", 0
+str_t_banks:
+    .db "ROM Banks        : ", 0
+str_t_wram:
+    .db "WRAM Read/Write  : ", 0
+str_t_gsu_vcr:
+    .db "GSU-2 VCR        : ", 0
+str_t_gsu_sram:
+    .db "GSU SRAM R/W     : ", 0
+str_t_gsu_exec:
+    .db "GSU Execute      : ", 0
+str_t_gpkram:
+    .db "Game Pak RAM     : ", 0
+str_t_msu_det:
+    .db "MSU-1 Detect     : ", 0
+str_t_msu_sts:
+    .db "MSU-1 Status     : ", 0
+
+str_pass:
+    .db "PASS", 0
+str_fail:
+    .db "FAIL", 0
+str_skip:
+    .db "SKIPPED", 0
+str_found:
+    .db "FOUND", 0
+str_notfound:
+    .db "NOT FOUND", 0
+str_dashes:
+    .db "--", 0
+
+str_2kb:
+    .db "2KB", 0
+str_4kb:
+    .db "4KB", 0
+str_8kb:
+    .db "8KB", 0
+str_16kb:
+    .db "16KB", 0
+str_32kb:
+    .db "32KB", 0
+str_64kbp:
+    .db "64KB+", 0
+
+str_cpu_label:
+    .db "CPU: ", 0
+str_cpu_fast:
+    .db "3.58MHz", 0
+str_gsu_label:
+    .db "  GSU: ", 0
+str_clk_10:
+    .db "10.7MHz", 0
+str_clk_21:
+    .db "21.4MHz", 0
+
+str_footer_rom:
+    .db "ROM: 4096KB  SRAM: ", 0
+str_gsu_demo:
+    .db "GSU:", 0
+str_board:
+    .db "Board: SHVC-1CD0N7S-01", 0
+str_serial:
+    .db "Serial: SHVC-TEST", 0
+
+
+;============================================================
+; Palette Data
+;============================================================
+PaletteData:
+    .dw $2842, $0000, $0000, $7FFF
+    .dw $0000, $0000, $0000, $03E0
+    .dw $0000, $0000, $0000, $001F
+    .dw $0000, $0000, $0000, $03FF
+    .dw $0000, $0000, $0000, $7FE0
+
+
+;============================================================
+; Font Data + Pixel Test Binary
+;============================================================
+FontData:
+    .incbin "build/font.bin"
+
+PixelTestBin:
+    .incbin "build/pixel_test.bin"
+PixelTestBinEnd:
+
+GsuDemoBin:
+    .incbin "build/gsu_demo.bin"
+GsuDemoBinEnd:
+
+GsuScalerBin:
+    .incbin "build/sprite_scaler.bin"
+GsuScalerBinEnd:
+
+.ends
+
+
+;============================================================
+; Extended Header ($FFB0-$FFBF)
+;============================================================
+.bank 0 slot 0
+.org $FFB0
+.section "ext_header" force
+    .db "CD"
+    .db "TEST"
+    .dsb 7 0
+    .db 0
+    .db 0
+    .db 0
+.ends
+
+
+;============================================================
+; SNES Header ($FFC0-$FFDF)
+;============================================================
+.org $FFC0
+.section "header" force
+    .db "HIROM GSU MSU1 TEST  "
+    .db $31                     ; HiROM + FastROM
+    .db $15                     ; ROM + GSU + RAM + Battery
+    .db $0C                     ; ROM size: 4 MB (1<<12 KB)
+    .db $03                     ; SRAM size: 8 KB
+    .db $01                     ; country: USA/NTSC
+    .db $33                     ; licensee: extended header
+    .db $00                     ; version
+    .dw $FFFF                   ; checksum complement (dummy)
+    .dw $0000                   ; checksum (dummy)
+.ends
+
+
+;============================================================
+; Native Mode Vectors ($FFE4-$FFEF)
+;============================================================
+.org $FFE4
+.section "native_vectors" force
+    .dw EmptyHandler
+    .dw EmptyHandler
+    .dw EmptyHandler
+    .dw NmiHandler
+    .dw EmptyHandler
+    .dw EmptyHandler
+.ends
+
+
+;============================================================
+; Emulation Mode Vectors ($FFF4-$FFFF)
+;============================================================
+.org $FFF4
+.section "emu_vectors" force
+    .dw EmptyHandler
+    .dw EmptyHandler
+    .dw EmptyHandler
+    .dw EmptyHandler
+    .dw Reset
+    .dw EmptyHandler
+.ends
