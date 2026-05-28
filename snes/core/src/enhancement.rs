@@ -711,6 +711,10 @@ enum Dsp1Operation {
     Radius,
     Range,
     Range2,
+    Trigonometric,
+    Rotate2d,
+    Rotate3d,
+    VectorLength,
     MemoryDump,
     Unsupported,
     Freeze,
@@ -878,6 +882,10 @@ impl Dsp1State {
             Dsp1Operation::Radius => dsp1_radius(&self.input_words),
             Dsp1Operation::Range => vec![dsp1_range(&self.input_words, 0)],
             Dsp1Operation::Range2 => vec![dsp1_range(&self.input_words, 1)],
+            Dsp1Operation::Trigonometric => dsp1_trigonometric(&self.input_words),
+            Dsp1Operation::Rotate2d => dsp1_rotate_2d(&self.input_words),
+            Dsp1Operation::Rotate3d => dsp1_rotate_3d(&self.input_words),
+            Dsp1Operation::VectorLength => vec![dsp1_vector_length(&self.input_words)],
             Dsp1Operation::MemoryDump => vec![0; spec.writes],
             Dsp1Operation::Unsupported => vec![0; spec.writes],
             Dsp1Operation::Freeze => {
@@ -919,22 +927,23 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x01 | 0x05 | 0x11 | 0x15 | 0x21 | 0x25 | 0x31 | 0x35 => (4, 0, Op::Unsupported),
         0x02 | 0x12 | 0x22 | 0x32 => (7, 4, Op::Unsupported),
         0x03 | 0x13 | 0x23 | 0x33 => (3, 3, Op::Unsupported),
-        0x04 | 0x24 => (2, 2, Op::Unsupported),
+        0x04 | 0x24 => (2, 2, Op::Trigonometric),
         0x06 | 0x16 | 0x26 | 0x36 => (3, 3, Op::Unsupported),
         0x07 | 0x09 | 0x17 | 0x1A | 0x27 | 0x2A | 0x37 | 0x3A => (0, 0, Op::Freeze),
         0x08 => (3, 2, Op::Radius),
         0x0A => (1, 4, Op::Unsupported),
         0x0B | 0x1B => (3, 1, Op::Unsupported),
-        0x0C | 0x2C => (3, 2, Op::Unsupported),
+        0x0C | 0x2C => (3, 2, Op::Rotate2d),
         0x0D | 0x1D | 0x2D | 0x3D => (3, 3, Op::Unsupported),
         0x0E | 0x2E => (2, 2, Op::Unsupported),
         0x0F => (1, 1, Op::MemoryTest),
         0x10 | 0x30 => (2, 2, Op::Unsupported),
         0x14 => (6, 3, Op::Unsupported),
+        0x1C | 0x3C => (6, 3, Op::Rotate3d),
         0x18 => (4, 1, Op::Range),
         0x1F | 0x3F => (1, 1024, Op::MemoryDump),
         0x20 => (2, 1, Op::Multiply2),
-        0x28 => (3, 1, Op::Unsupported),
+        0x28 => (3, 1, Op::VectorLength),
         0x2F => (1, 1, Op::MemorySize),
         0x38 => (4, 1, Op::Range2),
         _ => (0, 0, Op::Unsupported),
@@ -975,6 +984,71 @@ fn dsp1_range(input_words: &[u16], round: i64) -> u16 {
         .sum::<i64>();
     let radius = i64::from(input_words.get(3).copied().unwrap_or(0) as i16);
     (((sum - radius * radius) >> 15) + round) as i16 as u16
+}
+
+fn dsp1_trigonometric(input_words: &[u16]) -> Vec<u16> {
+    let angle = dsp1_angle(input_words[0]);
+    let radius = f64::from(input_words[1] as i16);
+    vec![
+        dsp1_saturating_i16(radius * angle.sin()),
+        dsp1_saturating_i16(radius * angle.cos()),
+    ]
+}
+
+fn dsp1_rotate_2d(input_words: &[u16]) -> Vec<u16> {
+    let angle = dsp1_angle(input_words[0]);
+    let x = f64::from(input_words[1] as i16);
+    let y = f64::from(input_words[2] as i16);
+    vec![
+        dsp1_saturating_i16(y * angle.sin() + x * angle.cos()),
+        dsp1_saturating_i16(y * angle.cos() - x * angle.sin()),
+    ]
+}
+
+fn dsp1_rotate_3d(input_words: &[u16]) -> Vec<u16> {
+    let z_angle = dsp1_angle(input_words[0]);
+    let y_angle = dsp1_angle(input_words[1]);
+    let x_angle = dsp1_angle(input_words[2]);
+    let x = f64::from(input_words[3] as i16);
+    let y = f64::from(input_words[4] as i16);
+    let z = f64::from(input_words[5] as i16);
+
+    let x_after_z = y * z_angle.sin() + x * z_angle.cos();
+    let y_after_z = y * z_angle.cos() - x * z_angle.sin();
+
+    let z_after_y = x_after_z * y_angle.sin() + z * y_angle.cos();
+    let x_after_y = x_after_z * y_angle.cos() - z * y_angle.sin();
+
+    let y_after_x = z_after_y * x_angle.sin() + y_after_z * x_angle.cos();
+    let z_after_x = z_after_y * x_angle.cos() - y_after_z * x_angle.sin();
+
+    vec![
+        dsp1_saturating_i16(x_after_y),
+        dsp1_saturating_i16(y_after_x),
+        dsp1_saturating_i16(z_after_x),
+    ]
+}
+
+fn dsp1_vector_length(input_words: &[u16]) -> u16 {
+    let sum = input_words
+        .iter()
+        .take(3)
+        .map(|value| {
+            let value = f64::from(*value as i16);
+            value * value
+        })
+        .sum::<f64>();
+    dsp1_saturating_i16(sum.sqrt())
+}
+
+fn dsp1_angle(value: u16) -> f64 {
+    f64::from(value as i16) * std::f64::consts::TAU / 65536.0
+}
+
+fn dsp1_saturating_i16(value: f64) -> u16 {
+    value
+        .round()
+        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16 as u16
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
