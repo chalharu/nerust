@@ -914,6 +914,61 @@ mod tests {
     }
 
     #[test]
+    fn sa1_bmap_is_independent_from_bmaps_for_variable_data() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x400000, 0x11));
+        assert!(cartridge.write(0x402000, 0x22));
+
+        assert!(cartridge.write(0x002224, 0x00));
+        assert!(cartridge.write(0x002225, 0x01));
+        assert_eq!(cartridge.read(0x006000), Some(0x11));
+
+        write_u24(&mut cartridge, 0x002259, 0x006000);
+        assert_eq!(cartridge.read(0x00230C), Some(0x22));
+        assert_eq!(cartridge.read(0x002225), Some(0x01));
+    }
+
+    #[test]
+    fn sa1_bmap_bitmap_reads_variable_data_pixels() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x400000, 0xAB));
+        assert!(cartridge.write(0x00223F, 0x00));
+        assert!(cartridge.write(0x002225, 0x80));
+
+        write_u24(&mut cartridge, 0x002259, 0x006000);
+        assert_eq!(cartridge.read(0x00230C), Some(0x0B));
+        assert_eq!(cartridge.read(0x00230D), Some(0x0A));
+
+        assert!(cartridge.write(0x400000, 0xE4));
+        assert!(cartridge.write(0x00223F, 0x80));
+
+        write_u24(&mut cartridge, 0x002259, 0x006000);
+        assert_eq!(cartridge.read(0x00230C), Some(0x00));
+        assert_eq!(cartridge.read(0x00230D), Some(0x01));
+    }
+
+    #[test]
+    fn sa1_bitmap_banks_always_read_variable_data_pixels() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x400000, 0xAB));
+        assert!(cartridge.write(0x00223F, 0x00));
+        assert!(cartridge.write(0x002225, 0x00));
+
+        write_u24(&mut cartridge, 0x002259, 0x006000);
+        assert_eq!(cartridge.read(0x00230C), Some(0xAB));
+
+        write_u24(&mut cartridge, 0x002259, 0x600000);
+        assert_eq!(cartridge.read(0x00230C), Some(0x0B));
+        assert_eq!(cartridge.read(0x00230D), Some(0x0A));
+    }
+
+    #[test]
     fn sa1_variable_length_data_reads_rom_and_auto_increments() {
         let mut rom = build_sa1_rom(0x400000, 0x03);
         rom[0x000000] = 0x12;
