@@ -6,7 +6,6 @@ import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -37,7 +36,6 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun appStartsAndDrawerOpensWithoutVisibleMenuButton() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val scenario = launchActivity()
 
         try {
@@ -52,7 +50,6 @@ class MainActivityE2eTest {
                 )
                 activity.openDrawerForTest()
             }
-            instrumentation.waitForIdleSync()
 
             assertChromeViewAvailable(
                 scenario,
@@ -77,7 +74,6 @@ class MainActivityE2eTest {
                 assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
                 activity.onBackPressed()
             }
-            instrumentation.waitForIdleSync()
         } finally {
             scenario.close()
         }
@@ -85,7 +81,6 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeRomLibraryDialogAppearsWithExpectedEntries() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val scenario = launchActivity()
 
         try {
@@ -96,7 +91,6 @@ class MainActivityE2eTest {
                     arrayOf("mario", "metroid"),
                 )
             }
-            instrumentation.waitForIdleSync()
 
             assertChromeViewAvailable(
                 scenario,
@@ -116,7 +110,6 @@ class MainActivityE2eTest {
                 )
                 activity.dismissComposeDialogForTest()
             }
-            instrumentation.waitForIdleSync()
         } finally {
             scenario.close()
         }
@@ -124,7 +117,6 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeSettingsDialogAppearsWithCurrentSelections() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val scenario = launchActivity()
 
         try {
@@ -137,7 +129,6 @@ class MainActivityE2eTest {
                     arrayOf("1", "0"),
                 )
             }
-            instrumentation.waitForIdleSync()
 
             assertChromeViewAvailable(
                 scenario,
@@ -157,7 +148,6 @@ class MainActivityE2eTest {
                 )
                 activity.dismissComposeDialogForTest()
             }
-            instrumentation.waitForIdleSync()
         } finally {
             scenario.close()
         }
@@ -232,7 +222,6 @@ class MainActivityE2eTest {
     }
 
     private fun exerciseMenuAction(action: String) {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val scenario = launchActivity()
 
         try {
@@ -241,7 +230,6 @@ class MainActivityE2eTest {
                 require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
                 activity.dispatchMenuActionForTest(action)
             }
-            instrumentation.waitForIdleSync()
             SystemClock.sleep(MENU_ACTION_SETTLE_DELAY_MS)
             scenario.onActivity { activity ->
                 require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
