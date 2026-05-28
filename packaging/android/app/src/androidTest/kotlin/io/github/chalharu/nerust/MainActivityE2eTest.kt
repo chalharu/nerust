@@ -88,12 +88,7 @@ class MainActivityE2eTest {
         } finally {
             instrumentation.removeMonitor(monitor)
             launchedActivity?.let { activity ->
-                instrumentation.runOnMainSync {
-                    if (!activity.isFinishing && !activity.isDestroyed) {
-                        activity.finish()
-                    }
-                }
-                instrumentation.waitForIdleSync()
+                finishActivity(instrumentation, activity)
             }
         }
     }
@@ -174,6 +169,9 @@ class MainActivityE2eTest {
             }
         }
         instrumentation.waitForIdleSync()
+        assertTrue("MainActivity should be destroyed after finish", waitUntil(STARTUP_TIMEOUT_MS) {
+            activity.isDestroyed
+        })
     }
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
