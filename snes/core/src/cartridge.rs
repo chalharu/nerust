@@ -1358,6 +1358,8 @@ mod tests {
     const GSU_MOVE_REGISTER_PROGRAM: [u8; 11] = [
         0xF1, 0xEF, 0xBE, 0x21, 0x10, 0xF1, 0x40, 0x01, 0x31, 0x00, 0x01,
     ];
+    const GSU_MOVES_OVERFLOW_SET_PROGRAM: [u8; 6] = [0xF1, 0x80, 0x00, 0x20, 0xB1, 0x00];
+    const GSU_MOVES_OVERFLOW_CLEAR_PROGRAM: [u8; 6] = [0xF1, 0x01, 0x00, 0x20, 0xB1, 0x00];
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
     const GSU_GETB_PROGRAM: [u8; 9] = [0xFE, 0x23, 0x81, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00];
@@ -1498,6 +1500,39 @@ mod tests {
 
         assert_eq!(cartridge.read(0x700140), Some(0xEF));
         assert_eq!(cartridge.read(0x700141), Some(0xBE));
+    }
+
+    #[test]
+    fn super_fx_moves_sets_overflow_from_source_bit_seven() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU MOVES V",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        for (offset, value) in GSU_MOVES_OVERFLOW_SET_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x1A, 0x10);
+
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU MOVES NV",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+        for (offset, value) in GSU_MOVES_OVERFLOW_CLEAR_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003030, 0x10));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x1A, 0x00);
     }
 
     #[test]
