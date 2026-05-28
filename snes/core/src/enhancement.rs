@@ -1603,7 +1603,7 @@ impl<'a> GsuInterpreter<'a> {
             (_, 0xA0..=0xAF) => {
                 let value = self.fetch();
                 self.sync_program_counter();
-                self.load_register(usize::from(opcode & 0x0F), u16::from(value));
+                self.load_register(usize::from(opcode & 0x0F), i16::from(value as i8) as u16);
             }
             (_, 0xB0..=0xBF) => {
                 self.sync_program_counter();
