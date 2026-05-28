@@ -80,13 +80,34 @@ impl EnhancementState {
 pub(crate) struct Sa1State {
     registers: ByteWindow,
     iram: ByteWindow,
+    arithmetic_acm: bool,
+    arithmetic_md: bool,
+    ma: u16,
+    mb: u16,
+    mr: u64,
+    arithmetic_overflow: bool,
 }
+
+const SA1_MCNT: u16 = 0x2250;
+const SA1_MAL: u16 = 0x2251;
+const SA1_MAH: u16 = 0x2252;
+const SA1_MBL: u16 = 0x2253;
+const SA1_MBH: u16 = 0x2254;
+const SA1_MR0: u16 = 0x2306;
+const SA1_OF: u16 = 0x230B;
+const SA1_MR_MASK: u64 = (1 << 40) - 1;
 
 impl Sa1State {
     fn new() -> Self {
         Self {
             registers: ByteWindow::new(0x2200, 0x0200),
             iram: ByteWindow::new(0x3000, 0x0800),
+            arithmetic_acm: false,
+            arithmetic_md: false,
+            ma: 0,
+            mb: 0,
+            mr: 0,
+            arithmetic_overflow: false,
         }
     }
 
@@ -95,9 +116,14 @@ impl Sa1State {
             return None;
         }
 
+        let address_offset = offset(address);
+        if let Some(value) = self.read_arithmetic(address_offset) {
+            return Some(value);
+        }
+
         self.registers
-            .read(offset(address))
-            .or_else(|| self.iram.read(offset(address)))
+            .read(address_offset)
+            .or_else(|| self.iram.read(address_offset))
     }
 
     fn write(&mut self, address: u32, value: u8) -> bool {
@@ -105,7 +131,77 @@ impl Sa1State {
             return false;
         }
 
-        self.registers.write(offset(address), value) || self.iram.write(offset(address), value)
+        let address_offset = offset(address);
+        if self.write_arithmetic(address_offset, value) {
+            return true;
+        }
+
+        self.registers.write(address_offset, value) || self.iram.write(address_offset, value)
+    }
+
+    fn read_arithmetic(&self, address_offset: u16) -> Option<u8> {
+        match address_offset {
+            SA1_MR0..=0x230A => Some((self.mr >> ((address_offset - SA1_MR0) * 8)) as u8),
+            SA1_OF => Some(if self.arithmetic_overflow { 0x80 } else { 0x00 }),
+            _ => None,
+        }
+    }
+
+    fn write_arithmetic(&mut self, address_offset: u16, value: u8) -> bool {
+        if !matches!(address_offset, SA1_MCNT..=SA1_MBH) {
+            return false;
+        }
+
+        self.registers.write(address_offset, value);
+        match address_offset {
+            SA1_MCNT => {
+                self.arithmetic_md = value & 0x01 != 0;
+                self.arithmetic_acm = value & 0x02 != 0;
+                if self.arithmetic_acm {
+                    self.mr = 0;
+                }
+            }
+            SA1_MAL => self.ma = (self.ma & 0xFF00) | u16::from(value),
+            SA1_MAH => self.ma = (self.ma & 0x00FF) | (u16::from(value) << 8),
+            SA1_MBL => self.mb = (self.mb & 0xFF00) | u16::from(value),
+            SA1_MBH => {
+                self.mb = (self.mb & 0x00FF) | (u16::from(value) << 8);
+                self.execute_arithmetic();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn execute_arithmetic(&mut self) {
+        if self.arithmetic_acm {
+            let product = i64::from(self.ma as i16) * i64::from(self.mb as i16);
+            let sum = self.mr.wrapping_add(product as u64);
+            self.arithmetic_overflow = (sum >> 40) != 0;
+            self.mr = sum & SA1_MR_MASK;
+            self.mb = 0;
+        } else if self.arithmetic_md {
+            self.execute_divide();
+            self.ma = 0;
+            self.mb = 0;
+        } else {
+            let product = i32::from(self.ma as i16) * i32::from(self.mb as i16);
+            self.mr = u64::from(product as u32);
+            self.mb = 0;
+        }
+    }
+
+    fn execute_divide(&mut self) {
+        if self.mb == 0 {
+            self.mr = 0;
+            return;
+        }
+
+        let dividend = i32::from(self.ma as i16);
+        let divisor = i32::from(self.mb);
+        let remainder = dividend.rem_euclid(divisor);
+        let quotient = (dividend - remainder) / divisor;
+        self.mr = (u64::from(remainder as u16) << 16) | u64::from(quotient as i16 as u16);
     }
 }
 
