@@ -3,7 +3,6 @@ package io.github.chalharu.nerust
 import android.app.Instrumentation
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -11,7 +10,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.Assume.assumeTrue
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,14 +35,18 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun appStartsAndDrawerMenuIsAvailable() {
+    fun appStartsDrawerAndRecreateKeepMenuAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-        var launchedActivity: MainActivity? = null
+        var activeActivity: MainActivity? = null
 
         try {
-            val activity = launchMainActivity(instrumentation, context, monitor).also { launchedActivity = it }
+            val activity = try {
+                launchMainActivity(instrumentation, context, monitor)
+            } finally {
+                instrumentation.removeMonitor(monitor)
+            }.also { activeActivity = it }
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
@@ -85,54 +87,10 @@ class MainActivityE2eTest {
                 }
                 assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
             }
+
+            activeActivity = recreateMainActivity(instrumentation, activity)
         } finally {
-            instrumentation.removeMonitor(monitor)
-            launchedActivity?.let { activity ->
-                finishActivity(instrumentation, activity)
-            }
-        }
-    }
-
-    @Test
-    fun lifecycleRecreateKeepsMenuAvailable() {
-        assumeTrue(
-            "NativeActivity recreate e2e is covered on the latest API emulator",
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM,
-        )
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        var firstActivity: MainActivity? = null
-        var recreatedActivity: MainActivity? = null
-
-        try {
-            val firstMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-            val first = try {
-                launchMainActivity(instrumentation, context, firstMonitor)
-            } finally {
-                instrumentation.removeMonitor(firstMonitor)
-            }.also { firstActivity = it }
-
-            val recreateMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-            try {
-                instrumentation.runOnMainSync {
-                    first.recreate()
-                }
-                instrumentation.waitForIdleSync()
-                val recreated =
-                    requireNotNull(recreateMonitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
-                        "MainActivity should be recreated"
-                    }
-                recreatedActivity = recreated
-                assertTrue("MainActivity should be destroyed before recreation completes", waitUntil(STARTUP_TIMEOUT_MS) {
-                    first.isDestroyed
-                })
-                firstActivity = null
-                assertMenuButtonAvailable(instrumentation, recreated)
-            } finally {
-                instrumentation.removeMonitor(recreateMonitor)
-            }
-        } finally {
-            listOfNotNull(recreatedActivity, firstActivity).distinct().forEach { activity ->
+            activeActivity?.let { activity ->
                 finishActivity(instrumentation, activity)
             }
         }
@@ -161,6 +119,26 @@ class MainActivityE2eTest {
         instrumentation.waitForIdleSync()
         assertMenuButtonAvailable(instrumentation, activity)
         return activity
+    }
+
+    private fun recreateMainActivity(instrumentation: Instrumentation, activity: MainActivity): MainActivity {
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+        try {
+            instrumentation.runOnMainSync {
+                activity.recreate()
+            }
+            val recreated = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
+                "MainActivity should be recreated"
+            }
+            instrumentation.waitForIdleSync()
+            assertTrue("MainActivity should be destroyed before recreation completes", waitUntil(STARTUP_TIMEOUT_MS) {
+                activity.isDestroyed
+            })
+            assertMenuButtonAvailable(instrumentation, recreated)
+            return recreated
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
     }
 
     private fun finishActivity(instrumentation: Instrumentation, activity: MainActivity) {
