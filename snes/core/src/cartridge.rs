@@ -1166,6 +1166,37 @@ mod tests {
         assert_cx4_pattern_bitplanes(&mut cartridge);
     }
 
+    #[test]
+    fn cx4_applies_bitplane_wave() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 BITPLANE WAVE",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        for row in 0..8u32 {
+            write_word(&mut cartridge, 0x006A00 + row * 2, 0xFFFF);
+            write_word(&mut cartridge, 0x006A10 + row * 2, 0xFFFF);
+        }
+        for offset in 0..0x80 {
+            assert!(cartridge.write(0x006B00 + offset, 0xF0));
+        }
+
+        assert!(cartridge.write(0x007F83, 0));
+        assert!(cartridge.write(0x007F4D, 0x0C));
+        assert!(cartridge.write(0x007F4F, 0x00));
+
+        assert_eq!(read_word(&mut cartridge, 0x006000), 0xFFFF);
+        assert_eq!(read_word(&mut cartridge, 0x00600E), 0xFFFF);
+        assert_eq!(read_word(&mut cartridge, 0x006200), 0xFF00);
+        assert_eq!(read_word(&mut cartridge, 0x00680E), 0xFF00);
+        assert_eq!(read_word(&mut cartridge, 0x006010), 0xFFFF);
+        assert_eq!(read_word(&mut cartridge, 0x006210), 0xFF00);
+    }
+
     fn write_cx4_packed_pattern(cartridge: &mut Cartridge) {
         for row in 0..8u32 {
             for (column_pair, byte) in CX4_PACKED_NIBBLE_PATTERN.into_iter().enumerate() {

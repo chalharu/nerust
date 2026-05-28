@@ -645,6 +645,12 @@ const CX4_IMMEDIATE_DATA: [u8; 48] = [
     0xFF, 0xFF, 0x00, 0x00, 0x80, 0xFF, 0xFF, 0x7F, 0x00, 0x80, 0x00, 0xFF, 0x7F, 0x00, 0xFF, 0x7F,
     0xFF, 0x7F, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFE, 0x00, 0x01, 0x00, 0xFF, 0xFE, 0x00,
 ];
+const CX4_WAVE_DATA: [usize; 40] = [
+    0x0000, 0x0002, 0x0004, 0x0006, 0x0008, 0x000A, 0x000C, 0x000E, 0x0200, 0x0202, 0x0204, 0x0206,
+    0x0208, 0x020A, 0x020C, 0x020E, 0x0400, 0x0402, 0x0404, 0x0406, 0x0408, 0x040A, 0x040C, 0x040E,
+    0x0600, 0x0602, 0x0604, 0x0606, 0x0608, 0x060A, 0x060C, 0x060E, 0x0800, 0x0802, 0x0804, 0x0806,
+    0x0808, 0x080A, 0x080C, 0x080E,
+];
 
 impl Cx4State {
     fn new() -> Self {
@@ -744,6 +750,7 @@ impl Cx4State {
             0x03 => self.command_scale_rotate(0),
             0x07 => self.command_scale_rotate(64),
             0x0B => self.command_disintegrate(),
+            0x0C => self.command_bitplane_wave(),
             _ => {}
         }
     }
@@ -1004,6 +1011,41 @@ impl Cx4State {
         }
         if pixel & 0x08 != 0 {
             self.ram[output_index + 17] |= mask;
+        }
+    }
+
+    fn command_bitplane_wave(&mut self) {
+        let mut dest = 0usize;
+        let mut wave = usize::from(self.ram[CX4_DATA_START + 3]);
+        for _ in 0..0x10 {
+            self.apply_bitplane_wave_group(dest, 0x0A00, &mut wave);
+            dest += 16;
+            self.apply_bitplane_wave_group(dest, 0x0A10, &mut wave);
+            dest += 16;
+        }
+    }
+
+    fn apply_bitplane_wave_group(&mut self, dest: usize, source: usize, wave: &mut usize) {
+        let mut mask = 0xC0C0u16;
+        loop {
+            let start_height = -i16::from(self.ram[0x0B00 + *wave] as i8) - 16;
+            for (height, offset) in (start_height..).zip(CX4_WAVE_DATA) {
+                let index = dest + offset;
+                let mut value = self.read_u16(index) & !mask;
+                if height >= 0 {
+                    value |= if height < 8 {
+                        mask & self.read_u16(source + height as usize * 2)
+                    } else {
+                        mask & 0xFF00
+                    };
+                }
+                self.write_u16(index, value);
+            }
+            *wave = (*wave + 1) & 0x7F;
+            mask = (mask >> 2) | (mask << 6);
+            if mask == 0xC0C0 {
+                break;
+            }
         }
     }
 
