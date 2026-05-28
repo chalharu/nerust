@@ -271,6 +271,14 @@ impl AndroidFrontend {
         self.shell.needs_redraw = true;
     }
 
+    fn rebuild_window_after_surface_close(&mut self, event_loop: &ActiveEventLoop) {
+        self.save_lifecycle_state();
+        self.release_window_resources();
+        if let Err(error) = self.ensure_window(event_loop) {
+            log::warn!("failed to rebuild Android window after surface close: {error}");
+        }
+    }
+
     fn request_library_dialog(&mut self) {
         match library::request_show_library(&self.app, self.storage.rom_library.entries()) {
             Ok(true) => {}
@@ -449,7 +457,7 @@ impl ApplicationHandler for AndroidFrontend {
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -459,8 +467,7 @@ impl ApplicationHandler for AndroidFrontend {
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                self.save_lifecycle_state();
-                self.release_surface_resources();
+                self.rebuild_window_after_surface_close(event_loop);
             }
             WindowEvent::Focused(false) => {
                 let _ = self.session.clear_input();
