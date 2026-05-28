@@ -172,6 +172,7 @@ struct GsuInterpreter<'a> {
     pc: u16,
     source: usize,
     destination: Option<usize>,
+    alt_mode: u8,
     color: u8,
     zero: bool,
     screen_base: usize,
@@ -188,6 +189,7 @@ impl<'a> GsuInterpreter<'a> {
             pc: entry,
             source: 0,
             destination: None,
+            alt_mode: 0,
             color: 0,
             zero: false,
             screen_base,
@@ -208,20 +210,27 @@ impl<'a> GsuInterpreter<'a> {
 
     fn step(&mut self) -> bool {
         let opcode = self.fetch();
-        match opcode {
-            0x00 => {
+        if self.alt_mode == 0 && matches!(opcode, 0x3D..=0x3F) {
+            self.sync_program_counter();
+            self.alt_mode = opcode - 0x3C;
+            return true;
+        }
+
+        let alt_mode = std::mem::take(&mut self.alt_mode);
+        match (alt_mode, opcode) {
+            (_, 0x00) => {
                 self.sync_program_counter();
                 self.halted = true;
             }
-            0x01 | 0x02 => self.sync_program_counter(),
-            0x08 => {
+            (_, 0x01 | 0x02) => self.sync_program_counter(),
+            (_, 0x08) => {
                 let relative = self.fetch() as i8;
                 self.sync_program_counter();
                 if !self.zero {
                     self.branch(relative);
                 }
             }
-            0x20..=0x2F => {
+            (_, 0x20..=0x2F) => {
                 let register = usize::from(opcode & 0x0F);
                 if self.read_ram(self.pc) & 0xF0 == 0xB0 {
                     let operand = self.fetch();
@@ -235,7 +244,7 @@ impl<'a> GsuInterpreter<'a> {
                     self.destination = Some(register);
                 }
             }
-            0x3C => {
+            (0, 0x3C) => {
                 self.sync_program_counter();
                 self.registers[12] = self.registers[12].wrapping_sub(1);
                 self.zero = self.registers[12] == 0;
@@ -244,49 +253,56 @@ impl<'a> GsuInterpreter<'a> {
                     self.registers[15] = self.pc;
                 }
             }
-            0x3F => {
-                let operand = self.fetch();
-                self.sync_program_counter();
-                if operand & 0xF0 == 0x60 {
-                    self.compare_register(usize::from(operand & 0x0F));
-                } else {
-                    return false;
-                }
-            }
-            0x30..=0x3F => {
+            (0, 0x30..=0x3B) => {
                 self.sync_program_counter();
                 self.store_word(usize::from(opcode & 0x0F));
             }
-            0x4C => {
+            (1, 0x30..=0x3F) => {
+                self.sync_program_counter();
+                self.store_byte(usize::from(opcode & 0x0F));
+            }
+            (0, 0x40..=0x4B) => {
+                self.sync_program_counter();
+                self.load_word(usize::from(opcode & 0x0F));
+            }
+            (1, 0x40..=0x4B) => {
+                self.sync_program_counter();
+                self.load_byte(usize::from(opcode & 0x0F));
+            }
+            (0, 0x4C) => {
                 self.sync_program_counter();
                 self.plot();
             }
-            0x4E => {
+            (0, 0x4E) => {
                 self.sync_program_counter();
                 self.color = self.registers[0] as u8 & 0x0F;
             }
-            0x50..=0x5F => {
+            (_, 0x50..=0x5F) => {
                 self.sync_program_counter();
                 self.add_register(usize::from(opcode & 0x0F));
             }
-            0xA0..=0xAF => {
+            (3, 0x60..=0x6F) => {
+                self.sync_program_counter();
+                self.compare_register(usize::from(opcode & 0x0F));
+            }
+            (_, 0xA0..=0xAF) => {
                 let value = self.fetch();
                 self.sync_program_counter();
                 self.set_register(usize::from(opcode & 0x0F), u16::from(value));
             }
-            0xB0..=0xBF => {
+            (_, 0xB0..=0xBF) => {
                 self.sync_program_counter();
                 self.source = usize::from(opcode & 0x0F);
                 self.destination = None;
             }
-            0xD0..=0xDF => {
+            (_, 0xD0..=0xDF) => {
                 self.sync_program_counter();
                 let register = usize::from(opcode & 0x0F);
                 self.registers[register] = self.registers[register].wrapping_add(1);
                 self.zero = self.registers[register] == 0;
                 self.source = register;
             }
-            0xF0..=0xFF => {
+            (_, 0xF0..=0xFF) => {
                 let low = self.fetch();
                 let high = self.fetch();
                 self.sync_program_counter();
@@ -336,6 +352,26 @@ impl<'a> GsuInterpreter<'a> {
         self.write_ram(address, value[0]);
         self.write_ram(address.wrapping_add(1), value[1]);
         self.destination = None;
+    }
+
+    fn store_byte(&mut self, register: usize) {
+        let address = self.registers[register];
+        self.write_ram(address, self.registers[self.source] as u8);
+        self.destination = None;
+    }
+
+    fn load_word(&mut self, register: usize) {
+        let address = self.registers[register];
+        let value = u16::from_le_bytes([
+            self.read_ram(address),
+            self.read_ram(address.wrapping_add(1)),
+        ]);
+        self.set_register(0, value);
+    }
+
+    fn load_byte(&mut self, register: usize) {
+        let value = u16::from(self.read_ram(self.registers[register]));
+        self.set_register(0, value);
     }
 
     fn plot(&mut self) {
