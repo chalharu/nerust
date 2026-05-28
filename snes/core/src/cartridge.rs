@@ -772,6 +772,12 @@ mod tests {
         "../../../roms/snes-coprocessor-tests/hirom-gsu-test/build/sprite_scaler.bin"
     );
     const GSU_BITMASK_LUT: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+    const CX4_PACKED_NIBBLE_PATTERN: [u8; 4] = [0x10, 0x32, 0x54, 0x76];
+    const CX4_PATTERN_BITPLANES: [u8; 32] = [
+        0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55,
+        0x33, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00,
+        0x0F, 0x00,
+    ];
 
     #[test]
     fn super_fx_game_ram_maps_full_direct_banks_and_starts_programs() {
@@ -1123,23 +1129,53 @@ mod tests {
         assert!(cartridge.write(0x007F8C, 8));
         write_word(&mut cartridge, 0x007F8F, 0x0100);
 
-        for row in 0..8 {
-            for (column_pair, byte) in [0x10, 0x32, 0x54, 0x76].into_iter().enumerate() {
-                assert!(cartridge.write(0x006600 + row * 4 + column_pair as u32, byte));
-            }
-        }
+        write_cx4_packed_pattern(&mut cartridge);
 
         assert!(cartridge.write(0x007F4D, 0x0B));
         assert!(cartridge.write(0x007F4F, 0x00));
 
-        for (offset, expected) in [
-            0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33, 0x55, 0x33,
-            0x55, 0x33, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00, 0x0F, 0x00,
-            0x0F, 0x00, 0x0F, 0x00,
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        assert_cx4_pattern_bitplanes(&mut cartridge);
+    }
+
+    #[test]
+    fn cx4_scale_rotates_packed_pixels_to_bitplanes() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 SCALE ROTATE",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_word(&mut cartridge, 0x007F80, 0);
+        write_word(&mut cartridge, 0x007F83, 4);
+        write_word(&mut cartridge, 0x007F86, 4);
+        assert!(cartridge.write(0x007F89, 8));
+        assert!(cartridge.write(0x007F8C, 8));
+        write_word(&mut cartridge, 0x007F8F, 0x1000);
+        write_word(&mut cartridge, 0x007F92, 0x1000);
+        write_cx4_packed_pattern(&mut cartridge);
+
+        assert!(cartridge.write(0x007F4D, 0x03));
+        assert!(cartridge.write(0x007F4F, 0x00));
+        assert_cx4_pattern_bitplanes(&mut cartridge);
+
+        assert!(cartridge.write(0x007F4D, 0x07));
+        assert!(cartridge.write(0x007F4F, 0x00));
+        assert_cx4_pattern_bitplanes(&mut cartridge);
+    }
+
+    fn write_cx4_packed_pattern(cartridge: &mut Cartridge) {
+        for row in 0..8u32 {
+            for (column_pair, byte) in CX4_PACKED_NIBBLE_PATTERN.into_iter().enumerate() {
+                assert!(cartridge.write(0x006600 + row * 4 + column_pair as u32, byte));
+            }
+        }
+    }
+
+    fn assert_cx4_pattern_bitplanes(cartridge: &mut Cartridge) {
+        for (offset, expected) in CX4_PATTERN_BITPLANES.into_iter().enumerate() {
             assert_eq!(cartridge.read(0x006000 + offset as u32), Some(expected));
         }
     }

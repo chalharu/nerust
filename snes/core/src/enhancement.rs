@@ -740,8 +740,11 @@ impl Cx4State {
     }
 
     fn command_sprite(&mut self) {
-        if self.ram[CX4_COMMAND_MODE] == 0x0B {
-            self.command_disintegrate();
+        match self.ram[CX4_COMMAND_MODE] {
+            0x03 => self.command_scale_rotate(0),
+            0x07 => self.command_scale_rotate(64),
+            0x0B => self.command_disintegrate(),
+            _ => {}
         }
     }
 
@@ -872,6 +875,72 @@ impl Cx4State {
         self.write_u24(CX4_DATA_START + 6, (squared >> 24) as u32);
     }
 
+    fn command_scale_rotate(&mut self, row_padding: usize) {
+        let angle = self.read_u16(CX4_DATA_START) & 0x01FF;
+        let scale_x = cx4_scale_factor(self.read_u16(CX4_DATA_START + 15));
+        let scale_y = cx4_scale_factor(self.read_u16(CX4_DATA_START + 18));
+        let (a, b, c, d) = cx4_scale_rotate_matrix(angle, scale_x, scale_y);
+
+        let width = i32::from(self.ram[CX4_DATA_START + 9] & !7);
+        let height = i32::from(self.ram[CX4_DATA_START + 12] & !7);
+        let clear_len = ((width as usize + row_padding / 4) * height as usize) / 2;
+        for byte in self.ram.iter_mut().take(clear_len) {
+            *byte = 0;
+        }
+
+        let center_x = i32::from(self.read_i16(CX4_DATA_START + 3));
+        let center_y = i32::from(self.read_i16(CX4_DATA_START + 6));
+        let mut line_x = (center_x << 12) - center_x * a - center_x * b;
+        let mut line_y = (center_y << 12) - center_y * c - center_y * d;
+        let mut output_index = 0i32;
+        let mut mask = 0x80;
+
+        for _ in 0..height {
+            let mut source_x = line_x;
+            let mut source_y = line_y;
+            for _ in 0..width {
+                let sample_x = source_x >> 12;
+                let sample_y = source_y >> 12;
+                let pixel = if (0..width).contains(&sample_x) && (0..height).contains(&sample_y) {
+                    let packed_index = sample_y as usize * width as usize + sample_x as usize;
+                    let mut pixel = self
+                        .ram
+                        .get(0x0600 + (packed_index >> 1))
+                        .copied()
+                        .unwrap_or(0);
+                    if packed_index & 1 != 0 {
+                        pixel >>= 4;
+                    }
+                    pixel &= 0x0F;
+                    pixel
+                } else {
+                    0
+                };
+
+                if output_index >= 0 {
+                    self.write_bitplane_pixel(output_index as usize, mask, pixel);
+                }
+                mask >>= 1;
+                if mask == 0 {
+                    mask = 0x80;
+                    output_index += 32;
+                }
+
+                source_x += a;
+                source_y += c;
+            }
+
+            output_index += 2 + row_padding as i32;
+            if output_index & 0x10 != 0 {
+                output_index &= !0x10;
+            } else {
+                output_index -= width * 4 + row_padding as i32;
+            }
+            line_x += b;
+            line_y += d;
+        }
+    }
+
     fn command_disintegrate(&mut self) {
         let center_x = i32::from(self.read_i16(CX4_DATA_START));
         let center_y = i32::from(self.read_i16(CX4_DATA_START + 3));
@@ -895,7 +964,7 @@ impl Cx4State {
                 let pixel = if source_low_nibble {
                     source_byte & 0x0F
                 } else {
-                    source_byte >> 4
+                    (source_byte >> 4) & 0x0F
                 };
                 if !source_low_nibble {
                     source_index += 1;
@@ -912,24 +981,29 @@ impl Cx4State {
                         + (sample_x >> 3) * 32
                         + (sample_y & 7) * 2;
                     let mask = 0x80 >> (sample_x & 7);
-                    if output_index + 17 < self.ram.len() {
-                        if pixel & 0x01 != 0 {
-                            self.ram[output_index] |= mask;
-                        }
-                        if pixel & 0x02 != 0 {
-                            self.ram[output_index + 1] |= mask;
-                        }
-                        if pixel & 0x04 != 0 {
-                            self.ram[output_index + 16] |= mask;
-                        }
-                        if pixel & 0x08 != 0 {
-                            self.ram[output_index + 17] |= mask;
-                        }
-                    }
+                    self.write_bitplane_pixel(output_index, mask, pixel);
                 }
                 source_x += scale_x;
             }
             source_y += scale_y;
+        }
+    }
+
+    fn write_bitplane_pixel(&mut self, output_index: usize, mask: u8, pixel: u8) {
+        if output_index >= self.ram.len().saturating_sub(17) {
+            return;
+        }
+        if pixel & 0x01 != 0 {
+            self.ram[output_index] |= mask;
+        }
+        if pixel & 0x02 != 0 {
+            self.ram[output_index + 1] |= mask;
+        }
+        if pixel & 0x04 != 0 {
+            self.ram[output_index + 16] |= mask;
+        }
+        if pixel & 0x08 != 0 {
+            self.ram[output_index + 17] |= mask;
         }
     }
 
@@ -992,6 +1066,41 @@ impl Cx4State {
 
 fn cx4_angle128(value: u8) -> f64 {
     f64::from(value) * std::f64::consts::TAU / 128.0
+}
+
+fn cx4_scale_factor(raw: u16) -> i32 {
+    if raw & 0x8000 != 0 {
+        0x7FFF
+    } else {
+        i32::from(raw)
+    }
+}
+
+fn cx4_scale_rotate_matrix(angle: u16, scale_x: i32, scale_y: i32) -> (i32, i32, i32, i32) {
+    match angle {
+        0 => (scale_x, 0, 0, scale_y),
+        128 => (0, -scale_y, scale_x, 0),
+        256 => (-scale_x, 0, 0, -scale_y),
+        384 => (0, scale_y, -scale_x, 0),
+        _ => {
+            let sin = cx4_sin512(angle);
+            let cos = cx4_cos512(angle);
+            (
+                (cos * scale_x) >> 15,
+                -((sin * scale_y) >> 15),
+                (sin * scale_x) >> 15,
+                (cos * scale_y) >> 15,
+            )
+        }
+    }
+}
+
+fn cx4_sin512(value: u16) -> i32 {
+    ((f64::from(value & 0x01FF) * std::f64::consts::TAU / 512.0).sin() * 32767.0).round() as i32
+}
+
+fn cx4_cos512(value: u16) -> i32 {
+    ((f64::from(value & 0x01FF) * std::f64::consts::TAU / 512.0).cos() * 32767.0).round() as i32
 }
 
 fn cx4_angle512(value: u16) -> f64 {
