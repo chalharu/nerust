@@ -113,11 +113,13 @@ pub(crate) struct Sa1State {
     dma_char_conversion_target: bool,
     dma_dest_bwram: bool,
     dma_source_device: u8,
+    dma_conversion_size: u8,
     dma_conversion_depth: u8,
     dma_source_address: u32,
     dma_dest_address: u32,
     dma_length: u16,
     dma_line: u8,
+    dma_bwram_conversion_active: bool,
     bitmap_register_file: [u8; 16],
     arithmetic_acm: bool,
     arithmetic_md: bool,
@@ -195,11 +197,13 @@ impl Sa1State {
             dma_char_conversion_target: false,
             dma_dest_bwram: false,
             dma_source_device: 0,
+            dma_conversion_size: 0,
             dma_conversion_depth: 0,
             dma_source_address: 0,
             dma_dest_address: 0,
             dma_length: 0,
             dma_line: 0,
+            dma_bwram_conversion_active: false,
             bitmap_register_file: [0; 16],
             arithmetic_acm: false,
             arithmetic_md: false,
@@ -303,6 +307,18 @@ impl Sa1State {
         Some(linear % ram_len)
     }
 
+    pub(crate) fn read_sa1_bwram(&mut self, address: u32, save_ram: &[u8]) -> Option<u8> {
+        let linear = self.sa1_bwram_linear_address(address)?;
+        if save_ram.is_empty() {
+            return None;
+        }
+        if self.dma_bwram_conversion_active {
+            return Some(self.read_character_conversion_type1(linear, save_ram));
+        }
+
+        Some(save_ram[linear % save_ram.len()])
+    }
+
     pub(crate) fn can_write_sa1_bwram(&self, address: u32) -> bool {
         let Some(linear) = self.sa1_bwram_linear_address(address) else {
             return false;
@@ -377,7 +393,13 @@ impl Sa1State {
                 self.dma_dest_bwram = value & 0x04 != 0;
                 self.dma_source_device = value & 0x03;
             }
-            SA1_CDMA => self.dma_conversion_depth = (value & 0x03).min(2),
+            SA1_CDMA => {
+                if value & 0x80 != 0 {
+                    self.dma_bwram_conversion_active = false;
+                }
+                self.dma_conversion_size = ((value >> 2) & 0x07).min(5);
+                self.dma_conversion_depth = (value & 0x03).min(2);
+            }
             SA1_DSAL => {
                 self.dma_source_address = (self.dma_source_address & 0xFFFF00) | u32::from(value);
             }
@@ -395,8 +417,13 @@ impl Sa1State {
             SA1_DDAM => {
                 self.dma_dest_address =
                     (self.dma_dest_address & 0xFF00FF) | (u32::from(value) << 8);
+                // IRAM destinations trigger after the middle DDA byte; BWRAM waits for DDAH.
                 if !self.dma_dest_bwram {
-                    self.execute_normal_dma(rom, save_ram);
+                    if self.dma_char_conversion && self.dma_char_conversion_target {
+                        self.dma_bwram_conversion_active = self.dma_enabled;
+                    } else {
+                        self.execute_normal_dma(rom, save_ram);
+                    }
                 }
             }
             SA1_DDAH => {
@@ -567,6 +594,69 @@ impl Sa1State {
         }
 
         self.dma_line = self.dma_line.wrapping_add(1) & 0x0F;
+    }
+
+    fn read_character_conversion_type1(&mut self, address: usize, save_ram: &[u8]) -> u8 {
+        let character_mask = (1usize << (6 - self.dma_conversion_depth)) - 1;
+        if address & character_mask == 0 {
+            self.buffer_character_conversion_type1(address, save_ram);
+        }
+
+        let iram_index = (self.dma_dest_address as usize + (address & character_mask)) & 0x07FF;
+        self.iram.bytes[iram_index]
+    }
+
+    fn buffer_character_conversion_type1(&mut self, address: usize, save_ram: &[u8]) {
+        let bytes_per_row = 2usize << (2 - self.dma_conversion_depth);
+        let bytes_per_line = (8usize << self.dma_conversion_size) >> self.dma_conversion_depth;
+        let bwram_mask = save_ram.len() - 1;
+        let tile = (address.wrapping_sub(self.dma_source_address as usize) & bwram_mask)
+            >> (6 - self.dma_conversion_depth);
+        let tile_y = tile >> self.dma_conversion_size;
+        let tile_x = tile & ((1usize << self.dma_conversion_size) - 1);
+        let mut bwram_address =
+            self.dma_source_address as usize + tile_y * 8 * bytes_per_line + tile_x * bytes_per_row;
+
+        for row in 0..8 {
+            let mut data = 0u64;
+            for byte_index in 0..bytes_per_row {
+                data |= u64::from(save_ram[(bwram_address + byte_index) & bwram_mask])
+                    << (byte_index * 8);
+            }
+            bwram_address += bytes_per_line;
+
+            let mut output = [0u8; 8];
+            for pixel in 0..8 {
+                output[0] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                output[1] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                if self.dma_conversion_depth == 2 {
+                    continue;
+                }
+                output[2] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                output[3] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                if self.dma_conversion_depth == 1 {
+                    continue;
+                }
+                output[4] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                output[5] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                output[6] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+                output[7] |= ((data & 1) as u8) << (7 - pixel);
+                data >>= 1;
+            }
+
+            for (byte_index, byte) in output.into_iter().take(bytes_per_row).enumerate() {
+                let plane_offset = ((byte_index & 0x06) << 3) + (byte_index & 0x01);
+                let target = (self.dma_dest_address as usize + row * 2 + plane_offset) & 0x07FF;
+                self.iram.bytes[target] = byte;
+            }
+        }
     }
 
     fn read_arithmetic(&self, address_offset: u16) -> Option<u8> {
