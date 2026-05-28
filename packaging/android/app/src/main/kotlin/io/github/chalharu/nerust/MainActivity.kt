@@ -9,16 +9,19 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ListView
+import android.widget.PopupWindow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -84,11 +87,27 @@ private val DRAWER_ACTIONS = listOf(
     DrawerAction("Reset", MENU_ACTION_RESET),
 )
 
+private fun createRomPickerIntent(): Intent =
+    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        type = "*/*"
+    }
+
 class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
+    private val ensureMenuChromeAttachedRunnable = Runnable { ensureMenuChromeAttached() }
     private var menuChromeAttachAttempts = 0
+    private var chromeAttachEnabled = false
+    private var controlsOverlayPopup: PopupWindow? = null
+    private var controlsOverlayView: View? = null
+    private var menuButtonPopup: PopupWindow? = null
+    private var menuButtonView: View? = null
+    private var drawerPopup: PopupWindow? = null
+    private var drawerOverlayView: View? = null
+    private var drawerComposeView: View? = null
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -114,6 +133,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     override fun onResume() {
         super.onResume()
+        chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         scheduleMenuChromeAttach()
     }
@@ -126,11 +146,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     override fun onPause() {
+        chromeAttachEnabled = false
+        removePendingChromeAttachCallbacks()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
 
     override fun onStop() {
+        removePendingChromeAttachCallbacks()
+        dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         super.onStop()
     }
@@ -141,6 +165,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     override fun onDestroy() {
+        chromeAttachEnabled = false
+        removePendingChromeAttachCallbacks()
+        dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         super.onDestroy()
@@ -156,11 +183,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     @Suppress("DEPRECATION")
     fun startRomPicker() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-        startActivityForResult(intent, ROM_PICKER_REQUEST_CODE)
+        startActivityForResult(createRomPickerIntent(), ROM_PICKER_REQUEST_CODE)
     }
 
     @Suppress("DEPRECATION")
@@ -172,9 +195,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri != null) {
-            val takeFlags = data?.flags?.and(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
-            ) ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+            val takeFlags = data?.flags
+                ?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                ?.takeIf { it != 0 }
+                ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
             try {
                 contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (error: SecurityException) {
@@ -184,6 +208,28 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         onFilePickerResult(uri?.toString())
     }
+
+    fun isChromeViewShowingForTest(tag: String): Boolean =
+        when (tag) {
+            CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
+                controlsOverlayView.isShownInWindowForTest()
+            DRAWER_COMPOSE_TAG -> drawerPopup?.isShowing == true &&
+                drawerComposeView.isShownInWindowForTest()
+            DRAWER_OVERLAY_TAG -> drawerPopup?.isShowing == true &&
+                drawerOverlayView.isShownInWindowForTest()
+            MENU_BUTTON_TAG -> menuButtonPopup?.isShowing == true &&
+                menuButtonView.isShownInWindowForTest()
+            else -> false
+        }
+
+    fun findChromeViewForTest(tag: String): View? =
+        when (tag) {
+            CONTROLS_OVERLAY_TAG -> controlsOverlayView
+            DRAWER_COMPOSE_TAG -> drawerComposeView
+            DRAWER_OVERLAY_TAG -> drawerOverlayView
+            MENU_BUTTON_TAG -> menuButtonView
+            else -> window.decorView.findViewWithTag(tag)
+        }
 
     /**
      * Show a modal ROM library dialog.
@@ -297,45 +343,102 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun scheduleMenuChromeAttach() {
-        if (isFinishing || isDestroyed) {
+        if (!chromeAttachEnabled || isFinishing || isDestroyed) {
             return
         }
         menuChromeAttachAttempts = 0
         ensureMenuChromeAttached()
-        window.decorView.post(::ensureMenuChromeAttached)
+        window.decorView.post(ensureMenuChromeAttachedRunnable)
     }
 
     private fun ensureMenuChromeAttached() {
-        if (isFinishing || isDestroyed) {
+        if (!chromeAttachEnabled || isFinishing || isDestroyed) {
             return
         }
-        val root = contentRoot() ?: run {
+        val anchor = popupAnchor() ?: run {
             retryMenuChromeAttach()
             return
         }
-        installComposeOwners(root)
-        val controls = root.findViewWithTag<View>(CONTROLS_OVERLAY_TAG)
-            ?: createControlsOverlay().also(::addOverlayView)
-        val button = root.findViewWithTag<View>(MENU_BUTTON_TAG)
-            ?: createMenuButtonOverlay().also(::addOverlayView)
-        controls.bringToFront()
-        button.bringToFront()
-        root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)?.bringToFront()
+        installComposeOwners(anchor)
+        val controlsAttached = ensureControlsOverlayPopup(anchor)
+        val buttonAttached = ensureMenuButtonPopup(anchor)
+        if (!controlsAttached || !buttonAttached) {
+            retryMenuChromeAttach()
+        }
     }
 
     private fun retryMenuChromeAttach() {
         if (menuChromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
-            Log.w(TAG, "Menu chrome attach skipped because Android content root was unavailable")
+            Log.w(TAG, "Menu chrome attach skipped because Android window token was unavailable")
             return
         }
         menuChromeAttachAttempts += 1
-        window.decorView.postDelayed(::ensureMenuChromeAttached, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
+        window.decorView.postDelayed(ensureMenuChromeAttachedRunnable, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
     }
 
-    private fun addOverlayView(view: View) {
-        if (view.parent == null) {
-            addContentView(view, view.layoutParams)
+    private fun removePendingChromeAttachCallbacks() {
+        window.decorView.removeCallbacks(ensureMenuChromeAttachedRunnable)
+    }
+
+    private fun ensureControlsOverlayPopup(anchor: View): Boolean {
+        val existing = controlsOverlayPopup
+        if (existing?.isShowing == true && controlsOverlayView != null) {
+            return true
         }
+
+        controlsOverlayPopup?.dismiss()
+        val view = createControlsOverlay()
+        val popup = PopupWindow(
+            view,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            false,
+        ).apply {
+            isTouchable = false
+            isClippingEnabled = false
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+
+        controlsOverlayView = view
+        controlsOverlayPopup = popup
+        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
+            return true
+        }
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        return false
+    }
+
+    private fun ensureMenuButtonPopup(anchor: View): Boolean {
+        val existing = menuButtonPopup
+        if (existing?.isShowing == true && menuButtonView != null) {
+            return true
+        }
+
+        menuButtonPopup?.dismiss()
+        val view = createMenuButtonOverlay()
+        val popup = PopupWindow(
+            view,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            false,
+        ).apply {
+            isClippingEnabled = false
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            elevation = dp(8).toFloat()
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+
+        menuButtonView = view
+        menuButtonPopup = popup
+        val margin = dp(16)
+        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, margin, statusBarHeight() + margin)) {
+            return true
+        }
+        menuButtonPopup = null
+        menuButtonView = null
+        return false
     }
 
     private fun installComposeOwners(root: View) {
@@ -369,19 +472,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START,
-            ).apply {
-                val margin = dp(16)
-                leftMargin = margin
-                topMargin = statusBarHeight() + margin
-            }
+            )
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
     private fun showDrawerOverlay() {
-        val root = contentRoot() ?: return
-        val existing = root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)
-        if (existing != null) {
-            existing.bringToFront()
+        val anchor = popupAnchor() ?: return
+        val existing = drawerPopup
+        if (existing?.isShowing == true) {
             return
         }
 
@@ -409,20 +507,76 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 }
             }
         }
+        installComposeOwners(overlay)
+        installComposeOwners(drawerContent)
         overlay.addView(drawerContent)
-        addOverlayView(overlay)
-        overlay.bringToFront()
+
+        val popup = PopupWindow(
+            overlay,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            true,
+        ).apply {
+            isClippingEnabled = false
+            isOutsideTouchable = true
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setOnDismissListener { clearDrawerPopupReferences() }
+        }
+
+        drawerOverlayView = overlay
+        drawerComposeView = drawerContent
+        drawerPopup = popup
+        if (!showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
+            clearDrawerPopupReferences()
+        }
     }
 
     private fun removeDrawerOverlay(): Boolean {
-        val root = contentRoot() ?: return false
-        val overlay = root.findViewWithTag<View>(DRAWER_OVERLAY_TAG) ?: return false
-        root.removeView(overlay)
+        val popup = drawerPopup ?: return false
+        popup.dismiss()
+        clearDrawerPopupReferences()
         return true
     }
 
-    private fun contentRoot(): ViewGroup? =
-        findViewById<View>(android.R.id.content) as? ViewGroup ?: window.decorView as? ViewGroup
+    private fun popupAnchor(): View? =
+        window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
+
+    private fun showPopupAtLocation(
+        popup: PopupWindow,
+        anchor: View,
+        gravity: Int,
+        x: Int,
+        y: Int,
+    ): Boolean =
+        try {
+            popup.showAtLocation(anchor, gravity, x, y)
+            true
+        } catch (_: WindowManager.BadTokenException) {
+            false
+        } catch (_: IllegalStateException) {
+            false
+        }
+
+    private fun clearDrawerPopupReferences() {
+        drawerPopup = null
+        drawerOverlayView = null
+        drawerComposeView = null
+    }
+
+    private fun View?.isShownInWindowForTest(): Boolean =
+        this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
+
+    private fun dismissChromePopups() {
+        drawerPopup?.dismiss()
+        clearDrawerPopupReferences()
+        menuButtonPopup?.dismiss()
+        menuButtonPopup = null
+        menuButtonView = null
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+    }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
@@ -455,6 +609,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
+
+        fun createRomPickerIntentForTest(): Intent = createRomPickerIntent()
     }
 }
 
