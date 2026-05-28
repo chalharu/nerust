@@ -762,6 +762,44 @@ video:
     }
 
     #[test]
+    fn file_backed_manager_round_trips_snapshot_across_reloads() {
+        let root = test_root("file-backed-roundtrip");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let paths =
+            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::gtk_opengl());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        snapshot.local.audio.muted = true;
+        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snapshot.clone()).unwrap();
+
+        let reloaded = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap()
+        .snapshot()
+        .unwrap();
+
+        assert_eq!(reloaded, snapshot);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn update_window_size_records_host_specific_app_state() {
         let manager = SettingsManager::ephemeral(
             test_shared_defaults(),

@@ -463,8 +463,8 @@ pub(crate) fn present_preferences_dialog(
             &capture_target,
             language,
         );
-        let _ = dialog.connect_response(move |dialog, response| match response {
-            gtk::ResponseType::Ok => {
+        let _ = dialog.connect_response(move |dialog, response| {
+            if should_apply_response(response) {
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
@@ -482,8 +482,7 @@ pub(crate) fn present_preferences_dialog(
                         error_label.set_text(&error);
                     }
                 }
-            }
-            _ => {
+            } else {
                 dialog.close();
                 run_finish_callback(&finish_for_response);
             }
@@ -539,6 +538,13 @@ fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     snapshot: SettingsSnapshot,
 ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
     state.borrow_mut().apply_settings(snapshot)
+}
+
+fn should_apply_response(response: gtk::ResponseType) -> bool {
+    matches!(
+        response,
+        gtk::ResponseType::Ok | gtk::ResponseType::DeleteEvent
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1060,7 +1066,7 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow};
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
     use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
@@ -1105,6 +1111,13 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.apply_calls, 1);
         assert_eq!(state.finish_calls, 1);
+    }
+
+    #[test]
+    fn close_button_uses_apply_path() {
+        assert!(should_apply_response(gtk::ResponseType::Ok));
+        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
+        assert!(!should_apply_response(gtk::ResponseType::Cancel));
     }
 }
 
