@@ -271,7 +271,9 @@ impl Cartridge {
         if let EnhancementState::Sa1(state) = &self.enhancement
             && let Some(index) = state.sa1_bwram_index(address, self.save_ram.len())
         {
-            self.save_ram[index] = value;
+            if state.can_write_sa1_bwram(address) {
+                self.save_ram[index] = value;
+            }
             return true;
         }
 
@@ -720,6 +722,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert!(cartridge.write(0x002226, 0x80));
         assert!(cartridge.write(0x006000, 0x5A));
         assert_eq!(cartridge.read(0x006000), Some(0x5A));
         assert_eq!(cartridge.read(0x806000), Some(0x5A));
@@ -728,6 +731,32 @@ mod tests {
         assert!(cartridge.write(0x407FFF, 0xC3));
         assert_eq!(cartridge.read(0x007FFF), Some(0xC3));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn sa1_bwram_write_protection_requires_enable_or_unprotected_range() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert_eq!(cartridge.read(0x002226), Some(0x00));
+        assert_eq!(cartridge.read(0x002227), Some(0x00));
+        assert_eq!(cartridge.read(0x002228), Some(0x0F));
+        assert!(cartridge.write(0x006000, 0xAA));
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+
+        assert!(cartridge.write(0x002228, 0x00));
+        assert!(cartridge.write(0x006000, 0x11));
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert!(cartridge.write(0x006100, 0x22));
+        assert_eq!(cartridge.read(0x006100), Some(0x22));
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x006000, 0x33));
+        assert_eq!(cartridge.read(0x006000), Some(0x33));
+
+        assert!(cartridge.write(0x002226, 0x00));
+        assert!(cartridge.write(0x002227, 0x80));
+        assert!(cartridge.write(0x006000, 0x44));
+        assert_eq!(cartridge.read(0x006000), Some(0x44));
     }
 
     #[test]
@@ -791,6 +820,7 @@ mod tests {
         let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
 
         assert_eq!(cartridge.save_ram().len(), 16 * 1024);
+        assert!(cartridge.write(0x002226, 0x80));
         assert!(cartridge.write(0x006000, 0x11));
         assert_eq!(cartridge.read(0x400000), Some(0x11));
 

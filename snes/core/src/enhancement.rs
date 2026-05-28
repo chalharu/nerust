@@ -89,6 +89,9 @@ pub(crate) struct Sa1State {
     fbmode: bool,
     fb: u8,
     sbm: u8,
+    swen: bool,
+    cwen: bool,
+    bwp: u8,
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -102,6 +105,8 @@ const SA1_DXB: u16 = 0x2221;
 const SA1_EXB: u16 = 0x2222;
 const SA1_FXB: u16 = 0x2223;
 const SA1_BMAPS: u16 = 0x2224;
+const SA1_SBWE: u16 = 0x2226;
+const SA1_CBWE: u16 = 0x2227;
 const SA1_BWPA: u16 = 0x2228;
 const SA1_MCNT: u16 = 0x2250;
 const SA1_MAL: u16 = 0x2251;
@@ -132,6 +137,9 @@ impl Sa1State {
             fbmode: false,
             fb: 3,
             sbm: 0,
+            swen: false,
+            cwen: false,
+            bwp: 0x0F,
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -218,17 +226,30 @@ impl Sa1State {
             return None;
         }
 
-        let bank = bank(address);
-        let offset = offset(address);
-        let linear = match bank {
-            0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
-                usize::from(self.sbm) * 0x2000 + usize::from(offset - 0x6000)
-            }
-            0x40..=0x4F => usize::from(bank & 0x0F) * 0x10000 + usize::from(offset),
-            _ => return None,
-        };
+        let linear = self.sa1_bwram_linear_address(address)?;
 
         Some(linear % ram_len)
+    }
+
+    pub(crate) fn can_write_sa1_bwram(&self, address: u32) -> bool {
+        let Some(linear) = self.sa1_bwram_linear_address(address) else {
+            return false;
+        };
+        // BWPA is checked against the 256 KiB SA-1 BWRAM address space before SRAM mirroring.
+        let protection_address = linear & 0x3FFFF;
+        self.swen || self.cwen || protection_address >= (0x100usize << self.bwp)
+    }
+
+    fn sa1_bwram_linear_address(&self, address: u32) -> Option<usize> {
+        let bank = bank(address);
+        let offset = offset(address);
+        match bank {
+            0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
+                Some(usize::from(self.sbm) * 0x2000 + usize::from(offset - 0x6000))
+            }
+            0x40..=0x4F => Some(usize::from(bank & 0x0F) * 0x10000 + usize::from(offset)),
+            _ => None,
+        }
     }
 
     fn write_mapper_register(&mut self, address_offset: u16, value: u8) {
@@ -250,6 +271,9 @@ impl Sa1State {
                 self.fb = value & 0x07;
             }
             SA1_BMAPS => self.sbm = value & 0x1F,
+            SA1_SBWE => self.swen = value & 0x80 != 0,
+            SA1_CBWE => self.cwen = value & 0x80 != 0,
+            SA1_BWPA => self.bwp = value & 0x0F,
             _ => {}
         }
     }
