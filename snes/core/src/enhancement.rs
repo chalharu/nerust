@@ -712,6 +712,7 @@ enum Dsp1Operation {
     Radius,
     Range,
     Range2,
+    Inverse,
     SetMatrix(Dsp1MatrixKind),
     ObjectiveMatrix(Dsp1MatrixKind),
     SubjectiveMatrix(Dsp1MatrixKind),
@@ -905,6 +906,7 @@ impl Dsp1State {
             Dsp1Operation::Radius => dsp1_radius(&self.input_words),
             Dsp1Operation::Range => vec![dsp1_range(&self.input_words, 0)],
             Dsp1Operation::Range2 => vec![dsp1_range(&self.input_words, 1)],
+            Dsp1Operation::Inverse => dsp1_inverse(&self.input_words),
             Dsp1Operation::SetMatrix(kind) => {
                 self.matrices[kind.index()] = dsp1_attitude_matrix(&self.input_words);
                 Vec::new()
@@ -985,7 +987,7 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x29 | 0x2D => (3, 3, Op::ObjectiveMatrix(Matrix::C)),
         0x0E | 0x2E => (2, 2, Op::Unsupported),
         0x0F => (1, 1, Op::MemoryTest),
-        0x10 | 0x30 => (2, 2, Op::Unsupported),
+        0x10 | 0x30 => (2, 2, Op::Inverse),
         0x14 => (6, 3, Op::Unsupported),
         0x1C | 0x3C => (6, 3, Op::Rotate3d),
         0x18 => (4, 1, Op::Range),
@@ -1032,6 +1034,38 @@ fn dsp1_range(input_words: &[u16], round: i64) -> u16 {
         .sum::<i64>();
     let radius = i64::from(input_words.get(3).copied().unwrap_or(0) as i16);
     (((sum - radius * radius) >> 15) + round) as i16 as u16
+}
+
+fn dsp1_inverse(input_words: &[u16]) -> Vec<u16> {
+    let coefficient = input_words[0] as i16;
+    let mut exponent = input_words[1] as i16;
+    if coefficient == 0 {
+        return vec![0x7FFF, 0x002F];
+    }
+
+    let sign = if coefficient < 0 { -1 } else { 1 };
+    let mut normalized = i32::from(coefficient);
+    if normalized < 0 {
+        normalized = (-normalized).min(i32::from(i16::MAX));
+    }
+    while normalized < 0x4000 {
+        normalized <<= 1;
+        exponent = exponent.wrapping_sub(1);
+    }
+
+    let reciprocal = if normalized == 0x4000 {
+        if sign > 0 {
+            i16::MAX
+        } else {
+            exponent = exponent.wrapping_sub(1);
+            -0x4000
+        }
+    } else {
+        let value = (536_870_912.0 / f64::from(normalized)).round() as i16;
+        if sign < 0 { -value } else { value }
+    };
+
+    vec![reciprocal as u16, 1_i16.wrapping_sub(exponent) as u16]
 }
 
 fn dsp1_attitude_matrix(input_words: &[u16]) -> [[i16; 3]; 3] {
