@@ -1279,6 +1279,14 @@ mod tests {
     const GSU_ROM_STORE_PROGRAM: [u8; 8] = [0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x00];
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
+    const GSU_GETB_PROGRAM: [u8; 9] = [0xFE, 0x23, 0x81, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00];
+    const GSU_ROMB_GETB_PROGRAM: [u8; 15] = [
+        0xF0, 0x01, 0x00, 0x3F, 0xDF, 0xFE, 0x00, 0x80, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x00,
+    ];
+    const GSU_RAMB_PROGRAM: [u8; 16] = [
+        0xF0, 0x01, 0x00, 0x3E, 0xDF, 0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x00, 0x00,
+        0x00,
+    ];
     const GSU_SPRITE_SCALER_PROGRAM: &[u8] = include_bytes!(
         "../../../roms/snes-coprocessor-tests/hirom-gsu-test/build/sprite_scaler.bin"
     );
@@ -1403,6 +1411,87 @@ mod tests {
         assert_eq!(cartridge.read(0x700101), Some(0xBE));
         assert_eq!(cartridge.read(0x700000), Some(0x00));
         assert_eq!(cartridge.read(0x700001), Some(0x00));
+    }
+
+    #[test]
+    fn super_fx_getb_reads_rom_buffer() {
+        let mut rom = build_hirom_with_header("HIROM GSU GETB", 0x31, 0x15, None, 0x0C);
+        rom[0x0123] = 0x7A;
+        for (offset, value) in GSU_GETB_PROGRAM.iter().copied().enumerate() {
+            assert_ne!(offset, 0x0123);
+            rom[offset] = value;
+        }
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x80));
+
+        assert_eq!(cartridge.read(0x700100), Some(0x7A));
+        assert_eq!(cartridge.read(0x700101), Some(0x00));
+        assert_eq!(cartridge.read(0x003036), Some(0x00));
+    }
+
+    #[test]
+    fn super_fx_romb_selects_rom_buffer_bank() {
+        let mut rom = build_hirom_with_header("HIROM GSU ROMB", 0x31, 0x15, None, 0x0C);
+        rom[0x8000] = 0x5C;
+        rom[..GSU_ROMB_GETB_PROGRAM.len()].copy_from_slice(&GSU_ROMB_GETB_PROGRAM);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x80));
+
+        assert_eq!(cartridge.read(0x700100), Some(0x5C));
+        assert_eq!(cartridge.read(0x003036), Some(0x01));
+    }
+
+    #[test]
+    fn super_fx_ramb_selects_game_ram_bank() {
+        let mut rom = build_hirom_with_header("HIROM GSU RAMB", 0x31, 0x15, None, 0x0C);
+        rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
+        rom[..GSU_RAMB_PROGRAM.len()].copy_from_slice(&GSU_RAMB_PROGRAM);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x80));
+
+        assert_eq!(cartridge.save_ram()[0x0100], 0x00);
+        assert_eq!(cartridge.save_ram()[0x0101], 0x00);
+        assert_eq!(cartridge.save_ram()[0x10100], 0xEF);
+        assert_eq!(cartridge.save_ram()[0x10101], 0xBE);
+        assert_eq!(cartridge.read(0x00303C), Some(0x01));
+    }
+
+    #[test]
+    fn super_fx_plot_ignores_ramb_framebuffer_bank() {
+        let mut rom = build_hirom_with_header("HIROM GSU RAMB PLOT", 0x31, 0x15, None, 0x0C);
+        rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        let program = GSU_RAMB_PROGRAM[..5]
+            .iter()
+            .chain(GSU_PIXEL_TEST_PROGRAM.iter())
+            .copied();
+        for (offset, value) in program.enumerate() {
+            assert!(cartridge.write(0x700200 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x003034, 0x70));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x02));
+
+        for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
+            assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
+            assert_eq!(cartridge.read(0x710C00 + offset as u32), Some(0x00));
+        }
+        assert_eq!(cartridge.read(0x00303C), Some(0x01));
     }
 
     #[test]
