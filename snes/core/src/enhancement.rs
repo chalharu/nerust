@@ -48,7 +48,7 @@ impl EnhancementState {
         match self {
             Self::None => None,
             Self::Sa1(state) => state.peek(address, rom, save_ram),
-            Self::SuperFx(state) => state.read(address),
+            Self::SuperFx(state) => state.peek(address),
             Self::Cx4(state) => state.read(address),
             Self::Dsp1(state) => state.peek(mapper_kind, address),
         }
@@ -1169,11 +1169,13 @@ const SUPERFX_SCMR: u16 = 0x303A;
 const SUPERFX_RAMBR: u16 = 0x303C;
 const SUPERFX_CBR: u16 = 0x303E;
 const SUPERFX_CBR_HIGH: u16 = 0x303F;
+const SUPERFX_SFR_HIGH: u16 = SUPERFX_SFR + 1;
 const SUPERFX_ZERO_FLAG: u8 = 0x02;
 const SUPERFX_CARRY_FLAG: u8 = 0x04;
 const SUPERFX_SIGN_FLAG: u8 = 0x08;
 const SUPERFX_OVERFLOW_FLAG: u8 = 0x10;
 const SUPERFX_GO_FLAG: u8 = 0x20;
+const SUPERFX_IRQ_FLAG: u8 = 0x80;
 const SUPERFX_ALU_FLAGS: u8 =
     SUPERFX_ZERO_FLAG | SUPERFX_CARRY_FLAG | SUPERFX_SIGN_FLAG | SUPERFX_OVERFLOW_FLAG;
 const GSU_MAX_INTERPRETER_STEPS: usize = 256 * 1024;
@@ -1185,12 +1187,22 @@ impl SuperFxState {
         Self { registers }
     }
 
-    fn read(&self, address: u32) -> Option<u8> {
+    fn peek(&self, address: u32) -> Option<u8> {
         if is_system_bank(address) {
             self.registers.read(offset(address))
         } else {
             None
         }
+    }
+
+    fn read(&mut self, address: u32) -> Option<u8> {
+        let address_offset = offset(address);
+        let value = self.peek(address)?;
+        if is_system_bank(address) && address_offset == SUPERFX_SFR_HIGH {
+            self.registers
+                .write(SUPERFX_SFR_HIGH, value & !SUPERFX_IRQ_FLAG);
+        }
+        Some(value)
     }
 
     fn write(&mut self, address: u32, value: u8, rom: &[u8], save_ram: &mut [u8]) -> bool {
@@ -1248,6 +1260,7 @@ impl SuperFxState {
         };
         let mut interpreter = GsuInterpreter::new(start, rom, save_ram);
         interpreter.run();
+        let stopped = interpreter.halted;
         for (register, value) in interpreter.registers.iter().copied().enumerate() {
             let [low, high] = value.to_le_bytes();
             let offset = 0x3000 + register as u16 * 2;
@@ -1266,6 +1279,10 @@ impl SuperFxState {
             & !(SUPERFX_ALU_FLAGS | SUPERFX_GO_FLAG))
             | interpreter.sfr_flags();
         self.registers.write(SUPERFX_SFR, sfr);
+        if stopped {
+            let sfr_high = self.registers.read(SUPERFX_SFR_HIGH).unwrap_or(0) | SUPERFX_IRQ_FLAG;
+            self.registers.write(SUPERFX_SFR_HIGH, sfr_high);
+        }
     }
 }
 
