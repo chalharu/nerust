@@ -258,6 +258,15 @@ impl AndroidFrontend {
         self.session.flush_before_exit();
     }
 
+    fn release_window_resources(&mut self) {
+        self.renderer = None;
+        self.window = None;
+        self.window_id = None;
+        self.overlay = None;
+        self.active_touches.clear();
+        self.shell.needs_redraw = true;
+    }
+
     fn request_library_dialog(&mut self) {
         match library::request_show_library(&self.app, self.storage.rom_library.entries()) {
             Ok(true) => {}
@@ -427,12 +436,7 @@ impl ApplicationHandler for AndroidFrontend {
         library::reset();
         menu::reset();
         settings::reset();
-        self.renderer = None;
-        self.window = None;
-        self.window_id = None;
-        self.overlay = None;
-        self.active_touches.clear();
-        self.shell.needs_redraw = true;
+        self.release_window_resources();
     }
 
     fn window_event(
@@ -446,9 +450,13 @@ impl ApplicationHandler for AndroidFrontend {
         }
 
         match event {
-            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+            WindowEvent::CloseRequested => {
                 self.save_lifecycle_state();
                 event_loop.exit();
+            }
+            WindowEvent::Destroyed => {
+                self.save_lifecycle_state();
+                self.release_window_resources();
             }
             WindowEvent::Focused(false) => {
                 let _ = self.session.clear_input();
