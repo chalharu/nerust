@@ -110,11 +110,15 @@ pub(crate) struct Sa1State {
     vbr_address: u32,
     dma_enabled: bool,
     dma_char_conversion: bool,
+    dma_char_conversion_target: bool,
     dma_dest_bwram: bool,
     dma_source_device: u8,
+    dma_conversion_depth: u8,
     dma_source_address: u32,
     dma_dest_address: u32,
     dma_length: u16,
+    dma_line: u8,
+    bitmap_register_file: [u8; 16],
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -141,6 +145,7 @@ const SA1_VDAL: u16 = 0x2259;
 const SA1_VDAM: u16 = 0x225A;
 const SA1_VDAH: u16 = 0x225B;
 const SA1_DCNT: u16 = 0x2230;
+const SA1_CDMA: u16 = 0x2231;
 const SA1_DSAL: u16 = 0x2232;
 const SA1_DSAM: u16 = 0x2233;
 const SA1_DSAH: u16 = 0x2234;
@@ -149,6 +154,9 @@ const SA1_DDAM: u16 = 0x2236;
 const SA1_DDAH: u16 = 0x2237;
 const SA1_DTCL: u16 = 0x2238;
 const SA1_DTCH: u16 = 0x2239;
+const SA1_BRF0: u16 = 0x2240;
+const SA1_BRF7: u16 = 0x2247;
+const SA1_BRF15: u16 = 0x224F;
 const SA1_MR0: u16 = 0x2306;
 const SA1_OF: u16 = 0x230B;
 const SA1_VDPL: u16 = 0x230C;
@@ -184,11 +192,15 @@ impl Sa1State {
             vbr_address: 0,
             dma_enabled: false,
             dma_char_conversion: false,
+            dma_char_conversion_target: false,
             dma_dest_bwram: false,
             dma_source_device: 0,
+            dma_conversion_depth: 0,
             dma_source_address: 0,
             dma_dest_address: 0,
             dma_length: 0,
+            dma_line: 0,
+            bitmap_register_file: [0; 16],
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -361,9 +373,11 @@ impl Sa1State {
             SA1_DCNT => {
                 self.dma_enabled = value & 0x80 != 0;
                 self.dma_char_conversion = value & 0x20 != 0;
+                self.dma_char_conversion_target = value & 0x10 != 0;
                 self.dma_dest_bwram = value & 0x04 != 0;
                 self.dma_source_device = value & 0x03;
             }
+            SA1_CDMA => self.dma_conversion_depth = (value & 0x03).min(2),
             SA1_DSAL => {
                 self.dma_source_address = (self.dma_source_address & 0xFFFF00) | u32::from(value);
             }
@@ -394,6 +408,12 @@ impl Sa1State {
             }
             SA1_DTCL => self.dma_length = (self.dma_length & 0xFF00) | u16::from(value),
             SA1_DTCH => self.dma_length = (self.dma_length & 0x00FF) | (u16::from(value) << 8),
+            SA1_BRF0..=SA1_BRF15 => {
+                self.bitmap_register_file[usize::from(address_offset - SA1_BRF0)] = value;
+                if matches!(address_offset, SA1_BRF7 | SA1_BRF15) {
+                    self.execute_character_conversion_type2();
+                }
+            }
             _ => {}
         }
     }
@@ -522,6 +542,31 @@ impl Sa1State {
             2 => self.iram.bytes[address as usize & 0x07FF],
             _ => 0xFF,
         }
+    }
+
+    fn execute_character_conversion_type2(&mut self) {
+        if !self.dma_enabled || !self.dma_char_conversion || self.dma_char_conversion_target {
+            return;
+        }
+
+        let bytes_per_row = 2usize << (2 - self.dma_conversion_depth);
+        let mut target = self.dma_dest_address as usize & 0x07FF;
+        target &= !((1usize << (7 - self.dma_conversion_depth)) - 1);
+        target += usize::from(self.dma_line & 0x08) * bytes_per_row;
+        target += usize::from(self.dma_line & 0x07) * 2;
+
+        let source_offset = usize::from(self.dma_line & 0x01) * 8;
+        for byte_index in 0..bytes_per_row {
+            let mut output = 0;
+            for bit_index in 0..8 {
+                let bit = (self.bitmap_register_file[source_offset + bit_index] >> byte_index) & 1;
+                output |= bit << (7 - bit_index);
+            }
+            let plane_offset = ((byte_index & 0x06) << 3) + (byte_index & 0x01);
+            self.iram.bytes[(target + plane_offset) & 0x07FF] = output;
+        }
+
+        self.dma_line = self.dma_line.wrapping_add(1) & 0x0F;
     }
 
     fn read_arithmetic(&self, address_offset: u16) -> Option<u8> {

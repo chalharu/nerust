@@ -919,6 +919,34 @@ mod tests {
     }
 
     #[test]
+    fn sa1_character_conversion_type2_writes_planar_rows_to_iram() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x03)).unwrap();
+
+        assert!(cartridge.write(0x002235, 0x00));
+        assert!(cartridge.write(0x002236, 0x03));
+        assert!(cartridge.write(0x002230, 0xA0));
+        assert!(cartridge.write(0x002231, 0x02));
+
+        for (index, value) in [0x01, 0x02, 0x01, 0x02, 0x01, 0x02, 0x01, 0x02]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(cartridge.write(0x002240 + index as u32, value));
+        }
+        assert_eq!(cartridge.read(0x003300), Some(0xAA));
+        assert_eq!(cartridge.read(0x003301), Some(0x55));
+
+        for (index, value) in [0x03, 0x00, 0x03, 0x00, 0x03, 0x00, 0x03, 0x00]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(cartridge.write(0x002248 + index as u32, value));
+        }
+        assert_eq!(cartridge.read(0x003302), Some(0xAA));
+        assert_eq!(cartridge.read(0x003303), Some(0xAA));
+    }
+
+    #[test]
     fn sa1_arithmetic_multiplies_signed_operands() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "SA1 ARITH MUL",
