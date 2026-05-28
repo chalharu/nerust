@@ -199,11 +199,30 @@ pub(crate) fn sa1_ram_index(address: u32, ram_len: usize) -> Option<usize> {
     Some(linear % ram_len)
 }
 
+pub(crate) fn superfx_ram_index(address: u32, ram_len: usize) -> Option<usize> {
+    if ram_len == 0 {
+        return None;
+    }
+
+    let address = address & ADDRESS_MASK;
+    let bank = ((address >> 16) & 0xFF) as u8;
+    let offset = (address & 0xFFFF) as u16;
+
+    let linear = match bank {
+        0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
+            usize::from(bank & 0x3F) * 0x2000 + usize::from(offset - 0x6000)
+        }
+        0x70..=0x71 | 0xF0..=0xF1 => usize::from(bank & 0x01) * 0x10000 + usize::from(offset),
+        _ => return None,
+    };
+    Some(linear % ram_len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         hirom_ram_index, hirom_rom_index, lorom_ram_index, lorom_rom_index, sa1_ram_index,
-        sa1_rom_index,
+        sa1_rom_index, superfx_ram_index,
     };
 
     #[test]
@@ -273,5 +292,17 @@ mod tests {
         assert_eq!(sa1_ram_index(0x4F1234, 0x20000), Some(0x11234));
         assert_eq!(sa1_ram_index(0xC00000, 0x20000), None);
         assert_eq!(sa1_ram_index(0x700000, 0x20000), None);
+    }
+
+    #[test]
+    fn superfx_game_ram_maps_direct_and_system_windows() {
+        assert_eq!(superfx_ram_index(0x700000, 0x2000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0x701FFF, 0x2000), Some(0x1FFF));
+        assert_eq!(superfx_ram_index(0x702000, 0x2000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0x710000, 0x2000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0xF00000, 0x2000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0x006000, 0x2000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0x007FFF, 0x2000), Some(0x1FFF));
+        assert_eq!(superfx_ram_index(0x005FFF, 0x2000), None);
     }
 }
