@@ -1065,6 +1065,28 @@ mod tests {
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), (-10_i16) as u16);
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 30);
 
+        assert!(cartridge.write(0x208000, 0x14));
+        write_dsp1_word(&mut cartridge, 0x208000, 100);
+        write_dsp1_word(&mut cartridge, 0x208000, 200);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 5);
+        write_dsp1_word(&mut cartridge, 0x208000, 7);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 100);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 205);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 7);
+
+        assert!(cartridge.write(0x208000, 0x34));
+        write_dsp1_word(&mut cartridge, 0x208000, 100);
+        write_dsp1_word(&mut cartridge, 0x208000, 200);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 10);
+        write_dsp1_word(&mut cartridge, 0x208000, 20);
+        write_dsp1_word(&mut cartridge, 0x208000, 30);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 80);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 210);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x4000 + 30);
+
         assert!(cartridge.write(0x208000, 0x28));
         write_dsp1_word(&mut cartridge, 0x208000, 3);
         write_dsp1_word(&mut cartridge, 0x208000, 4);
