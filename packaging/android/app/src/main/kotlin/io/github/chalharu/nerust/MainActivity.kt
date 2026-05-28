@@ -301,6 +301,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return
         }
         menuChromeAttachAttempts = 0
+        ensureMenuChromeAttached()
         window.decorView.post(::ensureMenuChromeAttached)
     }
 
