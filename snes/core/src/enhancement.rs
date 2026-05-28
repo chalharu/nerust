@@ -701,7 +701,6 @@ enum Dsp1Phase {
     WaitingCommand,
     ReadingData,
     WritingData,
-    Frozen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -729,7 +728,6 @@ enum Dsp1Operation {
     VectorLength,
     MemoryDump,
     Unsupported,
-    Freeze,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -867,7 +865,7 @@ impl Dsp1State {
         match self.phase {
             Dsp1Phase::WaitingCommand => self.start_command(value),
             Dsp1Phase::ReadingData => self.write_input_byte(value),
-            Dsp1Phase::WritingData | Dsp1Phase::Frozen => {}
+            Dsp1Phase::WritingData => {}
         }
     }
 
@@ -878,10 +876,6 @@ impl Dsp1State {
 
         self.command = value & 0x3F;
         let spec = dsp1_command_spec(self.command);
-        if spec.operation == Dsp1Operation::Freeze {
-            self.freeze();
-            return;
-        }
 
         self.status = DSP1_STATUS_RQM;
         self.expected_input_words = spec.reads;
@@ -955,10 +949,6 @@ impl Dsp1State {
             Dsp1Operation::VectorLength => vec![dsp1_vector_length(&self.input_words)],
             Dsp1Operation::MemoryDump => vec![0; spec.writes],
             Dsp1Operation::Unsupported => vec![0; spec.writes],
-            Dsp1Operation::Freeze => {
-                self.freeze();
-                return;
-            }
         };
         self.output_index = 0;
         self.status &= !DSP1_STATUS_DRS;
@@ -978,12 +968,6 @@ impl Dsp1State {
         self.output_words.clear();
         self.output_index = 0;
     }
-
-    fn freeze(&mut self) {
-        self.status &= !DSP1_STATUS_RQM;
-        self.status &= !DSP1_STATUS_DRS;
-        self.phase = Dsp1Phase::Frozen;
-    }
 }
 
 fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
@@ -1001,7 +985,7 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x23 => (3, 3, Op::SubjectiveMatrix(Matrix::C)),
         0x04 | 0x24 => (2, 2, Op::Trigonometric),
         0x06 | 0x16 | 0x26 | 0x36 => (3, 3, Op::ProjectObject),
-        0x07 | 0x17 | 0x27 | 0x37 => (0, 0, Op::Freeze),
+        0x07 | 0x0F => (1, 1, Op::MemoryTest),
         0x08 => (3, 2, Op::Radius),
         0x0A | 0x1A | 0x2A | 0x3A => (1, 4, Op::Raster),
         0x0B | 0x3B => (3, 1, Op::ScalarProduct(Matrix::A)),
@@ -1012,15 +996,14 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x19 | 0x1D => (3, 3, Op::ObjectiveMatrix(Matrix::B)),
         0x29 | 0x2D => (3, 3, Op::ObjectiveMatrix(Matrix::C)),
         0x0E | 0x1E | 0x2E | 0x3E => (2, 2, Op::Target),
-        0x0F => (1, 1, Op::MemoryTest),
         0x10 | 0x30 => (2, 2, Op::Inverse),
         0x14 | 0x34 => (6, 3, Op::AttitudeDelta),
         0x1C | 0x3C => (6, 3, Op::Rotate3d),
         0x18 => (4, 1, Op::Range),
-        0x1F | 0x3F => (1, 1024, Op::MemoryDump),
+        0x17 | 0x1F | 0x37 | 0x3F => (1, 1024, Op::MemoryDump),
         0x20 => (2, 1, Op::Multiply2),
         0x28 => (3, 1, Op::VectorLength),
-        0x2F => (1, 1, Op::MemorySize),
+        0x27 | 0x2F => (1, 1, Op::MemorySize),
         0x38 => (4, 1, Op::Range2),
         _ => (0, 0, Op::Unsupported),
     };
