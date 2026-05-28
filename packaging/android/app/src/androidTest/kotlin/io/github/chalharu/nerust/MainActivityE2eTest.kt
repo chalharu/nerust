@@ -37,7 +37,7 @@ class MainActivityE2eTest {
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun appStartsAndDrawerOpensWithoutVisibleMenuButton() {
+    fun appSupportsDrawerDialogsAndMenuActionsWithoutVisibleMenuButton() {
         val activity = launchActivity()
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
@@ -75,11 +75,6 @@ class MainActivityE2eTest {
             assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
             activity.onBackPressed()
         }
-    }
-
-    @Test(timeout = TEST_TIMEOUT_MS)
-    fun composeRomLibraryDialogAppearsWithExpectedEntries() {
-        val activity = launchActivity()
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
@@ -107,11 +102,10 @@ class MainActivityE2eTest {
             )
             activity.dismissComposeDialogForTest()
         }
-    }
 
-    @Test(timeout = TEST_TIMEOUT_MS)
-    fun composeSettingsDialogAppearsWithCurrentSelections() {
-        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
+        }
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
@@ -141,42 +135,22 @@ class MainActivityE2eTest {
             )
             activity.dismissComposeDialogForTest()
         }
-    }
 
-    @Test
-    fun portraitControlsOverlayMatchesExpectedArrangement() {
-        val zones = portraitControlsLayout(1080f, 1920f).associateBy { it.label }
-        val up = requireNotNull(zones["UP"])
-        val down = requireNotNull(zones["DOWN"])
-        val left = requireNotNull(zones["LEFT"])
-        val right = requireNotNull(zones["RIGHT"])
-        val select = requireNotNull(zones["SELECT"])
-        val start = requireNotNull(zones["START"])
-        val b = requireNotNull(zones["B"])
-        val a = requireNotNull(zones["A"])
-
-        assertEquals(up.x, down.x, 0.01f)
-        assertEquals(up.width, down.width, 0.01f)
-        assertEquals(left.y, right.y, 0.01f)
-        assertEquals(left.height, right.height, 0.01f)
-        assertEquals(a.y, b.y, 0.01f)
-        assertEquals(a.height, b.height, 0.01f)
-        assertTrue("B should sit to the right of the D-pad", b.x > right.x + right.width)
-        assertTrue("A should sit to the right of B", a.x > b.x + b.width)
-        assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
-        assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
-        assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
-        assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
-    }
-
-    @Test(timeout = TEST_TIMEOUT_MS)
-    fun menuRomLibraryActionInvokesNativeCallbackWithoutCrashing() {
-        exerciseMenuAction(MENU_ACTION_OPEN_LIBRARY)
-    }
-
-    @Test(timeout = TEST_TIMEOUT_MS)
-    fun menuSettingsActionInvokesNativeCallbackWithoutCrashing() {
-        exerciseMenuAction(MENU_ACTION_OPEN_SETTINGS)
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
+        }
+        exerciseMenuAction(
+            activity,
+            MENU_ACTION_OPEN_LIBRARY,
+            ROM_LIBRARY_DIALOG_TAG,
+            "ROM library dialog should be attached after dispatching open_library",
+        )
+        exerciseMenuAction(
+            activity,
+            MENU_ACTION_OPEN_SETTINGS,
+            SETTINGS_DIALOG_TAG,
+            "Settings dialog should be attached after dispatching open_settings",
+        )
     }
 
     private fun launchActivity(): MainActivity {
@@ -217,18 +191,53 @@ class MainActivityE2eTest {
         )
     }
 
-    private fun exerciseMenuAction(action: String) {
-        val activity = launchActivity()
-
+    private fun exerciseMenuAction(
+        activity: MainActivity,
+        action: String,
+        expectedDialogTag: String,
+        expectedDialogMessage: String,
+    ) {
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
             activity.dispatchMenuActionForTest(action)
         }
-        SystemClock.sleep(MENU_ACTION_SETTLE_DELAY_MS)
+        assertChromeViewAvailable(activity, expectedDialogTag, DIALOG_TIMEOUT_MS, expectedDialogMessage)
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
+        }
+        if (!waitUntil(DIALOG_TIMEOUT_MS) { !safeChromeViewIsShowing(activity, expectedDialogTag) }) {
+            fail("Dialog for $action should be dismissed after handling the action; ${safeChromeDebugState(activity, expectedDialogTag)}")
+        }
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
         }
+    }
+
+    @Test
+    fun portraitControlsOverlayMatchesExpectedArrangement() {
+        val zones = portraitControlsLayout(1080f, 1920f).associateBy { it.label }
+        val up = requireNotNull(zones["UP"])
+        val down = requireNotNull(zones["DOWN"])
+        val left = requireNotNull(zones["LEFT"])
+        val right = requireNotNull(zones["RIGHT"])
+        val select = requireNotNull(zones["SELECT"])
+        val start = requireNotNull(zones["START"])
+        val b = requireNotNull(zones["B"])
+        val a = requireNotNull(zones["A"])
+
+        assertEquals(up.x, down.x, 0.01f)
+        assertEquals(up.width, down.width, 0.01f)
+        assertEquals(left.y, right.y, 0.01f)
+        assertEquals(left.height, right.height, 0.01f)
+        assertEquals(a.y, b.y, 0.01f)
+        assertEquals(a.height, b.height, 0.01f)
+        assertTrue("B should sit to the right of the D-pad", b.x > right.x + right.width)
+        assertTrue("A should sit to the right of B", a.x > b.x + b.width)
+        assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
+        assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
+        assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
+        assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
     }
 
     private fun assertChromeViewAvailable(
@@ -325,7 +334,6 @@ class MainActivityE2eTest {
         const val MENU_ACTION_OPEN_LIBRARY = "open_library"
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
-        const val MENU_ACTION_SETTLE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
         const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
         const val ROM_PICKER_REQUIRED_FLAGS =
