@@ -80,6 +80,15 @@ impl EnhancementState {
 pub(crate) struct Sa1State {
     registers: ByteWindow,
     iram: ByteWindow,
+    cbmode: bool,
+    cb: u8,
+    dbmode: bool,
+    db: u8,
+    ebmode: bool,
+    eb: u8,
+    fbmode: bool,
+    fb: u8,
+    sbm: u8,
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -88,6 +97,12 @@ pub(crate) struct Sa1State {
     arithmetic_overflow: bool,
 }
 
+const SA1_CXB: u16 = 0x2220;
+const SA1_DXB: u16 = 0x2221;
+const SA1_EXB: u16 = 0x2222;
+const SA1_FXB: u16 = 0x2223;
+const SA1_BMAPS: u16 = 0x2224;
+const SA1_BWPA: u16 = 0x2228;
 const SA1_MCNT: u16 = 0x2250;
 const SA1_MAL: u16 = 0x2251;
 const SA1_MAH: u16 = 0x2252;
@@ -99,9 +114,24 @@ const SA1_MR_MASK: u64 = (1 << 40) - 1;
 
 impl Sa1State {
     fn new() -> Self {
+        let mut registers = ByteWindow::new(0x2200, 0x0200);
+        registers.write(SA1_DXB, 0x01);
+        registers.write(SA1_EXB, 0x02);
+        registers.write(SA1_FXB, 0x03);
+        registers.write(SA1_BWPA, 0x0F);
+
         Self {
-            registers: ByteWindow::new(0x2200, 0x0200),
+            registers,
             iram: ByteWindow::new(0x3000, 0x0800),
+            cbmode: false,
+            cb: 0,
+            dbmode: false,
+            db: 1,
+            ebmode: false,
+            eb: 2,
+            fbmode: false,
+            fb: 3,
+            sbm: 0,
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -136,7 +166,92 @@ impl Sa1State {
             return true;
         }
 
-        self.registers.write(address_offset, value) || self.iram.write(address_offset, value)
+        if self.registers.write(address_offset, value) {
+            self.write_mapper_register(address_offset, value);
+            return true;
+        }
+
+        self.iram.write(address_offset, value)
+    }
+
+    pub(crate) fn sa1_banked_rom_index(&self, address: u32, rom_len: usize) -> Option<usize> {
+        if rom_len == 0 {
+            return None;
+        }
+
+        let bank = bank(address);
+        let offset = offset(address);
+        let (slot, slot_offset, lo_access) = match bank {
+            0xC0..=0xFF => {
+                let slot = usize::from((bank - 0xC0) >> 4);
+                let slot_offset = usize::from(bank & 0x0F) * 0x10000 + usize::from(offset);
+                (slot, slot_offset, false)
+            }
+            0x00..=0x3F | 0x80..=0xBF if offset >= 0x8000 => {
+                let mirror_bank = bank & 0x3F;
+                let slot = usize::from(mirror_bank >> 5);
+                let slot_offset =
+                    usize::from(mirror_bank & 0x1F) * 0x8000 + usize::from(offset - 0x8000);
+                (slot, slot_offset, true)
+            }
+            _ => return None,
+        };
+
+        let (xmode, selected_bank) = match slot {
+            0 => (self.cbmode, self.cb),
+            1 => (self.dbmode, self.db),
+            2 => (self.ebmode, self.eb),
+            3 => (self.fbmode, self.fb),
+            _ => unreachable!("SA-1 Super MMC slot is constrained to 0..=3"),
+        };
+        let base = if lo_access && !xmode {
+            slot * 0x100000
+        } else {
+            usize::from(selected_bank) * 0x100000
+        };
+
+        Some((base + slot_offset) % rom_len)
+    }
+
+    pub(crate) fn sa1_bwram_index(&self, address: u32, ram_len: usize) -> Option<usize> {
+        if ram_len == 0 {
+            return None;
+        }
+
+        let bank = bank(address);
+        let offset = offset(address);
+        let linear = match bank {
+            0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
+                usize::from(self.sbm) * 0x2000 + usize::from(offset - 0x6000)
+            }
+            0x40..=0x4F => usize::from(bank & 0x0F) * 0x10000 + usize::from(offset),
+            _ => return None,
+        };
+
+        Some(linear % ram_len)
+    }
+
+    fn write_mapper_register(&mut self, address_offset: u16, value: u8) {
+        match address_offset {
+            SA1_CXB => {
+                self.cbmode = value & 0x80 != 0;
+                self.cb = value & 0x07;
+            }
+            SA1_DXB => {
+                self.dbmode = value & 0x80 != 0;
+                self.db = value & 0x07;
+            }
+            SA1_EXB => {
+                self.ebmode = value & 0x80 != 0;
+                self.eb = value & 0x07;
+            }
+            SA1_FXB => {
+                self.fbmode = value & 0x80 != 0;
+                self.fb = value & 0x07;
+            }
+            SA1_BMAPS => self.sbm = value & 0x1F,
+            _ => {}
+        }
     }
 
     fn read_arithmetic(&self, address_offset: u16) -> Option<u8> {

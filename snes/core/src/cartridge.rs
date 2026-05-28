@@ -234,6 +234,15 @@ impl Cartridge {
     }
 
     fn read_mapped(&self, address: u32) -> Option<u8> {
+        if let EnhancementState::Sa1(state) = &self.enhancement {
+            if let Some(index) = state.sa1_bwram_index(address, self.save_ram.len()) {
+                return Some(self.save_ram[index]);
+            }
+            return state
+                .sa1_banked_rom_index(address, self.rom.len())
+                .map(|index| self.rom[index]);
+        }
+
         if self.header.enhancement_chip().is_superfx()
             && let Some(index) = superfx_ram_index(address, self.save_ram.len())
         {
@@ -255,6 +264,12 @@ impl Cartridge {
         }
         if self.header.enhancement_chip().is_superfx()
             && let Some(index) = superfx_ram_index(address, self.save_ram.len())
+        {
+            self.save_ram[index] = value;
+            return true;
+        }
+        if let EnhancementState::Sa1(state) = &self.enhancement
+            && let Some(index) = state.sa1_bwram_index(address, self.save_ram.len())
         {
             self.save_ram[index] = value;
             return true;
@@ -394,6 +409,13 @@ mod tests {
         if let Some(subtype) = expansion_chip_subtype {
             rom[HEADER_OFFSET - 1] = subtype;
         }
+        rom
+    }
+
+    fn build_sa1_rom(rom_len: usize, ram_size_code: u8) -> Vec<u8> {
+        let mut rom = build_lorom_with_header("SA1 MAPPER", 0x23, 0x34, None, 0x0C);
+        rom.resize(rom_len, 0);
+        rom[HEADER_OFFSET + 0x18] = ram_size_code;
         rom
     }
 
@@ -706,6 +728,82 @@ mod tests {
         assert!(cartridge.write(0x407FFF, 0xC3));
         assert_eq!(cartridge.read(0x007FFF), Some(0xC3));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    #[test]
+    fn sa1_super_mmc_physical_banks_use_runtime_selectors() {
+        let mut rom = build_sa1_rom(0x400000, 0x03);
+        rom[0x000000] = 0x11;
+        rom[0x100000] = 0x22;
+        rom[0x200000] = 0x33;
+        rom[0x300000] = 0x44;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert_eq!(cartridge.read(0x002220), Some(0x00));
+        assert_eq!(cartridge.read(0x002221), Some(0x01));
+        assert_eq!(cartridge.read(0x002222), Some(0x02));
+        assert_eq!(cartridge.read(0x002223), Some(0x03));
+        assert_eq!(cartridge.read(0x002228), Some(0x0F));
+        assert_eq!(cartridge.read(0xC00000), Some(0x11));
+        assert_eq!(cartridge.read(0xD00000), Some(0x22));
+        assert_eq!(cartridge.read(0xE00000), Some(0x33));
+        assert_eq!(cartridge.read(0xF00000), Some(0x44));
+
+        assert!(cartridge.write(0x002220, 0x03));
+        assert!(cartridge.write(0x002221, 0x00));
+        assert!(cartridge.write(0x002222, 0x01));
+        assert!(cartridge.write(0x002223, 0x02));
+
+        assert_eq!(cartridge.read(0xC00000), Some(0x44));
+        assert_eq!(cartridge.read(0xD00000), Some(0x11));
+        assert_eq!(cartridge.read(0xE00000), Some(0x22));
+        assert_eq!(cartridge.read(0xF00000), Some(0x33));
+    }
+
+    #[test]
+    fn sa1_super_mmc_lorom_mirrors_require_xmode() {
+        let mut rom = build_sa1_rom(0x400000, 0x03);
+        rom[0x000000] = 0x11;
+        rom[0x100000] = 0x22;
+        rom[0x300000] = 0x44;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert_eq!(cartridge.read(0x008000), Some(0x11));
+        assert_eq!(cartridge.read(0x208000), Some(0x22));
+        assert_eq!(cartridge.read(0x808000), Some(0x11));
+
+        assert!(cartridge.write(0x002220, 0x03));
+        assert_eq!(cartridge.read(0x008000), Some(0x11));
+
+        assert!(cartridge.write(0x002220, 0x83));
+        assert_eq!(cartridge.read(0x008000), Some(0x44));
+        assert_eq!(cartridge.read(0x808000), Some(0x44));
+
+        assert!(cartridge.write(0x002221, 0x80));
+        assert_eq!(cartridge.read(0x208000), Some(0x11));
+
+        assert!(cartridge.write(0x002221, 0x01));
+        assert_eq!(cartridge.read(0x208000), Some(0x22));
+    }
+
+    #[test]
+    fn sa1_bmaps_shifts_system_bwram_window() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert_eq!(cartridge.save_ram().len(), 16 * 1024);
+        assert!(cartridge.write(0x006000, 0x11));
+        assert_eq!(cartridge.read(0x400000), Some(0x11));
+
+        assert!(cartridge.write(0x002224, 0x01));
+        assert_eq!(cartridge.read(0x002224), Some(0x01));
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert!(cartridge.write(0x006000, 0x22));
+        assert_eq!(cartridge.read(0x806000), Some(0x22));
+        assert_eq!(cartridge.read(0x402000), Some(0x22));
+        assert_eq!(cartridge.read(0x400000), Some(0x11));
+
+        assert!(cartridge.write(0x002224, 0x00));
+        assert_eq!(cartridge.read(0x006000), Some(0x11));
     }
 
     #[test]
