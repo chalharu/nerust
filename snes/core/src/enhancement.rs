@@ -101,6 +101,8 @@ pub(crate) struct Sa1State {
     fbmode: bool,
     fb: u8,
     sbm: u8,
+    sa1_bwbank: u8,
+    sa1_bwmode: bool,
     swen: bool,
     cwen: bool,
     bwp: u8,
@@ -132,6 +134,7 @@ pub(crate) struct Sa1State {
     dma_line: u8,
     dma_bwram_conversion_active: bool,
     bitmap_register_file: [u8; 16],
+    bwram_bitmap_2bpp: bool,
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -149,11 +152,13 @@ const SA1_DXB: u16 = 0x2221;
 const SA1_EXB: u16 = 0x2222;
 const SA1_FXB: u16 = 0x2223;
 const SA1_BMAPS: u16 = 0x2224;
+const SA1_BMAP: u16 = 0x2225;
 const SA1_SBWE: u16 = 0x2226;
 const SA1_CBWE: u16 = 0x2227;
 const SA1_BWPA: u16 = 0x2228;
 const SA1_SIWP: u16 = 0x2229;
 const SA1_CIWP: u16 = 0x222A;
+const SA1_BBF: u16 = 0x223F;
 const SA1_MCNT: u16 = 0x2250;
 const SA1_MAL: u16 = 0x2251;
 const SA1_MAH: u16 = 0x2252;
@@ -184,6 +189,12 @@ const SA1_VDPL: u16 = 0x230C;
 const SA1_VDPH: u16 = 0x230D;
 const SA1_MR_MASK: u64 = (1 << 40) - 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sa1BwramAccess {
+    Linear(usize),
+    Bitmap(usize),
+}
+
 impl Sa1State {
     fn new() -> Self {
         let mut registers = ByteWindow::new(0x2200, 0x0200);
@@ -204,6 +215,8 @@ impl Sa1State {
             fbmode: false,
             fb: 3,
             sbm: 0,
+            sa1_bwbank: 0,
+            sa1_bwmode: false,
             swen: false,
             cwen: false,
             bwp: 0x0F,
@@ -235,6 +248,7 @@ impl Sa1State {
             dma_line: 0,
             dma_bwram_conversion_active: false,
             bitmap_register_file: [0; 16],
+            bwram_bitmap_2bpp: false,
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -335,13 +349,13 @@ impl Sa1State {
             return None;
         }
 
-        let linear = self.sa1_bwram_linear_address(address)?;
+        let linear = self.s_cpu_bwram_linear_address(address)?;
 
         Some(linear % ram_len)
     }
 
     pub(crate) fn read_sa1_bwram(&mut self, address: u32, save_ram: &[u8]) -> Option<u8> {
-        let linear = self.sa1_bwram_linear_address(address)?;
+        let linear = self.s_cpu_bwram_linear_address(address)?;
         if save_ram.is_empty() {
             return None;
         }
@@ -353,7 +367,7 @@ impl Sa1State {
     }
 
     pub(crate) fn can_write_sa1_bwram(&self, address: u32) -> bool {
-        let Some(linear) = self.sa1_bwram_linear_address(address) else {
+        let Some(linear) = self.s_cpu_bwram_linear_address(address) else {
             return false;
         };
         // BWPA is checked against the 256 KiB SA-1 BWRAM address space before SRAM mirroring.
@@ -361,7 +375,7 @@ impl Sa1State {
         self.swen || self.cwen || protection_address >= (0x100usize << self.bwp)
     }
 
-    fn sa1_bwram_linear_address(&self, address: u32) -> Option<usize> {
+    fn s_cpu_bwram_linear_address(&self, address: u32) -> Option<usize> {
         let bank = bank(address);
         let offset = offset(address);
         match bank {
@@ -370,6 +384,51 @@ impl Sa1State {
             }
             0x40..=0x4F => Some(usize::from(bank & 0x0F) * 0x10000 + usize::from(offset)),
             _ => None,
+        }
+    }
+
+    fn read_sa1_cpu_bwram(&self, address: u32, save_ram: &[u8]) -> Option<u8> {
+        if save_ram.is_empty() {
+            return None;
+        }
+
+        match self.sa1_cpu_bwram_access(address)? {
+            Sa1BwramAccess::Linear(linear) => Some(save_ram[linear % save_ram.len()]),
+            Sa1BwramAccess::Bitmap(pixel_address) => {
+                Some(self.read_bwram_bitmap_pixel(pixel_address, save_ram))
+            }
+        }
+    }
+
+    fn sa1_cpu_bwram_access(&self, address: u32) -> Option<Sa1BwramAccess> {
+        let bank = bank(address);
+        let offset = offset(address);
+        match bank {
+            0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
+                let address = usize::from(self.sa1_bwbank) * 0x2000 + usize::from(offset - 0x6000);
+                if self.sa1_bwmode {
+                    Some(Sa1BwramAccess::Bitmap(address))
+                } else {
+                    Some(Sa1BwramAccess::Linear(address))
+                }
+            }
+            0x40..=0x4F => Some(Sa1BwramAccess::Linear(
+                usize::from(bank & 0x0F) * 0x10000 + usize::from(offset),
+            )),
+            0x60..=0x6F => Some(Sa1BwramAccess::Bitmap(
+                usize::from(bank & 0x0F) * 0x10000 + usize::from(offset),
+            )),
+            _ => None,
+        }
+    }
+
+    fn read_bwram_bitmap_pixel(&self, pixel_address: usize, save_ram: &[u8]) -> u8 {
+        if self.bwram_bitmap_2bpp {
+            let shift = (pixel_address & 0x03) * 2;
+            (save_ram[(pixel_address >> 2) % save_ram.len()] >> shift) & 0x03
+        } else {
+            let shift = (pixel_address & 0x01) * 4;
+            (save_ram[(pixel_address >> 1) % save_ram.len()] >> shift) & 0x0F
         }
     }
 
@@ -445,6 +504,10 @@ impl Sa1State {
                 self.fb = value & 0x07;
             }
             SA1_BMAPS => self.sbm = value & 0x1F,
+            SA1_BMAP => {
+                self.sa1_bwbank = value & 0x7F;
+                self.sa1_bwmode = value & 0x80 != 0;
+            }
             SA1_SBWE => self.swen = value & 0x80 != 0,
             SA1_CBWE => self.cwen = value & 0x80 != 0,
             SA1_BWPA => self.bwp = value & 0x0F,
@@ -526,6 +589,7 @@ impl Sa1State {
                     self.execute_character_conversion_type2();
                 }
             }
+            SA1_BBF => self.bwram_bitmap_2bpp = value & 0x80 != 0,
             _ => {}
         }
     }
@@ -562,10 +626,8 @@ impl Sa1State {
                 .map(|index| rom[index])
                 .unwrap_or(0xFF);
         }
-        if !save_ram.is_empty()
-            && ((address & 0x40E000) == 0x006000 || (address & 0xF00000) == 0x400000)
-        {
-            return save_ram[address as usize % save_ram.len()];
+        if let Some(value) = self.read_sa1_cpu_bwram(address, save_ram) {
+            return value;
         }
         if (address & 0x40F800) == 0x000000 || (address & 0x40F800) == 0x003000 {
             return self.iram.bytes[address as usize & 0x07FF];
