@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -653,18 +654,25 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         overlay.addView(drawerContent)
 
         container.removeAllViews()
-        container.addView(overlay)
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
         drawerEdgeHandleView = null
         drawerShowing = true
+        // Resize popup to full screen BEFORE adding Compose content so that
+        // the ModalNavigationDrawer measures against the correct width.
         val shown = updateDrawerChromePopupForDrawer(popup)
-        lastDrawerStateForTest =
-            "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
         if (!shown) {
             clearDrawerWindowReferences()
             restoreDrawerEdgeHandleOverlay()
+            lastDrawerStateForTest =
+                "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
+            return
         }
+        popup.isFocusable = true
+        popup.update()
+        container.addView(overlay)
+        lastDrawerStateForTest =
+            "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
     }
 
     private fun removeDrawerOverlay(): Boolean {
@@ -800,6 +808,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         val edgeHandle = createDrawerEdgeHandleOverlay()
         container.addView(edgeHandle)
         drawerEdgeHandleView = edgeHandle
+        popup.isFocusable = false
+        popup.update()
         return updatePopupWindow(
             popup,
             0,
@@ -1240,6 +1250,11 @@ private class ControlsOverlayView(context: Context) : View(context) {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
+    private val arrowPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(220, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -1268,9 +1283,51 @@ private class ControlsOverlayView(context: Context) : View(context) {
         val radius = min(width, height) * 0.20f
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
-        textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
-        val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-        canvas.drawText(label, rect.centerX(), centerY, textPaint)
+
+        when (label) {
+            "UP" -> drawArrow(canvas, rect, Direction.UP)
+            "DOWN" -> drawArrow(canvas, rect, Direction.DOWN)
+            "LEFT" -> drawArrow(canvas, rect, Direction.LEFT)
+            "RIGHT" -> drawArrow(canvas, rect, Direction.RIGHT)
+            else -> {
+                textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
+                val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+                canvas.drawText(label, rect.centerX(), centerY, textPaint)
+            }
+        }
+    }
+
+    private enum class Direction { UP, DOWN, LEFT, RIGHT }
+
+    private fun drawArrow(canvas: Canvas, rect: RectF, direction: Direction) {
+        val size = min(rect.width(), rect.height()) * 0.45f
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val path = Path()
+        when (direction) {
+            Direction.UP -> {
+                path.moveTo(cx, cy - size * 0.5f)
+                path.lineTo(cx - size * 0.5f, cy + size * 0.35f)
+                path.lineTo(cx + size * 0.5f, cy + size * 0.35f)
+            }
+            Direction.DOWN -> {
+                path.moveTo(cx, cy + size * 0.5f)
+                path.lineTo(cx - size * 0.5f, cy - size * 0.35f)
+                path.lineTo(cx + size * 0.5f, cy - size * 0.35f)
+            }
+            Direction.LEFT -> {
+                path.moveTo(cx - size * 0.5f, cy)
+                path.lineTo(cx + size * 0.35f, cy - size * 0.5f)
+                path.lineTo(cx + size * 0.35f, cy + size * 0.5f)
+            }
+            Direction.RIGHT -> {
+                path.moveTo(cx + size * 0.5f, cy)
+                path.lineTo(cx - size * 0.35f, cy - size * 0.5f)
+                path.lineTo(cx - size * 0.35f, cy + size * 0.5f)
+            }
+        }
+        path.close()
+        canvas.drawPath(path, arrowPaint)
     }
 }
 
