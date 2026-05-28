@@ -1,0 +1,170 @@
+// GSU-2 Rainbow Tile Demo — Direct RAM write of 4bpp tile data
+//
+// Writes a pre-computed 8x8 diagonal rainbow gradient tile to Game Pak RAM
+// using the GSU's STW (store word) instruction. The 32-byte tile encodes a
+// diagonal color sweep through 15 rainbow colors in SNES 4bpp OBJ format.
+//
+// Pattern: pixel color = X + Y + 1 (colors 1-15 diagonal gradient)
+//   Row 0: 1  2  3  4  5  6  7  8
+//   Row 1: 2  3  4  5  6  7  8  9
+//   Row 7: 8  9 10 11 12 13 14 15
+//
+// Executes from Game Pak RAM at $70:0100
+// Output: 32 bytes of 4bpp tile at screen base (SCBR * $400)
+
+arch snes.gsu
+base $000100
+
+    cache                       // enable code cache
+
+    iwt r1, #$0C00              // R1 = dest: screen base (SCBR=3 -> $0C00)
+    iwt r8, #2                  // R8 = 2 (address step for word writes)
+
+    // --- Bytes 0-15: BP0/BP1 interleaved for rows 0-7 ---
+    // Row 0 (colors 1,2,3,4,5,6,7,8): BP0=$AA BP1=$66
+    iwt r0, #$66AA
+    stw (r1)
+    with r1
+    add r8
+    // Row 1 (colors 2,3,4,5,6,7,8,9): BP0=$55 BP1=$CC
+    iwt r0, #$CC55
+    stw (r1)
+    with r1
+    add r8
+    // Row 2 (colors 3,4,5,6,7,8,9,10): BP0=$AA BP1=$99
+    iwt r0, #$99AA
+    stw (r1)
+    with r1
+    add r8
+    // Row 3 (colors 4,5,6,7,8,9,10,11): BP0=$55 BP1=$33
+    iwt r0, #$3355
+    stw (r1)
+    with r1
+    add r8
+    // Row 4 (colors 5,6,7,8,9,10,11,12): BP0=$AA BP1=$66
+    iwt r0, #$66AA
+    stw (r1)
+    with r1
+    add r8
+    // Row 5 (colors 6,7,8,9,10,11,12,13): BP0=$55 BP1=$CC
+    iwt r0, #$CC55
+    stw (r1)
+    with r1
+    add r8
+    // Row 6 (colors 7,8,9,10,11,12,13,14): BP0=$AA BP1=$99
+    iwt r0, #$99AA
+    stw (r1)
+    with r1
+    add r8
+    // Row 7 (colors 8,9,10,11,12,13,14,15): BP0=$55 BP1=$33
+    iwt r0, #$3355
+    stw (r1)
+    with r1
+    add r8
+
+    // --- Bytes 16-31: BP2/BP3 interleaved for rows 0-7 ---
+    // Row 0: BP2=$1E BP3=$01
+    iwt r0, #$011E
+    stw (r1)
+    with r1
+    add r8
+    // Row 1: BP2=$3C BP3=$03
+    iwt r0, #$033C
+    stw (r1)
+    with r1
+    add r8
+    // Row 2: BP2=$78 BP3=$07
+    iwt r0, #$0778
+    stw (r1)
+    with r1
+    add r8
+    // Row 3: BP2=$F0 BP3=$0F
+    iwt r0, #$0FF0
+    stw (r1)
+    with r1
+    add r8
+    // Row 4: BP2=$E1 BP3=$1F
+    iwt r0, #$1FE1
+    stw (r1)
+    with r1
+    add r8
+    // Row 5: BP2=$C3 BP3=$3F
+    iwt r0, #$3FC3
+    stw (r1)
+    with r1
+    add r8
+    // Row 6: BP2=$87 BP3=$7F
+    iwt r0, #$7F87
+    stw (r1)
+    with r1
+    add r8
+    // Row 7: BP2=$0F BP3=$FF
+    iwt r0, #$FF0F
+    stw (r1)
+
+    stop
+    nop
+
+
+// =====================================================================
+// DISABLED: PLOT-based 16x16 demo
+//
+// This version uses the GSU's PLOT/COLOR pipeline to render a 16x16
+// diagonal rainbow gradient. It demonstrates per-pixel color control
+// and multi-tile OBJ-mode output — the same pipeline used for 3D
+// rendering in Star Fox and Doom.
+//
+// KNOWN BUG (Mesen2): The pixel cache does not flush intermediate tile
+// rows to RAM when the Y coordinate changes between PLOT calls. Only
+// the final row (flushed by STOP) survives. This produces a single
+// rainbow line instead of a 16x16 square.
+//
+// Additionally, per-pixel COLOR changes within a single 8-pixel cache
+// line produce doubled color values (1,3,5,7... instead of 1,2,3,4...).
+//
+// Both bugs are documented in the project issue tracker. The STW-based
+// demo above works around these by writing tile data directly to RAM.
+//
+// To test: replace the STW block above with this code, change the
+// sprite to 16x16 in SetupOBJBase, and DMA 576 bytes instead of 32.
+// =====================================================================
+//
+//  cache
+//
+//  ibt r3, #15                 // R3 = 15 (mod constant)
+//  ibt r4, #0                  // R4 = Y counter
+//  ibt r5, #16                 // R5 = 16 (Y limit)
+//
+//row_loop:
+//  moves r2, r4                // R2 = Y
+//  ibt r1, #0                  // R1 = X = 0 (PLOT auto-increments)
+//  ibt r7, #0                  // R7 = X counter for color calc
+//  ibt r12, #16                // 16 pixels per row
+//  moves r13, r15              // R13 = loop target
+//
+//pixel_loop:
+//  // color = ((X + Y) mod 15) + 1
+//  from r7
+//  add r4                      // R0 = X + Y (0..30)
+//sub_loop:
+//  from r0
+//  cmp r3                      // compare with 15
+//  blt no_sub
+//  from r0
+//  sub r3                      // R0 -= 15
+//  bra sub_loop
+//no_sub:
+//  inc r0                      // R0 = (X+Y)%15 + 1
+//  color                       // COLR = R0
+//  plot                        // plot at (R1, R2), R1++
+//  inc r7
+//  loop
+//
+//  // Next row
+//  inc r4
+//  from r4
+//  cmp r5
+//  bne row_loop
+//
+//  stop
+//  nop
