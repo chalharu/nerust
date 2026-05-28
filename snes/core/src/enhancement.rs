@@ -1,5 +1,20 @@
-use crate::cartridge::{CartridgeHeader, EnhancementChip};
 use crate::mapper::{MapperKind, lorom_rom_index};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnhancementChip {
+    None,
+    Sa1,
+    SuperFxGsu1,
+    SuperFxGsu2,
+    Cx4,
+    Dsp1Family,
+}
+
+impl EnhancementChip {
+    pub(crate) fn is_superfx(self) -> bool {
+        matches!(self, Self::SuperFxGsu1 | Self::SuperFxGsu2)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EnhancementState {
@@ -11,8 +26,8 @@ pub(crate) enum EnhancementState {
 }
 
 impl EnhancementState {
-    pub(crate) fn from_header(header: &CartridgeHeader) -> Self {
-        match header.enhancement_chip() {
+    pub(crate) fn from_chip(chip: EnhancementChip) -> Self {
+        match chip {
             EnhancementChip::None => Self::None,
             EnhancementChip::Sa1 => Self::Sa1(Sa1State::new()),
             EnhancementChip::SuperFxGsu1 | EnhancementChip::SuperFxGsu2 => {
@@ -23,29 +38,29 @@ impl EnhancementState {
         }
     }
 
-    pub(crate) fn peek(&self, header: &CartridgeHeader, address: u32) -> Option<u8> {
+    pub(crate) fn peek(&self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
         match self {
             Self::None => None,
             Self::Sa1(state) => state.read(address),
             Self::SuperFx(state) => state.read(address),
             Self::Cx4(state) => state.read(address),
-            Self::Dsp1(state) => state.peek(header.mapper_kind(), address),
+            Self::Dsp1(state) => state.peek(mapper_kind, address),
         }
     }
 
-    pub(crate) fn read(&mut self, header: &CartridgeHeader, address: u32) -> Option<u8> {
+    pub(crate) fn read(&mut self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
         match self {
             Self::None => None,
             Self::Sa1(state) => state.read(address),
             Self::SuperFx(state) => state.read(address),
             Self::Cx4(state) => state.read(address),
-            Self::Dsp1(state) => state.read(header.mapper_kind(), address),
+            Self::Dsp1(state) => state.read(mapper_kind, address),
         }
     }
 
     pub(crate) fn write(
         &mut self,
-        header: &CartridgeHeader,
+        mapper_kind: MapperKind,
         address: u32,
         value: u8,
         rom: &[u8],
@@ -56,7 +71,7 @@ impl EnhancementState {
             Self::Sa1(state) => state.write(address, value),
             Self::SuperFx(state) => state.write(address, value, save_ram),
             Self::Cx4(state) => state.write(address, value, rom),
-            Self::Dsp1(state) => state.write(header.mapper_kind(), address, value),
+            Self::Dsp1(state) => state.write(mapper_kind, address, value),
         }
     }
 }
