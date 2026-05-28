@@ -110,6 +110,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var drawerDialog: Dialog? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
+    private var lastDrawerStateForTest = "not requested"
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -232,6 +233,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             MENU_BUTTON_TAG -> menuButtonView
             else -> window.decorView.findViewWithTag(tag)
         }
+
+    fun chromeDebugStateForTest(tag: String): String =
+        "tag=$tag, chromeAttachEnabled=$chromeAttachEnabled, " +
+            "attachAttempts=$menuChromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
+            "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
+            "menuPopup=${menuButtonPopup.debugPopupState()}, menuView=${menuButtonView.debugViewState()}, " +
+            "drawerDialog=${drawerDialog.debugDialogState()}, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
+            "drawerCompose=${drawerComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest"
 
     /**
      * Show a modal ROM library dialog.
@@ -480,12 +489,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private fun showDrawerOverlay() {
         if (popupAnchor() == null) {
+            lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
             return
         }
         val existing = drawerDialog
         if (existing?.isShowing == true) {
+            lastDrawerStateForTest = "already showing"
             return
         }
+        lastDrawerStateForTest = "creating"
 
         val overlay = ComposeOwnerFrameLayout(this).apply {
             tag = DRAWER_OVERLAY_TAG
@@ -518,13 +530,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         val dialog = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setContentView(overlay)
-            setOnDismissListener { clearDrawerWindowReferences() }
+            setOnDismissListener {
+                lastDrawerStateForTest = "dismissed"
+                clearDrawerWindowReferences()
+            }
         }
 
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
         drawerDialog = dialog
-        if (!showDrawerDialog(dialog)) {
+        val shown = showDrawerDialog(dialog)
+        lastDrawerStateForTest =
+            "showDialog=$shown, dialog=${dialog.debugDialogState()}, overlay=${overlay.debugViewState()}"
+        if (!shown) {
             clearDrawerWindowReferences()
         }
     }
@@ -578,6 +596,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private fun View?.isShownInWindowForTest(): Boolean =
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
+
+    private fun View?.debugViewState(): String =
+        if (this == null) {
+            "null"
+        } else {
+            "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
+        }
+
+    private fun PopupWindow?.debugPopupState(): String =
+        if (this == null) "null" else "showing=$isShowing"
+
+    private fun Dialog?.debugDialogState(): String =
+        if (this == null) "null" else "showing=$isShowing, window=${window != null}"
 
     private fun dismissChromePopups() {
         drawerDialog?.dismiss()

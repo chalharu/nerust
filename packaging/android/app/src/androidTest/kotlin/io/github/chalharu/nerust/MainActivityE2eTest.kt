@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.FixMethodOrder
 import org.junit.Test
@@ -59,9 +60,13 @@ class MainActivityE2eTest {
             }
             instrumentation.waitForIdleSync()
 
-            assertTrue("Drawer overlay should be attached after tapping Menu", waitUntil(DRAWER_TIMEOUT_MS) {
-                chromeViewIsShowing(instrumentation, activity, DRAWER_OVERLAY_TAG)
-            })
+            assertChromeViewAvailable(
+                instrumentation,
+                activity,
+                DRAWER_OVERLAY_TAG,
+                DRAWER_TIMEOUT_MS,
+                "Drawer overlay should be attached after tapping Menu",
+            )
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive after opening Menu" }
@@ -172,9 +177,26 @@ class MainActivityE2eTest {
     }
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
-        assertTrue("Menu button should be attached after startup", waitUntil(STARTUP_TIMEOUT_MS) {
-            chromeViewIsShowing(instrumentation, activity, MENU_BUTTON_TAG)
-        })
+        assertChromeViewAvailable(
+            instrumentation,
+            activity,
+            MENU_BUTTON_TAG,
+            STARTUP_TIMEOUT_MS,
+            "Menu button should be attached after startup",
+        )
+    }
+
+    private fun assertChromeViewAvailable(
+        instrumentation: Instrumentation,
+        activity: MainActivity,
+        tag: String,
+        timeoutMs: Long,
+        failureMessage: String,
+    ) {
+        if (waitUntil(timeoutMs) { chromeViewIsShowing(instrumentation, activity, tag) }) {
+            return
+        }
+        fail("$failureMessage; ${chromeDebugState(instrumentation, activity, tag)}")
     }
 
     private fun chromeViewIsShowing(
@@ -189,6 +211,20 @@ class MainActivityE2eTest {
             }
         }
         return showing
+    }
+
+    private fun chromeDebugState(
+        instrumentation: Instrumentation,
+        activity: MainActivity,
+        tag: String,
+    ): String {
+        var state = "activity destroyed"
+        instrumentation.runOnMainSync {
+            if (!activity.isDestroyed) {
+                state = activity.chromeDebugStateForTest(tag)
+            }
+        }
+        return state
     }
 
     private fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
