@@ -1030,6 +1030,8 @@ const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
 const SUPERFX_SCMR: u16 = 0x303A;
 const SUPERFX_RAMBR: u16 = 0x303C;
+const SUPERFX_CBR: u16 = 0x303E;
+const SUPERFX_CBR_HIGH: u16 = 0x303F;
 const SUPERFX_ZERO_FLAG: u8 = 0x02;
 const SUPERFX_CARRY_FLAG: u8 = 0x04;
 const SUPERFX_SIGN_FLAG: u8 = 0x08;
@@ -1060,7 +1062,10 @@ impl SuperFxState {
         }
 
         let address_offset = offset(address);
-        if matches!(address_offset, SUPERFX_VCR | SUPERFX_ROMBR | SUPERFX_RAMBR) {
+        if matches!(
+            address_offset,
+            SUPERFX_VCR | SUPERFX_ROMBR | SUPERFX_RAMBR | SUPERFX_CBR | SUPERFX_CBR_HIGH
+        ) {
             return self.registers.contains(address_offset);
         }
 
@@ -1087,6 +1092,10 @@ impl SuperFxState {
         let pbr = self.registers.read(SUPERFX_PBR).unwrap_or(0) & 0x7F;
         let rombr = self.registers.read(SUPERFX_ROMBR).unwrap_or(0) & 0x7F;
         let rambr = self.registers.read(SUPERFX_RAMBR).unwrap_or(0) & 0x01 != 0;
+        let cbr = u16::from_le_bytes([
+            self.registers.read(SUPERFX_CBR).unwrap_or(0),
+            self.registers.read(SUPERFX_CBR_HIGH).unwrap_or(0),
+        ]) & 0xFFF0;
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
         let screen_mode = self.registers.read(SUPERFX_SCMR).unwrap_or(0);
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0);
@@ -1095,6 +1104,7 @@ impl SuperFxState {
             pbr,
             rombr,
             rambr,
+            cbr,
             screen_base,
             screen_mode,
             sfr,
@@ -1107,9 +1117,13 @@ impl SuperFxState {
             self.registers.write(offset, low);
             self.registers.write(offset + 1, high);
         }
+        self.registers.write(SUPERFX_PBR, interpreter.pbr & 0x7F);
         self.registers.write(SUPERFX_ROMBR, interpreter.rombr);
         self.registers
             .write(SUPERFX_RAMBR, u8::from(interpreter.rambr));
+        let [cbr_low, cbr_high] = (interpreter.cbr & 0xFFF0).to_le_bytes();
+        self.registers.write(SUPERFX_CBR, cbr_low);
+        self.registers.write(SUPERFX_CBR_HIGH, cbr_high);
 
         let sfr = (self.registers.read(SUPERFX_SFR).unwrap_or(0)
             & !(SUPERFX_ALU_FLAGS | SUPERFX_GO_FLAG))
@@ -1126,6 +1140,7 @@ struct GsuInterpreter<'a> {
     pbr: u8,
     rombr: u8,
     rambr: bool,
+    cbr: u16,
     source: usize,
     destination: Option<usize>,
     alt_mode: u8,
@@ -1148,6 +1163,7 @@ struct GsuStartState {
     pbr: u8,
     rombr: u8,
     rambr: bool,
+    cbr: u16,
     screen_base: usize,
     screen_mode: u8,
     sfr: u8,
@@ -1165,6 +1181,7 @@ impl<'a> GsuInterpreter<'a> {
             pbr: start.pbr,
             rombr: start.rombr,
             rambr: start.rambr,
+            cbr: start.cbr,
             source: 0,
             destination: None,
             alt_mode: 0,
@@ -1208,7 +1225,11 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 self.halted = true;
             }
-            (_, 0x01 | 0x02) => self.sync_program_counter(),
+            (_, 0x01) => self.sync_program_counter(),
+            (_, 0x02) => {
+                self.sync_program_counter();
+                self.cache();
+            }
             (0, 0x04) => {
                 self.sync_program_counter();
                 self.rotate_left();
@@ -1389,6 +1410,9 @@ impl<'a> GsuInterpreter<'a> {
             (0, 0x98..=0x9D) => {
                 self.jump_register(usize::from(opcode & 0x0F));
             }
+            (1, 0x98..=0x9D) => {
+                self.long_jump_register(usize::from(opcode & 0x0F));
+            }
             (0, 0x9E) => {
                 self.sync_program_counter();
                 self.low_byte();
@@ -1558,6 +1582,17 @@ impl<'a> GsuInterpreter<'a> {
     fn jump_register(&mut self, register: usize) {
         self.pc = self.registers[register];
         self.registers[15] = self.pc;
+    }
+
+    fn long_jump_register(&mut self, register: usize) {
+        self.pbr = self.registers[register] as u8 & 0x7F;
+        self.pc = self.registers[self.source];
+        self.registers[15] = self.pc;
+        self.cbr = self.pc & 0xFFF0;
+    }
+
+    fn cache(&mut self) {
+        self.cbr = self.registers[15] & 0xFFF0;
     }
 
     fn set_register(&mut self, register: usize, value: u16) {
