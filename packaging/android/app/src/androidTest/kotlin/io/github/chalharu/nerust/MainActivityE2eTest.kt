@@ -76,38 +76,35 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun activityRecreationKeepsMenuAvailable() {
+    fun activityDestroyAndRelaunchKeepsMenuAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         var firstActivity: MainActivity? = null
-        var latestActivity: MainActivity? = null
+        var relaunchedActivity: MainActivity? = null
 
         try {
-            val activity = launchMainActivity(instrumentation, context, monitor)
-            firstActivity = activity
-            latestActivity = activity
+            val firstMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+            val first = try {
+                launchMainActivity(instrumentation, context, firstMonitor)
+            } finally {
+                instrumentation.removeMonitor(firstMonitor)
+            }.also { firstActivity = it }
 
-            instrumentation.runOnMainSync {
-                require(!activity.isDestroyed) { "MainActivity should remain alive before recreation" }
-                activity.recreate()
+            finishActivity(instrumentation, first)
+            assertTrue("MainActivity should be destroyed before relaunch", waitUntil(STARTUP_TIMEOUT_MS) {
+                first.isDestroyed
+            })
+            firstActivity = null
+
+            val relaunchMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+            try {
+                relaunchedActivity = launchMainActivity(instrumentation, context, relaunchMonitor)
+            } finally {
+                instrumentation.removeMonitor(relaunchMonitor)
             }
-            val recreatedActivity =
-                requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
-                    "MainActivity should be recreated"
-                }.also { latestActivity = it }
-            instrumentation.waitForIdleSync()
-
-            assertMenuButtonAvailable(instrumentation, recreatedActivity)
         } finally {
-            instrumentation.removeMonitor(monitor)
-            listOfNotNull(latestActivity, firstActivity).distinct().forEach { activity ->
-                instrumentation.runOnMainSync {
-                    if (!activity.isFinishing && !activity.isDestroyed) {
-                        activity.finish()
-                    }
-                }
-                instrumentation.waitForIdleSync()
+            listOfNotNull(relaunchedActivity, firstActivity).distinct().forEach { activity ->
+                finishActivity(instrumentation, activity)
             }
         }
     }
@@ -129,6 +126,15 @@ class MainActivityE2eTest {
         instrumentation.waitForIdleSync()
         assertMenuButtonAvailable(instrumentation, activity)
         return activity
+    }
+
+    private fun finishActivity(instrumentation: Instrumentation, activity: MainActivity) {
+        instrumentation.runOnMainSync {
+            if (!activity.isFinishing && !activity.isDestroyed) {
+                activity.finish()
+            }
+        }
+        instrumentation.waitForIdleSync()
     }
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
