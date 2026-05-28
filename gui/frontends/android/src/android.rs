@@ -12,6 +12,10 @@ use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
+use jni::objects::JObject;
+use jni::refs::Global;
+use jni::sys::jobject;
+use jni::{JavaVM, jni_sig, jni_str};
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
@@ -277,6 +281,45 @@ impl AndroidFrontend {
         }
     }
 
+    fn handle_surface_close(&mut self, event_loop: &ActiveEventLoop) {
+        if self.activity_is_finishing() {
+            self.save_lifecycle_state();
+            self.release_window_resources();
+            event_loop.exit();
+            return;
+        }
+        self.rebuild_window_after_surface_close(event_loop);
+    }
+
+    fn activity_is_finishing(&self) -> bool {
+        match self.query_activity_is_finishing() {
+            Ok(is_finishing) => is_finishing,
+            Err(error) => {
+                log::warn!("{error}");
+                false
+            }
+        }
+    }
+
+    fn query_activity_is_finishing(&self) -> Result<bool, String> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        vm.attach_current_thread(|env| {
+            env.with_local_frame(4, |env| {
+                let activity_raw = self.app.activity_as_ptr() as jobject;
+                let activity =
+                    unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+                env.call_method(
+                    activity.as_ref(),
+                    jni_str!("isFinishing"),
+                    jni_sig!("()Z"),
+                    &[],
+                )?
+                .z()
+            })
+        })
+        .map_err(|error| format!("failed to query Android activity finishing state: {error}"))
+    }
+
     fn request_library_dialog(&mut self) {
         match library::request_show_library(&self.app, self.storage.rom_library.entries()) {
             Ok(true) => {}
@@ -476,7 +519,7 @@ impl ApplicationHandler for AndroidFrontend {
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                self.rebuild_window_after_surface_close(event_loop);
+                self.handle_surface_close(event_loop);
             }
             WindowEvent::Focused(false) => {
                 let _ = self.session.clear_input();
