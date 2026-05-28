@@ -106,6 +106,15 @@ pub(crate) struct Sa1State {
     bwp: u8,
     siwp: u8,
     ciwp: u8,
+    cpu_irq_flag: bool,
+    cpu_irq_vector_override: bool,
+    cpu_nmi_vector_override: bool,
+    cpu_message: u8,
+    sa1_irq_flag: bool,
+    sa1_nmi_flag: bool,
+    dma_irq_flag: bool,
+    character_dma_irq_flag: bool,
+    sa1_message: u8,
     vbr_auto_increment: bool,
     vbr_shift: u8,
     vbr_bits: u8,
@@ -132,6 +141,10 @@ pub(crate) struct Sa1State {
 }
 
 const SA1_CXB: u16 = 0x2220;
+const SA1_CCNT: u16 = 0x2200;
+const SA1_SIC: u16 = 0x2202;
+const SA1_SCNT: u16 = 0x2209;
+const SA1_CIC: u16 = 0x220B;
 const SA1_DXB: u16 = 0x2221;
 const SA1_EXB: u16 = 0x2222;
 const SA1_FXB: u16 = 0x2223;
@@ -163,6 +176,8 @@ const SA1_DTCH: u16 = 0x2239;
 const SA1_BRF0: u16 = 0x2240;
 const SA1_BRF7: u16 = 0x2247;
 const SA1_BRF15: u16 = 0x224F;
+const SA1_SFR: u16 = 0x2300;
+const SA1_CFR: u16 = 0x2301;
 const SA1_MR0: u16 = 0x2306;
 const SA1_OF: u16 = 0x230B;
 const SA1_VDPL: u16 = 0x230C;
@@ -194,6 +209,15 @@ impl Sa1State {
             bwp: 0x0F,
             siwp: 0,
             ciwp: 0,
+            cpu_irq_flag: false,
+            cpu_irq_vector_override: false,
+            cpu_nmi_vector_override: false,
+            cpu_message: 0,
+            sa1_irq_flag: false,
+            sa1_nmi_flag: false,
+            dma_irq_flag: false,
+            character_dma_irq_flag: false,
+            sa1_message: 0,
             vbr_auto_increment: false,
             vbr_shift: 16,
             vbr_bits: 0,
@@ -226,6 +250,9 @@ impl Sa1State {
         }
 
         let address_offset = offset(address);
+        if let Some(value) = self.read_status(address_offset) {
+            return Some(value);
+        }
         if let Some(value) = self.read_arithmetic(address_offset) {
             return Some(value);
         }
@@ -365,6 +392,42 @@ impl Sa1State {
         save_ram: &mut [u8],
     ) {
         match address_offset {
+            SA1_CCNT => {
+                self.sa1_message = value & 0x0F;
+                if value & 0x80 != 0 {
+                    self.sa1_irq_flag = true;
+                }
+                if value & 0x10 != 0 {
+                    self.sa1_nmi_flag = true;
+                }
+            }
+            SA1_SIC => {
+                if value & 0x80 != 0 {
+                    self.cpu_irq_flag = false;
+                }
+                if value & 0x20 != 0 {
+                    self.character_dma_irq_flag = false;
+                }
+            }
+            SA1_SCNT => {
+                self.cpu_irq_vector_override = value & 0x40 != 0;
+                self.cpu_nmi_vector_override = value & 0x10 != 0;
+                self.cpu_message = value & 0x0F;
+                if value & 0x80 != 0 {
+                    self.cpu_irq_flag = true;
+                }
+            }
+            SA1_CIC => {
+                if value & 0x80 != 0 {
+                    self.sa1_irq_flag = false;
+                }
+                if value & 0x20 != 0 {
+                    self.dma_irq_flag = false;
+                }
+                if value & 0x10 != 0 {
+                    self.sa1_nmi_flag = false;
+                }
+            }
             SA1_CXB => {
                 self.cbmode = value & 0x80 != 0;
                 self.cb = value & 0x07;
@@ -440,6 +503,9 @@ impl Sa1State {
                 if !self.dma_dest_bwram {
                     if self.dma_char_conversion && self.dma_char_conversion_target {
                         self.dma_bwram_conversion_active = self.dma_enabled;
+                        if self.dma_enabled {
+                            self.character_dma_irq_flag = true;
+                        }
                     } else {
                         self.execute_normal_dma(rom, save_ram);
                     }
@@ -570,6 +636,7 @@ impl Sa1State {
             .wrapping_add(u32::from(self.dma_length))
             & 0x00FF_FFFF;
         self.dma_length = 0;
+        self.dma_irq_flag = true;
     }
 
     fn read_dma_source(&self, address: u32, rom: &[u8], save_ram: &[u8]) -> u8 {
@@ -675,6 +742,25 @@ impl Sa1State {
                 let target = (self.dma_dest_address as usize + row * 2 + plane_offset) & 0x07FF;
                 self.iram.bytes[target] = byte;
             }
+        }
+    }
+
+    fn read_status(&self, address_offset: u16) -> Option<u8> {
+        match address_offset {
+            SA1_SFR => Some(
+                u8::from(self.cpu_irq_flag) << 7
+                    | u8::from(self.cpu_irq_vector_override) << 6
+                    | u8::from(self.character_dma_irq_flag) << 5
+                    | u8::from(self.cpu_nmi_vector_override) << 4
+                    | (self.cpu_message & 0x0F),
+            ),
+            SA1_CFR => Some(
+                u8::from(self.sa1_irq_flag) << 7
+                    | u8::from(self.dma_irq_flag) << 5
+                    | u8::from(self.sa1_nmi_flag) << 4
+                    | (self.sa1_message & 0x0F),
+            ),
+            _ => None,
         }
     }
 
