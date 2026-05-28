@@ -81,7 +81,7 @@ impl EnhancementState {
         match self {
             Self::None => false,
             Self::Sa1(state) => state.write(address, value, rom, save_ram),
-            Self::SuperFx(state) => state.write(address, value, save_ram),
+            Self::SuperFx(state) => state.write(address, value, rom, save_ram),
             Self::Cx4(state) => state.write(address, value, rom),
             Self::Dsp1(state) => state.write(mapper_kind, address, value),
         }
@@ -1025,7 +1025,10 @@ const SUPERFX_VCR: u16 = 0x303B;
 const SUPERFX_SFR: u16 = 0x3030;
 const SUPERFX_R15: u16 = 0x301E;
 const SUPERFX_R15_HIGH: u16 = 0x301F;
+const SUPERFX_PBR: u16 = 0x3034;
+const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
+const SUPERFX_RAMBR: u16 = 0x303C;
 const SUPERFX_GO_FLAG: u8 = 0x20;
 const GSU_MAX_INTERPRETER_STEPS: usize = 256 * 1024;
 
@@ -1044,30 +1047,36 @@ impl SuperFxState {
         }
     }
 
-    fn write(&mut self, address: u32, value: u8, save_ram: &mut [u8]) -> bool {
+    fn write(&mut self, address: u32, value: u8, rom: &[u8], save_ram: &mut [u8]) -> bool {
         if !is_system_bank(address) {
             return false;
         }
 
         let address_offset = offset(address);
-        if address_offset == SUPERFX_VCR {
+        if matches!(address_offset, SUPERFX_VCR | SUPERFX_ROMBR | SUPERFX_RAMBR) {
             return self.registers.contains(address_offset);
         }
 
+        let value = if address_offset == SUPERFX_PBR {
+            value & 0x7F
+        } else {
+            value
+        };
         let handled = self.registers.write(address_offset, value);
         if handled && address_offset == SUPERFX_R15_HIGH {
-            self.run_program(save_ram);
+            self.run_program(rom, save_ram);
         }
         handled
     }
 
-    fn run_program(&mut self, save_ram: &mut [u8]) {
+    fn run_program(&mut self, rom: &[u8], save_ram: &mut [u8]) {
         let r15 = u16::from_le_bytes([
             self.registers.read(SUPERFX_R15).unwrap_or(0),
             self.registers.read(SUPERFX_R15 + 1).unwrap_or(0),
         ]);
+        let pbr = self.registers.read(SUPERFX_PBR).unwrap_or(0) & 0x7F;
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
-        GsuInterpreter::new(r15, screen_base, save_ram).run();
+        GsuInterpreter::new(r15, pbr, screen_base, rom, save_ram).run();
 
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0) & !SUPERFX_GO_FLAG;
         self.registers.write(SUPERFX_SFR, sfr);
@@ -1075,9 +1084,11 @@ impl SuperFxState {
 }
 
 struct GsuInterpreter<'a> {
+    rom: &'a [u8],
     ram: &'a mut [u8],
     registers: [u16; 16],
     pc: u16,
+    pbr: u8,
     source: usize,
     destination: Option<usize>,
     alt_mode: u8,
@@ -1088,13 +1099,15 @@ struct GsuInterpreter<'a> {
 }
 
 impl<'a> GsuInterpreter<'a> {
-    fn new(entry: u16, screen_base: usize, ram: &'a mut [u8]) -> Self {
+    fn new(entry: u16, pbr: u8, screen_base: usize, rom: &'a [u8], ram: &'a mut [u8]) -> Self {
         let mut registers = [0; 16];
         registers[15] = entry;
         Self {
+            rom,
             ram,
             registers,
             pc: entry,
+            pbr,
             source: 0,
             destination: None,
             alt_mode: 0,
@@ -1155,7 +1168,7 @@ impl<'a> GsuInterpreter<'a> {
             }
             (_, 0x20..=0x2F) => {
                 let register = usize::from(opcode & 0x0F);
-                if self.read_ram(self.pc) & 0xF0 == 0xB0 {
+                if self.peek_instruction_byte() & 0xF0 == 0xB0 {
                     let operand = self.fetch();
                     self.sync_program_counter();
                     let source = usize::from(operand & 0x0F);
@@ -1314,9 +1327,21 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn fetch(&mut self) -> u8 {
-        let value = self.read_ram(self.pc);
+        let value = self.peek_instruction_byte();
         self.pc = self.pc.wrapping_add(1);
         value
+    }
+
+    fn peek_instruction_byte(&self) -> u8 {
+        let address = (u32::from(self.pbr) << 16) | u32::from(self.pc);
+        if self.pbr <= 0x5F {
+            return superfx_rom_index(address, self.rom.len())
+                .map(|index| self.rom[index])
+                .unwrap_or(0);
+        }
+
+        let ram_address = (usize::from(self.pbr & 0x01) << 16) | usize::from(self.pc);
+        self.read_ram_usize(ram_address)
     }
 
     fn sync_program_counter(&mut self) {
@@ -1530,6 +1555,22 @@ impl<'a> GsuInterpreter<'a> {
             self.ram[address % self.ram.len()] = value;
         }
     }
+}
+
+fn superfx_rom_index(address: u32, rom_len: usize) -> Option<usize> {
+    if rom_len == 0 {
+        return None;
+    }
+
+    let address = address & 0x007F_FFFF;
+    let linear = if address & 0x00C0_0000 == 0 {
+        ((address & 0x003F_0000) >> 1) | (address & 0x0000_7FFF)
+    } else if address & 0x00E0_0000 == 0x0040_0000 {
+        address
+    } else {
+        return None;
+    };
+    Some(linear as usize % rom_len)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

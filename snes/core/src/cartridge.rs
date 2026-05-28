@@ -1221,6 +1221,12 @@ mod tests {
         assert_eq!(cartridge.read(0x003000), Some(0x24));
         assert_eq!(cartridge.read(0x803000), Some(0x24));
         assert_eq!(cartridge.read(0x00303B), Some(0x04));
+        assert!(cartridge.write(0x003034, 0xFF));
+        assert_eq!(cartridge.read(0x003034), Some(0x7F));
+        assert!(cartridge.write(0x003036, 0x12));
+        assert_eq!(cartridge.read(0x003036), Some(0x00));
+        assert!(cartridge.write(0x00303C, 0x01));
+        assert_eq!(cartridge.read(0x00303C), Some(0x00));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
     }
 
@@ -1270,6 +1276,9 @@ mod tests {
         0xF1, 0x10, 0x02, 0x31, 0xF0, 0x80, 0x00, 0xB0, 0x95, 0xF1, 0x12, 0x02, 0x31, 0xF0, 0x80,
         0xFF, 0xB0, 0x96, 0xF1, 0x14, 0x02, 0x31, 0x00, 0x01,
     ];
+    const GSU_ROM_STORE_PROGRAM: [u8; 8] = [0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x00];
+    const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
+        [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
     const GSU_SPRITE_SCALER_PROGRAM: &[u8] = include_bytes!(
         "../../../roms/snes-coprocessor-tests/hirom-gsu-test/build/sprite_scaler.bin"
     );
@@ -1309,6 +1318,7 @@ mod tests {
             assert!(cartridge.write(0x700200 + offset as u32, value));
         }
         assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x00));
         assert!(cartridge.write(0x00301F, 0x02));
@@ -1320,6 +1330,7 @@ mod tests {
         for (offset, value) in GSU_DEMO_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700100 + offset as u32, value));
         }
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x00));
         assert!(cartridge.write(0x00301F, 0x01));
@@ -1344,6 +1355,7 @@ mod tests {
         for (offset, value) in GSU_RAM_LOAD_STORE_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x80));
         assert!(cartridge.write(0x00301F, 0x00));
@@ -1360,6 +1372,40 @@ mod tests {
     }
 
     #[test]
+    fn super_fx_executes_program_from_rom_pbr() {
+        let mut rom = build_hirom_with_header("HIROM GSU ROM OPS", 0x31, 0x15, None, 0x0C);
+        rom[..GSU_ROM_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_STORE_PROGRAM);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
+        assert_eq!(cartridge.read(0x003034), Some(0x00));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x80));
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        assert_eq!(cartridge.read(0x700100), Some(0xEF));
+        assert_eq!(cartridge.read(0x700101), Some(0xBE));
+    }
+
+    #[test]
+    fn super_fx_rom_fetch_uses_pbr_for_with_lookahead() {
+        let mut rom = build_hirom_with_header("HIROM GSU ROM WITH", 0x31, 0x15, None, 0x0C);
+        rom[..GSU_ROM_WITH_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_WITH_STORE_PROGRAM);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x80));
+
+        assert_eq!(cartridge.read(0x700100), Some(0xEF));
+        assert_eq!(cartridge.read(0x700101), Some(0xBE));
+        assert_eq!(cartridge.read(0x700000), Some(0x00));
+        assert_eq!(cartridge.read(0x700001), Some(0x00));
+    }
+
+    #[test]
     fn super_fx_alu_and_branch_ops_update_game_ram() {
         let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
             "HIROM GSU ALU OPS",
@@ -1373,6 +1419,7 @@ mod tests {
         for (offset, value) in GSU_ALU_BRANCH_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x80));
         assert!(cartridge.write(0x00301F, 0x00));
@@ -1410,6 +1457,7 @@ mod tests {
         for (offset, value) in GSU_ALU_VARIANTS_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x80));
         assert!(cartridge.write(0x00301F, 0x00));
@@ -1452,6 +1500,7 @@ mod tests {
         for (offset, value) in GSU_SPRITE_SCALER_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700100 + offset as u32, value));
         }
+        assert!(cartridge.write(0x003034, 0x70));
         assert!(cartridge.write(0x003030, 0x20));
         assert!(cartridge.write(0x00301E, 0x00));
         assert!(cartridge.write(0x00301F, 0x01));
