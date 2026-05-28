@@ -83,7 +83,9 @@ class MainActivityE2eTest {
                     "Drawer ComposeView should be attached after opening drawer"
                 }
             assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
+            activity.onBackPressed()
         }
+        instrumentation.waitForIdleSync()
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -196,6 +198,11 @@ class MainActivityE2eTest {
 
     private fun launchActivity(clearTask: Boolean = true): MainActivity {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        resumedMainActivity(instrumentation)?.let { activity ->
+            instrumentation.waitForIdleSync()
+            assertDrawerHandleAvailable(instrumentation, activity)
+            return activity
+        }
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
 
