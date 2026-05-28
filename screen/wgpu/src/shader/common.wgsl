@@ -18,7 +18,7 @@ struct FilterUniforms {
 var<uniform> uniforms: FilterUniforms;
 
 @group(0) @binding(4)
-var srgb_lut_texture: texture_1d<f32>;
+var srgb_lut_texture: texture_2d<f32>;
 
 const BLACK_INDEX: u32 = 15u;
 
@@ -58,9 +58,9 @@ fn direct_rgb_for_output(output: vec2<i32>) -> vec3<u32> {
 
 fn srgb_to_linear(color: vec3<u32>) -> vec3<f32> {
     return vec3<f32>(
-        textureLoad(srgb_lut_texture, i32(color.r), 0).r,
-        textureLoad(srgb_lut_texture, i32(color.g), 0).r,
-        textureLoad(srgb_lut_texture, i32(color.b), 0).r,
+        textureLoad(srgb_lut_texture, vec2<i32>(i32(color.r), 0), 0).r,
+        textureLoad(srgb_lut_texture, vec2<i32>(i32(color.g), 0), 0).r,
+        textureLoad(srgb_lut_texture, vec2<i32>(i32(color.b), 0), 0).r,
     );
 }
 

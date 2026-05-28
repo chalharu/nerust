@@ -160,7 +160,7 @@ impl Renderer {
             ntsc_size,
             &ntsc_data,
         );
-        let srgb_lut_texture = create_texture_1d_from_bytes(
+        let srgb_lut_texture = create_srgb_lut_texture(
             &device,
             &queue,
             "nerust_srgb_lut_texture",
@@ -242,7 +242,7 @@ impl Renderer {
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
                         sample_type: TextureSampleType::Float { filterable: false },
-                        view_dimension: TextureViewDimension::D1,
+                        view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
@@ -400,7 +400,7 @@ fn create_texture_from_bytes(
     texture
 }
 
-fn create_texture_1d_from_bytes(
+fn create_srgb_lut_texture(
     device: &Device,
     queue: &Queue,
     label: &str,
@@ -418,7 +418,7 @@ fn create_texture_1d_from_bytes(
         },
         mip_level_count: 1,
         sample_count: 1,
-        dimension: TextureDimension::D1,
+        dimension: TextureDimension::D2,
         format,
         usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         view_formats: &[],
@@ -433,8 +433,8 @@ fn create_texture_1d_from_bytes(
         bytes,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: None,
-            rows_per_image: None,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(1),
         },
         Extent3d {
             width,
