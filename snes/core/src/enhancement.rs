@@ -1133,6 +1133,8 @@ struct GsuInterpreter<'a> {
     overflow: bool,
     screen_base: usize,
     halted: bool,
+    last_ram_address: Option<usize>,
+    last_ram_word_swapped: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1167,6 +1169,8 @@ impl<'a> GsuInterpreter<'a> {
             overflow: start.sfr & SUPERFX_OVERFLOW_FLAG != 0,
             screen_base: start.screen_base,
             halted: false,
+            last_ram_address: None,
+            last_ram_word_swapped: false,
         }
     }
 
@@ -1305,6 +1309,10 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 self.multiply_immediate(u16::from(opcode & 0x0F));
             }
+            (_, 0x90) => {
+                self.sync_program_counter();
+                self.store_last_ram_word();
+            }
             (0, 0x95) => {
                 self.sync_program_counter();
                 self.sign_extend();
@@ -1319,6 +1327,16 @@ impl<'a> GsuInterpreter<'a> {
             (0, 0x9E) => {
                 self.sync_program_counter();
                 self.low_byte();
+            }
+            (1, 0xA0..=0xAF) => {
+                let address = u16::from(self.fetch()) * 2;
+                self.sync_program_counter();
+                self.load_absolute_word(usize::from(opcode & 0x0F), address);
+            }
+            (2, 0xA0..=0xAF) => {
+                let address = u16::from(self.fetch()) * 2;
+                self.sync_program_counter();
+                self.store_absolute_word(address, usize::from(opcode & 0x0F));
             }
             (_, 0xA0..=0xAF) => {
                 let value = self.fetch();
@@ -1374,6 +1392,24 @@ impl<'a> GsuInterpreter<'a> {
             (0, 0xC1..=0xCF) => {
                 self.sync_program_counter();
                 self.or_register(usize::from(opcode & 0x0F));
+            }
+            (1, 0xF0..=0xFF) => {
+                let low = self.fetch();
+                let high = self.fetch();
+                self.sync_program_counter();
+                self.load_absolute_word(
+                    usize::from(opcode & 0x0F),
+                    u16::from_le_bytes([low, high]),
+                );
+            }
+            (2, 0xF0..=0xFF) => {
+                let low = self.fetch();
+                let high = self.fetch();
+                self.sync_program_counter();
+                self.store_absolute_word(
+                    u16::from_le_bytes([low, high]),
+                    usize::from(opcode & 0x0F),
+                );
             }
             (_, 0xF0..=0xFF) => {
                 let low = self.fetch();
@@ -1645,9 +1681,7 @@ impl<'a> GsuInterpreter<'a> {
 
     fn store_word(&mut self, register: usize) {
         let address = self.registers[register];
-        let value = self.registers[0].to_le_bytes();
-        self.write_ram(address, value[0]);
-        self.write_ram(address.wrapping_add(1), value[1]);
+        self.write_ram_word(address, self.registers[0]);
         self.destination = None;
     }
 
@@ -1659,10 +1693,7 @@ impl<'a> GsuInterpreter<'a> {
 
     fn load_word(&mut self, register: usize) {
         let address = self.registers[register];
-        let value = u16::from_le_bytes([
-            self.read_ram(address),
-            self.read_ram(address.wrapping_add(1)),
-        ]);
+        let value = self.read_ram_word(address);
         self.write_load_result(value);
     }
 
@@ -1671,10 +1702,34 @@ impl<'a> GsuInterpreter<'a> {
         self.write_load_result(value);
     }
 
+    fn load_absolute_word(&mut self, register: usize, address: u16) {
+        let value = self.read_ram_word(address);
+        self.registers[register] = value;
+        self.set_zero_sign(value);
+        self.source = register;
+    }
+
+    fn store_absolute_word(&mut self, address: u16, register: usize) {
+        self.write_ram_word(address, self.registers[register]);
+        self.source = register;
+        self.destination = None;
+    }
+
+    fn store_last_ram_word(&mut self) {
+        if let Some(address) = self.last_ram_address {
+            self.write_ram_word_raw(
+                address,
+                self.last_ram_word_swapped,
+                self.registers[self.source],
+            );
+        }
+        self.destination = None;
+    }
+
     fn write_load_result(&mut self, value: u16) {
         if let Some(destination) = self.destination.take() {
             self.registers[destination] = value;
-            self.zero = value == 0;
+            self.set_zero_sign(value);
         } else {
             self.set_register(0, value);
         }
@@ -1702,12 +1757,10 @@ impl<'a> GsuInterpreter<'a> {
         self.destination = None;
     }
 
-    fn read_ram(&self, address: u16) -> u8 {
-        self.read_ram_usize(usize::from(address))
-    }
-
-    fn read_ram_usize(&self, address: usize) -> u8 {
-        let address = (usize::from(self.rambr) << 16) | address;
+    fn read_ram(&mut self, address: u16) -> u8 {
+        let address = self.ram_raw_address(usize::from(address));
+        self.last_ram_address = Some(address);
+        self.last_ram_word_swapped = false;
         self.read_ram_raw_usize(address)
     }
 
@@ -1720,12 +1773,47 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn write_ram(&mut self, address: u16, value: u8) {
-        self.write_ram_usize(usize::from(address), value);
+        let address = self.ram_raw_address(usize::from(address));
+        self.last_ram_address = Some(address);
+        self.last_ram_word_swapped = false;
+        self.write_ram_raw_usize(address, value);
     }
 
-    fn write_ram_usize(&mut self, address: usize, value: u8) {
-        let address = (usize::from(self.rambr) << 16) | address;
-        self.write_ram_raw_usize(address, value);
+    fn read_ram_word(&mut self, address: u16) -> u16 {
+        let swapped = address & 0x0001 != 0;
+        let address = self.ram_raw_address(usize::from(address & !1));
+        self.last_ram_address = Some(address);
+        self.last_ram_word_swapped = swapped;
+        let low = self.read_ram_raw_usize(address);
+        let high = self.read_ram_raw_usize(address + 1);
+        if swapped {
+            u16::from_le_bytes([high, low])
+        } else {
+            u16::from_le_bytes([low, high])
+        }
+    }
+
+    fn write_ram_word(&mut self, address: u16, value: u16) {
+        let swapped = address & 0x0001 != 0;
+        let address = self.ram_raw_address(usize::from(address & !1));
+        self.last_ram_address = Some(address);
+        self.last_ram_word_swapped = swapped;
+        self.write_ram_word_raw(address, swapped, value);
+    }
+
+    fn write_ram_word_raw(&mut self, address: usize, swapped: bool, value: u16) {
+        let [low, high] = value.to_le_bytes();
+        if swapped {
+            self.write_ram_raw_usize(address, high);
+            self.write_ram_raw_usize(address + 1, low);
+        } else {
+            self.write_ram_raw_usize(address, low);
+            self.write_ram_raw_usize(address + 1, high);
+        }
+    }
+
+    fn ram_raw_address(&self, address: usize) -> usize {
+        (usize::from(self.rambr) << 16) | address
     }
 
     fn write_ram_raw_usize(&mut self, address: usize, value: u8) {
