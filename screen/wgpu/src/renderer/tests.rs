@@ -65,6 +65,13 @@ fn composed_shader_source_contains_split_stage_modules_once() {
 }
 
 #[test]
+fn composed_shader_source_avoids_gles_array_translation_gaps() {
+    let source = composed_shader_source();
+    assert!(!source.contains("array<array"));
+    assert!(!source.contains("array<vec"));
+}
+
+#[test]
 fn direct_color_upload_uses_logical_frame_size() {
     let presentation = VideoPresentation::new(VideoFrameSpec::new(
         VideoFrameFormat::Rgba,
