@@ -35,13 +35,13 @@ class MainActivityE2eTest {
                 }
 
                 assertEquals("Menu", menuButton.contentDescription?.toString())
-                assertTrue("Menu button should be visible", menuButton.isShown)
+                assertTrue("Menu button should be visible", menuButton.isVisibleForTest())
                 assertTrue("Menu button should handle clicks", menuButton.performClick())
             }
             instrumentation.waitForIdleSync()
 
             assertTrue("Drawer overlay should be attached after tapping Menu", waitUntil(DRAWER_TIMEOUT_MS) {
-                taggedView(instrumentation, activity, DRAWER_OVERLAY_TAG)?.isShown == true
+                taggedView(instrumentation, activity, DRAWER_OVERLAY_TAG)?.isVisibleForTest() == true
             })
 
             instrumentation.runOnMainSync {
@@ -52,7 +52,7 @@ class MainActivityE2eTest {
                 ) {
                     "Drawer overlay should be attached after tapping Menu"
                 }
-                assertTrue("Drawer overlay should be visible", drawerOverlay.isShown)
+                assertTrue("Drawer overlay should be visible", drawerOverlay.isVisibleForTest())
                 assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
 
                 val drawerComposeView = requireNotNull(
@@ -60,7 +60,7 @@ class MainActivityE2eTest {
                 ) {
                     "Drawer ComposeView should be attached after tapping Menu"
                 }
-                assertTrue("Drawer ComposeView should be visible", drawerComposeView.isShown)
+                assertTrue("Drawer ComposeView should be visible", drawerComposeView.isVisibleForTest())
             }
         } finally {
             instrumentation.removeMonitor(monitor)
@@ -151,9 +151,11 @@ class MainActivityE2eTest {
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
         assertTrue("Menu button should be attached after startup", waitUntil(STARTUP_TIMEOUT_MS) {
-            taggedView(instrumentation, activity, MENU_BUTTON_TAG)?.isShown == true
+            taggedView(instrumentation, activity, MENU_BUTTON_TAG)?.isVisibleForTest() == true
         })
     }
+
+    private fun View.isVisibleForTest(): Boolean = visibility == View.VISIBLE
 
     private fun taggedView(
         instrumentation: Instrumentation,
