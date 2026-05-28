@@ -220,14 +220,24 @@ impl Cartridge {
     }
 
     pub(crate) fn read_mut(&mut self, address: u32) -> Option<u8> {
-        if let Some(value) = self.enhancement.read(self.header.mapper_kind(), address) {
+        if let Some(value) = self.enhancement.read(
+            self.header.mapper_kind(),
+            address,
+            &self.rom,
+            &self.save_ram,
+        ) {
             return Some(value);
         }
         self.read_mapped(address)
     }
 
     fn peek(&self, address: u32) -> Option<u8> {
-        if let Some(value) = self.enhancement.peek(self.header.mapper_kind(), address) {
+        if let Some(value) = self.enhancement.peek(
+            self.header.mapper_kind(),
+            address,
+            &self.rom,
+            &self.save_ram,
+        ) {
             return Some(value);
         }
         self.read_mapped(address)
@@ -834,6 +844,42 @@ mod tests {
 
         assert!(cartridge.write(0x002224, 0x00));
         assert_eq!(cartridge.read(0x006000), Some(0x11));
+    }
+
+    #[test]
+    fn sa1_variable_length_data_reads_rom_and_auto_increments() {
+        let mut rom = build_sa1_rom(0x400000, 0x03);
+        rom[0x000000] = 0x12;
+        rom[0x000001] = 0x34;
+        rom[0x000002] = 0x56;
+        rom[0x200000] = 0x77;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        write_u24(&mut cartridge, 0x002259, 0xC00000);
+        assert!(cartridge.write(0x002258, 0x84));
+        assert_eq!(cartridge.read(0x00230C), Some(0x12));
+        assert_eq!(cartridge.read_mut(0x00230D), Some(0x34));
+        assert_eq!(cartridge.read_mut(0x00230C), Some(0x41));
+        assert_eq!(cartridge.read_mut(0x00230D), Some(0x63));
+        assert_eq!(cartridge.read_mut(0x00230C), Some(0x34));
+
+        write_u24(&mut cartridge, 0x002259, 0x808000);
+        assert_eq!(cartridge.read(0x00230C), Some(0x77));
+    }
+
+    #[test]
+    fn sa1_variable_length_data_reads_bwram_and_iram() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
+
+        assert!(cartridge.write(0x002226, 0x80));
+        assert!(cartridge.write(0x400000, 0xAB));
+        assert!(cartridge.write(0x003000, 0xCD));
+
+        write_u24(&mut cartridge, 0x002259, 0x400000);
+        assert_eq!(cartridge.read(0x00230C), Some(0xAB));
+
+        write_u24(&mut cartridge, 0x002259, 0x003000);
+        assert_eq!(cartridge.read(0x00230C), Some(0xCD));
     }
 
     #[test]

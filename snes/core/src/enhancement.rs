@@ -38,20 +38,32 @@ impl EnhancementState {
         }
     }
 
-    pub(crate) fn peek(&self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
+    pub(crate) fn peek(
+        &self,
+        mapper_kind: MapperKind,
+        address: u32,
+        rom: &[u8],
+        save_ram: &[u8],
+    ) -> Option<u8> {
         match self {
             Self::None => None,
-            Self::Sa1(state) => state.read(address),
+            Self::Sa1(state) => state.peek(address, rom, save_ram),
             Self::SuperFx(state) => state.read(address),
             Self::Cx4(state) => state.read(address),
             Self::Dsp1(state) => state.peek(mapper_kind, address),
         }
     }
 
-    pub(crate) fn read(&mut self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
+    pub(crate) fn read(
+        &mut self,
+        mapper_kind: MapperKind,
+        address: u32,
+        rom: &[u8],
+        save_ram: &[u8],
+    ) -> Option<u8> {
         match self {
             Self::None => None,
-            Self::Sa1(state) => state.read(address),
+            Self::Sa1(state) => state.read(address, rom, save_ram),
             Self::SuperFx(state) => state.read(address),
             Self::Cx4(state) => state.read(address),
             Self::Dsp1(state) => state.read(mapper_kind, address),
@@ -92,6 +104,10 @@ pub(crate) struct Sa1State {
     swen: bool,
     cwen: bool,
     bwp: u8,
+    vbr_auto_increment: bool,
+    vbr_shift: u8,
+    vbr_bits: u8,
+    vbr_address: u32,
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -113,8 +129,14 @@ const SA1_MAL: u16 = 0x2251;
 const SA1_MAH: u16 = 0x2252;
 const SA1_MBL: u16 = 0x2253;
 const SA1_MBH: u16 = 0x2254;
+const SA1_VBD: u16 = 0x2258;
+const SA1_VDAL: u16 = 0x2259;
+const SA1_VDAM: u16 = 0x225A;
+const SA1_VDAH: u16 = 0x225B;
 const SA1_MR0: u16 = 0x2306;
 const SA1_OF: u16 = 0x230B;
+const SA1_VDPL: u16 = 0x230C;
+const SA1_VDPH: u16 = 0x230D;
 const SA1_MR_MASK: u64 = (1 << 40) - 1;
 
 impl Sa1State {
@@ -140,6 +162,10 @@ impl Sa1State {
             swen: false,
             cwen: false,
             bwp: 0x0F,
+            vbr_auto_increment: false,
+            vbr_shift: 16,
+            vbr_bits: 0,
+            vbr_address: 0,
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -149,7 +175,7 @@ impl Sa1State {
         }
     }
 
-    fn read(&self, address: u32) -> Option<u8> {
+    fn peek(&self, address: u32, rom: &[u8], save_ram: &[u8]) -> Option<u8> {
         if !is_system_bank(address) {
             return None;
         }
@@ -158,10 +184,21 @@ impl Sa1State {
         if let Some(value) = self.read_arithmetic(address_offset) {
             return Some(value);
         }
+        if let Some(value) = self.peek_variable_data(address_offset, rom, save_ram) {
+            return Some(value);
+        }
 
         self.registers
             .read(address_offset)
             .or_else(|| self.iram.read(address_offset))
+    }
+
+    fn read(&mut self, address: u32, rom: &[u8], save_ram: &[u8]) -> Option<u8> {
+        let value = self.peek(address, rom, save_ram)?;
+        if is_system_bank(address) && offset(address) == SA1_VDPH && self.vbr_auto_increment {
+            self.increment_variable_data_address();
+        }
+        Some(value)
     }
 
     fn write(&mut self, address: u32, value: u8) -> bool {
@@ -274,8 +311,105 @@ impl Sa1State {
             SA1_SBWE => self.swen = value & 0x80 != 0,
             SA1_CBWE => self.cwen = value & 0x80 != 0,
             SA1_BWPA => self.bwp = value & 0x0F,
+            SA1_VBD => {
+                self.vbr_auto_increment = value & 0x80 != 0;
+                self.vbr_shift = value & 0x0F;
+                if self.vbr_shift == 0 {
+                    self.vbr_shift = 16;
+                }
+                if !self.vbr_auto_increment {
+                    self.increment_variable_data_address();
+                }
+            }
+            SA1_VDAL => self.vbr_address = (self.vbr_address & 0xFFFF00) | u32::from(value),
+            SA1_VDAM => {
+                self.vbr_address = (self.vbr_address & 0xFF00FF) | (u32::from(value) << 8);
+            }
+            SA1_VDAH => {
+                self.vbr_address = (self.vbr_address & 0x00FFFF) | (u32::from(value) << 16);
+                self.vbr_bits = 0;
+            }
             _ => {}
         }
+    }
+
+    fn peek_variable_data(&self, address_offset: u16, rom: &[u8], save_ram: &[u8]) -> Option<u8> {
+        if !matches!(address_offset, SA1_VDPL | SA1_VDPH) {
+            return None;
+        }
+
+        let data = u32::from(self.read_variable_data_byte(self.vbr_address, rom, save_ram))
+            | (u32::from(self.read_variable_data_byte(
+                self.vbr_address.wrapping_add(1),
+                rom,
+                save_ram,
+            )) << 8)
+            | (u32::from(self.read_variable_data_byte(
+                self.vbr_address.wrapping_add(2),
+                rom,
+                save_ram,
+            )) << 16);
+        let shifted = data >> self.vbr_bits;
+        Some(if address_offset == SA1_VDPL {
+            shifted as u8
+        } else {
+            (shifted >> 8) as u8
+        })
+    }
+
+    fn read_variable_data_byte(&self, address: u32, rom: &[u8], save_ram: &[u8]) -> u8 {
+        let address = address & 0x00FF_FFFF;
+        if is_sa1_rom_address(address) {
+            return self
+                .sa1_cpu_banked_rom_index(address, rom.len())
+                .map(|index| rom[index])
+                .unwrap_or(0xFF);
+        }
+        if !save_ram.is_empty()
+            && ((address & 0x40E000) == 0x006000 || (address & 0xF00000) == 0x400000)
+        {
+            return save_ram[address as usize % save_ram.len()];
+        }
+        if (address & 0x40F800) == 0x000000 || (address & 0x40F800) == 0x003000 {
+            return self.iram.bytes[address as usize & 0x07FF];
+        }
+        0xFF
+    }
+
+    fn increment_variable_data_address(&mut self) {
+        let bits = self.vbr_bits + self.vbr_shift;
+        self.vbr_address = self.vbr_address.wrapping_add(u32::from(bits >> 3)) & 0x00FF_FFFF;
+        self.vbr_bits = bits & 0x07;
+    }
+
+    fn sa1_cpu_banked_rom_index(&self, address: u32, rom_len: usize) -> Option<usize> {
+        if rom_len == 0 {
+            return None;
+        }
+
+        let address = address & 0x00FF_FFFF;
+        let translated = if (address & 0x408000) == 0x008000 {
+            ((address & 0x800000) >> 2) | ((address & 0x3F0000) >> 1) | (address & 0x007FFF)
+        } else {
+            address
+        };
+        let lo_access = translated < 0x400000;
+        let normalized = translated & 0x3FFFFF;
+        let slot = (normalized >> 20) as usize;
+        let slot_offset = normalized as usize & 0x0F_FFFF;
+        let (xmode, selected_bank) = match slot {
+            0 => (self.cbmode, self.cb),
+            1 => (self.dbmode, self.db),
+            2 => (self.ebmode, self.eb),
+            3 => (self.fbmode, self.fb),
+            _ => return None,
+        };
+        let base = if lo_access && !xmode {
+            slot * 0x100000
+        } else {
+            usize::from(selected_bank) * 0x100000
+        };
+        Some((base + slot_offset) % rom_len)
     }
 
     fn read_arithmetic(&self, address_offset: u16) -> Option<u8> {
@@ -2566,6 +2700,10 @@ fn dsp1_register_offset(mapper_kind: MapperKind, address: u32) -> Option<u16> {
 
 fn is_system_bank(address: u32) -> bool {
     matches!(bank(address), 0x00..=0x3F | 0x80..=0xBF)
+}
+
+fn is_sa1_rom_address(address: u32) -> bool {
+    (address & 0x408000) == 0x008000 || (address & 0xC00000) == 0xC00000
 }
 
 fn bank(address: u32) -> u8 {
