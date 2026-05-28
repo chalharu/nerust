@@ -1408,17 +1408,24 @@ impl<'a> GsuInterpreter<'a> {
                 self.destination = Some(usize::from(opcode & 0x0F));
             }
             (_, 0x20..=0x2F) => {
-                let register = usize::from(opcode & 0x0F);
-                if self.peek_instruction_byte() & 0xF0 == 0xB0 {
+                let source = usize::from(opcode & 0x0F);
+                let next = self.peek_instruction_byte();
+                if next & 0xF0 == 0x10 {
                     let operand = self.fetch();
                     self.sync_program_counter();
+                    let destination = usize::from(operand & 0x0F);
+                    self.move_register(destination, source);
+                } else if next & 0xF0 == 0xB0 {
+                    let operand = self.fetch();
+                    self.sync_program_counter();
+                    let destination = source;
                     let source = usize::from(operand & 0x0F);
                     let value = self.registers[source];
-                    self.set_register(register, value);
+                    self.set_register(destination, value);
                 } else {
                     self.sync_program_counter();
-                    self.source = register;
-                    self.destination = Some(register);
+                    self.source = source;
+                    self.destination = Some(source);
                 }
             }
             (0, 0x3C) => {
@@ -1757,6 +1764,12 @@ impl<'a> GsuInterpreter<'a> {
         self.registers[register] = value;
         self.set_zero_sign(value);
         self.source = register;
+        self.destination = None;
+    }
+
+    fn move_register(&mut self, destination: usize, source: usize) {
+        self.registers[destination] = self.registers[source];
+        self.source = destination;
         self.destination = None;
     }
 
