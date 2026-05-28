@@ -2003,13 +2003,29 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn tile_row_base(&self, x: usize, y: usize) -> usize {
-        let tile_index = if self.plot_option & 0x10 != 0 {
+        let tile_index = if self.is_obj_mode() {
             (y / 128) * 0x200 + (x / 128) * 0x100 + ((y / 8) & 0x0F) * 0x10 + ((x / 8) & 0x0F)
         } else {
-            (y / 8) * 16 + (x / 8)
+            (x / 8) * self.screen_height_tiles() + (y / 8)
         };
         let bytes_per_tile = usize::from(self.bitmap_planes()) * 8;
         self.screen_base + tile_index * bytes_per_tile + (y & 0x07) * 2
+    }
+
+    fn is_obj_mode(&self) -> bool {
+        self.plot_option & 0x10 != 0 || self.screen_height_mode() == 3
+    }
+
+    fn screen_height_tiles(&self) -> usize {
+        match self.screen_height_mode() {
+            1 => 20,
+            2 => 24,
+            _ => 16,
+        }
+    }
+
+    fn screen_height_mode(&self) -> u8 {
+        ((self.screen_mode >> 2) & 0x01) | ((self.screen_mode >> 4) & 0x02)
     }
 
     fn read_ram(&mut self, address: u16) -> u8 {

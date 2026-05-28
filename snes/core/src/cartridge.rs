@@ -1302,6 +1302,12 @@ mod tests {
         0x01,
     ];
     const GSU_BITMAP_8BPP_PROGRAM: &[u8] = &[0xF0, 0xA5, 0x00, 0x4E, 0x4C, 0x00, 0x01];
+    const GSU_BITMAP_X8_PLOT_PROGRAM: &[u8] = &[
+        0xF0, 0x01, 0x00, 0x4E, 0xF1, 0x08, 0x00, 0xF2, 0x00, 0x00, 0x4C, 0x00, 0x01,
+    ];
+    const GSU_BITMAP_X128_PLOT_PROGRAM: &[u8] = &[
+        0xF0, 0x01, 0x00, 0x4E, 0xF1, 0x80, 0x00, 0xF2, 0x00, 0x00, 0x4C, 0x00, 0x01,
+    ];
     const GSU_ROM_STORE_PROGRAM: [u8; 8] = [0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x00];
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
@@ -1585,6 +1591,45 @@ mod tests {
         assert_eq!(cartridge.read(0x700C21), Some(0x80));
         assert_eq!(cartridge.read(0x700C30), Some(0x00));
         assert_eq!(cartridge.read(0x700C31), Some(0x80));
+    }
+
+    #[test]
+    fn super_fx_bitmap_tile_addressing_uses_screen_height_modes() {
+        for (screen_mode, expected_address) in
+            [(0x01, 0x700E00), (0x05, 0x700E80), (0x21, 0x700F00)]
+        {
+            let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+                "HIROM GSU HEIGHT",
+                0x31,
+                0x15,
+                None,
+                0x0C,
+            ))
+            .unwrap();
+
+            for (offset, value) in GSU_BITMAP_X8_PLOT_PROGRAM.iter().copied().enumerate() {
+                assert!(cartridge.write(0x700080 + offset as u32, value));
+            }
+            assert!(cartridge.write(0x003038, 0x03));
+            assert!(cartridge.write(0x00303A, screen_mode));
+            start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+            assert_eq!(cartridge.read(expected_address), Some(0x80));
+            assert_eq!(cartridge.read(0x700C20), Some(0x00));
+        }
+
+        let mut rom = build_hirom_with_header("HIROM GSU OBJ", 0x31, 0x15, None, 0x0C);
+        rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+        for (offset, value) in GSU_BITMAP_X128_PLOT_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x00303A, 0x25));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x702C00), Some(0x80));
+        assert_eq!(cartridge.read(0x700C20), Some(0x00));
     }
 
     #[test]
