@@ -748,6 +748,7 @@ impl Cx4State {
     fn command_sprite(&mut self) {
         match self.ram[CX4_COMMAND_MODE] {
             0x03 => self.command_scale_rotate(0),
+            0x05 => self.command_transform_lines(),
             0x07 => self.command_scale_rotate(64),
             0x0B => self.command_disintegrate(),
             0x0C => self.command_bitplane_wave(),
@@ -880,6 +881,68 @@ impl Cx4State {
         let squared = value * value;
         self.write_u24(CX4_DATA_START + 3, squared as u32);
         self.write_u24(CX4_DATA_START + 6, (squared >> 24) as u32);
+    }
+
+    fn command_transform_lines(&mut self) {
+        let rotate_x = self.ram[CX4_DATA_START + 3];
+        let rotate_y = self.ram[CX4_DATA_START + 6];
+        let rotate_z = self.ram[CX4_DATA_START + 9];
+        let scale = self.ram[CX4_DATA_START + 12];
+
+        let vertex_count = usize::from(self.read_u16(CX4_DATA_START));
+        let max_vertices = if self.ram.len() > 10 {
+            (self.ram.len() - 11) / 0x10 + 1
+        } else {
+            0
+        };
+        for vertex in 0..vertex_count.min(max_vertices) {
+            let base = vertex * 0x10;
+            let (x, y) = cx4_transform_wireframe(
+                self.read_i16(base + 1),
+                self.read_i16(base + 5),
+                self.read_i16(base + 9),
+                rotate_x,
+                rotate_y,
+                rotate_z,
+                scale,
+            );
+            self.write_i16(base + 1, x.wrapping_add(0x80));
+            self.write_i16(base + 5, y.wrapping_add(0x50));
+        }
+
+        self.write_u16(0x0600, 23);
+        self.write_u16(0x0602, 0x60);
+        self.write_u16(0x0605, 0x40);
+        self.write_u16(0x0608, 23);
+        self.write_u16(0x060A, 0x60);
+        self.write_u16(0x060D, 0x40);
+
+        let line_count = usize::from(self.read_u16(0x0B00));
+        let max_line_sources = if self.ram.len() > 0x0B03 {
+            (self.ram.len() - 0x0B04) / 2 + 1
+        } else {
+            0
+        };
+        let max_line_outputs = if self.ram.len() > 0x0606 {
+            (self.ram.len() - 0x0607) / 8 + 1
+        } else {
+            0
+        };
+        for line in 0..line_count.min(max_line_sources).min(max_line_outputs) {
+            let source = 0x0B02 + line * 2;
+            let output = 0x0600 + line * 8;
+            let start = usize::from(self.ram[source]) << 4;
+            let end = usize::from(self.ram[source + 1]) << 4;
+            let (distance, step_x, step_y) = cx4_calc_wireframe(
+                self.read_i16(start + 1),
+                self.read_i16(start + 5),
+                self.read_i16(end + 1),
+                self.read_i16(end + 5),
+            );
+            self.write_u16(output, distance);
+            self.write_i16(output + 2, step_x);
+            self.write_i16(output + 5, step_y);
+        }
     }
 
     fn command_scale_rotate(&mut self, row_padding: usize) {
@@ -1143,6 +1206,67 @@ fn cx4_sin512(value: u16) -> i32 {
 
 fn cx4_cos512(value: u16) -> i32 {
     ((f64::from(value & 0x01FF) * std::f64::consts::TAU / 512.0).cos() * 32767.0).round() as i32
+}
+
+fn cx4_transform_wireframe(
+    x: i16,
+    y: i16,
+    z: i16,
+    rotate_x: u8,
+    rotate_y: u8,
+    rotate_z: u8,
+    scale: u8,
+) -> (i16, i16) {
+    let c4x = f64::from(x);
+    let c4y = f64::from(y);
+    let c4z = f64::from(z) - 0x95 as f64;
+
+    let angle_x = -cx4_angle128(rotate_x);
+    let y2 = c4y * angle_x.cos() - c4z * angle_x.sin();
+    let z2 = c4y * angle_x.sin() + c4z * angle_x.cos();
+
+    let angle_y = -cx4_angle128(rotate_y);
+    let x2 = c4x * angle_y.cos() + z2 * angle_y.sin();
+    let z = c4x * -angle_y.sin() + z2 * angle_y.cos();
+
+    let angle_z = -cx4_angle128(rotate_z);
+    let x = x2 * angle_z.cos() - y2 * angle_z.sin();
+    let y = x2 * angle_z.sin() + y2 * angle_z.cos();
+
+    let projection = f64::from(scale) / (0x90 as f64 * (z + 0x95 as f64)) * 0x95 as f64;
+    (
+        cx4_saturating_trunc_i16(x * projection),
+        cx4_saturating_trunc_i16(y * projection),
+    )
+}
+
+fn cx4_saturating_trunc_i16(value: f64) -> i16 {
+    if value.is_nan() {
+        0
+    } else {
+        value.clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+    }
+}
+
+fn cx4_calc_wireframe(x1: i16, y1: i16, x2: i16, y2: i16) -> (u16, i16, i16) {
+    let mut dx = i32::from(x2) - i32::from(x1);
+    let mut dy = i32::from(y2) - i32::from(y1);
+
+    let distance = if dx.abs() > dy.abs() {
+        let distance = dx.abs() + 1;
+        dy = 256 * dy / dx.abs();
+        dx = if dx < 0 { -256 } else { 256 };
+        distance
+    } else if dy != 0 {
+        let distance = dy.abs() + 1;
+        dx = 256 * dx / dy.abs();
+        dy = if dy < 0 { -256 } else { 256 };
+        distance
+    } else {
+        0
+    };
+
+    (distance.max(1) as u16, dx as i16, dy as i16)
 }
 
 fn cx4_angle512(value: u16) -> f64 {

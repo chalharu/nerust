@@ -1197,6 +1197,39 @@ mod tests {
         assert_eq!(read_word(&mut cartridge, 0x006210), 0xFF00);
     }
 
+    #[test]
+    fn cx4_transforms_line_vertices() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 LINES",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_word(&mut cartridge, 0x007F80, 1);
+        assert!(cartridge.write(0x007F83, 0));
+        assert!(cartridge.write(0x007F86, 0));
+        assert!(cartridge.write(0x007F89, 0));
+        assert!(cartridge.write(0x007F8C, 0x90));
+        write_word(&mut cartridge, 0x006001, 10);
+        write_word(&mut cartridge, 0x006005, 20);
+        write_word(&mut cartridge, 0x006009, 0x0095);
+
+        assert!(cartridge.write(0x007F4D, 0x05));
+        assert!(cartridge.write(0x007F4F, 0x00));
+
+        assert_eq!(read_word(&mut cartridge, 0x006001), 0x008A);
+        assert_eq!(read_word(&mut cartridge, 0x006005), 0x0064);
+        assert_eq!(read_word(&mut cartridge, 0x006600), 23);
+        assert_eq!(read_word(&mut cartridge, 0x006602), 0x60);
+        assert_eq!(read_word(&mut cartridge, 0x006605), 0x40);
+        assert_eq!(read_word(&mut cartridge, 0x006608), 23);
+        assert_eq!(read_word(&mut cartridge, 0x00660A), 0x60);
+        assert_eq!(read_word(&mut cartridge, 0x00660D), 0x40);
+    }
+
     fn write_cx4_packed_pattern(cartridge: &mut Cartridge) {
         for row in 0..8u32 {
             for (column_pair, byte) in CX4_PACKED_NIBBLE_PATTERN.into_iter().enumerate() {
