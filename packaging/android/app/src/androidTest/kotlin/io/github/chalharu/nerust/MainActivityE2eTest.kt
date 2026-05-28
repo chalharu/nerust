@@ -80,7 +80,7 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeRomLibraryDialogAppearsWithExpectedEntries() {
-        val activity = launchActivity()
+        val activity = launchActivity(clearTask = false)
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
@@ -112,7 +112,7 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeSettingsDialogAppearsWithCurrentSelections() {
-        val activity = launchActivity()
+        val activity = launchActivity(clearTask = false)
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
@@ -181,9 +181,22 @@ class MainActivityE2eTest {
     }
 
     private fun launchActivity(clearTask: Boolean = true): MainActivity {
-        sharedActivity
-            ?.takeUnless { it.isDestroyed || it.isFinishing }
-            ?.let { activity ->
+        if (!clearTask) {
+            sharedActivity
+                ?.takeUnless { it.isDestroyed || it.isFinishing }
+                ?.let { activity ->
+                    try {
+                        runOnActivityThread(activity) {
+                            activity.resetChromeStateForTest()
+                        }
+                        assertDrawerHandleAvailable(activity)
+                        return activity
+                    } catch (_: Throwable) {
+                        sharedActivity = null
+                    }
+                }
+            MainActivity.currentActivityForTest()?.let { activity ->
+                sharedActivity = activity
                 try {
                     runOnActivityThread(activity) {
                         activity.resetChromeStateForTest()
@@ -194,6 +207,7 @@ class MainActivityE2eTest {
                     sharedActivity = null
                 }
             }
+        }
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -214,6 +228,15 @@ class MainActivityE2eTest {
             context.startActivity(launchIntent)
             val activity =
                 (monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity)
+                    ?: if (!clearTask) {
+                        MainActivity.currentActivityForTest()?.also {
+                            runOnActivityThread(it) {
+                                it.resetChromeStateForTest()
+                            }
+                        }
+                    } else {
+                        null
+                    }
                     ?: throw IllegalArgumentException("MainActivity should be launched")
             sharedActivity = activity
             assertDrawerHandleAvailable(activity)
@@ -233,7 +256,7 @@ class MainActivityE2eTest {
     }
 
     private fun exerciseMenuAction(action: String) {
-        val activity = launchActivity()
+        val activity = launchActivity(clearTask = false)
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         runOnActivityThread(activity) {

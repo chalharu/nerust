@@ -173,6 +173,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     override fun onResume() {
         super.onResume()
+        activeActivityForTest = this
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         scheduleChromeAttach()
@@ -186,6 +187,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     override fun onPause() {
+        if (activeActivityForTest === this) {
+            activeActivityForTest = null
+        }
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -205,6 +209,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     override fun onDestroy() {
+        if (activeActivityForTest === this) {
+            activeActivityForTest = null
+        }
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
         dismissChromePopups()
@@ -907,8 +914,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
+        @Volatile
+        private var activeActivityForTest: MainActivity? = null
 
         fun createRomPickerIntentForTest(): Intent = createRomPickerIntent()
+
+        fun currentActivityForTest(): MainActivity? =
+            activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
     }
 }
 
