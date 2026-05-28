@@ -259,9 +259,13 @@ impl AndroidFrontend {
     }
 
     fn release_window_resources(&mut self) {
-        self.renderer = None;
+        self.release_surface_resources();
         self.window = None;
         self.window_id = None;
+    }
+
+    fn release_surface_resources(&mut self) {
+        self.renderer = None;
         self.overlay = None;
         self.active_touches.clear();
         self.shell.needs_redraw = true;
@@ -304,7 +308,11 @@ impl AndroidFrontend {
     }
 
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        if self.window.is_some() {
+        if let Some(window) = self.window.as_ref().cloned() {
+            if self.renderer.is_none() {
+                self.renderer = Some(WgpuRenderer::new(window, &self.session));
+                self.rebuild_overlay();
+            }
             return Ok(());
         }
 
@@ -452,7 +460,7 @@ impl ApplicationHandler for AndroidFrontend {
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 self.save_lifecycle_state();
-                self.release_window_resources();
+                self.release_surface_resources();
             }
             WindowEvent::Focused(false) => {
                 let _ = self.session.clear_input();
