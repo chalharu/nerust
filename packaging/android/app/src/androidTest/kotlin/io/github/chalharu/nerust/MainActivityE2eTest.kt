@@ -45,6 +45,8 @@ class MainActivityE2eTest {
         } finally {
             instrumentation.removeMonitor(monitor)
         }
+        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
+        assertMenuButtonAvailable(instrumentation, activity)
 
         instrumentation.runOnMainSync {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
@@ -181,6 +183,7 @@ class MainActivityE2eTest {
         const val POLL_INTERVAL_MS = 50L
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L
     }

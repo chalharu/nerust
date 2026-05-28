@@ -131,6 +131,10 @@ If `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY` are exported, the packaging
 script generates a temporary JKS keystore automatically before Gradle signs the
 release APK.
 
+ROM import on Android uses the system document picker (`ACTION_OPEN_DOCUMENT`)
+and persists the user-selected URI grant, so no broad storage permission is
+declared in the manifest.
+
 ## Usage
 
 ### Tao Frontend (official)
