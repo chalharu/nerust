@@ -515,10 +515,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             overlay,
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
-            true,
+            false,
         ).apply {
             isClippingEnabled = false
-            isOutsideTouchable = true
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setOnDismissListener { clearDrawerPopupReferences() }
