@@ -907,6 +907,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private external fun onSettingsDialogResult(result: String?)
 
     companion object {
+        init {
+            // Load the native library via the app classloader so the JVM can
+            // resolve `external fun` declarations on this class.  NativeActivity
+            // loads the library later via native dlopen which bypasses Java's
+            // classloader registration; without this explicit load, standard JNI
+            // name lookup fails with UnsatisfiedLinkError.
+            System.loadLibrary("main")
+        }
+
         private const val TAG = "Nerust"
         private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L

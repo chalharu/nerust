@@ -36,11 +36,11 @@ pub unsafe extern "system" fn JNI_OnLoad(
     _reserved: *mut c_void,
 ) -> jint {
     let vm = unsafe { JavaVM::from_raw(vm) };
-    // Best-effort registration; reliable registration happens in android::run().
-    // Always return the version so the JVM considers the library loaded and
-    // standard JNI symbol lookup can find exported native methods.
+    // Register native method bindings.  This succeeds when the library is loaded
+    // via `System.loadLibrary("main")` in the companion-object init because the
+    // app classloader is on the call stack at that point.
     if let Err(error) = vm.attach_current_thread(android::register_main_activity_natives) {
-        eprintln!("JNI_OnLoad: deferred native registration (will retry): {error:?}");
+        eprintln!("JNI_OnLoad: native registration failed: {error:?}");
     }
     JNI_VERSION_1_6
 }
