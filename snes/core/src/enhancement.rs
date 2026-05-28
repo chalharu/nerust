@@ -1028,6 +1028,7 @@ const SUPERFX_R15_HIGH: u16 = 0x301F;
 const SUPERFX_PBR: u16 = 0x3034;
 const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
+const SUPERFX_SCMR: u16 = 0x303A;
 const SUPERFX_RAMBR: u16 = 0x303C;
 const SUPERFX_ZERO_FLAG: u8 = 0x02;
 const SUPERFX_CARRY_FLAG: u8 = 0x04;
@@ -1087,6 +1088,7 @@ impl SuperFxState {
         let rombr = self.registers.read(SUPERFX_ROMBR).unwrap_or(0) & 0x7F;
         let rambr = self.registers.read(SUPERFX_RAMBR).unwrap_or(0) & 0x01 != 0;
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
+        let screen_mode = self.registers.read(SUPERFX_SCMR).unwrap_or(0);
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0);
         let start = GsuStartState {
             entry: r15,
@@ -1094,6 +1096,7 @@ impl SuperFxState {
             rombr,
             rambr,
             screen_base,
+            screen_mode,
             sfr,
         };
         let mut interpreter = GsuInterpreter::new(start, rom, save_ram);
@@ -1127,11 +1130,13 @@ struct GsuInterpreter<'a> {
     destination: Option<usize>,
     alt_mode: u8,
     color: u8,
+    plot_option: u8,
     zero: bool,
     carry: bool,
     sign: bool,
     overflow: bool,
     screen_base: usize,
+    screen_mode: u8,
     halted: bool,
     last_ram_address: Option<usize>,
     last_ram_word_swapped: bool,
@@ -1144,6 +1149,7 @@ struct GsuStartState {
     rombr: u8,
     rambr: bool,
     screen_base: usize,
+    screen_mode: u8,
     sfr: u8,
 }
 
@@ -1163,11 +1169,13 @@ impl<'a> GsuInterpreter<'a> {
             destination: None,
             alt_mode: 0,
             color: 0,
+            plot_option: 0,
             zero: start.sfr & SUPERFX_ZERO_FLAG != 0,
             carry: start.sfr & SUPERFX_CARRY_FLAG != 0,
             sign: start.sfr & SUPERFX_SIGN_FLAG != 0,
             overflow: start.sfr & SUPERFX_OVERFLOW_FLAG != 0,
             screen_base: start.screen_base,
+            screen_mode: start.screen_mode,
             halted: false,
             last_ram_address: None,
             last_ram_word_swapped: false,
@@ -1265,13 +1273,22 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 self.plot();
             }
+            (1, 0x4C) => {
+                self.sync_program_counter();
+                self.read_pixel();
+            }
             (0, 0x4D) => {
                 self.sync_program_counter();
                 self.swap_bytes();
             }
+            (1, 0x4E) => {
+                self.sync_program_counter();
+                self.plot_option = self.registers[self.source] as u8 & 0x1F;
+                self.destination = None;
+            }
             (0, 0x4E) => {
                 self.sync_program_counter();
-                self.color = self.registers[0] as u8 & 0x0F;
+                self.apply_color_input(self.registers[self.source] as u8);
             }
             (0, 0x4F) => {
                 self.sync_program_counter();
@@ -1820,7 +1837,10 @@ impl<'a> GsuInterpreter<'a> {
         match alt_mode {
             2 => self.rambr = self.registers[self.source] & 0x01 != 0,
             3 => self.rombr = self.registers[self.source] as u8 & 0x7F,
-            _ => self.color = self.read_rom_buffer() & 0x0F,
+            _ => {
+                let value = self.read_rom_buffer();
+                self.apply_color_input(value);
+            }
         }
         self.destination = None;
     }
@@ -1908,23 +1928,88 @@ impl<'a> GsuInterpreter<'a> {
     fn plot(&mut self) {
         let x = usize::from(self.registers[1]);
         let y = usize::from(self.registers[2]);
-        let tile_index = (y / 8) * 16 + (x / 8);
-        let tile_base = self.screen_base + tile_index * 32;
-        let row = y & 0x07;
-        let bit = 0x80 >> (x & 0x07);
-        for plane in 0..4 {
-            let byte_offset = tile_base + row * 2 + (plane & 0x01) + (plane / 2) * 16;
-            let mut value = self.read_ram_raw_usize(byte_offset);
-            if self.color & (1 << plane) != 0 {
-                value |= bit;
-            } else {
-                value &= !bit;
+        if let Some(color) = self.plot_color(x, y) {
+            let bit = 0x80 >> (x & 0x07);
+            let row_base = self.tile_row_base(x, y);
+            for plane in 0..self.bitmap_planes() {
+                let plane = usize::from(plane);
+                let byte_offset = row_base + (plane & 0x01) + (plane / 2) * 16;
+                let mut value = self.read_ram_raw_usize(byte_offset);
+                if color & (1 << plane) != 0 {
+                    value |= bit;
+                } else {
+                    value &= !bit;
+                }
+                self.write_ram_raw_usize(byte_offset, value);
             }
-            self.write_ram_raw_usize(byte_offset, value);
         }
         self.registers[1] = self.registers[1].wrapping_add(1);
         self.source = 1;
         self.destination = None;
+    }
+
+    fn read_pixel(&mut self) {
+        let x = usize::from(self.registers[1]);
+        let y = usize::from(self.registers[2]);
+        let bit = 0x80 >> (x & 0x07);
+        let row_base = self.tile_row_base(x, y);
+        let mut color = 0;
+        for plane in 0..self.bitmap_planes() {
+            let plane = usize::from(plane);
+            let byte_offset = row_base + (plane & 0x01) + (plane / 2) * 16;
+            if self.read_ram_raw_usize(byte_offset) & bit != 0 {
+                color |= 1 << plane;
+            }
+        }
+        self.write_result(color);
+    }
+
+    fn apply_color_input(&mut self, value: u8) {
+        let mut value = value;
+        if self.plot_option & 0x04 != 0 {
+            value = (value & 0xF0) | (value >> 4);
+        }
+        if self.plot_option & 0x08 != 0 {
+            value = (self.color & 0xF0) | (value & 0x0F);
+        }
+        self.color = value;
+    }
+
+    fn plot_color(&self, x: usize, y: usize) -> Option<u8> {
+        let mut color = self.color;
+        if self.bitmap_planes() != 8 && self.plot_option & 0x02 != 0 && (x ^ y) & 0x01 != 0 {
+            color >>= 4;
+        }
+        let mask = if self.bitmap_planes() == 8 {
+            0xFF
+        } else {
+            (1 << self.bitmap_planes()) - 1
+        };
+        color &= mask;
+        if self.plot_option & 0x01 == 0 && color == 0 {
+            None
+        } else {
+            Some(color)
+        }
+    }
+
+    fn bitmap_planes(&self) -> u8 {
+        match self.screen_mode & 0x03 {
+            0 => 2,
+            1 => 4,
+            3 => 8,
+            _ => 4,
+        }
+    }
+
+    fn tile_row_base(&self, x: usize, y: usize) -> usize {
+        let tile_index = if self.plot_option & 0x10 != 0 {
+            (y / 128) * 0x200 + (x / 128) * 0x100 + ((y / 8) & 0x0F) * 0x10 + ((x / 8) & 0x0F)
+        } else {
+            (y / 8) * 16 + (x / 8)
+        };
+        let bytes_per_tile = usize::from(self.bitmap_planes()) * 8;
+        self.screen_base + tile_index * bytes_per_tile + (y & 0x07) * 2
     }
 
     fn read_ram(&mut self, address: u16) -> u8 {
