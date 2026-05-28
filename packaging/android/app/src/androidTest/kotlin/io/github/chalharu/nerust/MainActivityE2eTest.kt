@@ -34,19 +34,22 @@ class MainActivityE2eTest {
         )
     }
 
-    @Test
-    fun appStartsDrawerAndRecreateKeepMenuAvailable() {
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun appStartsRecreateAndDrawerKeepMenuAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         var activeActivity: MainActivity? = null
 
         try {
-            val activity = try {
+            var activity = try {
                 launchMainActivity(instrumentation, context, monitor)
             } finally {
                 instrumentation.removeMonitor(monitor)
             }.also { activeActivity = it }
+
+            activity = recreateMainActivity(instrumentation, activity)
+            activeActivity = activity
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
@@ -87,8 +90,6 @@ class MainActivityE2eTest {
                 }
                 assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
             }
-
-            activeActivity = recreateMainActivity(instrumentation, activity)
         } finally {
             activeActivity?.let { activity ->
                 finishActivity(instrumentation, activity)
@@ -125,6 +126,7 @@ class MainActivityE2eTest {
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         try {
             instrumentation.runOnMainSync {
+                activity.dismissChromeForTest()
                 activity.recreate()
             }
             val recreated = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
@@ -223,5 +225,6 @@ class MainActivityE2eTest {
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val STARTUP_TIMEOUT_MS = 60_000L
+        const val TEST_TIMEOUT_MS = 180_000L
     }
 }
