@@ -1029,7 +1029,13 @@ const SUPERFX_PBR: u16 = 0x3034;
 const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
 const SUPERFX_RAMBR: u16 = 0x303C;
+const SUPERFX_ZERO_FLAG: u8 = 0x02;
+const SUPERFX_CARRY_FLAG: u8 = 0x04;
+const SUPERFX_SIGN_FLAG: u8 = 0x08;
+const SUPERFX_OVERFLOW_FLAG: u8 = 0x10;
 const SUPERFX_GO_FLAG: u8 = 0x20;
+const SUPERFX_ALU_FLAGS: u8 =
+    SUPERFX_ZERO_FLAG | SUPERFX_CARRY_FLAG | SUPERFX_SIGN_FLAG | SUPERFX_OVERFLOW_FLAG;
 const GSU_MAX_INTERPRETER_STEPS: usize = 256 * 1024;
 
 impl SuperFxState {
@@ -1081,8 +1087,16 @@ impl SuperFxState {
         let rombr = self.registers.read(SUPERFX_ROMBR).unwrap_or(0) & 0x7F;
         let rambr = self.registers.read(SUPERFX_RAMBR).unwrap_or(0) & 0x01 != 0;
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
-        let mut interpreter =
-            GsuInterpreter::new(r15, pbr, rombr, rambr, screen_base, rom, save_ram);
+        let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0);
+        let start = GsuStartState {
+            entry: r15,
+            pbr,
+            rombr,
+            rambr,
+            screen_base,
+            sfr,
+        };
+        let mut interpreter = GsuInterpreter::new(start, rom, save_ram);
         interpreter.run();
         for (register, value) in interpreter.registers.iter().copied().enumerate() {
             let [low, high] = value.to_le_bytes();
@@ -1094,7 +1108,9 @@ impl SuperFxState {
         self.registers
             .write(SUPERFX_RAMBR, u8::from(interpreter.rambr));
 
-        let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0) & !SUPERFX_GO_FLAG;
+        let sfr = (self.registers.read(SUPERFX_SFR).unwrap_or(0)
+            & !(SUPERFX_ALU_FLAGS | SUPERFX_GO_FLAG))
+            | interpreter.sfr_flags();
         self.registers.write(SUPERFX_SFR, sfr);
     }
 }
@@ -1112,36 +1128,44 @@ struct GsuInterpreter<'a> {
     alt_mode: u8,
     color: u8,
     zero: bool,
+    carry: bool,
+    sign: bool,
+    overflow: bool,
     screen_base: usize,
     halted: bool,
 }
 
+#[derive(Clone, Copy)]
+struct GsuStartState {
+    entry: u16,
+    pbr: u8,
+    rombr: u8,
+    rambr: bool,
+    screen_base: usize,
+    sfr: u8,
+}
+
 impl<'a> GsuInterpreter<'a> {
-    fn new(
-        entry: u16,
-        pbr: u8,
-        rombr: u8,
-        rambr: bool,
-        screen_base: usize,
-        rom: &'a [u8],
-        ram: &'a mut [u8],
-    ) -> Self {
+    fn new(start: GsuStartState, rom: &'a [u8], ram: &'a mut [u8]) -> Self {
         let mut registers = [0; 16];
-        registers[15] = entry;
+        registers[15] = start.entry;
         Self {
             rom,
             ram,
             registers,
-            pc: entry,
-            pbr,
-            rombr,
-            rambr,
+            pc: start.entry,
+            pbr: start.pbr,
+            rombr: start.rombr,
+            rambr: start.rambr,
             source: 0,
             destination: None,
             alt_mode: 0,
             color: 0,
-            zero: false,
-            screen_base,
+            zero: start.sfr & SUPERFX_ZERO_FLAG != 0,
+            carry: start.sfr & SUPERFX_CARRY_FLAG != 0,
+            sign: start.sfr & SUPERFX_SIGN_FLAG != 0,
+            overflow: start.sfr & SUPERFX_OVERFLOW_FLAG != 0,
+            screen_base: start.screen_base,
             halted: false,
         }
     }
@@ -1173,23 +1197,16 @@ impl<'a> GsuInterpreter<'a> {
                 self.halted = true;
             }
             (_, 0x01 | 0x02) => self.sync_program_counter(),
+            (_, 0x05..=0x0F) => {
+                let relative = self.fetch() as i8;
+                self.sync_program_counter();
+                if self.branch_condition(opcode) {
+                    self.branch(relative);
+                }
+            }
             (0, 0x03) => {
                 self.sync_program_counter();
                 self.shift_right();
-            }
-            (_, 0x08) => {
-                let relative = self.fetch() as i8;
-                self.sync_program_counter();
-                if !self.zero {
-                    self.branch(relative);
-                }
-            }
-            (_, 0x09) => {
-                let relative = self.fetch() as i8;
-                self.sync_program_counter();
-                if self.zero {
-                    self.branch(relative);
-                }
             }
             (_, 0x10..=0x1F) => {
                 self.sync_program_counter();
@@ -1212,7 +1229,9 @@ impl<'a> GsuInterpreter<'a> {
             (0, 0x3C) => {
                 self.sync_program_counter();
                 self.registers[12] = self.registers[12].wrapping_sub(1);
-                self.zero = self.registers[12] == 0;
+                self.set_zero_sign(self.registers[12]);
+                self.carry = false;
+                self.overflow = false;
                 if !self.zero {
                     self.pc = self.registers[13];
                     self.registers[15] = self.pc;
@@ -1322,14 +1341,18 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 let register = usize::from(opcode & 0x0F);
                 self.registers[register] = self.registers[register].wrapping_add(1);
-                self.zero = self.registers[register] == 0;
+                self.set_zero_sign(self.registers[register]);
+                self.carry = false;
+                self.overflow = false;
                 self.source = register;
             }
             (_, 0xE0..=0xEF) => {
                 self.sync_program_counter();
                 let register = usize::from(opcode & 0x0F);
                 self.registers[register] = self.registers[register].wrapping_sub(1);
-                self.zero = self.registers[register] == 0;
+                self.set_zero_sign(self.registers[register]);
+                self.carry = false;
+                self.overflow = false;
                 self.source = register;
             }
             (0, 0xC0) => {
@@ -1363,6 +1386,17 @@ impl<'a> GsuInterpreter<'a> {
         true
     }
 
+    fn sfr_flags(&self) -> u8 {
+        (if self.zero { SUPERFX_ZERO_FLAG } else { 0 })
+            | (if self.carry { SUPERFX_CARRY_FLAG } else { 0 })
+            | (if self.sign { SUPERFX_SIGN_FLAG } else { 0 })
+            | (if self.overflow {
+                SUPERFX_OVERFLOW_FLAG
+            } else {
+                0
+            })
+    }
+
     fn fetch(&mut self) -> u8 {
         let value = self.peek_instruction_byte();
         self.pc = self.pc.wrapping_add(1);
@@ -1390,6 +1424,28 @@ impl<'a> GsuInterpreter<'a> {
         self.registers[15] = self.pc;
     }
 
+    fn branch_condition(&self, opcode: u8) -> bool {
+        match opcode {
+            0x05 => true,
+            0x06 => self.sign == self.overflow,
+            0x07 => self.sign != self.overflow,
+            0x08 => !self.zero,
+            0x09 => self.zero,
+            0x0A => !self.sign,
+            0x0B => self.sign,
+            0x0C => !self.carry,
+            0x0D => self.carry,
+            0x0E => !self.overflow,
+            0x0F => self.overflow,
+            _ => false,
+        }
+    }
+
+    fn set_zero_sign(&mut self, value: u16) {
+        self.zero = value == 0;
+        self.sign = value & 0x8000 != 0;
+    }
+
     fn jump_register(&mut self, register: usize) {
         self.pc = self.registers[register];
         self.registers[15] = self.pc;
@@ -1397,114 +1453,161 @@ impl<'a> GsuInterpreter<'a> {
 
     fn set_register(&mut self, register: usize, value: u16) {
         self.registers[register] = value;
-        self.zero = value == 0;
+        self.set_zero_sign(value);
         self.source = register;
         self.destination = None;
     }
 
     fn load_register(&mut self, register: usize, value: u16) {
         self.registers[register] = value;
-        self.zero = value == 0;
+        self.set_zero_sign(value);
     }
 
     fn compare_register(&mut self, register: usize) {
-        self.zero = self.registers[self.source] == self.registers[register];
+        let lhs = self.registers[self.source];
+        let rhs = self.registers[register];
+        let result = lhs.wrapping_sub(rhs);
+        self.set_subtract_flags(lhs, rhs, result);
         self.destination = None;
     }
 
     fn add_register(&mut self, register: usize) {
-        let result = self.registers[self.source].wrapping_add(self.registers[register]);
+        let lhs = self.registers[self.source];
+        let rhs = self.registers[register];
+        let result = lhs.wrapping_add(rhs);
+        self.set_add_flags(lhs, rhs, result);
         self.write_result(result);
     }
 
     fn add_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source].wrapping_add(value);
+        let lhs = self.registers[self.source];
+        let result = lhs.wrapping_add(value);
+        self.set_add_flags(lhs, value, result);
         self.write_result(result);
     }
 
     fn subtract_register(&mut self, register: usize) {
-        let result = self.registers[self.source].wrapping_sub(self.registers[register]);
+        let lhs = self.registers[self.source];
+        let rhs = self.registers[register];
+        let result = lhs.wrapping_sub(rhs);
+        self.set_subtract_flags(lhs, rhs, result);
         self.write_result(result);
     }
 
     fn subtract_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source].wrapping_sub(value);
+        let lhs = self.registers[self.source];
+        let result = lhs.wrapping_sub(value);
+        self.set_subtract_flags(lhs, value, result);
         self.write_result(result);
     }
 
     fn and_immediate(&mut self, value: u16) {
         let result = self.registers[self.source] & value;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn and_register(&mut self, register: usize) {
         let result = self.registers[self.source] & self.registers[register];
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn or_register(&mut self, register: usize) {
         let result = self.registers[self.source] | self.registers[register];
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn or_immediate(&mut self, value: u16) {
         let result = self.registers[self.source] | value;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn xor_register(&mut self, register: usize) {
         let result = self.registers[self.source] ^ self.registers[register];
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn xor_immediate(&mut self, value: u16) {
         let result = self.registers[self.source] ^ value;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn multiply_register(&mut self, register: usize) {
         let result = self.registers[self.source].wrapping_mul(self.registers[register]);
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn multiply_immediate(&mut self, value: u16) {
         let result = self.registers[self.source].wrapping_mul(value);
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn not(&mut self) {
         let result = !self.registers[self.source];
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn shift_right(&mut self) {
+        self.carry = self.registers[self.source] & 0x0001 != 0;
+        self.overflow = false;
         let result = self.registers[self.source] >> 1;
         self.write_result(result);
     }
 
     fn arithmetic_shift_right(&mut self) {
+        self.carry = self.registers[self.source] & 0x0001 != 0;
+        self.overflow = false;
         let result = ((self.registers[self.source] as i16) >> 1) as u16;
         self.write_result(result);
     }
 
     fn high_byte(&mut self) {
         let result = self.registers[self.source] >> 8;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn low_byte(&mut self) {
         let result = self.registers[self.source] & 0x00FF;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn sign_extend(&mut self) {
         let result = i16::from(self.registers[self.source] as u8 as i8) as u16;
+        self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn swap_bytes(&mut self) {
         let result = self.registers[self.source].swap_bytes();
+        self.clear_arithmetic_flags();
         self.write_result(result);
+    }
+
+    fn set_add_flags(&mut self, lhs: u16, rhs: u16, result: u16) {
+        self.set_zero_sign(result);
+        self.carry = u32::from(lhs) + u32::from(rhs) > 0xFFFF;
+        self.overflow = (!(lhs ^ rhs) & (lhs ^ result) & 0x8000) != 0;
+    }
+
+    fn set_subtract_flags(&mut self, lhs: u16, rhs: u16, result: u16) {
+        self.set_zero_sign(result);
+        self.carry = lhs >= rhs;
+        self.overflow = ((lhs ^ rhs) & (lhs ^ result) & 0x8000) != 0;
+    }
+
+    fn clear_arithmetic_flags(&mut self) {
+        self.carry = false;
+        self.overflow = false;
     }
 
     fn getc_ramb_romb(&mut self, alt_mode: u8) {
