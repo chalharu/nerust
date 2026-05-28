@@ -618,7 +618,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun showComposeDialog(
-        tag: String,
+        dialogTag: String,
         contentDescription: String,
         onDismiss: () -> Unit,
         content: @Composable (dismiss: () -> Unit) -> Unit,
@@ -628,7 +628,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         lateinit var dialog: Dialog
         val root =
             ComposeOwnerFrameLayout(this).apply {
-                tag = tag
+                tag = dialogTag
                 setTag(R.id.nerust_dialog_content_probe, contentDescription)
                 layoutParams =
                     FrameLayout.LayoutParams(
@@ -638,7 +638,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             }
         val composeView =
             ComposeView(this).apply {
-                tag = "$tag-compose"
+                tag = "$dialogTag-compose"
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -667,7 +667,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         composeDialog = dialog
         composeDialogRootView = root
         composeDialogComposeView = composeView
-        composeDialogTag = tag
+        composeDialogTag = dialogTag
         composeDialogDismissCallback = onDismiss
         dialog.setOnDismissListener {
             val dismissCallback = composeDialogDismissCallback
@@ -680,16 +680,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            lastDialogStateForTest = "showing $tag"
+            lastDialogStateForTest = "showing $dialogTag"
         } catch (_: WindowManager.BadTokenException) {
             dialog.setOnDismissListener(null)
             clearComposeDialogWindowReferences()
-            lastDialogStateForTest = "show failed for $tag: bad token"
+            lastDialogStateForTest = "show failed for $dialogTag: bad token"
             onDismiss()
         } catch (_: IllegalStateException) {
             dialog.setOnDismissListener(null)
             clearComposeDialogWindowReferences()
-            lastDialogStateForTest = "show failed for $tag: illegal state"
+            lastDialogStateForTest = "show failed for $dialogTag: illegal state"
             onDismiss()
         }
     }
