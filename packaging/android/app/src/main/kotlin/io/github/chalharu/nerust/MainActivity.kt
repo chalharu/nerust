@@ -145,6 +145,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var composeDialogComposeView: View? = null
     private var composeDialogTag: String? = null
     private var composeDialogDismissCallback: (() -> Unit)? = null
+    private var composeDialogOwnedByTest = false
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
 
@@ -304,6 +305,30 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dismissComposeDialog(notifyDismiss = false)
     }
 
+    fun resetChromeStateForTest() {
+        dismissComposeDialog(notifyDismiss = !composeDialogOwnedByTest)
+        removeDrawerOverlay()
+    }
+
+    fun showRomLibraryDialogForTest(entryNames: Array<String>, entryIds: Array<String>) {
+        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = true)
+    }
+
+    fun showSettingsDialogForTest(
+        keys: Array<String>,
+        labels: Array<String>,
+        choiceStrings: Array<String>,
+        currentIndices: Array<String>,
+    ) {
+        showSettingsDialogInternal(
+            keys = keys,
+            labels = labels,
+            choiceStrings = choiceStrings,
+            currentIndices = currentIndices,
+            ownedByTest = true,
+        )
+    }
+
     /**
      * Show a modal ROM library dialog.
      *
@@ -316,10 +341,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
      * Called from the Rust JNI bridge on the Java main thread.
      */
     fun showRomLibraryDialog(entryNames: Array<String>, entryIds: Array<String>) {
+        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = false)
+    }
+
+    private fun showRomLibraryDialogInternal(
+        entryNames: Array<String>,
+        entryIds: Array<String>,
+        ownedByTest: Boolean,
+    ) {
         var resultSent = false
         showComposeDialog(
             dialogTag = ROM_LIBRARY_DIALOG_TAG,
             contentDescription = romLibraryContentDescription(entryNames.asList()),
+            ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
                     onRomLibrarySelected(null)
@@ -361,6 +395,22 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
     ) {
+        showSettingsDialogInternal(
+            keys = keys,
+            labels = labels,
+            choiceStrings = choiceStrings,
+            currentIndices = currentIndices,
+            ownedByTest = false,
+        )
+    }
+
+    private fun showSettingsDialogInternal(
+        keys: Array<String>,
+        labels: Array<String>,
+        choiceStrings: Array<String>,
+        currentIndices: Array<String>,
+        ownedByTest: Boolean,
+    ) {
         val settings =
             labels.indices.map { index ->
                 AndroidSetting(
@@ -385,6 +435,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         showComposeDialog(
             dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
+            ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
                     onSettingsDialogResult(null)
@@ -621,6 +672,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dialogTag: String,
         contentDescription: String,
         onDismiss: () -> Unit,
+        ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
         dismissComposeDialog(notifyDismiss = true)
@@ -669,6 +721,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         composeDialogComposeView = composeView
         composeDialogTag = dialogTag
         composeDialogDismissCallback = onDismiss
+        composeDialogOwnedByTest = ownedByTest
         dialog.setOnDismissListener {
             val dismissCallback = composeDialogDismissCallback
             clearComposeDialogWindowReferences()
@@ -773,6 +826,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         composeDialogComposeView = null
         composeDialogTag = null
         composeDialogDismissCallback = null
+        composeDialogOwnedByTest = false
     }
 
     private fun View?.isShownInWindowForTest(): Boolean =
