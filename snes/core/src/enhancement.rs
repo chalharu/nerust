@@ -1224,6 +1224,10 @@ impl SuperFxState {
             value
         };
         let handled = self.registers.write(address_offset, value);
+        if handled && address_offset == SUPERFX_SFR && value & SUPERFX_GO_FLAG == 0 {
+            self.registers.write(SUPERFX_CBR, 0);
+            self.registers.write(SUPERFX_CBR_HIGH, 0);
+        }
         if handled
             && (address_offset == SUPERFX_R15_HIGH
                 || address_offset == SUPERFX_SFR && value & SUPERFX_GO_FLAG != 0)
