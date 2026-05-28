@@ -71,7 +71,7 @@ struct AndroidFrontend {
 
 impl AndroidFrontend {
     fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
-        Self {
+        let mut frontend = Self {
             app,
             session: SessionHandle::new_with_settings_manager(
                 HostBackendIdentity::android_wgpu(),
@@ -84,10 +84,33 @@ impl AndroidFrontend {
             renderer: None,
             overlay: None,
             active_touches: HashMap::new(),
+        };
+        if let Err(error) = frontend.restore_last_session() {
+            log::warn!("{error}");
         }
+        frontend
+    }
+
+    fn restore_last_session(&mut self) -> Result<(), String> {
+        let Some(id) = self.storage.load_last_rom_id()? else {
+            return Ok(());
+        };
+        if self.storage.rom_library.rom_path(&id).is_none() {
+            return Ok(());
+        }
+        self.load_from_library_with_autosave(&id, true)
+            .map_err(|error| format!("failed to restore Android lifecycle session: {error}"))
     }
 
     fn load_from_library(&mut self, id: &str) -> Result<(), String> {
+        self.load_from_library_with_autosave(id, false)
+    }
+
+    fn load_from_library_with_autosave(
+        &mut self,
+        id: &str,
+        restore_hidden_state: bool,
+    ) -> Result<(), String> {
         let bytes = self
             .storage
             .rom_library
@@ -100,6 +123,14 @@ impl AndroidFrontend {
             .load(MediaObject::new(path, bytes), LoadRequest::Auto)
         {
             return Err(format!("failed to start ROM {id} from library: {error}"));
+        }
+        if let Err(error) = self.storage.save_last_rom_id(id) {
+            log::warn!("{error}");
+        }
+        if restore_hidden_state {
+            self.session.load_hidden_lifecycle_state();
+        } else {
+            self.session.clear_hidden_lifecycle_state();
         }
         self.request_redraw();
         Ok(())
@@ -160,6 +191,10 @@ impl AndroidFrontend {
                 entry.display_name
             ));
         }
+        if let Err(error) = self.storage.save_last_rom_id(&entry.id) {
+            log::warn!("{error}");
+        }
+        self.session.clear_hidden_lifecycle_state();
         self.request_redraw();
         Ok(())
     }
@@ -207,6 +242,20 @@ impl AndroidFrontend {
         if outcome.needs_redraw {
             self.request_redraw();
         }
+    }
+
+    fn save_lifecycle_state(&mut self) {
+        if let Err(error) = self.session.clear_input() {
+            log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
+            self.session.clear_hidden_lifecycle_state();
+            self.session.flush_before_exit();
+            return;
+        }
+        self.active_touches.clear();
+        if !self.session.save_hidden_lifecycle_state() {
+            self.session.clear_hidden_lifecycle_state();
+        }
+        self.session.flush_before_exit();
     }
 
     fn request_library_dialog(&mut self) {
@@ -367,12 +416,13 @@ impl ApplicationHandler for AndroidFrontend {
             event_loop.exit();
             return;
         }
+        self.session.load_hidden_lifecycle_state();
         let _ = self.session.run_command(SessionCommand::Resume);
         self.request_redraw();
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        let _ = self.session.clear_input();
+        self.save_lifecycle_state();
         picker::reset();
         library::reset();
         menu::reset();
@@ -397,7 +447,7 @@ impl ApplicationHandler for AndroidFrontend {
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                self.session.flush_before_exit();
+                self.save_lifecycle_state();
                 event_loop.exit();
             }
             WindowEvent::Focused(false) => {

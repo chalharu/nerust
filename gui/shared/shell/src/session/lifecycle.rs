@@ -1,6 +1,7 @@
 use crate::descriptor::{RuntimeHostServices, SystemSettingsPageModel};
 use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
+use nerust_console::state::PreviewFrame;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_session::title::window_title;
@@ -8,11 +9,13 @@ use nerust_persistence::sidecar::{
     load_mapper_save, write_mapper_save, write_recovery_mapper_save,
 };
 use nerust_persistence::slots::{
-    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots_for_identity,
-    state_slot_path, write_state_slot,
+    allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
+    load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
+    write_autosave_state_slot, write_state_slot,
 };
 use nerust_persistence::thumbnail::ThumbnailSource;
 use nerust_persistence::time::latest_saved_slot_id;
+use std::io::ErrorKind;
 use std::path::Path;
 
 impl SessionHandle {
@@ -266,6 +269,83 @@ impl SessionHandle {
 
     pub fn active_slot_id(&self) -> Option<u64> {
         self.persistence.active_slot_id
+    }
+
+    pub fn save_hidden_lifecycle_state(&mut self) -> bool {
+        if !self.loaded() {
+            return false;
+        }
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return false;
+        };
+        let Some(identity) = self.persistence_identity() else {
+            return false;
+        };
+        match self.runtime.export_state() {
+            Ok(export) => {
+                let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
+                match write_autosave_state_slot(
+                    &sidecars.states_dir,
+                    &export.state_blob,
+                    identity,
+                    preview.as_ref(),
+                ) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        log::warn!("saving hidden lifecycle state failed: {error}");
+                        false
+                    }
+                }
+            }
+            Err(error) => {
+                log::warn!("hidden lifecycle state export failed: {error}");
+                false
+            }
+        }
+    }
+
+    pub fn load_hidden_lifecycle_state(&mut self) -> bool {
+        if !self.loaded() {
+            return false;
+        }
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return false;
+        };
+        let Some(identity) = self.persistence_identity() else {
+            return false;
+        };
+        let path = autosave_state_slot_path(&sidecars.states_dir);
+        match load_state_slot_for_identity(&path, identity) {
+            Ok(Some(slot)) => {
+                if let Err(error) = self.runtime.import_state(&slot.machine_state) {
+                    log::warn!("hidden lifecycle state import failed: {error}");
+                    false
+                } else {
+                    self.sync_input_from_runtime();
+                    true
+                }
+            }
+            Ok(None) => false,
+            Err(nerust_persistence::error::PersistenceError::Io(error))
+                if error.kind() == ErrorKind::NotFound =>
+            {
+                false
+            }
+            Err(error) => {
+                log::warn!("loading hidden lifecycle state failed: {error}");
+                false
+            }
+        }
+    }
+
+    pub fn clear_hidden_lifecycle_state(&mut self) {
+        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+            return;
+        };
+        let path = autosave_state_slot_path(&sidecars.states_dir);
+        if let Err(error) = delete_state_slot(&path) {
+            log::warn!("deleting hidden lifecycle state failed: {error}");
+        }
     }
 
     pub fn persistence_identity(&self) -> Option<nerust_contract_persistence::PersistenceIdentity> {
@@ -602,4 +682,12 @@ fn adjacent_slot_id(
         current_index - 1
     };
     Some(slots[next_index].slot_id)
+}
+
+fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
+    ThumbnailSource {
+        width: preview.width,
+        height: preview.height,
+        rgba: preview.rgba.clone(),
+    }
 }
