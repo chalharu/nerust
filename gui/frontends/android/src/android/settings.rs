@@ -295,7 +295,9 @@ pub(crate) fn show_settings_dialog_sync(
     let current_indices = cached.current_indices.clone();
     drop(cached);
 
-    if let Err(error) = show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices) {
+    if let Err(error) =
+        show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices)
+    {
         SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
         return Err(error);
     }
@@ -377,7 +379,14 @@ fn show_settings_on_java_main_thread(
     vm.attach_current_thread(|env| {
         let activity_raw = app.activity_as_ptr() as jobject;
         let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-        show_settings_with_env_inner(env, activity.as_ref(), keys, labels, choices, current_indices)
+        show_settings_with_env_inner(
+            env,
+            activity.as_ref(),
+            keys,
+            labels,
+            choices,
+            current_indices,
+        )
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
 }
@@ -407,8 +416,7 @@ fn show_settings_with_env_inner(
 ) -> Result<(), jni::errors::Error> {
     let string_class = env.find_class(jni_str!("java/lang/String"))?;
 
-    let mut make_string_array =
-        |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
+    let mut make_string_array = |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
         let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
         for (i, s) in items.iter().enumerate() {
             let js = env.new_string(s.as_str())?;
@@ -425,9 +433,7 @@ fn show_settings_with_env_inner(
     env.call_method(
         activity,
         jni_str!("showSettingsDialog"),
-        jni_sig!(
-            "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"
-        ),
+        jni_sig!("([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"),
         &[
             JValue::Object(keys_arr.as_ref()),
             JValue::Object(labels_arr.as_ref()),
