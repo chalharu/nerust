@@ -1073,6 +1073,38 @@ mod tests {
         assert_eq!(cartridge.read(0x00600A), Some(0xCC));
     }
 
+    #[test]
+    fn cx4_executes_immediate_register_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "CX4 IMMEDIATE",
+            0x20,
+            0xF3,
+            Some(0x10),
+            0x0A,
+        ))
+        .unwrap();
+
+        write_u24(&mut cartridge, 0x007F80, 0x000077);
+        assert!(cartridge.write(0x007F4F, 0x5C));
+        assert_eq!(read_u24(&mut cartridge, 0x007F80), 0x000030);
+        assert_eq!(cartridge.read(0x006000), Some(0x00));
+        assert_eq!(cartridge.read(0x006003), Some(0xFF));
+        assert_eq!(cartridge.read(0x00602F), Some(0x00));
+
+        write_u24(&mut cartridge, 0x007F80, 0x000020);
+        assert!(cartridge.write(0x007F4F, 0x66));
+        assert_eq!(read_u24(&mut cartridge, 0x007F80), 0x000044);
+        assert_eq!(cartridge.read(0x006020), Some(0xFF));
+        assert_eq!(cartridge.read(0x006027), Some(0x00));
+        assert_eq!(cartridge.read(0x006043), Some(0x00));
+
+        write_u24(&mut cartridge, 0x007F80, 0x000BFE);
+        assert!(cartridge.write(0x007F4F, 0x7C));
+        assert_eq!(read_u24(&mut cartridge, 0x007F80), 0x000C01);
+        assert_eq!(cartridge.read(0x006BFE), Some(0xFF));
+        assert_eq!(cartridge.read(0x006BFF), Some(0xFE));
+    }
+
     fn write_word(cartridge: &mut Cartridge, address: u32, word: u16) {
         let [low, high] = word.to_le_bytes();
         assert!(cartridge.write(address, low));

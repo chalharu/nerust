@@ -640,6 +640,11 @@ const CX4_COMMAND_MODE: usize = 0x1F4D;
 const CX4_LOAD_SOURCE: usize = 0x1F40;
 const CX4_LOAD_LEN: usize = 0x1F43;
 const CX4_LOAD_DEST: usize = 0x1F45;
+const CX4_IMMEDIATE_DATA: [u8; 48] = [
+    0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x00,
+    0xFF, 0xFF, 0x00, 0x00, 0x80, 0xFF, 0xFF, 0x7F, 0x00, 0x80, 0x00, 0xFF, 0x7F, 0x00, 0xFF, 0x7F,
+    0xFF, 0x7F, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFE, 0x00, 0x01, 0x00, 0xFF, 0xFE, 0x00,
+];
 
 impl Cx4State {
     fn new() -> Self {
@@ -719,6 +724,11 @@ impl Cx4State {
             0x2D => self.command_transform_coordinates(),
             0x40 => self.command_sum(),
             0x54 => self.command_square(),
+            0x5C => self.command_immediate_register_reset(),
+            0x5E => self.command_immediate_register(0),
+            0x60..=0x7C if command.is_multiple_of(2) => {
+                self.command_immediate_register(usize::from((command - 0x5E) / 2) * 3)
+            }
             0x89 => {
                 self.ram[CX4_DATA_START] = 0x36;
                 self.ram[CX4_DATA_START + 1] = 0x43;
@@ -853,6 +863,23 @@ impl Cx4State {
         let squared = value * value;
         self.write_u24(CX4_DATA_START + 3, squared as u32);
         self.write_u24(CX4_DATA_START + 6, (squared >> 24) as u32);
+    }
+
+    fn command_immediate_register_reset(&mut self) {
+        self.write_u24(CX4_DATA_START, 0);
+        self.command_immediate_register(0);
+    }
+
+    fn command_immediate_register(&mut self, start: usize) {
+        let mut address = self.read_u24(CX4_DATA_START);
+        for value in CX4_IMMEDIATE_DATA[start..].iter().copied() {
+            let index = (address & 0x0FFF) as usize;
+            if index < 0x0C00 {
+                self.ram[index] = value;
+            }
+            address = address.wrapping_add(1);
+        }
+        self.write_u24(CX4_DATA_START, address);
     }
 
     fn read_u16(&self, index: usize) -> u16 {
