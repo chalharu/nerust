@@ -1,7 +1,6 @@
 package io.github.chalharu.nerust
 
 import android.app.AlertDialog
-import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
@@ -17,7 +16,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -106,8 +104,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var controlsOverlayPopup: PopupWindow? = null
     private var controlsOverlayView: View? = null
     private var menuButtonPopup: PopupWindow? = null
+    private var menuChromeContainer: FrameLayout? = null
     private var menuButtonView: View? = null
-    private var drawerDialog: Dialog? = null
+    private var drawerShowing = false
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
     private var lastDrawerStateForTest = "not requested"
@@ -216,9 +215,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         when (tag) {
             CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
                 controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerDialog?.isShowing == true &&
+            DRAWER_COMPOSE_TAG -> drawerShowing && menuButtonPopup?.isShowing == true &&
                 drawerComposeView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerDialog?.isShowing == true &&
+            DRAWER_OVERLAY_TAG -> drawerShowing && menuButtonPopup?.isShowing == true &&
                 drawerOverlayView.isShownInWindowForTest()
             MENU_BUTTON_TAG -> menuButtonPopup?.isShowing == true &&
                 menuButtonView.isShownInWindowForTest()
@@ -239,7 +238,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "attachAttempts=$menuChromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
             "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
             "menuPopup=${menuButtonPopup.debugPopupState()}, menuView=${menuButtonView.debugViewState()}, " +
-            "drawerDialog=${drawerDialog.debugDialogState()}, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
+            "drawerShowing=$drawerShowing, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
             "drawerCompose=${drawerComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest"
 
     /**
@@ -423,14 +422,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private fun ensureMenuButtonPopup(anchor: View): Boolean {
         val existing = menuButtonPopup
-        if (existing?.isShowing == true && menuButtonView != null) {
+        if (existing?.isShowing == true && (menuButtonView != null || drawerShowing)) {
             return true
         }
 
         menuButtonPopup?.dismiss()
+        val container = FrameLayout(this)
         val view = createMenuButtonOverlay()
+        container.addView(view)
         val popup = PopupWindow(
-            view,
+            container,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             false,
@@ -441,6 +442,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         }
 
+        menuChromeContainer = container
         menuButtonView = view
         menuButtonPopup = popup
         val margin = dp(16)
@@ -448,6 +450,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return true
         }
         menuButtonPopup = null
+        menuChromeContainer = null
         menuButtonView = null
         return false
     }
@@ -492,8 +495,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
             return
         }
-        val existing = drawerDialog
-        if (existing?.isShowing == true) {
+        val popup = menuButtonPopup ?: run {
+            lastDrawerStateForTest = "menu popup unavailable"
+            return
+        }
+        val container = menuChromeContainer ?: run {
+            lastDrawerStateForTest = "menu container unavailable"
+            return
+        }
+        if (drawerShowing) {
             lastDrawerStateForTest = "already showing"
             return
         }
@@ -527,31 +537,27 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         installComposeOwners(drawerContent)
         overlay.addView(drawerContent)
 
-        val dialog = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar).apply {
-            requestWindowFeature(Window.FEATURE_NO_TITLE)
-            setContentView(overlay)
-            setOnDismissListener {
-                lastDrawerStateForTest = "dismissed"
-                clearDrawerWindowReferences()
-            }
-        }
-
+        container.removeAllViews()
+        container.addView(overlay)
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
-        drawerDialog = dialog
-        val shown = showDrawerDialog(dialog)
+        drawerShowing = true
+        menuButtonView = null
+        val shown = updateMenuChromePopupForDrawer(popup)
         lastDrawerStateForTest =
-            "showDialog=$shown, dialog=${dialog.debugDialogState()}, overlay=${overlay.debugViewState()}"
+            "showInMenuPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
         if (!shown) {
             clearDrawerWindowReferences()
+            restoreMenuButtonOverlay()
         }
     }
 
     private fun removeDrawerOverlay(): Boolean {
-        val dialog = drawerDialog ?: return false
-        dialog.dismiss()
+        if (!drawerShowing) {
+            return false
+        }
         clearDrawerWindowReferences()
-        return true
+        return restoreMenuButtonOverlay()
     }
 
     private fun popupAnchor(): View? =
@@ -573,14 +579,31 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         }
 
-    private fun showDrawerDialog(dialog: Dialog): Boolean =
+    private fun updateMenuChromePopupForDrawer(popup: PopupWindow): Boolean =
+        updatePopupWindow(popup, 0, 0, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+
+    private fun restoreMenuButtonOverlay(): Boolean {
+        val popup = menuButtonPopup ?: return false
+        val container = menuChromeContainer ?: return false
+        container.removeAllViews()
+        val button = createMenuButtonOverlay()
+        container.addView(button)
+        menuButtonView = button
+        val margin = dp(16)
+        return updatePopupWindow(
+            popup,
+            margin,
+            statusBarHeight() + margin,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
+    private fun updatePopupWindow(popup: PopupWindow, x: Int, y: Int, width: Int, height: Int): Boolean =
         try {
-            dialog.show()
-            dialog.window?.apply {
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            }
+            popup.width = width
+            popup.height = height
+            popup.update(x, y, width, height)
             true
         } catch (_: WindowManager.BadTokenException) {
             false
@@ -589,7 +612,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     private fun clearDrawerWindowReferences() {
-        drawerDialog = null
+        drawerShowing = false
         drawerOverlayView = null
         drawerComposeView = null
     }
@@ -607,14 +630,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun PopupWindow?.debugPopupState(): String =
         if (this == null) "null" else "showing=$isShowing"
 
-    private fun Dialog?.debugDialogState(): String =
-        if (this == null) "null" else "showing=$isShowing, window=${window != null}"
-
     private fun dismissChromePopups() {
-        drawerDialog?.dismiss()
         clearDrawerWindowReferences()
         menuButtonPopup?.dismiss()
         menuButtonPopup = null
+        menuChromeContainer = null
         menuButtonView = null
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
