@@ -223,12 +223,27 @@ impl<'a> GsuInterpreter<'a> {
                 self.halted = true;
             }
             (_, 0x01 | 0x02) => self.sync_program_counter(),
+            (0, 0x03) => {
+                self.sync_program_counter();
+                self.shift_right();
+            }
             (_, 0x08) => {
                 let relative = self.fetch() as i8;
                 self.sync_program_counter();
                 if !self.zero {
                     self.branch(relative);
                 }
+            }
+            (_, 0x09) => {
+                let relative = self.fetch() as i8;
+                self.sync_program_counter();
+                if self.zero {
+                    self.branch(relative);
+                }
+            }
+            (_, 0x10..=0x1F) => {
+                self.sync_program_counter();
+                self.destination = Some(usize::from(opcode & 0x0F));
             }
             (_, 0x20..=0x2F) => {
                 let register = usize::from(opcode & 0x0F);
@@ -273,17 +288,40 @@ impl<'a> GsuInterpreter<'a> {
                 self.sync_program_counter();
                 self.plot();
             }
+            (0, 0x4D) => {
+                self.sync_program_counter();
+                self.swap_bytes();
+            }
             (0, 0x4E) => {
                 self.sync_program_counter();
                 self.color = self.registers[0] as u8 & 0x0F;
             }
-            (_, 0x50..=0x5F) => {
+            (2, 0x50..=0x5F) => {
+                self.sync_program_counter();
+                self.add_immediate(u16::from(opcode & 0x0F));
+            }
+            (0, 0x50..=0x5F) => {
                 self.sync_program_counter();
                 self.add_register(usize::from(opcode & 0x0F));
             }
             (3, 0x60..=0x6F) => {
                 self.sync_program_counter();
                 self.compare_register(usize::from(opcode & 0x0F));
+            }
+            (2, 0x70..=0x7F) => {
+                self.sync_program_counter();
+                self.and_immediate(u16::from(opcode & 0x0F));
+            }
+            (0, 0x70..=0x7F) => {
+                self.sync_program_counter();
+                self.and_register(usize::from(opcode & 0x0F));
+            }
+            (0, 0x80..=0x8F) => {
+                self.sync_program_counter();
+                self.multiply_register(usize::from(opcode & 0x0F));
+            }
+            (0, 0x98..=0x9D) => {
+                self.jump_register(usize::from(opcode & 0x0F));
             }
             (_, 0xA0..=0xAF) => {
                 let value = self.fetch();
@@ -293,7 +331,6 @@ impl<'a> GsuInterpreter<'a> {
             (_, 0xB0..=0xBF) => {
                 self.sync_program_counter();
                 self.source = usize::from(opcode & 0x0F);
-                self.destination = None;
             }
             (_, 0xD0..=0xDF) => {
                 self.sync_program_counter();
@@ -301,6 +338,14 @@ impl<'a> GsuInterpreter<'a> {
                 self.registers[register] = self.registers[register].wrapping_add(1);
                 self.zero = self.registers[register] == 0;
                 self.source = register;
+            }
+            (0, 0xC0) => {
+                self.sync_program_counter();
+                self.high_byte();
+            }
+            (0, 0xC1..=0xCF) => {
+                self.sync_program_counter();
+                self.or_register(usize::from(opcode & 0x0F));
             }
             (_, 0xF0..=0xFF) => {
                 let low = self.fetch();
@@ -328,6 +373,11 @@ impl<'a> GsuInterpreter<'a> {
         self.registers[15] = self.pc;
     }
 
+    fn jump_register(&mut self, register: usize) {
+        self.pc = self.registers[register];
+        self.registers[15] = self.pc;
+    }
+
     fn set_register(&mut self, register: usize, value: u16) {
         self.registers[register] = value;
         self.zero = value == 0;
@@ -342,6 +392,50 @@ impl<'a> GsuInterpreter<'a> {
 
     fn add_register(&mut self, register: usize) {
         let result = self.registers[self.source].wrapping_add(self.registers[register]);
+        self.write_result(result);
+    }
+
+    fn add_immediate(&mut self, value: u16) {
+        let result = self.registers[self.source].wrapping_add(value);
+        self.write_result(result);
+    }
+
+    fn and_immediate(&mut self, value: u16) {
+        let result = self.registers[self.source] & value;
+        self.write_result(result);
+    }
+
+    fn and_register(&mut self, register: usize) {
+        let result = self.registers[self.source] & self.registers[register];
+        self.write_result(result);
+    }
+
+    fn or_register(&mut self, register: usize) {
+        let result = self.registers[self.source] | self.registers[register];
+        self.write_result(result);
+    }
+
+    fn multiply_register(&mut self, register: usize) {
+        let result = self.registers[self.source].wrapping_mul(self.registers[register]);
+        self.write_result(result);
+    }
+
+    fn shift_right(&mut self) {
+        let result = self.registers[self.source] >> 1;
+        self.write_result(result);
+    }
+
+    fn high_byte(&mut self) {
+        let result = self.registers[self.source] >> 8;
+        self.write_result(result);
+    }
+
+    fn swap_bytes(&mut self) {
+        let result = self.registers[self.source].swap_bytes();
+        self.write_result(result);
+    }
+
+    fn write_result(&mut self, result: u16) {
         let destination = self.destination.take().unwrap_or(0);
         self.set_register(destination, result);
     }
