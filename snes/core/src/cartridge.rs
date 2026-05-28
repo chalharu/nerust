@@ -1429,6 +1429,28 @@ mod tests {
     }
 
     #[test]
+    fn super_fx_system_ram_window_mirrors_first_game_ram_page() {
+        let mut rom = build_hirom_with_header("HIROM GSU RAM MAP", 0x31, 0x15, None, 0x0C);
+        rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert_eq!(cartridge.save_ram().len(), 128 * 1024);
+        assert!(cartridge.write(0x700123, 0x11));
+        assert!(cartridge.write(0x710123, 0x22));
+        assert_eq!(cartridge.read(0x700123), Some(0x11));
+        assert_eq!(cartridge.read(0x710123), Some(0x22));
+        assert_eq!(cartridge.read(0x006123), Some(0x11));
+        assert_eq!(cartridge.read(0x016123), Some(0x11));
+        assert_eq!(cartridge.read(0x3F6123), Some(0x11));
+        assert_eq!(cartridge.read(0x806123), Some(0x11));
+        assert_eq!(cartridge.read(0xBF6123), Some(0x11));
+
+        assert!(cartridge.write(0x016123, 0x33));
+        assert_eq!(cartridge.read(0x700123), Some(0x33));
+        assert_eq!(cartridge.read(0x710123), Some(0x22));
+    }
+
+    #[test]
     fn super_fx_alt_loads_and_byte_stores_game_ram() {
         let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
             "HIROM GSU RAM OPS",
