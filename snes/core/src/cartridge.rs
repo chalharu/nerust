@@ -1298,6 +1298,13 @@ mod tests {
         0x0F, 0x00,
     ];
 
+    fn start_super_fx_program(cartridge: &mut Cartridge, pbr: u8, r15: u16) {
+        assert!(cartridge.write(0x003034, pbr));
+        assert!(cartridge.write(0x00301E, (r15 & 0x00FF) as u8));
+        assert!(cartridge.write(0x00301F, (r15 >> 8) as u8));
+        assert!(cartridge.write(0x003030, 0x20));
+    }
+
     #[test]
     fn super_fx_game_ram_maps_full_direct_banks_and_starts_programs() {
         let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
@@ -1326,10 +1333,7 @@ mod tests {
             assert!(cartridge.write(0x700200 + offset as u32, value));
         }
         assert!(cartridge.write(0x003038, 0x03));
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x02));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0200);
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
             assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
@@ -1338,10 +1342,7 @@ mod tests {
         for (offset, value) in GSU_DEMO_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700100 + offset as u32, value));
         }
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x01));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0100);
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         for (offset, expected) in GSU_DEMO_TILE_4BPP.iter().copied().enumerate() {
             assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
@@ -1363,10 +1364,7 @@ mod tests {
         for (offset, value) in GSU_RAM_LOAD_STORE_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x80));
-        assert!(cartridge.write(0x00301F, 0x00));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         assert_eq!(cartridge.read(0x700100), Some(0xEF));
@@ -1385,12 +1383,31 @@ mod tests {
         rom[..GSU_ROM_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_STORE_PROGRAM);
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
-        assert!(cartridge.write(0x003034, 0x00));
+        start_super_fx_program(&mut cartridge, 0x00, 0x8000);
         assert_eq!(cartridge.read(0x003034), Some(0x00));
-        assert!(cartridge.write(0x003030, 0x20));
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        assert_eq!(cartridge.read(0x700100), Some(0xEF));
+        assert_eq!(cartridge.read(0x700101), Some(0xBE));
+    }
+
+    #[test]
+    fn super_fx_requires_go_flag_to_start_program() {
+        let mut rom = build_hirom_with_header("HIROM GSU GO", 0x31, 0x15, None, 0x0C);
+        rom[..GSU_ROM_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_STORE_PROGRAM);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x003034, 0x00));
         assert!(cartridge.write(0x00301E, 0x00));
         assert!(cartridge.write(0x00301F, 0x80));
+        assert_eq!(cartridge.read(0x700100), Some(0x00));
+        assert_eq!(cartridge.read(0x700101), Some(0x00));
 
+        assert!(cartridge.write(0x003030, 0x00));
+        assert_eq!(cartridge.read(0x700100), Some(0x00));
+        assert_eq!(cartridge.read(0x700101), Some(0x00));
+
+        assert!(cartridge.write(0x003030, 0x20));
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         assert_eq!(cartridge.read(0x700100), Some(0xEF));
         assert_eq!(cartridge.read(0x700101), Some(0xBE));
@@ -1402,10 +1419,7 @@ mod tests {
         rom[..GSU_ROM_WITH_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_WITH_STORE_PROGRAM);
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
-        assert!(cartridge.write(0x003034, 0x00));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x80));
+        start_super_fx_program(&mut cartridge, 0x00, 0x8000);
 
         assert_eq!(cartridge.read(0x700100), Some(0xEF));
         assert_eq!(cartridge.read(0x700101), Some(0xBE));
@@ -1423,10 +1437,7 @@ mod tests {
         }
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
-        assert!(cartridge.write(0x003034, 0x00));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x80));
+        start_super_fx_program(&mut cartridge, 0x00, 0x8000);
 
         assert_eq!(cartridge.read(0x700100), Some(0x7A));
         assert_eq!(cartridge.read(0x700101), Some(0x00));
@@ -1440,10 +1451,7 @@ mod tests {
         rom[..GSU_ROMB_GETB_PROGRAM.len()].copy_from_slice(&GSU_ROMB_GETB_PROGRAM);
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
-        assert!(cartridge.write(0x003034, 0x00));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x80));
+        start_super_fx_program(&mut cartridge, 0x00, 0x8000);
 
         assert_eq!(cartridge.read(0x700100), Some(0x5C));
         assert_eq!(cartridge.read(0x003036), Some(0x01));
@@ -1456,10 +1464,7 @@ mod tests {
         rom[..GSU_RAMB_PROGRAM.len()].copy_from_slice(&GSU_RAMB_PROGRAM);
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
-        assert!(cartridge.write(0x003034, 0x00));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x80));
+        start_super_fx_program(&mut cartridge, 0x00, 0x8000);
 
         assert_eq!(cartridge.save_ram()[0x0100], 0x00);
         assert_eq!(cartridge.save_ram()[0x0101], 0x00);
@@ -1482,10 +1487,7 @@ mod tests {
             assert!(cartridge.write(0x700200 + offset as u32, value));
         }
         assert!(cartridge.write(0x003038, 0x03));
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x02));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0200);
 
         for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
             assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
@@ -1508,10 +1510,7 @@ mod tests {
         for (offset, value) in GSU_ALU_BRANCH_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x80));
-        assert!(cartridge.write(0x00301F, 0x00));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         assert_eq!(cartridge.read(0x700200), Some(0x08));
@@ -1546,10 +1545,7 @@ mod tests {
         for (offset, value) in GSU_ALU_VARIANTS_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700080 + offset as u32, value));
         }
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x80));
-        assert!(cartridge.write(0x00301F, 0x00));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         for (offset, expected) in [
@@ -1589,10 +1585,7 @@ mod tests {
         for (offset, value) in GSU_SPRITE_SCALER_PROGRAM.iter().copied().enumerate() {
             assert!(cartridge.write(0x700100 + offset as u32, value));
         }
-        assert!(cartridge.write(0x003034, 0x70));
-        assert!(cartridge.write(0x003030, 0x20));
-        assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x01));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0100);
 
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         for (offset, expected) in GSU_DEMO_TILE_4BPP.iter().copied().enumerate() {

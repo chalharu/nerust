@@ -1024,7 +1024,6 @@ pub(crate) struct SuperFxState {
 const SUPERFX_VCR: u16 = 0x303B;
 const SUPERFX_SFR: u16 = 0x3030;
 const SUPERFX_R15: u16 = 0x301E;
-const SUPERFX_R15_HIGH: u16 = 0x301F;
 const SUPERFX_PBR: u16 = 0x3034;
 const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
@@ -1063,7 +1062,7 @@ impl SuperFxState {
             value
         };
         let handled = self.registers.write(address_offset, value);
-        if handled && address_offset == SUPERFX_R15_HIGH {
+        if handled && address_offset == SUPERFX_SFR && value & SUPERFX_GO_FLAG != 0 {
             self.run_program(rom, save_ram);
         }
         handled
