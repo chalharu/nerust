@@ -4,12 +4,14 @@ const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 pub enum MapperKind {
     LoRom,
     HiRom,
+    Sa1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Mapper {
     LoRom(LoRomMapper),
     HiRom(HiRomMapper),
+    Sa1(Sa1Mapper),
 }
 
 impl Mapper {
@@ -31,6 +33,7 @@ impl Mapper {
         match self {
             Self::LoRom(mapper) => mapper.read_rom(rom, address),
             Self::HiRom(mapper) => mapper.read_rom(rom, address),
+            Self::Sa1(mapper) => mapper.read_rom(rom, address),
         }
     }
 
@@ -38,6 +41,7 @@ impl Mapper {
         match self {
             Self::LoRom(_) => lorom_ram_index(address, ram_len),
             Self::HiRom(_) => hirom_ram_index(address, ram_len),
+            Self::Sa1(_) => sa1_ram_index(address, ram_len),
         }
     }
 }
@@ -57,6 +61,15 @@ pub(crate) struct HiRomMapper;
 impl HiRomMapper {
     pub(crate) fn read_rom(&self, rom: &[u8], address: u32) -> Option<u8> {
         hirom_rom_index(address, rom.len()).map(|index| rom[index])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Sa1Mapper;
+
+impl Sa1Mapper {
+    pub(crate) fn read_rom(&self, rom: &[u8], address: u32) -> Option<u8> {
+        sa1_rom_index(address, rom.len()).map(|index| rom[index])
     }
 }
 
@@ -114,6 +127,24 @@ pub(crate) fn hirom_rom_index(address: u32, rom_len: usize) -> Option<usize> {
     Some(linear % rom_len)
 }
 
+pub(crate) fn sa1_rom_index(address: u32, rom_len: usize) -> Option<usize> {
+    if rom_len == 0 {
+        return None;
+    }
+
+    let address = address & ADDRESS_MASK;
+    let bank = ((address >> 16) & 0xFF) as u8;
+    let offset = (address & 0xFFFF) as u16;
+
+    match bank {
+        0xC0..=0xFF => {
+            let linear = usize::from(bank - 0xC0) * 0x10000 + usize::from(offset);
+            Some(linear % rom_len)
+        }
+        _ => lorom_rom_index(address, rom_len),
+    }
+}
+
 pub(crate) fn lorom_ram_index(address: u32, ram_len: usize) -> Option<usize> {
     if ram_len == 0 {
         return None;
@@ -150,9 +181,30 @@ pub(crate) fn hirom_ram_index(address: u32, ram_len: usize) -> Option<usize> {
     Some(linear % ram_len)
 }
 
+pub(crate) fn sa1_ram_index(address: u32, ram_len: usize) -> Option<usize> {
+    if ram_len == 0 {
+        return None;
+    }
+
+    let address = address & ADDRESS_MASK;
+    let bank = ((address >> 16) & 0xFF) as u8;
+    let offset = (address & 0xFFFF) as u16;
+
+    if !matches!(bank, 0x40..=0x4F) {
+        return None;
+    }
+
+    let page = usize::from(bank & 0x0F);
+    let linear = page * 0x10000 + usize::from(offset);
+    Some(linear % ram_len)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{hirom_ram_index, hirom_rom_index, lorom_ram_index, lorom_rom_index};
+    use super::{
+        hirom_ram_index, hirom_rom_index, lorom_ram_index, lorom_rom_index, sa1_ram_index,
+        sa1_rom_index,
+    };
 
     #[test]
     fn lorom_banks_and_mirrors_map_into_linear_rom_storage() {
@@ -202,5 +254,24 @@ mod tests {
         assert_eq!(hirom_ram_index(0x205FFF, 0x2000), None);
         assert_eq!(hirom_ram_index(0x208000, 0x2000), None);
         assert_eq!(hirom_ram_index(0x406000, 0x2000), None);
+    }
+
+    #[test]
+    fn sa1_default_super_mmc_rom_banks_map_full_64k_pages() {
+        assert_eq!(sa1_rom_index(0x008000, 0x20000), Some(0x00000));
+        assert_eq!(sa1_rom_index(0x00FFFF, 0x20000), Some(0x07FFF));
+        assert_eq!(sa1_rom_index(0xC00000, 0x20000), Some(0x00000));
+        assert_eq!(sa1_rom_index(0xC08000, 0x20000), Some(0x08000));
+        assert_eq!(sa1_rom_index(0xC10000, 0x20000), Some(0x10000));
+    }
+
+    #[test]
+    fn sa1_bwram_banks_map_to_linear_ram_storage() {
+        assert_eq!(sa1_ram_index(0x400000, 0x20000), Some(0x00000));
+        assert_eq!(sa1_ram_index(0x40FFFF, 0x20000), Some(0x0FFFF));
+        assert_eq!(sa1_ram_index(0x410000, 0x20000), Some(0x10000));
+        assert_eq!(sa1_ram_index(0x4F1234, 0x20000), Some(0x11234));
+        assert_eq!(sa1_ram_index(0xC00000, 0x20000), None);
+        assert_eq!(sa1_ram_index(0x700000, 0x20000), None);
     }
 }
