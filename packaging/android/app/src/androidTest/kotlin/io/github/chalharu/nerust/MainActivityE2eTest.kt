@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -79,7 +80,7 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeRomLibraryDialogAppearsWithExpectedEntries() {
-        val activity = launchActivity(clearTask = false)
+        val activity = launchActivity()
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
@@ -111,7 +112,7 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeSettingsDialogAppearsWithCurrentSelections() {
-        val activity = launchActivity(clearTask = false)
+        val activity = launchActivity()
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
@@ -179,89 +180,36 @@ class MainActivityE2eTest {
         exerciseMenuAction(MENU_ACTION_OPEN_SETTINGS)
     }
 
-    private fun launchActivity(clearTask: Boolean = true): MainActivity {
-        if (!clearTask) {
-            sharedActivity
-                ?.takeUnless { it.isDestroyed || it.isFinishing }
-                ?.let { activity ->
-                    if (prepareReusableActivity(activity)) {
-                        return activity
-                    }
-                    sharedActivity = null
-                }
-            MainActivity.currentActivityForTest()?.let { activity ->
-                sharedActivity = activity
-                if (prepareReusableActivity(activity)) {
-                    return activity
-                }
-                sharedActivity = null
-            }
-        }
+    private fun launchActivity(): MainActivity {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val launchIntent =
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
             }
-        val launchFlags =
-            if (clearTask) {
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            } else {
-                Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-        launchIntent.addFlags(launchFlags)
-        val preLaunchActivity = MainActivity.currentActivityForTest()
-
-        context.startActivity(launchIntent)
-        if (!clearTask) {
-            preLaunchActivity?.let { activity ->
-                try {
-                    runOnActivityThread(activity) {
-                        activity.resetChromeStateForTest()
-                    }
-                } catch (_: Throwable) {
-                    // Ignore stale or no-longer-responsive instances here; the launch poll below
-                    // will either observe a usable activity or fail with current chrome state.
-                }
-            }
-        }
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         val activity =
-            if (clearTask) {
-                waitUntilValue(STARTUP_TIMEOUT_MS) {
-                    MainActivity.currentActivityForTest()?.takeIf { it !== preLaunchActivity }
+            try {
+                val launched = InstrumentationRegistry.getInstrumentation().startActivitySync(launchIntent)
+                check(launched is MainActivity) {
+                    "Launch intent should start MainActivity but started ${launched::class.java.name}"
                 }
-            } else {
-                waitUntilValue(STARTUP_TIMEOUT_MS) {
-                    val current = MainActivity.currentActivityForTest() ?: return@waitUntilValue null
-                    when {
-                        current !== preLaunchActivity -> current
-                        safeChromeViewIsShowing(current, DRAWER_EDGE_HANDLE_TAG) -> current
-                        else -> null
-                    }
-                }
+                launched as MainActivity
+            } catch (error: Throwable) {
+                val current = MainActivity.currentActivityForTest()
+                val currentState = current?.let { safeChromeDebugState(it, DRAWER_EDGE_HANDLE_TAG) } ?: "no current activity"
+                fail(
+                    "MainActivity launch failed: ${error.message ?: error::class.java.simpleName}; " +
+                        "current=$currentState",
+                )
+                throw IllegalArgumentException("MainActivity should be launched", error)
             }
-        if (activity == null) {
-            val current = MainActivity.currentActivityForTest()
-            if (!clearTask && current != null) {
-                fail("MainActivity relaunch did not restore the drawer handle; ${safeChromeDebugState(current, DRAWER_EDGE_HANDLE_TAG)}")
-            }
-            throw IllegalArgumentException("MainActivity should be launched")
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
         }
-        sharedActivity = activity
         assertDrawerHandleAvailable(activity)
         return activity
     }
-
-    private fun prepareReusableActivity(activity: MainActivity): Boolean =
-        try {
-            runOnActivityThread(activity) {
-                activity.resetChromeStateForTest()
-            }
-            assertDrawerHandleAvailable(activity)
-            true
-        } catch (_: Throwable) {
-            false
-        }
 
     private fun assertDrawerHandleAvailable(activity: MainActivity) {
         assertChromeViewAvailable(
@@ -273,7 +221,7 @@ class MainActivityE2eTest {
     }
 
     private fun exerciseMenuAction(action: String) {
-        val activity = launchActivity(clearTask = false)
+        val activity = launchActivity()
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         runOnActivityThread(activity) {
@@ -360,15 +308,6 @@ class MainActivityE2eTest {
         return condition()
     }
 
-    private fun <T> waitUntilValue(timeoutMs: Long, supplier: () -> T?): T? {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() <= deadline) {
-            supplier()?.let { return it }
-            SystemClock.sleep(POLL_INTERVAL_MS)
-        }
-        return supplier()
-    }
-
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
@@ -391,7 +330,5 @@ class MainActivityE2eTest {
         const val TEST_TIMEOUT_MS = 180_000L
         const val UI_THREAD_TIMEOUT_MS = 10_000L
 
-        @Volatile
-        var sharedActivity: MainActivity? = null
     }
 }
