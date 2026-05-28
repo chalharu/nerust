@@ -94,11 +94,17 @@ class MainActivityE2eTest {
             assertTrue("MainActivity should be destroyed before relaunch", waitUntil(STARTUP_TIMEOUT_MS) {
                 first.isDestroyed
             })
+            SystemClock.sleep(RELAUNCH_SETTLE_MS)
             firstActivity = null
 
             val relaunchMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
             try {
-                relaunchedActivity = launchMainActivity(instrumentation, context, relaunchMonitor)
+                relaunchedActivity = launchMainActivity(
+                    instrumentation,
+                    context,
+                    relaunchMonitor,
+                    clearTask = false,
+                )
             } finally {
                 instrumentation.removeMonitor(relaunchMonitor)
             }
@@ -113,12 +119,18 @@ class MainActivityE2eTest {
         instrumentation: Instrumentation,
         context: Context,
         monitor: Instrumentation.ActivityMonitor,
+        clearTask: Boolean = true,
     ): MainActivity {
         val launchIntent =
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
             }
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val launchFlags = if (clearTask) {
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        } else {
+            Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        launchIntent.addFlags(launchFlags)
         context.startActivity(launchIntent)
         val activity = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
             "MainActivity should be launched"
@@ -175,6 +187,7 @@ class MainActivityE2eTest {
         const val EXPECTED_DRAWER_CONTENT = "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val POLL_INTERVAL_MS = 50L
+        const val RELAUNCH_SETTLE_MS = 1_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
     }
 }
