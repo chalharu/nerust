@@ -987,6 +987,21 @@ cases:
       - kind: oam_u16
         address: "0x0000"
         expected: "0xF080"
+  - id: hirom-gsu-test-300k-screen-state
+    description: >
+      The public-domain HiROM+GSU-2 integration test reaches a deterministic rendered report at 300000 steps while exercising Super FX VCR reads, Game Pak RAM access, and R15-triggered GSU execution used by its pixel and demo programs.
+
+    rom: snes-coprocessor-tests/hirom-gsu-test/build/HiRomGsuTest.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x58F085949A81CF09"
+    assertions:
+      - kind: bus_u8
+        address: "0x00303B"
+        expected: "0x04"
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
