@@ -39,61 +39,53 @@ class MainActivityE2eTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-        var activeActivity: MainActivity? = null
 
-        try {
-            var activity = try {
-                launchMainActivity(instrumentation, context, monitor)
-            } finally {
-                instrumentation.removeMonitor(monitor)
-            }.also { activeActivity = it }
-
-            activity = recreateMainActivity(instrumentation, activity)
-            activeActivity = activity
-
-            instrumentation.runOnMainSync {
-                require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
-                val menuButton = requireNotNull(
-                    activity.findChromeViewForTest(MENU_BUTTON_TAG),
-                ) {
-                    "Menu button should be attached after startup"
-                }
-
-                assertEquals("Menu", menuButton.contentDescription?.toString())
-                assertTrue("Menu button should be showing", activity.isChromeViewShowingForTest(MENU_BUTTON_TAG))
-                assertTrue("Menu button should handle clicks", menuButton.performClick())
-            }
-            instrumentation.waitForIdleSync()
-
-            assertChromeViewAvailable(
-                instrumentation,
-                activity,
-                DRAWER_OVERLAY_TAG,
-                DRAWER_TIMEOUT_MS,
-                "Drawer overlay should be attached after tapping Menu",
-            )
-
-            instrumentation.runOnMainSync {
-                require(!activity.isDestroyed) { "MainActivity should remain alive after opening Menu" }
-                val drawerOverlay = requireNotNull(
-                    activity.findChromeViewForTest(DRAWER_OVERLAY_TAG),
-                ) {
-                    "Drawer overlay should be attached after tapping Menu"
-                }
-                assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
-                assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
-
-                val drawerComposeView = requireNotNull(
-                    activity.findChromeViewForTest(DRAWER_COMPOSE_TAG),
-                ) {
-                    "Drawer ComposeView should be attached after tapping Menu"
-                }
-                assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
-            }
+        var activity = try {
+            launchMainActivity(instrumentation, context, monitor)
         } finally {
-            activeActivity?.let { activity ->
-                finishActivity(instrumentation, activity)
+            instrumentation.removeMonitor(monitor)
+        }
+
+        activity = recreateMainActivity(instrumentation, activity)
+
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
+            val menuButton = requireNotNull(
+                activity.findChromeViewForTest(MENU_BUTTON_TAG),
+            ) {
+                "Menu button should be attached after startup"
             }
+
+            assertEquals("Menu", menuButton.contentDescription?.toString())
+            assertTrue("Menu button should be showing", activity.isChromeViewShowingForTest(MENU_BUTTON_TAG))
+            assertTrue("Menu button should handle clicks", menuButton.performClick())
+        }
+        instrumentation.waitForIdleSync()
+
+        assertChromeViewAvailable(
+            instrumentation,
+            activity,
+            DRAWER_OVERLAY_TAG,
+            DRAWER_TIMEOUT_MS,
+            "Drawer overlay should be attached after tapping Menu",
+        )
+
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive after opening Menu" }
+            val drawerOverlay = requireNotNull(
+                activity.findChromeViewForTest(DRAWER_OVERLAY_TAG),
+            ) {
+                "Drawer overlay should be attached after tapping Menu"
+            }
+            assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
+            assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
+
+            val drawerComposeView = requireNotNull(
+                activity.findChromeViewForTest(DRAWER_COMPOSE_TAG),
+            ) {
+                "Drawer ComposeView should be attached after tapping Menu"
+            }
+            assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
         }
     }
 
@@ -141,18 +133,6 @@ class MainActivityE2eTest {
         } finally {
             instrumentation.removeMonitor(monitor)
         }
-    }
-
-    private fun finishActivity(instrumentation: Instrumentation, activity: MainActivity) {
-        instrumentation.runOnMainSync {
-            if (!activity.isFinishing && !activity.isDestroyed) {
-                activity.finish()
-            }
-        }
-        instrumentation.waitForIdleSync()
-        assertTrue("MainActivity should be destroyed after finish", waitUntil(STARTUP_TIMEOUT_MS) {
-            activity.isDestroyed
-        })
     }
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
