@@ -1780,7 +1780,6 @@ impl<'a> GsuInterpreter<'a> {
 
     fn load_register(&mut self, register: usize, value: u16) {
         self.registers[register] = value;
-        self.set_zero_sign(value);
     }
 
     fn compare_register(&mut self, register: usize) {
