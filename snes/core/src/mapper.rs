@@ -211,7 +211,7 @@ pub(crate) fn superfx_ram_index(address: u32, ram_len: usize) -> Option<usize> {
 
     let linear = match bank {
         0x00..=0x3F | 0x80..=0xBF if (0x6000..=0x7FFF).contains(&offset) => {
-            usize::from(bank & 0x3F) * 0x2000 + usize::from(offset - 0x6000)
+            usize::from(offset - 0x6000)
         }
         0x70..=0x71 | 0xF0..=0xF1 => usize::from(bank & 0x01) * 0x10000 + usize::from(offset),
         _ => return None,
@@ -309,6 +309,11 @@ mod tests {
         assert_eq!(superfx_ram_index(0xF00000, 0x2000), Some(0x0000));
         assert_eq!(superfx_ram_index(0x006000, 0x2000), Some(0x0000));
         assert_eq!(superfx_ram_index(0x007FFF, 0x2000), Some(0x1FFF));
+        assert_eq!(superfx_ram_index(0x016000, 0x20000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0x3F7FFF, 0x20000), Some(0x1FFF));
+        assert_eq!(superfx_ram_index(0x806000, 0x20000), Some(0x0000));
+        assert_eq!(superfx_ram_index(0xBF7FFF, 0x20000), Some(0x1FFF));
+        assert_eq!(superfx_ram_index(0x710000, 0x20000), Some(0x10000));
         assert_eq!(superfx_ram_index(0x005FFF, 0x2000), None);
     }
 }
