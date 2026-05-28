@@ -42,7 +42,7 @@ pub struct AndroidSound {
     source_sample_rate: u32,
 }
 
-// SAFETY: This Android app is packaged with minSdk 26, so CPAL/Oboe uses the
+// SAFETY: This Android app is packaged with minSdk 28, so CPAL/Oboe uses the
 // AAudio path rather than the older OpenSL ES + JNI fallback. `AndroidSound` is
 // created on the frontend thread and then moved once into the console thread,
 // which is the only thread that calls `play()`, `pause()`, or drops the stream.

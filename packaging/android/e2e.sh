@@ -7,7 +7,7 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TARGET_ABI="${ANDROID_E2E_ABI:-x86_64}"
 JNI_LIBS_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 
-export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-26}"
+export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-28}"
 export ANDROID_ABI_FILTERS="${ANDROID_ABI_FILTERS:-${TARGET_ABI}}"
 
 echo "Running Android e2e tests"
