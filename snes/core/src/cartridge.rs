@@ -1719,6 +1719,9 @@ mod tests {
 
         assert_eq!(cartridge.read(0x00303E), Some(0x00));
         assert_eq!(cartridge.read(0x00303F), Some(0x80));
+        assert!(cartridge.write(0x003030, 0x00));
+        assert_eq!(cartridge.read(0x00303E), Some(0x00));
+        assert_eq!(cartridge.read(0x00303F), Some(0x00));
 
         let mut rom = build_hirom_with_header("HIROM GSU LJMP", 0x31, 0x15, None, 0x0C);
         rom[..GSU_LJMP_SOURCE_PROGRAM.len()].copy_from_slice(GSU_LJMP_SOURCE_PROGRAM);
