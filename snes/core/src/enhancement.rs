@@ -720,6 +720,7 @@ enum Dsp1Operation {
     Trigonometric,
     Rotate2d,
     Rotate3d,
+    AttitudeDelta,
     VectorLength,
     MemoryDump,
     Unsupported,
@@ -926,6 +927,7 @@ impl Dsp1State {
             Dsp1Operation::Trigonometric => dsp1_trigonometric(&self.input_words),
             Dsp1Operation::Rotate2d => dsp1_rotate_2d(&self.input_words),
             Dsp1Operation::Rotate3d => dsp1_rotate_3d(&self.input_words),
+            Dsp1Operation::AttitudeDelta => dsp1_attitude_delta(&self.input_words),
             Dsp1Operation::VectorLength => vec![dsp1_vector_length(&self.input_words)],
             Dsp1Operation::MemoryDump => vec![0; spec.writes],
             Dsp1Operation::Unsupported => vec![0; spec.writes],
@@ -988,7 +990,7 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x0E | 0x2E => (2, 2, Op::Unsupported),
         0x0F => (1, 1, Op::MemoryTest),
         0x10 | 0x30 => (2, 2, Op::Inverse),
-        0x14 => (6, 3, Op::Unsupported),
+        0x14 | 0x34 => (6, 3, Op::AttitudeDelta),
         0x1C | 0x3C => (6, 3, Op::Rotate3d),
         0x18 => (4, 1, Op::Range),
         0x1F | 0x3F => (1, 1024, Op::MemoryDump),
@@ -1172,6 +1174,36 @@ fn dsp1_rotate_3d(input_words: &[u16]) -> Vec<u16> {
         dsp1_saturating_i16(x_after_y),
         dsp1_saturating_i16(y_after_x),
         dsp1_saturating_i16(z_after_x),
+    ]
+}
+
+fn dsp1_attitude_delta(input_words: &[u16]) -> Vec<u16> {
+    let z_rotation = input_words[0] as i16;
+    let x_rotation = input_words[1] as i16;
+    let y_rotation = input_words[2] as i16;
+    let u_delta = f64::from(input_words[3] as i16);
+    let f_delta = f64::from(input_words[4] as i16);
+    let l_delta = f64::from(input_words[5] as i16);
+
+    let x_angle = dsp1_angle(input_words[1]);
+    let y_angle = dsp1_angle(input_words[2]);
+    let sin_y = y_angle.sin();
+    let cos_y = y_angle.cos();
+    let cos_x = x_angle.cos();
+    let tan_x = x_angle.tan();
+
+    let z_delta = if cos_x.abs() < f64::EPSILON {
+        (u_delta * cos_y - f_delta * sin_y).signum() * f64::from(i16::MAX)
+    } else {
+        (u_delta * cos_y - f_delta * sin_y) / cos_x
+    };
+    let x_delta = u_delta * sin_y + f_delta * cos_y;
+    let y_delta = l_delta - (u_delta * cos_y + f_delta * sin_y) * tan_x;
+
+    vec![
+        z_rotation.wrapping_add(dsp1_saturating_i16_value(z_delta)) as u16,
+        x_rotation.wrapping_add(dsp1_saturating_i16_value(x_delta)) as u16,
+        y_rotation.wrapping_add(dsp1_saturating_i16_value(y_delta)) as u16,
     ]
 }
 
