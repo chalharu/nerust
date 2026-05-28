@@ -728,9 +728,30 @@ mod tests {
 
         assert_eq!(cartridge.read(0x003000), Some(0x00));
         assert!(cartridge.write(0x003000, 0xC3));
+        assert_eq!(cartridge.read(0x003000), Some(0x00));
+        assert!(cartridge.write(0x002229, 0x01));
+        assert!(cartridge.write(0x003000, 0xC3));
         assert_eq!(cartridge.read(0x003000), Some(0xC3));
 
         assert_eq!(cartridge.read(0xC08000), Some(0xA2));
+    }
+
+    #[test]
+    fn sa1_iram_write_protection_masks_cpu_pages() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x03)).unwrap();
+
+        assert!(cartridge.write(0x003100, 0x11));
+        assert_eq!(cartridge.read(0x003100), Some(0x00));
+
+        assert!(cartridge.write(0x002229, 0x02));
+        assert!(cartridge.write(0x003100, 0x22));
+        assert_eq!(cartridge.read(0x003100), Some(0x22));
+        assert!(cartridge.write(0x003200, 0x33));
+        assert_eq!(cartridge.read(0x003200), Some(0x00));
+
+        assert!(cartridge.write(0x002229, 0x06));
+        assert!(cartridge.write(0x003200, 0x44));
+        assert_eq!(cartridge.read(0x003200), Some(0x44));
     }
 
     #[test]
@@ -886,6 +907,7 @@ mod tests {
 
         assert!(cartridge.write(0x002226, 0x80));
         assert!(cartridge.write(0x400000, 0xAB));
+        assert!(cartridge.write(0x002229, 0x01));
         assert!(cartridge.write(0x003000, 0xCD));
 
         write_u24(&mut cartridge, 0x002259, 0x400000);
@@ -918,6 +940,7 @@ mod tests {
     fn sa1_normal_dma_copies_iram_to_bwram() {
         let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x04)).unwrap();
 
+        assert!(cartridge.write(0x002229, 0x01));
         assert!(cartridge.write(0x003010, 0x44));
         assert!(cartridge.write(0x003011, 0x55));
         write_u24(&mut cartridge, 0x002232, 0x000010);
