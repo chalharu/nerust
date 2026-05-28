@@ -319,6 +319,13 @@ impl Bus {
     fn advance_video_one_subtick(&mut self) {
         let was_in_vblank = self.in_vblank();
         self.video_phase = (self.video_phase + 1) % VBLANK_STUB_PERIOD;
+        let current_subtick = self.current_subtick();
+        let current_scanline = self.current_scanline();
+        self.cartridge.tick_sa1_timer(
+            current_subtick,
+            current_scanline,
+            VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+        );
         let in_vblank = self.in_vblank();
         // Rising edge of vblank: latch the NMI flag and optionally queue a
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
@@ -1492,6 +1499,18 @@ mod tests {
         Cartridge::from_bytes(&rom).unwrap()
     }
 
+    fn test_sa1_cartridge() -> Cartridge {
+        let mut rom = vec![0; 0x10000];
+        rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"SA1 BUS TEST         ");
+        rom[0x7FD5] = 0x23;
+        rom[0x7FD6] = 0x34;
+        rom[0x7FD7] = 0x0C;
+        rom[0x7FD8] = 0x03;
+        rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2]
+            .copy_from_slice(&0x8000_u16.to_le_bytes());
+        Cartridge::from_bytes(&rom).unwrap()
+    }
+
     #[test]
     fn low_ram_mirrors_and_full_wram_alias_each_other() {
         let mut bus = Bus::new(test_cartridge());
@@ -1515,6 +1534,23 @@ mod tests {
 
         assert_eq!(bus.read(0x700456), 0xA5);
         assert_eq!(bus.read(0x702456), 0xA5);
+    }
+
+    #[test]
+    fn sa1_timer_ticks_with_video_stub() {
+        let mut bus = Bus::new(test_sa1_cartridge());
+
+        bus.write(0x002212, 0x7F);
+        bus.write(0x002213, 0x00);
+        bus.write(0x002214, 0x00);
+        bus.write(0x002215, 0x00);
+        bus.write(0x002210, 0x03);
+
+        bus.tick_video_stub();
+
+        assert_eq!(bus.read(0x002301) & 0x40, 0x40);
+        assert_eq!(bus.read(0x002302), 0x7F);
+        assert_eq!(bus.read(0x002304), 0x00);
     }
 
     #[test]

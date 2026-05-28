@@ -135,6 +135,15 @@ pub(crate) struct Sa1State {
     dma_bwram_conversion_active: bool,
     bitmap_register_file: [u8; 16],
     bwram_bitmap_2bpp: bool,
+    timer_control: u8,
+    timer_h_target: u16,
+    timer_v_target: u16,
+    timer_h_counter: u16,
+    timer_v_counter: u16,
+    timer_latched_h_counter: u16,
+    timer_latched_v_counter: u16,
+    timer_linear_counter: u32,
+    timer_irq_flag: bool,
     arithmetic_acm: bool,
     arithmetic_md: bool,
     ma: u16,
@@ -148,6 +157,12 @@ const SA1_CCNT: u16 = 0x2200;
 const SA1_SIC: u16 = 0x2202;
 const SA1_SCNT: u16 = 0x2209;
 const SA1_CIC: u16 = 0x220B;
+const SA1_TMC: u16 = 0x2210;
+const SA1_CTR: u16 = 0x2211;
+const SA1_HCNTL: u16 = 0x2212;
+const SA1_HCNTH: u16 = 0x2213;
+const SA1_VCNTL: u16 = 0x2214;
+const SA1_VCNTH: u16 = 0x2215;
 const SA1_DXB: u16 = 0x2221;
 const SA1_EXB: u16 = 0x2222;
 const SA1_FXB: u16 = 0x2223;
@@ -183,11 +198,16 @@ const SA1_BRF7: u16 = 0x2247;
 const SA1_BRF15: u16 = 0x224F;
 const SA1_SFR: u16 = 0x2300;
 const SA1_CFR: u16 = 0x2301;
+const SA1_HCRL: u16 = 0x2302;
+const SA1_HCRH: u16 = 0x2303;
+const SA1_VCRL: u16 = 0x2304;
+const SA1_VCRH: u16 = 0x2305;
 const SA1_MR0: u16 = 0x2306;
 const SA1_OF: u16 = 0x230B;
 const SA1_VDPL: u16 = 0x230C;
 const SA1_VDPH: u16 = 0x230D;
 const SA1_MR_MASK: u64 = (1 << 40) - 1;
+const SA1_HCOUNTER_DOTS_PER_LINE: u16 = 341;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sa1BwramAccess {
@@ -249,6 +269,15 @@ impl Sa1State {
             dma_bwram_conversion_active: false,
             bitmap_register_file: [0; 16],
             bwram_bitmap_2bpp: false,
+            timer_control: 0,
+            timer_h_target: 0,
+            timer_v_target: 0,
+            timer_h_counter: 0,
+            timer_v_counter: 0,
+            timer_latched_h_counter: 0,
+            timer_latched_v_counter: 0,
+            timer_linear_counter: 0,
+            timer_irq_flag: false,
             arithmetic_acm: false,
             arithmetic_md: false,
             ma: 0,
@@ -267,6 +296,9 @@ impl Sa1State {
         if let Some(value) = self.read_status(address_offset) {
             return Some(value);
         }
+        if let Some(value) = self.peek_timer(address_offset) {
+            return Some(value);
+        }
         if let Some(value) = self.read_arithmetic(address_offset) {
             return Some(value);
         }
@@ -280,6 +312,12 @@ impl Sa1State {
     }
 
     fn read(&mut self, address: u32, rom: &[u8], save_ram: &[u8]) -> Option<u8> {
+        if is_system_bank(address)
+            && let Some(value) = self.read_timer(offset(address))
+        {
+            return Some(value);
+        }
+
         let value = self.peek(address, rom, save_ram)?;
         if is_system_bank(address) && offset(address) == SA1_VDPH && self.vbr_auto_increment {
             self.increment_variable_data_address();
@@ -527,12 +565,27 @@ impl Sa1State {
                 if value & 0x80 != 0 {
                     self.sa1_irq_flag = false;
                 }
+                if value & 0x40 != 0 {
+                    self.timer_irq_flag = false;
+                }
                 if value & 0x20 != 0 {
                     self.dma_irq_flag = false;
                 }
                 if value & 0x10 != 0 {
                     self.sa1_nmi_flag = false;
                 }
+            }
+            SA1_TMC => self.timer_control = value & 0x83,
+            SA1_CTR => self.restart_timer(),
+            SA1_HCNTL => self.timer_h_target = (self.timer_h_target & 0x0100) | u16::from(value),
+            SA1_HCNTH => {
+                self.timer_h_target =
+                    (self.timer_h_target & 0x00FF) | (u16::from(value & 0x01) << 8);
+            }
+            SA1_VCNTL => self.timer_v_target = (self.timer_v_target & 0x0100) | u16::from(value),
+            SA1_VCNTH => {
+                self.timer_v_target =
+                    (self.timer_v_target & 0x00FF) | (u16::from(value & 0x01) << 8);
             }
             SA1_CXB => {
                 self.cbmode = value & 0x80 != 0;
@@ -639,6 +692,74 @@ impl Sa1State {
             SA1_BBF => self.bwram_bitmap_2bpp = value & 0x80 != 0,
             _ => {}
         }
+    }
+
+    pub(crate) fn tick_timer(&mut self, h_subtick: u16, v_counter: u16, h_subticks_per_line: u16) {
+        if self.timer_control & 0x80 != 0 {
+            self.timer_linear_counter = self.timer_linear_counter.wrapping_add(1) & 0x3_FFFF;
+            self.timer_h_counter = (self.timer_linear_counter & 0x01FF) as u16;
+            self.timer_v_counter = ((self.timer_linear_counter >> 9) & 0x01FF) as u16;
+        } else {
+            self.timer_h_counter =
+                sa1_hcounter_midpoint_for_subtick(h_subtick, h_subticks_per_line);
+            self.timer_v_counter = v_counter & 0x01FF;
+        }
+
+        if self.timer_matches(h_subtick, h_subticks_per_line) {
+            self.timer_irq_flag = true;
+        }
+    }
+
+    fn restart_timer(&mut self) {
+        self.timer_linear_counter = 0;
+        self.timer_h_counter = 0;
+        self.timer_v_counter = 0;
+        self.timer_latched_h_counter = 0;
+        self.timer_latched_v_counter = 0;
+        self.timer_irq_flag = false;
+    }
+
+    fn timer_matches(&self, h_subtick: u16, h_subticks_per_line: u16) -> bool {
+        let h_enabled = self.timer_control & 0x01 != 0;
+        let v_enabled = self.timer_control & 0x02 != 0;
+        if !h_enabled && !v_enabled {
+            return false;
+        }
+
+        let h_match = if self.timer_control & 0x80 != 0 {
+            self.timer_h_counter == self.timer_h_target
+        } else {
+            sa1_hcounter_target_is_in_subtick(self.timer_h_target, h_subtick, h_subticks_per_line)
+        };
+        let v_match = self.timer_v_counter == self.timer_v_target;
+        match (h_enabled, v_enabled) {
+            (true, true) => h_match && v_match,
+            (true, false) => h_match,
+            (false, true) => v_match,
+            (false, false) => false,
+        }
+    }
+
+    fn read_timer(&mut self, address_offset: u16) -> Option<u8> {
+        if address_offset == SA1_HCRL {
+            self.latch_timer_counters();
+        }
+        self.peek_timer(address_offset)
+    }
+
+    fn peek_timer(&self, address_offset: u16) -> Option<u8> {
+        match address_offset {
+            SA1_HCRL => Some(self.timer_latched_h_counter as u8),
+            SA1_HCRH => Some(((self.timer_latched_h_counter >> 8) & 0x01) as u8),
+            SA1_VCRL => Some(self.timer_latched_v_counter as u8),
+            SA1_VCRH => Some(((self.timer_latched_v_counter >> 8) & 0x01) as u8),
+            _ => None,
+        }
+    }
+
+    fn latch_timer_counters(&mut self) {
+        self.timer_latched_h_counter = self.timer_h_counter;
+        self.timer_latched_v_counter = self.timer_v_counter;
     }
 
     fn peek_variable_data(&self, address_offset: u16, rom: &[u8], save_ram: &[u8]) -> Option<u8> {
@@ -865,6 +986,7 @@ impl Sa1State {
             ),
             SA1_CFR => Some(
                 u8::from(self.sa1_irq_flag) << 7
+                    | u8::from(self.timer_irq_flag) << 6
                     | u8::from(self.dma_irq_flag) << 5
                     | u8::from(self.sa1_nmi_flag) << 4
                     | (self.sa1_message & 0x0F),
@@ -937,6 +1059,21 @@ impl Sa1State {
         let quotient = (dividend - remainder) / divisor;
         self.mr = (u64::from(remainder as u16) << 16) | u64::from(quotient as i16 as u16);
     }
+}
+
+fn sa1_hcounter_target_is_in_subtick(target: u16, subtick: u16, subticks_per_line: u16) -> bool {
+    let subticks_per_line = u32::from(subticks_per_line.max(1));
+    let start = (u32::from(subtick) * u32::from(SA1_HCOUNTER_DOTS_PER_LINE)) / subticks_per_line;
+    let end = (u32::from(subtick + 1) * u32::from(SA1_HCOUNTER_DOTS_PER_LINE)) / subticks_per_line;
+    let target = u32::from(target.min(SA1_HCOUNTER_DOTS_PER_LINE.saturating_sub(1)));
+    target >= start && target < end
+}
+
+fn sa1_hcounter_midpoint_for_subtick(subtick: u16, subticks_per_line: u16) -> u16 {
+    let subticks_per_line = u32::from(subticks_per_line.max(1));
+    let start = (u32::from(subtick) * u32::from(SA1_HCOUNTER_DOTS_PER_LINE)) / subticks_per_line;
+    let end = (u32::from(subtick + 1) * u32::from(SA1_HCOUNTER_DOTS_PER_LINE)) / subticks_per_line;
+    (start + ((end - start).saturating_sub(1) / 2)) as u16
 }
 
 #[cfg(test)]

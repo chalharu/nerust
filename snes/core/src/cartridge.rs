@@ -231,6 +231,17 @@ impl Cartridge {
         self.read_mapped_mut(address)
     }
 
+    pub(crate) fn tick_sa1_timer(
+        &mut self,
+        h_subtick: u16,
+        v_counter: u16,
+        h_subticks_per_line: u16,
+    ) {
+        if let EnhancementState::Sa1(state) = &mut self.enhancement {
+            state.tick_timer(h_subtick, v_counter, h_subticks_per_line);
+        }
+    }
+
     fn peek(&self, address: u32) -> Option<u8> {
         if let Some(value) = self.enhancement.peek(
             self.header.mapper_kind(),
@@ -801,6 +812,36 @@ mod tests {
         assert_eq!(cartridge.read(0x002300).unwrap() & 0x20, 0x20);
         assert!(cartridge.write(0x002202, 0x20));
         assert_eq!(cartridge.read(0x002300).unwrap() & 0x20, 0x00);
+    }
+
+    #[test]
+    fn sa1_timer_latches_counters_and_sets_irq_flag() {
+        let mut cartridge = Cartridge::from_bytes(&build_sa1_rom(0x10000, 0x03)).unwrap();
+
+        write_word(&mut cartridge, 0x002212, 0x007F);
+        write_word(&mut cartridge, 0x002214, 0x0005);
+        assert!(cartridge.write(0x002210, 0x03));
+
+        cartridge.tick_sa1_timer(1, 5, 4);
+
+        assert_eq!(cartridge.read(0x002301).unwrap() & 0x40, 0x40);
+        assert_eq!(cartridge.read_mut(0x002302), Some(0x7F));
+        assert_eq!(cartridge.read_mut(0x002303), Some(0x00));
+        assert_eq!(cartridge.read_mut(0x002304), Some(0x05));
+        assert_eq!(cartridge.read_mut(0x002305), Some(0x00));
+
+        cartridge.tick_sa1_timer(2, 6, 4);
+        assert_eq!(cartridge.read(0x002302), Some(0x7F));
+        assert_eq!(cartridge.read(0x002304), Some(0x05));
+        assert_eq!(cartridge.read_mut(0x002302), Some(0xD4));
+        assert_eq!(cartridge.read_mut(0x002304), Some(0x06));
+
+        assert!(cartridge.write(0x00220B, 0x40));
+        assert_eq!(cartridge.read(0x002301).unwrap() & 0x40, 0x00);
+
+        assert!(cartridge.write(0x002211, 0x00));
+        assert_eq!(cartridge.read_mut(0x002302), Some(0x00));
+        assert_eq!(cartridge.read_mut(0x002304), Some(0x00));
     }
 
     #[test]
