@@ -755,6 +755,39 @@ mod tests {
     }
 
     #[test]
+    fn sa1_status_registers_reflect_control_and_dma_flags() {
+        let mut rom = build_sa1_rom(0x10000, 0x03);
+        rom[0] = 0x5A;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert_eq!(cartridge.read(0x002300), Some(0x00));
+        assert_eq!(cartridge.read(0x002301), Some(0x00));
+
+        assert!(cartridge.write(0x002209, 0xD3));
+        assert_eq!(cartridge.read(0x002300), Some(0xD3));
+        assert!(cartridge.write(0x002202, 0x80));
+        assert_eq!(cartridge.read(0x002300), Some(0x53));
+
+        assert!(cartridge.write(0x002200, 0x9A));
+        assert_eq!(cartridge.read(0x002301), Some(0x9A));
+        assert!(cartridge.write(0x00220B, 0x90));
+        assert_eq!(cartridge.read(0x002301), Some(0x0A));
+
+        write_word(&mut cartridge, 0x002238, 1);
+        assert!(cartridge.write(0x002230, 0x80));
+        assert!(cartridge.write(0x002236, 0x03));
+        assert_eq!(cartridge.read(0x002301).unwrap() & 0x20, 0x20);
+        assert!(cartridge.write(0x00220B, 0x20));
+        assert_eq!(cartridge.read(0x002301).unwrap() & 0x20, 0x00);
+
+        assert!(cartridge.write(0x002230, 0xB0));
+        assert!(cartridge.write(0x002236, 0x03));
+        assert_eq!(cartridge.read(0x002300).unwrap() & 0x20, 0x20);
+        assert!(cartridge.write(0x002202, 0x20));
+        assert_eq!(cartridge.read(0x002300).unwrap() & 0x20, 0x00);
+    }
+
+    #[test]
     fn sa1_bwram_maps_direct_and_system_windows() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "SA1 BWRAM",
