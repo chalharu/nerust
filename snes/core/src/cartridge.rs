@@ -709,6 +709,93 @@ mod tests {
     }
 
     #[test]
+    fn sa1_arithmetic_multiplies_signed_operands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "SA1 ARITH MUL",
+            0x23,
+            0x34,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x002250, 0x00));
+        write_word(&mut cartridge, 0x002251, (-1_i16) as u16);
+        write_word(&mut cartridge, 0x002253, 1);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0x0000_FFFF_FFFF);
+
+        write_word(&mut cartridge, 0x002251, 5);
+        write_word(&mut cartridge, 0x002253, 3);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 15);
+
+        write_word(&mut cartridge, 0x002253, 4);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 20);
+
+        assert!(cartridge.write(0x002254, 0));
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0);
+    }
+
+    #[test]
+    fn sa1_arithmetic_divides_signed_by_unsigned() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "SA1 ARITH DIV",
+            0x23,
+            0x34,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x002250, 0x01));
+        write_word(&mut cartridge, 0x002251, 10);
+        write_word(&mut cartridge, 0x002253, 3);
+        assert_eq!(read_word(&mut cartridge, 0x002306), 3);
+        assert_eq!(read_word(&mut cartridge, 0x002308), 1);
+
+        write_word(&mut cartridge, 0x002251, (-7_i16) as u16);
+        write_word(&mut cartridge, 0x002253, 3);
+        assert_eq!(read_word(&mut cartridge, 0x002306) as i16, -3);
+        assert_eq!(read_word(&mut cartridge, 0x002308), 2);
+
+        assert!(cartridge.write(0x002254, 0));
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0);
+
+        write_word(&mut cartridge, 0x002251, 99);
+        write_word(&mut cartridge, 0x002253, 0);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0);
+    }
+
+    #[test]
+    fn sa1_arithmetic_accumulates_signed_products() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "SA1 ARITH SUM",
+            0x23,
+            0x34,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x002250, 0x02));
+        write_word(&mut cartridge, 0x002251, 2);
+        write_word(&mut cartridge, 0x002253, 3);
+        write_word(&mut cartridge, 0x002251, 4);
+        write_word(&mut cartridge, 0x002253, 5);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 26);
+        assert_eq!(cartridge.read(0x00230B), Some(0x00));
+
+        assert!(cartridge.write(0x002250, 0x00));
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 26);
+        assert!(cartridge.write(0x002250, 0x02));
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0);
+
+        write_word(&mut cartridge, 0x002251, (-1_i16) as u16);
+        write_word(&mut cartridge, 0x002253, 1);
+        assert_eq!(read_u40(&mut cartridge, 0x002306), 0x00FF_FFFF_FFFF);
+        assert_eq!(cartridge.read(0x00230B), Some(0x80));
+    }
+
+    #[test]
     fn super_fx_register_window_is_accessible() {
         let mut cartridge =
             Cartridge::from_bytes(&build_lorom_with_header("GSU MMIO", 0x20, 0x13, None, 0x0A))
@@ -1316,6 +1403,12 @@ mod tests {
         u32::from(cartridge.read(address).unwrap())
             | (u32::from(cartridge.read(address + 1).unwrap()) << 8)
             | (u32::from(cartridge.read(address + 2).unwrap()) << 16)
+    }
+
+    fn read_u40(cartridge: &mut Cartridge, address: u32) -> u64 {
+        (0..5).fold(0, |value, byte| {
+            value | (u64::from(cartridge.read(address + byte).unwrap()) << (byte * 8))
+        })
     }
 
     #[test]
