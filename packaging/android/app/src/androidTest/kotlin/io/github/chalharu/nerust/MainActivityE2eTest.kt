@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -181,29 +180,27 @@ class MainActivityE2eTest {
     }
 
     private fun launchActivity(): MainActivity {
-
         val context = ApplicationProvider.getApplicationContext<Context>()
         val launchIntent =
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
             }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val preLaunchActivity = MainActivity.currentActivityForTest()
+        context.startActivity(launchIntent)
         val activity =
-            try {
-                val launched = InstrumentationRegistry.getInstrumentation().startActivitySync(launchIntent)
-                check(launched is MainActivity) {
-                    "Launch intent should start MainActivity but started ${launched::class.java.name}"
+            waitUntilValue(STARTUP_TIMEOUT_MS) {
+                MainActivity.currentActivityForTest()?.takeIf { current ->
+                    preLaunchActivity == null || current !== preLaunchActivity
                 }
-                launched as MainActivity
-            } catch (error: Throwable) {
-                val current = MainActivity.currentActivityForTest()
-                val currentState = current?.let { safeChromeDebugState(it, DRAWER_EDGE_HANDLE_TAG) } ?: "no current activity"
-                fail(
-                    "MainActivity launch failed: ${error.message ?: error::class.java.simpleName}; " +
-                        "current=$currentState",
-                )
-                throw IllegalArgumentException("MainActivity should be launched", error)
             }
+        if (activity == null) {
+            val current = MainActivity.currentActivityForTest()
+            if (current != null) {
+                fail("MainActivity relaunch did not restore the drawer handle; ${safeChromeDebugState(current, DRAWER_EDGE_HANDLE_TAG)}")
+            }
+            throw IllegalArgumentException("MainActivity should be launched")
+        }
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
@@ -306,6 +303,15 @@ class MainActivityE2eTest {
             SystemClock.sleep(POLL_INTERVAL_MS)
         }
         return condition()
+    }
+
+    private fun <T> waitUntilValue(timeoutMs: Long, supplier: () -> T?): T? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() <= deadline) {
+            supplier()?.let { return it }
+            SystemClock.sleep(POLL_INTERVAL_MS)
+        }
+        return supplier()
     }
 
     private companion object {
