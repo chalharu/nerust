@@ -1,5 +1,5 @@
 use crate::enhancement::EnhancementState;
-use crate::mapper::{HiRomMapper, LoRomMapper, Mapper, MapperKind, Sa1Mapper};
+use crate::mapper::{HiRomMapper, LoRomMapper, Mapper, MapperKind, Sa1Mapper, superfx_ram_index};
 
 const COPIER_HEADER_LEN: usize = 512;
 const LOROM_HEADER_OFFSET: usize = 0x7FC0;
@@ -229,12 +229,26 @@ impl Cartridge {
         if let Some(value) = self.enhancement.read(&self.header, address) {
             return Some(value);
         }
+        if self.header.enhancement_chip().is_superfx()
+            && let Some(index) = superfx_ram_index(address, self.save_ram.len())
+        {
+            return Some(self.save_ram[index]);
+        }
 
         self.mapper.read(&self.rom, &self.save_ram, address)
     }
 
     pub fn write(&mut self, address: u32, value: u8) -> bool {
-        if self.enhancement.write(&self.header, address, value) {
+        if self
+            .enhancement
+            .write(&self.header, address, value, &mut self.save_ram)
+        {
+            return true;
+        }
+        if self.header.enhancement_chip().is_superfx()
+            && let Some(index) = superfx_ram_index(address, self.save_ram.len())
+        {
+            self.save_ram[index] = value;
             return true;
         }
 
@@ -259,6 +273,12 @@ impl Cartridge {
 
         self.save_ram.copy_from_slice(save_ram);
         Ok(())
+    }
+}
+
+impl EnhancementChip {
+    fn is_superfx(self) -> bool {
+        matches!(self, Self::SuperFxGsu1 | Self::SuperFxGsu2)
     }
 }
 
@@ -674,7 +694,81 @@ mod tests {
         assert!(cartridge.write(0x003000, 0x24));
         assert_eq!(cartridge.read(0x003000), Some(0x24));
         assert_eq!(cartridge.read(0x803000), Some(0x24));
+        assert_eq!(cartridge.read(0x00303B), Some(0x04));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
+    }
+
+    const GSU_PIXEL_TEST_PROGRAM: [u8; 28] = [
+        0x02, 0xA0, 0x05, 0x4E, 0xA4, 0x00, 0xA5, 0x08, 0x22, 0xB4, 0xA1, 0x00, 0xAC, 0x08, 0x2D,
+        0xBF, 0x4C, 0x3C, 0x01, 0xD4, 0xB4, 0x3F, 0x65, 0x08, 0xEF, 0x01, 0x00, 0x01,
+    ];
+    const GSU_PIXEL_TEST_TILE_4BPP: [u8; 32] = [
+        0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF,
+        0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,
+        0xFF, 0x00,
+    ];
+    const GSU_DEMO_PROGRAM: [u8; 103] = [
+        0x02, 0xF1, 0x00, 0x0C, 0xF8, 0x02, 0x00, 0xF0, 0xAA, 0x66, 0x31, 0x21, 0x58, 0xF0, 0x55,
+        0xCC, 0x31, 0x21, 0x58, 0xF0, 0xAA, 0x99, 0x31, 0x21, 0x58, 0xF0, 0x55, 0x33, 0x31, 0x21,
+        0x58, 0xF0, 0xAA, 0x66, 0x31, 0x21, 0x58, 0xF0, 0x55, 0xCC, 0x31, 0x21, 0x58, 0xF0, 0xAA,
+        0x99, 0x31, 0x21, 0x58, 0xF0, 0x55, 0x33, 0x31, 0x21, 0x58, 0xF0, 0x1E, 0x01, 0x31, 0x21,
+        0x58, 0xF0, 0x3C, 0x03, 0x31, 0x21, 0x58, 0xF0, 0x78, 0x07, 0x31, 0x21, 0x58, 0xF0, 0xF0,
+        0x0F, 0x31, 0x21, 0x58, 0xF0, 0xE1, 0x1F, 0x31, 0x21, 0x58, 0xF0, 0xC3, 0x3F, 0x31, 0x21,
+        0x58, 0xF0, 0x87, 0x7F, 0x31, 0x21, 0x58, 0xF0, 0x0F, 0xFF, 0x31, 0x00, 0x01,
+    ];
+    const GSU_DEMO_TILE_4BPP: [u8; 32] = [
+        0xAA, 0x66, 0x55, 0xCC, 0xAA, 0x99, 0x55, 0x33, 0xAA, 0x66, 0x55, 0xCC, 0xAA, 0x99, 0x55,
+        0x33, 0x1E, 0x01, 0x3C, 0x03, 0x78, 0x07, 0xF0, 0x0F, 0xE1, 0x1F, 0xC3, 0x3F, 0x87, 0x7F,
+        0x0F, 0xFF,
+    ];
+
+    #[test]
+    fn super_fx_game_ram_maps_full_direct_banks_and_starts_programs() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU MMIO",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            cartridge.header().enhancement_chip(),
+            EnhancementChip::SuperFxGsu2
+        );
+        assert_eq!(cartridge.save_ram().len(), 8 * 1024);
+        assert_eq!(cartridge.read(0x00303B), Some(0x04));
+        assert!(cartridge.write(0x700000, 0x34));
+        assert!(cartridge.write(0x700001, 0x12));
+        assert_eq!(cartridge.read(0x700000), Some(0x34));
+        assert_eq!(cartridge.read(0x700001), Some(0x12));
+        assert!(cartridge.write(0x702000, 0xA5));
+        assert_eq!(cartridge.read(0x700000), Some(0xA5));
+
+        for (offset, value) in GSU_PIXEL_TEST_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700200 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x02));
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        for (offset, expected) in GSU_PIXEL_TEST_TILE_4BPP.iter().copied().enumerate() {
+            assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
+        }
+
+        for (offset, value) in GSU_DEMO_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700100 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301E, 0x00));
+        assert!(cartridge.write(0x00301F, 0x01));
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        for (offset, expected) in GSU_DEMO_TILE_4BPP.iter().copied().enumerate() {
+            assert_eq!(cartridge.read(0x700C00 + offset as u32), Some(expected));
+        }
+        assert_eq!(cartridge.read(0xC08000), Some(0xEA));
     }
 
     #[test]
