@@ -1421,7 +1421,7 @@ impl<'a> GsuInterpreter<'a> {
                     let destination = source;
                     let source = usize::from(operand & 0x0F);
                     let value = self.registers[source];
-                    self.set_register(destination, value);
+                    self.set_register_with_moves_flags(destination, value);
                 } else {
                     self.sync_program_counter();
                     self.source = source;
@@ -1765,6 +1765,11 @@ impl<'a> GsuInterpreter<'a> {
         self.set_zero_sign(value);
         self.source = register;
         self.destination = None;
+    }
+
+    fn set_register_with_moves_flags(&mut self, register: usize, value: u16) {
+        self.set_register(register, value);
+        self.overflow = value & 0x0080 != 0;
     }
 
     fn move_register(&mut self, destination: usize, source: usize) {
