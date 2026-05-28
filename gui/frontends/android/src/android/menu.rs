@@ -3,6 +3,8 @@ use std::mem;
 use std::sync::Mutex;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
+use super::{library, settings};
+
 const ACTION_LOAD_STATE: &str = "load_state";
 const ACTION_OPEN_LIBRARY: &str = "open_library";
 const ACTION_OPEN_SETTINGS: &str = "open_settings";
@@ -75,7 +77,7 @@ fn wake_main_thread() {
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     mut env: jni::EnvUnowned<'_>,
-    _activity: JObject<'_>,
+    activity: JObject<'_>,
     action: JString<'_>,
 ) {
     match env
@@ -83,16 +85,40 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
             if action.is_null() {
                 Ok(None)
             } else {
-                let action = action.try_to_string(env)?;
-                Ok(decode_action(&action))
+                let action_str = action.try_to_string(env)?;
+                let decoded = decode_action(&action_str);
+
+                // Dialog-showing actions are handled synchronously since we
+                // already have env/activity on the Java main thread.
+                match decoded {
+                    Some(MenuAction::OpenLibrary) => {
+                        match library::show_library_dialog_sync(env, &activity) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                log::error!("sync library dialog failed: {error}");
+                            }
+                        }
+                        return Ok(None);
+                    }
+                    Some(MenuAction::OpenSettings) => {
+                        match settings::show_settings_dialog_sync(env, &activity) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                log::error!("sync settings dialog failed: {error}");
+                            }
+                        }
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+
+                Ok(decoded)
             }
         })
         .into_outcome()
     {
         jni::Outcome::Ok(Some(action)) => publish_action(action),
-        jni::Outcome::Ok(None) => {
-            log::warn!("Android menu callback ignored an unknown action");
-        }
+        jni::Outcome::Ok(None) => {}
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android menu action: {error:?}");
         }
