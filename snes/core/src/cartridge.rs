@@ -1254,6 +1254,31 @@ mod tests {
         assert_eq!(cartridge.read(0x0067E1), Some(0xF8));
     }
 
+    #[test]
+    fn cx4_builds_oam_from_sprite_records() {
+        let mut rom = build_lorom_with_header("CX4 OAM", 0x20, 0xF3, Some(0x10), 0x0A);
+        rom[0x0100] = 0;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert!(cartridge.write(0x006620, 1));
+        write_word(&mut cartridge, 0x006220, 0x0012);
+        write_word(&mut cartridge, 0x006222, 0x0034);
+        assert!(cartridge.write(0x006224, 0x20));
+        assert!(cartridge.write(0x006225, 0x40));
+        assert!(cartridge.write(0x006226, 0x05));
+        write_u24(&mut cartridge, 0x006227, 0x008100);
+
+        assert!(cartridge.write(0x007F4D, 0x00));
+        assert!(cartridge.write(0x007F4F, 0x00));
+
+        assert_eq!(cartridge.read(0x006000), Some(0x12));
+        assert_eq!(cartridge.read(0x006001), Some(0x34));
+        assert_eq!(cartridge.read(0x006002), Some(0x40));
+        assert_eq!(cartridge.read(0x006003), Some(0x25));
+        assert_eq!(cartridge.read(0x006200), Some(0x02));
+        assert_eq!(cartridge.read(0x0061FD), Some(0xE0));
+    }
+
     fn write_cx4_packed_pattern(cartridge: &mut Cartridge) {
         for row in 0..8u32 {
             for (column_pair, byte) in CX4_PACKED_NIBBLE_PATTERN.into_iter().enumerate() {
