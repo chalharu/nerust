@@ -94,15 +94,15 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun lifecycleDestroyAndRelaunchKeepsMenuAvailable() {
+    fun lifecycleRecreateKeepsMenuAvailable() {
         assumeTrue(
-            "NativeActivity finish/relaunch e2e is covered on the latest API emulator",
+            "NativeActivity recreate e2e is covered on the latest API emulator",
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM,
         )
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         var firstActivity: MainActivity? = null
-        var relaunchedActivity: MainActivity? = null
+        var recreatedActivity: MainActivity? = null
 
         try {
             val firstMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
@@ -112,26 +112,27 @@ class MainActivityE2eTest {
                 instrumentation.removeMonitor(firstMonitor)
             }.also { firstActivity = it }
 
-            finishActivity(instrumentation, first)
-            assertTrue("MainActivity should be destroyed before relaunch", waitUntil(STARTUP_TIMEOUT_MS) {
-                first.isDestroyed
-            })
-            SystemClock.sleep(RELAUNCH_SETTLE_MS)
-            firstActivity = null
-
-            val relaunchMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+            val recreateMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
             try {
-                relaunchedActivity = launchMainActivity(
-                    instrumentation,
-                    context,
-                    relaunchMonitor,
-                    clearTask = false,
-                )
+                instrumentation.runOnMainSync {
+                    first.recreate()
+                }
+                instrumentation.waitForIdleSync()
+                val recreated =
+                    requireNotNull(recreateMonitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
+                        "MainActivity should be recreated"
+                    }
+                recreatedActivity = recreated
+                assertTrue("MainActivity should be destroyed before recreation completes", waitUntil(STARTUP_TIMEOUT_MS) {
+                    first.isDestroyed
+                })
+                firstActivity = null
+                assertMenuButtonAvailable(instrumentation, recreated)
             } finally {
-                instrumentation.removeMonitor(relaunchMonitor)
+                instrumentation.removeMonitor(recreateMonitor)
             }
         } finally {
-            listOfNotNull(relaunchedActivity, firstActivity).distinct().forEach { activity ->
+            listOfNotNull(recreatedActivity, firstActivity).distinct().forEach { activity ->
                 finishActivity(instrumentation, activity)
             }
         }
@@ -241,7 +242,6 @@ class MainActivityE2eTest {
         const val EXPECTED_DRAWER_CONTENT = "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val POLL_INTERVAL_MS = 50L
-        const val RELAUNCH_SETTLE_MS = 1_000L
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val STARTUP_TIMEOUT_MS = 60_000L
