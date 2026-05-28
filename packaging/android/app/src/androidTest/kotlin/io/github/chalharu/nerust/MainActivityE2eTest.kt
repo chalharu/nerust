@@ -3,9 +3,9 @@ package io.github.chalharu.nerust
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -14,6 +14,9 @@ import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -36,120 +39,108 @@ class MainActivityE2eTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun appStartsAndDrawerOpensWithoutVisibleMenuButton() {
-        val scenario = launchActivity()
+        val activity = launchActivity()
 
-        try {
-            SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
-            assertDrawerHandleAvailable(scenario)
+        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
+        assertDrawerHandleAvailable(activity)
 
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
-                assertNull(
-                    "Visible menu button should be removed in swipe-only drawer mode",
-                    activity.findChromeViewForTest(MENU_BUTTON_TAG),
-                )
-                activity.openDrawerForTest()
-            }
-
-            assertChromeViewAvailable(
-                scenario,
-                DRAWER_OVERLAY_TAG,
-                DRAWER_TIMEOUT_MS,
-                "Drawer overlay should be attached after opening the drawer",
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
+            assertNull(
+                "Visible menu button should be removed in swipe-only drawer mode",
+                activity.findChromeViewForTest(MENU_BUTTON_TAG),
             )
+            activity.openDrawerForTest()
+        }
 
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive after opening drawer" }
-                val drawerOverlay =
-                    requireNotNull(activity.findChromeViewForTest(DRAWER_OVERLAY_TAG)) {
-                        "Drawer overlay should be attached after opening drawer"
-                    }
-                assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
-                assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
+        assertChromeViewAvailable(
+            activity,
+            DRAWER_OVERLAY_TAG,
+            DRAWER_TIMEOUT_MS,
+            "Drawer overlay should be attached after opening the drawer",
+        )
 
-                val drawerComposeView =
-                    requireNotNull(activity.findChromeViewForTest(DRAWER_COMPOSE_TAG)) {
-                        "Drawer ComposeView should be attached after opening drawer"
-                    }
-                assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
-                activity.onBackPressed()
-            }
-        } finally {
-            scenario.close()
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive after opening drawer" }
+            val drawerOverlay =
+                requireNotNull(activity.findChromeViewForTest(DRAWER_OVERLAY_TAG)) {
+                    "Drawer overlay should be attached after opening drawer"
+                }
+            assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
+            assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
+
+            val drawerComposeView =
+                requireNotNull(activity.findChromeViewForTest(DRAWER_COMPOSE_TAG)) {
+                    "Drawer ComposeView should be attached after opening drawer"
+                }
+            assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
+            activity.onBackPressed()
         }
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeRomLibraryDialogAppearsWithExpectedEntries() {
-        val scenario = launchActivity()
+        val activity = launchActivity()
 
-        try {
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
-                activity.showRomLibraryDialog(
-                    arrayOf("Super Mario Bros.", "Metroid"),
-                    arrayOf("mario", "metroid"),
-                )
-            }
-
-            assertChromeViewAvailable(
-                scenario,
-                ROM_LIBRARY_DIALOG_TAG,
-                DIALOG_TIMEOUT_MS,
-                "ROM library dialog should be attached after requesting it",
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
+            activity.showRomLibraryDialogForTest(
+                arrayOf("Super Mario Bros.", "Metroid"),
+                arrayOf("mario", "metroid"),
             )
+        }
 
-            scenario.onActivity { activity ->
-                val dialogRoot =
-                    requireNotNull(activity.findChromeViewForTest(ROM_LIBRARY_DIALOG_TAG)) {
-                        "ROM library dialog root should be available"
-                    }
-                assertEquals(
-                    "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
-                    dialogRoot.getTag(R.id.nerust_dialog_content_probe),
-                )
-                activity.dismissComposeDialogForTest()
-            }
-        } finally {
-            scenario.close()
+        assertChromeViewAvailable(
+            activity,
+            ROM_LIBRARY_DIALOG_TAG,
+            DIALOG_TIMEOUT_MS,
+            "ROM library dialog should be attached after requesting it",
+        )
+
+        runOnActivityThread(activity) {
+            val dialogRoot =
+                requireNotNull(activity.findChromeViewForTest(ROM_LIBRARY_DIALOG_TAG)) {
+                    "ROM library dialog root should be available"
+                }
+            assertEquals(
+                "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
+                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            )
+            activity.dismissComposeDialogForTest()
         }
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun composeSettingsDialogAppearsWithCurrentSelections() {
-        val scenario = launchActivity()
+        val activity = launchActivity()
 
-        try {
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
-                activity.showSettingsDialog(
-                    arrayOf("video_filter", "touch_overlay"),
-                    arrayOf("Video Filter", "Touch Overlay"),
-                    arrayOf("CRT\tLCD", "On\tOff"),
-                    arrayOf("1", "0"),
-                )
-            }
-
-            assertChromeViewAvailable(
-                scenario,
-                SETTINGS_DIALOG_TAG,
-                DIALOG_TIMEOUT_MS,
-                "Settings dialog should be attached after requesting it",
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
+            activity.showSettingsDialogForTest(
+                arrayOf("video_filter", "touch_overlay"),
+                arrayOf("Video Filter", "Touch Overlay"),
+                arrayOf("CRT\tLCD", "On\tOff"),
+                arrayOf("1", "0"),
             )
+        }
 
-            scenario.onActivity { activity ->
-                val dialogRoot =
-                    requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
-                        "Settings dialog root should be available"
-                    }
-                assertEquals(
-                    "Settings\nVideo Filter: LCD\nTouch Overlay: On",
-                    dialogRoot.getTag(R.id.nerust_dialog_content_probe),
-                )
-                activity.dismissComposeDialogForTest()
-            }
-        } finally {
-            scenario.close()
+        assertChromeViewAvailable(
+            activity,
+            SETTINGS_DIALOG_TAG,
+            DIALOG_TIMEOUT_MS,
+            "Settings dialog should be attached after requesting it",
+        )
+
+        runOnActivityThread(activity) {
+            val dialogRoot =
+                requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
+                    "Settings dialog root should be available"
+                }
+            assertEquals(
+                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
+                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            )
+            activity.dismissComposeDialogForTest()
         }
     }
 
@@ -189,8 +180,24 @@ class MainActivityE2eTest {
         exerciseMenuAction(MENU_ACTION_OPEN_SETTINGS)
     }
 
-    private fun launchActivity(clearTask: Boolean = true): ActivityScenario<MainActivity> {
+    private fun launchActivity(clearTask: Boolean = true): MainActivity {
+        sharedActivity
+            ?.takeUnless { it.isDestroyed || it.isFinishing }
+            ?.let { activity ->
+                try {
+                    runOnActivityThread(activity) {
+                        activity.resetChromeStateForTest()
+                    }
+                    assertDrawerHandleAvailable(activity)
+                    return activity
+                } catch (_: Throwable) {
+                    sharedActivity = null
+                }
+            }
+
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         val launchIntent =
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
@@ -202,19 +209,23 @@ class MainActivityE2eTest {
                 Intent.FLAG_ACTIVITY_NEW_TASK
             }
         launchIntent.addFlags(launchFlags)
-        val scenario = ActivityScenario.launch<MainActivity>(launchIntent)
+
         try {
-            assertDrawerHandleAvailable(scenario)
-            return scenario
-        } catch (error: Throwable) {
-            scenario.close()
-            throw error
+            context.startActivity(launchIntent)
+            val activity =
+                (monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity)
+                    ?: throw IllegalArgumentException("MainActivity should be launched")
+            sharedActivity = activity
+            assertDrawerHandleAvailable(activity)
+            return activity
+        } finally {
+            instrumentation.removeMonitor(monitor)
         }
     }
 
-    private fun assertDrawerHandleAvailable(scenario: ActivityScenario<MainActivity>) {
+    private fun assertDrawerHandleAvailable(activity: MainActivity) {
         assertChromeViewAvailable(
-            scenario,
+            activity,
             DRAWER_EDGE_HANDLE_TAG,
             STARTUP_TIMEOUT_MS,
             "Drawer edge handle should be attached after startup",
@@ -222,38 +233,34 @@ class MainActivityE2eTest {
     }
 
     private fun exerciseMenuAction(action: String) {
-        val scenario = launchActivity()
+        val activity = launchActivity()
 
-        try {
-            SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
-                activity.dispatchMenuActionForTest(action)
-            }
-            SystemClock.sleep(MENU_ACTION_SETTLE_DELAY_MS)
-            scenario.onActivity { activity ->
-                require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
-            }
-        } finally {
-            scenario.close()
+        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
+            activity.dispatchMenuActionForTest(action)
+        }
+        SystemClock.sleep(MENU_ACTION_SETTLE_DELAY_MS)
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
         }
     }
 
     private fun assertChromeViewAvailable(
-        scenario: ActivityScenario<MainActivity>,
+        activity: MainActivity,
         tag: String,
         timeoutMs: Long,
         failureMessage: String,
     ) {
-        if (waitUntil(timeoutMs) { chromeViewIsShowing(scenario, tag) }) {
+        if (waitUntil(timeoutMs) { chromeViewIsShowing(activity, tag) }) {
             return
         }
-        fail("$failureMessage; ${chromeDebugState(scenario, tag)}")
+        fail("$failureMessage; ${chromeDebugState(activity, tag)}")
     }
 
-    private fun chromeViewIsShowing(scenario: ActivityScenario<MainActivity>, tag: String): Boolean {
+    private fun chromeViewIsShowing(activity: MainActivity, tag: String): Boolean {
         var showing = false
-        scenario.onActivity { activity ->
+        runOnActivityThread(activity) {
             if (!activity.isDestroyed) {
                 showing = activity.isChromeViewShowingForTest(tag)
             }
@@ -261,12 +268,31 @@ class MainActivityE2eTest {
         return showing
     }
 
-    private fun chromeDebugState(scenario: ActivityScenario<MainActivity>, tag: String): String {
+    private fun chromeDebugState(activity: MainActivity, tag: String): String {
         var state = "activity state unavailable"
-        scenario.onActivity { activity ->
+        runOnActivityThread(activity) {
             state = activity.chromeDebugStateForTest(tag)
         }
         return state
+    }
+
+    private fun runOnActivityThread(activity: MainActivity, action: () -> Unit) {
+        val completion = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        activity.runOnUiThread {
+            try {
+                action()
+            } catch (error: Throwable) {
+                failure.set(error)
+            } finally {
+                completion.countDown()
+            }
+        }
+        assertTrue(
+            "Timed out waiting for MainActivity UI thread work to complete",
+            completion.await(UI_THREAD_TIMEOUT_MS, TimeUnit.MILLISECONDS),
+        )
+        failure.get()?.let { throw it }
     }
 
     private fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
@@ -300,5 +326,9 @@ class MainActivityE2eTest {
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L
+        const val UI_THREAD_TIMEOUT_MS = 10_000L
+
+        @Volatile
+        var sharedActivity: MainActivity? = null
     }
 }
