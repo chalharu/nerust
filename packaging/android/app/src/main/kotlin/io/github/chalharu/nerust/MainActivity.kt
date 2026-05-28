@@ -139,6 +139,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var drawerChromeContainer: FrameLayout? = null
     private var drawerEdgeHandleView: View? = null
     private var drawerShowing = false
+    private var drawerFullScreenPopup: PopupWindow? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
     private var composeDialog: Dialog? = null
@@ -262,11 +263,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         when (tag) {
             CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
                 controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerShowing && drawerChromePopup?.isShowing == true &&
+            DRAWER_COMPOSE_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
                 drawerComposeView.isShownInWindowForTest()
             DRAWER_EDGE_HANDLE_TAG -> !drawerShowing && drawerChromePopup?.isShowing == true &&
                 drawerEdgeHandleView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerShowing && drawerChromePopup?.isShowing == true &&
+            DRAWER_OVERLAY_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
                 drawerOverlayView.isShownInWindowForTest()
             ROM_LIBRARY_DIALOG_TAG,
             SETTINGS_DIALOG_TAG,
@@ -295,7 +296,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "attachAttempts=$chromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
             "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
             "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
-            "drawerShowing=$drawerShowing, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
+            "drawerShowing=$drawerShowing, drawerFullScreenPopup=${drawerFullScreenPopup.debugPopupState()}, " +
+            "drawerOverlay=${drawerOverlayView.debugViewState()}, " +
             "drawerCompose=${drawerComposeView.debugViewState()}, dialogTag=$composeDialogTag, " +
             "dialog=${composeDialog.debugDialogState()}, dialogRoot=${composeDialogRootView.debugViewState()}, " +
             "dialogCompose=${composeDialogComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest, " +
@@ -603,16 +605,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     private fun showDrawerOverlay() {
-        if (popupAnchor() == null) {
+        val anchor = popupAnchor() ?: run {
             lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
-            return
-        }
-        val popup = drawerChromePopup ?: run {
-            lastDrawerStateForTest = "drawer popup unavailable"
-            return
-        }
-        val container = drawerChromeContainer ?: run {
-            lastDrawerStateForTest = "drawer container unavailable"
             return
         }
         if (drawerShowing) {
@@ -620,6 +614,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return
         }
         lastDrawerStateForTest = "creating"
+
+        // Hide the edge-handle popup while the drawer is open.
+        drawerChromePopup?.dismiss()
 
         val overlay =
             ComposeOwnerFrameLayout(this).apply {
@@ -653,34 +650,49 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         installComposeOwners(drawerContent)
         overlay.addView(drawerContent)
 
-        container.removeAllViews()
+        // Use a brand-new full-screen popup so Compose measures against the
+        // correct screen dimensions from the start (no resizing needed).
+        val fullScreenPopup =
+            PopupWindow(
+                overlay,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                true,
+            ).apply {
+                isTouchable = true
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                elevation = dp(8).toFloat()
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                setOnDismissListener { removeDrawerOverlay() }
+            }
+
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
         drawerEdgeHandleView = null
         drawerShowing = true
-        // Resize popup to full screen BEFORE adding Compose content so that
-        // the ModalNavigationDrawer measures against the correct width.
-        val shown = updateDrawerChromePopupForDrawer(popup)
-        if (!shown) {
+
+        val shown = showPopupAtLocation(fullScreenPopup, anchor, Gravity.TOP or Gravity.START, 0, 0)
+        if (shown) {
+            drawerFullScreenPopup = fullScreenPopup
+        } else {
             clearDrawerWindowReferences()
-            restoreDrawerEdgeHandleOverlay()
-            lastDrawerStateForTest =
-                "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
-            return
         }
-        popup.isFocusable = true
-        popup.update()
-        container.addView(overlay)
         lastDrawerStateForTest =
-            "showInDrawerPopup=$shown, popup=${popup.debugPopupState()}, overlay=${overlay.debugViewState()}"
+            "showInDrawerPopup=$shown, popup=${fullScreenPopup.debugPopupState()}, overlay=${overlay.debugViewState()}"
     }
 
     private fun removeDrawerOverlay(): Boolean {
         if (!drawerShowing) {
             return false
         }
+        drawerFullScreenPopup?.setOnDismissListener(null)
+        drawerFullScreenPopup?.dismiss()
+        drawerFullScreenPopup = null
         clearDrawerWindowReferences()
-        return restoreDrawerEdgeHandleOverlay()
+        // Re-show the narrow edge-handle popup for future swipe detection.
+        popupAnchor()?.let { ensureDrawerChromePopup(it) }
+        return true
     }
 
     private fun showComposeDialog(
@@ -792,33 +804,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         }
 
-    private fun updateDrawerChromePopupForDrawer(popup: PopupWindow): Boolean =
-        updatePopupWindow(
-            popup,
-            0,
-            0,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        )
-
-    private fun restoreDrawerEdgeHandleOverlay(): Boolean {
-        val popup = drawerChromePopup ?: return false
-        val container = drawerChromeContainer ?: return false
-        container.removeAllViews()
-        val edgeHandle = createDrawerEdgeHandleOverlay()
-        container.addView(edgeHandle)
-        drawerEdgeHandleView = edgeHandle
-        popup.isFocusable = false
-        popup.update()
-        return updatePopupWindow(
-            popup,
-            0,
-            0,
-            dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        )
-    }
-
     private fun updatePopupWindow(popup: PopupWindow, x: Int, y: Int, width: Int, height: Int): Boolean =
         try {
             popup.width = width
@@ -865,6 +850,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun dismissChromePopups() {
         clearDrawerWindowReferences()
         dismissComposeDialog(notifyDismiss = true)
+        drawerFullScreenPopup?.setOnDismissListener(null)
+        drawerFullScreenPopup?.dismiss()
+        drawerFullScreenPopup = null
         drawerChromePopup?.dismiss()
         drawerChromePopup = null
         drawerChromeContainer = null
@@ -1388,7 +1376,7 @@ internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZo
     val dpadCenterX = dpadLeft + dpadSize * 0.5f
     val dpadCenterY = controlTop + controlHeight * 0.58f
     val dpadArm = dpadSize * 0.28f
-    val dpadExtent = dpadSize * 0.38f
+    val dpadExtent = dpadSize * 0.42f
     val actionSize = width * 0.14f
     val actionGap = width * 0.04f
     val actionLeft = width * 0.64f
