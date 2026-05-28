@@ -1,4 +1,4 @@
-use crate::enhancement::EnhancementState;
+use crate::enhancement::{EnhancementChip, EnhancementState};
 use crate::mapper::{HiRomMapper, LoRomMapper, Mapper, MapperKind, Sa1Mapper, superfx_ram_index};
 
 const COPIER_HEADER_LEN: usize = 512;
@@ -13,16 +13,6 @@ const SA1_MAP_MODE_VALUE: u8 = 0x23;
 const HIROM_MAP_MODE_MASK: u8 = 0x2F;
 const HIROM_MAP_MODE_VALUE: u8 = 0x21;
 const MAX_RAM_SIZE_CODE: u8 = 0x08;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnhancementChip {
-    None,
-    Sa1,
-    SuperFxGsu1,
-    SuperFxGsu2,
-    Cx4,
-    Dsp1Family,
-}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -120,7 +110,7 @@ impl Cartridge {
 
         let save_ram = vec![0; ram_size_bytes(header.ram_size_code)?].into_boxed_slice();
 
-        let enhancement = EnhancementState::from_header(&header);
+        let enhancement = EnhancementState::from_chip(header.enhancement_chip());
 
         Ok(Self {
             rom: rom.to_vec().into_boxed_slice(),
@@ -230,14 +220,14 @@ impl Cartridge {
     }
 
     pub(crate) fn read_mut(&mut self, address: u32) -> Option<u8> {
-        if let Some(value) = self.enhancement.read(&self.header, address) {
+        if let Some(value) = self.enhancement.read(self.header.mapper_kind(), address) {
             return Some(value);
         }
         self.read_mapped(address)
     }
 
     fn peek(&self, address: u32) -> Option<u8> {
-        if let Some(value) = self.enhancement.peek(&self.header, address) {
+        if let Some(value) = self.enhancement.peek(self.header.mapper_kind(), address) {
             return Some(value);
         }
         self.read_mapped(address)
@@ -254,10 +244,13 @@ impl Cartridge {
     }
 
     pub fn write(&mut self, address: u32, value: u8) -> bool {
-        if self
-            .enhancement
-            .write(&self.header, address, value, &self.rom, &mut self.save_ram)
-        {
+        if self.enhancement.write(
+            self.header.mapper_kind(),
+            address,
+            value,
+            &self.rom,
+            &mut self.save_ram,
+        ) {
             return true;
         }
         if self.header.enhancement_chip().is_superfx()
@@ -288,12 +281,6 @@ impl Cartridge {
 
         self.save_ram.copy_from_slice(save_ram);
         Ok(())
-    }
-}
-
-impl EnhancementChip {
-    fn is_superfx(self) -> bool {
-        matches!(self, Self::SuperFxGsu1 | Self::SuperFxGsu2)
     }
 }
 
@@ -371,8 +358,8 @@ fn ram_size_bytes(code: u8) -> Result<usize, CartridgeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cartridge, CartridgeError, EnhancementChip};
-    use crate::MapperKind;
+    use super::{Cartridge, CartridgeError};
+    use crate::{EnhancementChip, MapperKind};
 
     const HEADER_OFFSET: usize = 0x7FC0;
     const RESET_VECTOR_OFFSET: usize = 0x7FFC;
