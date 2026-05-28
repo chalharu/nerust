@@ -693,6 +693,7 @@ pub(crate) struct Dsp1State {
     output_words: Vec<u16>,
     output_index: usize,
     matrices: [[[i16; 3]; 3]; 3],
+    projection: Dsp1ProjectionState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -713,6 +714,10 @@ enum Dsp1Operation {
     Range,
     Range2,
     Inverse,
+    ProjectionParameter,
+    Raster,
+    ProjectObject,
+    Target,
     SetMatrix(Dsp1MatrixKind),
     ObjectiveMatrix(Dsp1MatrixKind),
     SubjectiveMatrix(Dsp1MatrixKind),
@@ -744,6 +749,17 @@ impl Dsp1MatrixKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Dsp1ProjectionState {
+    fx: i16,
+    fy: i16,
+    fz: i16,
+    lfe: i16,
+    les: i16,
+    aas: u16,
+    azs: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Dsp1CommandSpec {
     reads: usize,
@@ -769,6 +785,7 @@ impl Dsp1State {
             output_words: Vec::new(),
             output_index: 0,
             matrices: [[[0; 3]; 3]; 3],
+            projection: Dsp1ProjectionState::default(),
         }
     }
 
@@ -908,6 +925,13 @@ impl Dsp1State {
             Dsp1Operation::Range => vec![dsp1_range(&self.input_words, 0)],
             Dsp1Operation::Range2 => vec![dsp1_range(&self.input_words, 1)],
             Dsp1Operation::Inverse => dsp1_inverse(&self.input_words),
+            Dsp1Operation::ProjectionParameter => {
+                self.projection = Dsp1ProjectionState::from_words(&self.input_words);
+                self.projection.parameter()
+            }
+            Dsp1Operation::Raster => self.projection.raster(self.input_words[0]),
+            Dsp1Operation::ProjectObject => self.projection.project(&self.input_words),
+            Dsp1Operation::Target => self.projection.target(&self.input_words),
             Dsp1Operation::SetMatrix(kind) => {
                 self.matrices[kind.index()] = dsp1_attitude_matrix(&self.input_words);
                 Vec::new()
@@ -971,15 +995,15 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x01 | 0x05 | 0x31 | 0x35 => (4, 0, Op::SetMatrix(Matrix::A)),
         0x11 | 0x15 => (4, 0, Op::SetMatrix(Matrix::B)),
         0x21 | 0x25 => (4, 0, Op::SetMatrix(Matrix::C)),
-        0x02 | 0x12 | 0x22 | 0x32 => (7, 4, Op::Unsupported),
+        0x02 | 0x12 | 0x22 | 0x32 => (7, 4, Op::ProjectionParameter),
         0x03 | 0x33 => (3, 3, Op::SubjectiveMatrix(Matrix::A)),
         0x13 => (3, 3, Op::SubjectiveMatrix(Matrix::B)),
         0x23 => (3, 3, Op::SubjectiveMatrix(Matrix::C)),
         0x04 | 0x24 => (2, 2, Op::Trigonometric),
-        0x06 | 0x16 | 0x26 | 0x36 => (3, 3, Op::Unsupported),
-        0x07 | 0x17 | 0x1A | 0x27 | 0x2A | 0x37 | 0x3A => (0, 0, Op::Freeze),
+        0x06 | 0x16 | 0x26 | 0x36 => (3, 3, Op::ProjectObject),
+        0x07 | 0x17 | 0x27 | 0x37 => (0, 0, Op::Freeze),
         0x08 => (3, 2, Op::Radius),
-        0x0A => (1, 4, Op::Unsupported),
+        0x0A | 0x1A | 0x2A | 0x3A => (1, 4, Op::Raster),
         0x0B | 0x3B => (3, 1, Op::ScalarProduct(Matrix::A)),
         0x1B => (3, 1, Op::ScalarProduct(Matrix::B)),
         0x2B => (3, 1, Op::ScalarProduct(Matrix::C)),
@@ -987,7 +1011,7 @@ fn dsp1_command_spec(command: u8) -> Dsp1CommandSpec {
         0x09 | 0x0D | 0x39 | 0x3D => (3, 3, Op::ObjectiveMatrix(Matrix::A)),
         0x19 | 0x1D => (3, 3, Op::ObjectiveMatrix(Matrix::B)),
         0x29 | 0x2D => (3, 3, Op::ObjectiveMatrix(Matrix::C)),
-        0x0E | 0x2E => (2, 2, Op::Unsupported),
+        0x0E | 0x1E | 0x2E | 0x3E => (2, 2, Op::Target),
         0x0F => (1, 1, Op::MemoryTest),
         0x10 | 0x30 => (2, 2, Op::Inverse),
         0x14 | 0x34 => (6, 3, Op::AttitudeDelta),
@@ -1068,6 +1092,115 @@ fn dsp1_inverse(input_words: &[u16]) -> Vec<u16> {
     };
 
     vec![reciprocal as u16, 1_i16.wrapping_sub(exponent) as u16]
+}
+
+impl Dsp1ProjectionState {
+    fn from_words(input_words: &[u16]) -> Self {
+        Self {
+            fx: input_words[0] as i16,
+            fy: input_words[1] as i16,
+            fz: input_words[2] as i16,
+            lfe: input_words[3] as i16,
+            les: input_words[4] as i16,
+            aas: input_words[5],
+            azs: input_words[6],
+        }
+    }
+
+    fn parameter(self) -> Vec<u16> {
+        let axes = self.axes();
+        let center = self.center(&axes);
+        vec![
+            0,
+            dsp1_saturating_i16(f64::from(self.les) * axes.normal[2]),
+            dsp1_saturating_i16(center[0]),
+            dsp1_saturating_i16(center[1]),
+        ]
+    }
+
+    fn raster(self, screen_line: u16) -> Vec<u16> {
+        let axes = self.axes();
+        let line = f64::from(screen_line as i16);
+        let depth = (f64::from(self.les) + line * axes.normal[2]).max(1.0);
+        let scale = f64::from(self.les) / depth * 256.0;
+        vec![
+            dsp1_saturating_i16(scale * axes.horizontal[0]),
+            dsp1_saturating_i16(scale * -axes.vertical[0]),
+            dsp1_saturating_i16(scale * axes.horizontal[1]),
+            dsp1_saturating_i16(scale * axes.vertical[1]),
+        ]
+    }
+
+    fn project(self, input_words: &[u16]) -> Vec<u16> {
+        let axes = self.axes();
+        let center = self.center(&axes);
+        let point = [
+            f64::from(input_words[0] as i16),
+            f64::from(input_words[1] as i16),
+            f64::from(input_words[2] as i16),
+        ];
+        let relative = [
+            point[0] - center[0],
+            point[1] - center[1],
+            point[2] - center[2],
+        ];
+        let depth = (f64::from(self.les) + dot3(relative, axes.normal)).max(1.0);
+        let scale = f64::from(self.les) / depth;
+        vec![
+            dsp1_saturating_i16(dot3(relative, axes.horizontal) * scale),
+            dsp1_saturating_i16(dot3(relative, axes.vertical) * scale),
+            dsp1_saturating_i16(scale * 256.0),
+        ]
+    }
+
+    fn target(self, input_words: &[u16]) -> Vec<u16> {
+        let axes = self.axes();
+        let center = self.center(&axes);
+        let h = f64::from(input_words[0] as i16);
+        let v = f64::from(input_words[1] as i16);
+        let target = [
+            center[0] + h * axes.horizontal[0] + v * axes.vertical[0],
+            center[1] + h * axes.horizontal[1] + v * axes.vertical[1],
+        ];
+        vec![
+            dsp1_saturating_i16(target[0]),
+            dsp1_saturating_i16(target[1]),
+        ]
+    }
+
+    fn center(self, axes: &Dsp1ProjectionAxes) -> [f64; 3] {
+        let lfe = f64::from(self.lfe);
+        [
+            f64::from(self.fx) + lfe * axes.normal[0],
+            f64::from(self.fy) + lfe * axes.normal[1],
+            f64::from(self.fz) + lfe * axes.normal[2],
+        ]
+    }
+
+    fn axes(self) -> Dsp1ProjectionAxes {
+        let aas = dsp1_angle(self.aas);
+        let azs = dsp1_angle(self.azs);
+        let sin_aas = aas.sin();
+        let cos_aas = aas.cos();
+        let sin_azs = azs.sin();
+        let cos_azs = azs.cos();
+
+        Dsp1ProjectionAxes {
+            normal: [-sin_azs * sin_aas, sin_azs * cos_aas, cos_azs],
+            horizontal: [cos_aas, sin_aas, 0.0],
+            vertical: [-cos_azs * sin_aas, cos_azs * cos_aas, -sin_azs],
+        }
+    }
+}
+
+struct Dsp1ProjectionAxes {
+    normal: [f64; 3],
+    horizontal: [f64; 3],
+    vertical: [f64; 3],
+}
+
+fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
 }
 
 fn dsp1_attitude_matrix(input_words: &[u16]) -> [[i16; 3]; 3] {

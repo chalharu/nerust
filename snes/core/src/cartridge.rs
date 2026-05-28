@@ -1117,6 +1117,67 @@ mod tests {
     }
 
     #[test]
+    fn dsp1_lorom_executes_projection_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 PROJECT",
+            0x20,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x208000, 0x02));
+        write_dsp1_word(&mut cartridge, 0x208000, 100);
+        write_dsp1_word(&mut cartridge, 0x208000, 200);
+        write_dsp1_word(&mut cartridge, 0x208000, 300);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 100);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 200);
+
+        assert!(cartridge.write(0x208000, 0x0A));
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0100);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0100);
+
+        assert!(cartridge.write(0x208000, 0x1A));
+        write_dsp1_word(&mut cartridge, 0x208000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0100);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0100);
+
+        assert!(cartridge.write(0x208000, 0x06));
+        write_dsp1_word(&mut cartridge, 0x208000, 116);
+        write_dsp1_word(&mut cartridge, 0x208000, 232);
+        write_dsp1_word(&mut cartridge, 0x208000, 300);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 32);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0100);
+
+        assert!(cartridge.write(0x208000, 0x16));
+        write_dsp1_word(&mut cartridge, 0x208000, 101);
+        write_dsp1_word(&mut cartridge, 0x208000, 200);
+        write_dsp1_word(&mut cartridge, 0x208000, (-20000_i16) as u16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x7FFF);
+
+        assert!(cartridge.write(0x208000, 0x3E));
+        write_dsp1_word(&mut cartridge, 0x208000, 16);
+        write_dsp1_word(&mut cartridge, 0x208000, 32);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 116);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 232);
+    }
+
+    #[test]
     fn dsp1_lorom_executes_matrix_commands() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "DSP1 MATRICES",
@@ -1214,7 +1275,7 @@ mod tests {
         ))
         .unwrap();
 
-        assert!(cartridge.write(0x208000, 0x1A));
+        assert!(cartridge.write(0x208000, 0x07));
 
         assert_eq!(cartridge.read(0x208001), Some(0x04));
     }
