@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.FixMethodOrder
@@ -37,7 +38,7 @@ class MainActivityE2eTest {
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun appStartsAndDrawerMenuIsAvailable() {
+    fun appStartsAndDrawerOpensWithoutVisibleMenuButton() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
@@ -48,19 +49,15 @@ class MainActivityE2eTest {
             instrumentation.removeMonitor(monitor)
         }
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
-        assertMenuButtonAvailable(instrumentation, activity)
+        assertDrawerHandleAvailable(instrumentation, activity)
 
         instrumentation.runOnMainSync {
-            require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
-            val menuButton = requireNotNull(
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
+            assertNull(
+                "Visible menu button should be removed in swipe-only drawer mode",
                 activity.findChromeViewForTest(MENU_BUTTON_TAG),
-            ) {
-                "Menu button should be attached after startup"
-            }
-
-            assertEquals("Menu", menuButton.contentDescription?.toString())
-            assertTrue("Menu button should be showing", activity.isChromeViewShowingForTest(MENU_BUTTON_TAG))
-            assertTrue("Menu button should handle clicks", menuButton.performClick())
+            )
+            activity.openDrawerForTest()
         }
         instrumentation.waitForIdleSync()
 
@@ -69,26 +66,122 @@ class MainActivityE2eTest {
             activity,
             DRAWER_OVERLAY_TAG,
             DRAWER_TIMEOUT_MS,
-            "Drawer overlay should be attached after tapping Menu",
+            "Drawer overlay should be attached after opening the drawer",
         )
 
         instrumentation.runOnMainSync {
-            require(!activity.isDestroyed) { "MainActivity should remain alive after opening Menu" }
-            val drawerOverlay = requireNotNull(
-                activity.findChromeViewForTest(DRAWER_OVERLAY_TAG),
-            ) {
-                "Drawer overlay should be attached after tapping Menu"
-            }
+            require(!activity.isDestroyed) { "MainActivity should remain alive after opening drawer" }
+            val drawerOverlay =
+                requireNotNull(activity.findChromeViewForTest(DRAWER_OVERLAY_TAG)) {
+                    "Drawer overlay should be attached after opening drawer"
+                }
             assertTrue("Drawer overlay should be showing", activity.isChromeViewShowingForTest(DRAWER_OVERLAY_TAG))
             assertEquals(EXPECTED_DRAWER_CONTENT, drawerOverlay.getTag(R.id.nerust_drawer_content_probe))
 
-            val drawerComposeView = requireNotNull(
-                activity.findChromeViewForTest(DRAWER_COMPOSE_TAG),
-            ) {
-                "Drawer ComposeView should be attached after tapping Menu"
-            }
+            val drawerComposeView =
+                requireNotNull(activity.findChromeViewForTest(DRAWER_COMPOSE_TAG)) {
+                    "Drawer ComposeView should be attached after opening drawer"
+                }
             assertTrue("Drawer ComposeView should be showing", activity.isChromeViewShowingForTest(DRAWER_COMPOSE_TAG))
         }
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun composeRomLibraryDialogAppearsWithExpectedEntries() {
+        val activity = launchActivity()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
+            activity.showRomLibraryDialog(
+                arrayOf("Super Mario Bros.", "Metroid"),
+                arrayOf("mario", "metroid"),
+            )
+        }
+        instrumentation.waitForIdleSync()
+
+        assertChromeViewAvailable(
+            instrumentation,
+            activity,
+            ROM_LIBRARY_DIALOG_TAG,
+            DIALOG_TIMEOUT_MS,
+            "ROM library dialog should be attached after requesting it",
+        )
+
+        instrumentation.runOnMainSync {
+            val dialogRoot =
+                requireNotNull(activity.findChromeViewForTest(ROM_LIBRARY_DIALOG_TAG)) {
+                    "ROM library dialog root should be available"
+                }
+            assertEquals(
+                "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
+                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            )
+            activity.dismissComposeDialogForTest()
+        }
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun composeSettingsDialogAppearsWithCurrentSelections() {
+        val activity = launchActivity()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
+            activity.showSettingsDialog(
+                arrayOf("video_filter", "touch_overlay"),
+                arrayOf("Video Filter", "Touch Overlay"),
+                arrayOf("CRT\tLCD", "On\tOff"),
+                arrayOf("1", "0"),
+            )
+        }
+        instrumentation.waitForIdleSync()
+
+        assertChromeViewAvailable(
+            instrumentation,
+            activity,
+            SETTINGS_DIALOG_TAG,
+            DIALOG_TIMEOUT_MS,
+            "Settings dialog should be attached after requesting it",
+        )
+
+        instrumentation.runOnMainSync {
+            val dialogRoot =
+                requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
+                    "Settings dialog root should be available"
+                }
+            assertEquals(
+                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
+                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            )
+            activity.dismissComposeDialogForTest()
+        }
+    }
+
+    @Test
+    fun portraitControlsOverlayMatchesExpectedArrangement() {
+        val zones = portraitControlsLayout(1080f, 1920f).associateBy { it.label }
+        val up = requireNotNull(zones["UP"])
+        val down = requireNotNull(zones["DOWN"])
+        val left = requireNotNull(zones["LEFT"])
+        val right = requireNotNull(zones["RIGHT"])
+        val select = requireNotNull(zones["SELECT"])
+        val start = requireNotNull(zones["START"])
+        val b = requireNotNull(zones["B"])
+        val a = requireNotNull(zones["A"])
+
+        assertEquals(up.x, down.x, 0.01f)
+        assertEquals(up.width, down.width, 0.01f)
+        assertEquals(left.y, right.y, 0.01f)
+        assertEquals(left.height, right.height, 0.01f)
+        assertEquals(a.y, b.y, 0.01f)
+        assertEquals(a.height, b.height, 0.01f)
+        assertTrue("B should sit to the right of the D-pad", b.x > right.x + right.width)
+        assertTrue("A should sit to the right of B", a.x > b.x + b.width)
+        assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
+        assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
+        assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
+        assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -101,6 +194,18 @@ class MainActivityE2eTest {
         exerciseMenuAction(MENU_ACTION_OPEN_SETTINGS)
     }
 
+    private fun launchActivity(clearTask: Boolean = true): MainActivity {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+
+        return try {
+            launchMainActivity(instrumentation, context, monitor, clearTask)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+    }
+
     private fun launchMainActivity(
         instrumentation: Instrumentation,
         context: Context,
@@ -111,11 +216,12 @@ class MainActivityE2eTest {
             requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
                 "Launch intent for ${context.packageName} was not found"
             }
-        val launchFlags = if (clearTask) {
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        } else {
-            Intent.FLAG_ACTIVITY_NEW_TASK
-        }
+        val launchFlags =
+            if (clearTask) {
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            } else {
+                Intent.FLAG_ACTIVITY_NEW_TASK
+            }
         launchIntent.addFlags(launchFlags)
         context.startActivity(launchIntent)
         val activity =
@@ -123,7 +229,7 @@ class MainActivityE2eTest {
                 ?: resumedMainActivity(instrumentation)
                 ?: throw IllegalArgumentException("MainActivity should be launched")
         instrumentation.waitForIdleSync()
-        assertMenuButtonAvailable(instrumentation, activity)
+        assertDrawerHandleAvailable(instrumentation, activity)
         return activity
     }
 
@@ -139,26 +245,20 @@ class MainActivityE2eTest {
         return activity
     }
 
-    private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
+    private fun assertDrawerHandleAvailable(instrumentation: Instrumentation, activity: MainActivity) {
         assertChromeViewAvailable(
             instrumentation,
             activity,
-            MENU_BUTTON_TAG,
+            DRAWER_EDGE_HANDLE_TAG,
             STARTUP_TIMEOUT_MS,
-            "Menu button should be attached after startup",
+            "Drawer edge handle should be attached after startup",
         )
     }
 
     private fun exerciseMenuAction(action: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+        val activity = launchActivity()
 
-        val activity = try {
-            launchMainActivity(instrumentation, context, monitor)
-        } finally {
-            instrumentation.removeMonitor(monitor)
-        }
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         instrumentation.runOnMainSync {
             require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
@@ -222,17 +322,22 @@ class MainActivityE2eTest {
     }
 
     private companion object {
+        const val DIALOG_TIMEOUT_MS = 5_000L
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
+        const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
-        const val EXPECTED_DRAWER_CONTENT = "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset"
+        const val EXPECTED_DRAWER_CONTENT =
+            "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset"
         const val MENU_ACTION_OPEN_LIBRARY = "open_library"
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val MENU_ACTION_SETTLE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
+        const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L
