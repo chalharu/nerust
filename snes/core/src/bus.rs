@@ -743,7 +743,7 @@ impl Bus {
             (0x00..=0x3F | 0x80..=0xBF, 0x4017) => self.read_joyser1(),
             (0x00..=0x3F | 0x80..=0xBF, 0x4200..=0x421F) => self.read_cpu_io(offset),
             (0x00..=0x3F | 0x80..=0xBF, 0x4300..=0x437F) => self.read_dma_register(offset),
-            _ => self.cartridge.read(address).unwrap_or(0),
+            _ => self.cartridge.read_mut(address).unwrap_or(0),
         }
     }
 
@@ -916,7 +916,7 @@ impl Bus {
 
         self.memory
             .read_cpu_bus(bank, offset)
-            .or_else(|| self.cartridge.read(address))
+            .or_else(|| self.cartridge.read_mut(address))
             .unwrap_or(0)
     }
 
