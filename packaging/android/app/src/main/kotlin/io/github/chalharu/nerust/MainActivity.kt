@@ -483,7 +483,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return
         }
 
-        val overlay = FrameLayout(this).apply {
+        val overlay = ComposeOwnerFrameLayout(this).apply {
             tag = DRAWER_OVERLAY_TAG
             setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
             layoutParams = FrameLayout.LayoutParams(
@@ -592,6 +592,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
         onMenuAction(action)
+    }
+
+    private inner class ComposeOwnerFrameLayout(context: Context) : FrameLayout(context) {
+        override fun onAttachedToWindow() {
+            installComposeOwners(this)
+            installComposeOwners(rootView)
+            super.onAttachedToWindow()
+        }
     }
 
     private external fun onFilePickerResult(uri: String?)
