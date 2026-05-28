@@ -1302,7 +1302,6 @@ mod tests {
         assert!(cartridge.write(0x003034, pbr));
         assert!(cartridge.write(0x00301E, (r15 & 0x00FF) as u8));
         assert!(cartridge.write(0x00301F, (r15 >> 8) as u8));
-        assert!(cartridge.write(0x003030, 0x20));
     }
 
     #[test]
@@ -1392,14 +1391,17 @@ mod tests {
     }
 
     #[test]
-    fn super_fx_requires_go_flag_to_start_program() {
+    fn super_fx_starts_on_r15_high_and_restarts_on_go_flag() {
         let mut rom = build_hirom_with_header("HIROM GSU GO", 0x31, 0x15, None, 0x0C);
-        rom[..GSU_ROM_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_STORE_PROGRAM);
+        let programs = [
+            0xF1, 0x00, 0x01, 0xF0, 0xEF, 0xBE, 0x31, 0x00, 0x01, 0xF1, 0x02, 0x01, 0xF0, 0xFE,
+            0xCA, 0x31, 0x00,
+        ];
+        rom[..programs.len()].copy_from_slice(&programs);
         let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
         assert!(cartridge.write(0x003034, 0x00));
         assert!(cartridge.write(0x00301E, 0x00));
-        assert!(cartridge.write(0x00301F, 0x80));
         assert_eq!(cartridge.read(0x700100), Some(0x00));
         assert_eq!(cartridge.read(0x700101), Some(0x00));
 
@@ -1407,10 +1409,21 @@ mod tests {
         assert_eq!(cartridge.read(0x700100), Some(0x00));
         assert_eq!(cartridge.read(0x700101), Some(0x00));
 
-        assert!(cartridge.write(0x003030, 0x20));
+        assert!(cartridge.write(0x00301F, 0x80));
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
         assert_eq!(cartridge.read(0x700100), Some(0xEF));
         assert_eq!(cartridge.read(0x700101), Some(0xBE));
+        assert_eq!(cartridge.read(0x700102), Some(0x00));
+        assert_eq!(cartridge.read(0x700103), Some(0x00));
+        assert_eq!(cartridge.read(0x003000), Some(0xEF));
+        assert_eq!(cartridge.read(0x003001), Some(0xBE));
+        assert_eq!(cartridge.read(0x00301E), Some(0x09));
+        assert_eq!(cartridge.read(0x00301F), Some(0x80));
+
+        assert!(cartridge.write(0x003030, 0x20));
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        assert_eq!(cartridge.read(0x700102), Some(0xFE));
+        assert_eq!(cartridge.read(0x700103), Some(0xCA));
     }
 
     #[test]

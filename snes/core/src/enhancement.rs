@@ -1024,6 +1024,7 @@ pub(crate) struct SuperFxState {
 const SUPERFX_VCR: u16 = 0x303B;
 const SUPERFX_SFR: u16 = 0x3030;
 const SUPERFX_R15: u16 = 0x301E;
+const SUPERFX_R15_HIGH: u16 = 0x301F;
 const SUPERFX_PBR: u16 = 0x3034;
 const SUPERFX_ROMBR: u16 = 0x3036;
 const SUPERFX_SCBR: u16 = 0x3038;
@@ -1062,7 +1063,10 @@ impl SuperFxState {
             value
         };
         let handled = self.registers.write(address_offset, value);
-        if handled && address_offset == SUPERFX_SFR && value & SUPERFX_GO_FLAG != 0 {
+        if handled
+            && (address_offset == SUPERFX_R15_HIGH
+                || address_offset == SUPERFX_SFR && value & SUPERFX_GO_FLAG != 0)
+        {
             self.run_program(rom, save_ram);
         }
         handled
@@ -1080,6 +1084,12 @@ impl SuperFxState {
         let mut interpreter =
             GsuInterpreter::new(r15, pbr, rombr, rambr, screen_base, rom, save_ram);
         interpreter.run();
+        for (register, value) in interpreter.registers.iter().copied().enumerate() {
+            let [low, high] = value.to_le_bytes();
+            let offset = 0x3000 + register as u16 * 2;
+            self.registers.write(offset, low);
+            self.registers.write(offset + 1, high);
+        }
         self.registers.write(SUPERFX_ROMBR, interpreter.rombr);
         self.registers
             .write(SUPERFX_RAMBR, u8::from(interpreter.rambr));
@@ -1158,6 +1168,7 @@ impl<'a> GsuInterpreter<'a> {
         let alt_mode = std::mem::take(&mut self.alt_mode);
         match (alt_mode, opcode) {
             (_, 0x00) => {
+                self.pc = self.pc.wrapping_add(1);
                 self.sync_program_counter();
                 self.halted = true;
             }
