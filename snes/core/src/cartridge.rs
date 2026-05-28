@@ -2237,12 +2237,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(cartridge.read(0x208000), Some(0x00));
-        assert_eq!(cartridge.read(0x208001), Some(0x84));
-        assert!(cartridge.write(0x208001, 0x00));
-        assert_eq!(cartridge.read(0x208001), Some(0x84));
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
+        assert!(cartridge.write(0x20C000, 0x00));
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
         assert!(cartridge.write(0x208000, 0x99));
         assert_eq!(cartridge.read(0x208000), Some(0x99));
-        assert_eq!(cartridge.read(0xA08001), Some(0x84));
+        assert_eq!(cartridge.read(0xA0C000), Some(0x84));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
     }
 
@@ -2270,11 +2270,11 @@ mod tests {
         .unwrap();
 
         assert!(cartridge.write(0x208000, 0x00));
-        assert_eq!(cartridge.read(0x208001), Some(0x80));
+        assert_eq!(cartridge.read(0x20C000), Some(0x80));
         write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
         write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x2000);
-        assert_eq!(cartridge.read(0x208001), Some(0x84));
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
 
         assert!(cartridge.write(0x208000, 0x20));
         write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
@@ -2578,16 +2578,16 @@ mod tests {
         write_dsp1_word(&mut cartridge, 0x208000, 0xFFFF);
         for _ in 0..1023 {
             assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0000);
-            assert_eq!(cartridge.read(0x208001), Some(0x80));
+            assert_eq!(cartridge.read(0x20C000), Some(0x80));
         }
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0000);
-        assert_eq!(cartridge.read(0x208001), Some(0x84));
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
 
         let mut cartridge = new_cartridge();
         assert!(cartridge.write(0x208000, 0x37));
         write_dsp1_word(&mut cartridge, 0x208000, 0xFFFF);
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0000);
-        assert_eq!(cartridge.read(0x208001), Some(0x80));
+        assert_eq!(cartridge.read(0x20C000), Some(0x80));
     }
 
     #[test]
@@ -2602,10 +2602,41 @@ mod tests {
         .unwrap();
 
         assert_eq!(cartridge.read(0x006000), Some(0x00));
-        assert_eq!(cartridge.read(0x006001), Some(0x84));
+        assert_eq!(cartridge.read(0x007000), Some(0x84));
         assert!(cartridge.write(0x006000, 0x77));
         assert_eq!(cartridge.read(0x006000), Some(0x77));
-        assert_eq!(cartridge.read(0x806001), Some(0x84));
+        assert_eq!(cartridge.read(0x807000), Some(0x84));
         assert_eq!(cartridge.read(0xC08000), Some(0xEA));
+    }
+
+    #[test]
+    fn dsp1_register_window_supports_documented_board_maps() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 2MB MMIO",
+            0x20,
+            0x03,
+            None,
+            0x0B,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x600000, 0x55));
+        assert_eq!(cartridge.read(0x600000), Some(0x55));
+        assert_eq!(cartridge.read(0x604000), Some(0x84));
+        assert_eq!(cartridge.read(0xE04000), Some(0x84));
+
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "DSP1B MAD2 MMIO",
+            0x21,
+            0x05,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x206000, 0x66));
+        assert_eq!(cartridge.read(0x206000), Some(0x66));
+        assert_eq!(cartridge.read(0x207000), Some(0x84));
+        assert_eq!(cartridge.read(0xA07000), Some(0x84));
     }
 }

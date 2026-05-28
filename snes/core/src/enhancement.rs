@@ -3827,24 +3827,20 @@ impl ByteWindow {
 }
 
 fn dsp1_register_offset(mapper_kind: MapperKind, address: u32) -> Option<u16> {
-    let bank = bank(address);
+    let bank = bank(address) & 0x7F;
     let offset = offset(address);
 
     match mapper_kind {
-        MapperKind::LoRom => {
-            if matches!(bank, 0x20..=0x3F | 0xA0..=0xBF) && offset >= 0x8000 {
-                Some(offset - 0x8000)
-            } else {
-                None
-            }
-        }
-        MapperKind::HiRom => {
-            if matches!(bank, 0x00..=0x1F | 0x80..=0x9F) && (0x6000..=0x7FFF).contains(&offset) {
-                Some(offset - 0x6000)
-            } else {
-                None
-            }
-        }
+        MapperKind::LoRom => match (bank, offset) {
+            (0x20..=0x3F, 0x8000..=0xBFFF) | (0x60..=0x6F, 0x0000..=0x3FFF) => Some(0),
+            (0x20..=0x3F, 0xC000..=0xFFFF) | (0x60..=0x6F, 0x4000..=0x7FFF) => Some(1),
+            _ => None,
+        },
+        MapperKind::HiRom => match (bank, offset) {
+            (0x00..=0x2F, 0x6000..=0x6FFF) => Some(0),
+            (0x00..=0x2F, 0x7000..=0x7FFF) => Some(1),
+            _ => None,
+        },
         MapperKind::Sa1 => None,
     }
 }
