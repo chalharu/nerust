@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{PresentationOptions, Renderer};
+use super::{DeviceLimitProfile, PresentationOptions, Renderer};
 use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
@@ -50,6 +50,25 @@ impl Renderer {
         assets: Option<&ConsoleVideoAssets>,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
+        Self::new_with_device_limit_profile(
+            render_surface,
+            surface_size,
+            presentation,
+            assets,
+            DeviceLimitProfile::Default,
+            presentation_options,
+        )
+        .await
+    }
+
+    pub async fn new_with_device_limit_profile<T: SurfaceTargetSource>(
+        render_surface: &RenderSurface<T>,
+        surface_size: SurfaceSize,
+        presentation: &VideoPresentation,
+        assets: Option<&ConsoleVideoAssets>,
+        device_limit_profile: DeviceLimitProfile,
+        presentation_options: PresentationOptions,
+    ) -> Result<Self, String> {
         let pipeline_kind = frame_pipeline_kind(presentation, assets)?;
 
         let instance = render_surface.instance();
@@ -66,7 +85,7 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("nerust_wgpu_device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: device_limit_profile.required_limits(),
                 ..Default::default()
             })
             .await

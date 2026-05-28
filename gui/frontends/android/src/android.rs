@@ -223,11 +223,9 @@ impl AndroidFrontend {
                 if plan.renderer_rebuild_required {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
-                    self.renderer = self
-                        .window
-                        .as_ref()
-                        .cloned()
-                        .map(|window| WgpuRenderer::new(window, &self.session));
+                    if let Some(window) = self.window.as_ref().cloned() {
+                        self.rebuild_renderer(window);
+                    }
                 }
                 self.request_redraw();
             }
@@ -318,7 +316,7 @@ impl AndroidFrontend {
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if let Some(window) = self.window.as_ref().cloned() {
             if self.renderer.is_none() {
-                self.renderer = Some(WgpuRenderer::new(window, &self.session));
+                self.rebuild_renderer(window);
                 self.rebuild_overlay();
             }
             return Ok(());
@@ -335,10 +333,20 @@ impl AndroidFrontend {
                 .map_err(|error| format!("failed to create Android window: {error}"))?,
         );
         self.window_id = Some(window.id());
-        self.renderer = Some(WgpuRenderer::new(window.clone(), &self.session));
+        self.rebuild_renderer(window.clone());
         self.window = Some(window);
         self.rebuild_overlay();
         Ok(())
+    }
+
+    fn rebuild_renderer(&mut self, window: Arc<Window>) {
+        self.renderer = match WgpuRenderer::new(window, &self.session) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                log::error!("failed to initialize Android renderer: {error}");
+                None
+            }
+        };
     }
 
     fn request_redraw(&mut self) {
@@ -365,6 +373,7 @@ impl AndroidFrontend {
             return;
         };
         let Some(renderer) = self.renderer.as_mut() else {
+            self.shell.needs_redraw = false;
             return;
         };
         let size = window.inner_size();

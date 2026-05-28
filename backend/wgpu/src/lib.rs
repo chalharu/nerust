@@ -6,7 +6,9 @@
 
 use nerust_console::video::VideoRenderProfile;
 use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
-use nerust_screen_wgpu::renderer::{PresentationOptions, RenderOutcome, Renderer};
+use nerust_screen_wgpu::renderer::{
+    DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,
+};
 use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 
@@ -87,6 +89,22 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
         render_profile: &VideoRenderProfile,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
+        Self::new_with_device_limit_profile(
+            target,
+            initial_size,
+            render_profile,
+            DeviceLimitProfile::Default,
+            presentation_options,
+        )
+    }
+
+    pub fn new_with_device_limit_profile(
+        target: T,
+        initial_size: SurfaceSize,
+        render_profile: &VideoRenderProfile,
+        device_limit_profile: DeviceLimitProfile,
+        presentation_options: PresentationOptions,
+    ) -> Result<Self, String> {
         let presentation = VideoPresentation::new(VideoFrameSpec::new(
             VideoFrameFormat::Rgba,
             render_profile.source_logical_size,
@@ -95,11 +113,12 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
         ));
         let render_surface = RenderSurface::new(ShellSurfaceTarget(target))?;
         let surface_size = render_surface.surface_size(initial_size);
-        let renderer = pollster::block_on(Renderer::new(
+        let renderer = pollster::block_on(Renderer::new_with_device_limit_profile(
             &render_surface,
             surface_size,
             &presentation,
             None,
+            device_limit_profile,
             presentation_options,
         ))?;
         Ok(Self {

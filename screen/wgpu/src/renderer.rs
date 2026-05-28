@@ -11,8 +11,8 @@ use crate::upload::FrameUploadLayout;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use wgpu::{
-    BindGroup, BindGroupLayout, Buffer, Device, Queue, RenderPipeline, SurfaceConfiguration,
-    Texture,
+    BindGroup, BindGroupLayout, Buffer, Device, Limits, Queue, RenderPipeline,
+    SurfaceConfiguration, Texture,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -30,6 +30,21 @@ pub struct PresentationOptions {
 impl Default for PresentationOptions {
     fn default() -> Self {
         Self { vsync: true }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceLimitProfile {
+    Default,
+    DownlevelWebGl2,
+}
+
+impl DeviceLimitProfile {
+    pub(crate) fn required_limits(self) -> Limits {
+        match self {
+            Self::Default => Limits::default(),
+            Self::DownlevelWebGl2 => Limits::downlevel_webgl2_defaults(),
+        }
     }
 }
 
