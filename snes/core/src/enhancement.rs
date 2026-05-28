@@ -713,6 +713,7 @@ impl Cx4State {
         }
 
         match command {
+            0x00 => self.command_sprite(),
             0x05 => self.command_propulsion(),
             0x0D => self.command_set_vector_length(),
             0x10 => self.command_polar_to_rectangular(true),
@@ -735,6 +736,12 @@ impl Cx4State {
                 self.ram[CX4_DATA_START + 2] = 0x05;
             }
             _ => {}
+        }
+    }
+
+    fn command_sprite(&mut self) {
+        if self.ram[CX4_COMMAND_MODE] == 0x0B {
+            self.command_disintegrate();
         }
     }
 
@@ -863,6 +870,67 @@ impl Cx4State {
         let squared = value * value;
         self.write_u24(CX4_DATA_START + 3, squared as u32);
         self.write_u24(CX4_DATA_START + 6, (squared >> 24) as u32);
+    }
+
+    fn command_disintegrate(&mut self) {
+        let center_x = i32::from(self.read_i16(CX4_DATA_START));
+        let center_y = i32::from(self.read_i16(CX4_DATA_START + 3));
+        let scale_x = i32::from(self.read_i16(CX4_DATA_START + 6));
+        let width = i32::from(self.ram[CX4_DATA_START + 9]);
+        let height = i32::from(self.ram[CX4_DATA_START + 12]);
+        let scale_y = i32::from(self.read_i16(CX4_DATA_START + 15));
+
+        let clear_len = (width.max(0) as usize * height.max(0) as usize) / 2;
+        for byte in self.ram.iter_mut().take(clear_len) {
+            *byte = 0;
+        }
+
+        let mut source_index = 0x0600usize;
+        let mut source_byte = self.ram[source_index];
+        let mut source_low_nibble = true;
+        let mut source_y = -center_y * scale_y + (center_y << 8);
+        for _ in 0..height {
+            let mut source_x = -center_x * scale_x + (center_x << 8);
+            for _ in 0..width {
+                let pixel = if source_low_nibble {
+                    source_byte & 0x0F
+                } else {
+                    source_byte >> 4
+                };
+                if !source_low_nibble {
+                    source_index += 1;
+                    source_byte = self.ram.get(source_index).copied().unwrap_or(0);
+                }
+                source_low_nibble = !source_low_nibble;
+
+                let sample_x = source_x >> 8;
+                let sample_y = source_y >> 8;
+                if (0..width).contains(&sample_x) && (0..height).contains(&sample_y) {
+                    let sample_x = sample_x as usize;
+                    let sample_y = sample_y as usize;
+                    let output_index = (sample_y >> 3) * width as usize * 4
+                        + (sample_x >> 3) * 32
+                        + (sample_y & 7) * 2;
+                    let mask = 0x80 >> (sample_x & 7);
+                    if output_index + 17 < self.ram.len() {
+                        if pixel & 0x01 != 0 {
+                            self.ram[output_index] |= mask;
+                        }
+                        if pixel & 0x02 != 0 {
+                            self.ram[output_index + 1] |= mask;
+                        }
+                        if pixel & 0x04 != 0 {
+                            self.ram[output_index + 16] |= mask;
+                        }
+                        if pixel & 0x08 != 0 {
+                            self.ram[output_index + 17] |= mask;
+                        }
+                    }
+                }
+                source_x += scale_x;
+            }
+            source_y += scale_y;
+        }
     }
 
     fn command_immediate_register_reset(&mut self) {
