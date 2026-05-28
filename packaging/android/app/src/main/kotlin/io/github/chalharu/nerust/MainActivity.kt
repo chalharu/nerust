@@ -88,6 +88,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
+    private var menuChromeAttachAttempts = 0
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -103,7 +104,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        window.decorView.post(::ensureMenuChromeAttached)
+        scheduleMenuChromeAttach()
     }
 
     override fun onStart() {
@@ -114,13 +115,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     override fun onResume() {
         super.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-        window.decorView.post(::ensureMenuChromeAttached)
+        scheduleMenuChromeAttach()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            window.decorView.post(::ensureMenuChromeAttached)
+            scheduleMenuChromeAttach()
         }
     }
 
@@ -295,11 +296,22 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         parentDialog.show()
     }
 
+    private fun scheduleMenuChromeAttach() {
+        if (isFinishing || isDestroyed) {
+            return
+        }
+        menuChromeAttachAttempts = 0
+        window.decorView.post(::ensureMenuChromeAttached)
+    }
+
     private fun ensureMenuChromeAttached() {
         if (isFinishing || isDestroyed) {
             return
         }
-        val root = contentRoot() ?: return
+        val root = contentRoot() ?: run {
+            retryMenuChromeAttach()
+            return
+        }
         installComposeOwners(root)
         val controls = root.findViewWithTag<View>(CONTROLS_OVERLAY_TAG)
             ?: createControlsOverlay().also(::addOverlayView)
@@ -308,6 +320,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         controls.bringToFront()
         button.bringToFront()
         root.findViewWithTag<View>(DRAWER_OVERLAY_TAG)?.bringToFront()
+    }
+
+    private fun retryMenuChromeAttach() {
+        if (menuChromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
+            Log.w(TAG, "Menu chrome attach skipped because Android content root was unavailable")
+            return
+        }
+        menuChromeAttachAttempts += 1
+        window.decorView.postDelayed(::ensureMenuChromeAttached, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
     }
 
     private fun addOverlayView(view: View) {
@@ -429,6 +450,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     companion object {
         private const val TAG = "Nerust"
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
+        private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
+        private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
     }
