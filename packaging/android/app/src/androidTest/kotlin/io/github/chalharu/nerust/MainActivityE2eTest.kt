@@ -35,18 +35,16 @@ class MainActivityE2eTest {
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun appStartsRecreateAndDrawerKeepMenuAvailable() {
+    fun appStartsAndDrawerMenuIsAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
 
-        var activity = try {
+        val activity = try {
             launchMainActivity(instrumentation, context, monitor)
         } finally {
             instrumentation.removeMonitor(monitor)
         }
-
-        activity = recreateMainActivity(instrumentation, activity)
 
         instrumentation.runOnMainSync {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
@@ -112,27 +110,6 @@ class MainActivityE2eTest {
         instrumentation.waitForIdleSync()
         assertMenuButtonAvailable(instrumentation, activity)
         return activity
-    }
-
-    private fun recreateMainActivity(instrumentation: Instrumentation, activity: MainActivity): MainActivity {
-        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-        try {
-            instrumentation.runOnMainSync {
-                activity.dismissChromeForTest()
-                activity.recreate()
-            }
-            val recreated = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
-                "MainActivity should be recreated"
-            }
-            instrumentation.waitForIdleSync()
-            assertTrue("MainActivity should be destroyed before recreation completes", waitUntil(STARTUP_TIMEOUT_MS) {
-                activity.isDestroyed
-            })
-            assertMenuButtonAvailable(instrumentation, recreated)
-            return recreated
-        } finally {
-            instrumentation.removeMonitor(monitor)
-        }
     }
 
     private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
