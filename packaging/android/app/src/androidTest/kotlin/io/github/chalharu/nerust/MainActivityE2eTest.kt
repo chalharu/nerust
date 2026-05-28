@@ -19,24 +19,11 @@ class MainActivityE2eTest {
     fun appStartsAndDrawerMenuIsAvailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val launchIntent =
-            requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
-                "Launch intent for ${context.packageName} was not found"
-            }
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
         var launchedActivity: MainActivity? = null
 
         try {
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            context.startActivity(launchIntent)
-            val activity = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
-                "MainActivity should be launched"
-            }.also { launchedActivity = it }
-            instrumentation.waitForIdleSync()
-
-            assertTrue("Menu button should be attached after startup", waitUntil(STARTUP_TIMEOUT_MS) {
-                taggedView(instrumentation, activity, MENU_BUTTON_TAG)?.isShown == true
-            })
+            val activity = launchMainActivity(instrumentation, context, monitor).also { launchedActivity = it }
 
             instrumentation.runOnMainSync {
                 require(!activity.isDestroyed) { "MainActivity should remain alive before opening Menu" }
@@ -86,6 +73,68 @@ class MainActivityE2eTest {
                 instrumentation.waitForIdleSync()
             }
         }
+    }
+
+    @Test
+    fun activityRecreationKeepsMenuAvailable() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+        var firstActivity: MainActivity? = null
+        var latestActivity: MainActivity? = null
+
+        try {
+            val activity = launchMainActivity(instrumentation, context, monitor)
+            firstActivity = activity
+            latestActivity = activity
+
+            instrumentation.runOnMainSync {
+                require(!activity.isDestroyed) { "MainActivity should remain alive before recreation" }
+                activity.recreate()
+            }
+            val recreatedActivity =
+                requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
+                    "MainActivity should be recreated"
+                }.also { latestActivity = it }
+            instrumentation.waitForIdleSync()
+
+            assertMenuButtonAvailable(instrumentation, recreatedActivity)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+            listOfNotNull(latestActivity, firstActivity).distinct().forEach { activity ->
+                instrumentation.runOnMainSync {
+                    if (!activity.isFinishing && !activity.isDestroyed) {
+                        activity.finish()
+                    }
+                }
+                instrumentation.waitForIdleSync()
+            }
+        }
+    }
+
+    private fun launchMainActivity(
+        instrumentation: Instrumentation,
+        context: Context,
+        monitor: Instrumentation.ActivityMonitor,
+    ): MainActivity {
+        val launchIntent =
+            requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)) {
+                "Launch intent for ${context.packageName} was not found"
+            }
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        context.startActivity(launchIntent)
+        val activity = requireNotNull(monitor.waitForActivityWithTimeout(STARTUP_TIMEOUT_MS) as? MainActivity) {
+            "MainActivity should be launched"
+        }
+        instrumentation.waitForIdleSync()
+        assertMenuButtonAvailable(instrumentation, activity)
+        return activity
+    }
+
+    private fun assertMenuButtonAvailable(instrumentation: Instrumentation, activity: MainActivity) {
+        assertTrue("Menu button should be attached after startup", waitUntil(STARTUP_TIMEOUT_MS) {
+            taggedView(instrumentation, activity, MENU_BUTTON_TAG)?.isShown == true
+        })
     }
 
     private fun taggedView(
