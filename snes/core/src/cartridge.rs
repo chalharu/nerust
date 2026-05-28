@@ -1004,6 +1004,48 @@ mod tests {
     }
 
     #[test]
+    fn dsp1_lorom_executes_geometry_commands() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 GEOMETRY",
+            0x20,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x208000, 0x04));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0000);
+
+        assert!(cartridge.write(0x208000, 0x0C));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 10);
+        write_dsp1_word(&mut cartridge, 0x208000, 20);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 20);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), (-10_i16) as u16);
+
+        assert!(cartridge.write(0x208000, 0x1C));
+        write_dsp1_word(&mut cartridge, 0x208000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x0000);
+        write_dsp1_word(&mut cartridge, 0x208000, 0x0000);
+        write_dsp1_word(&mut cartridge, 0x208000, 10);
+        write_dsp1_word(&mut cartridge, 0x208000, 20);
+        write_dsp1_word(&mut cartridge, 0x208000, 30);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 20);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), (-10_i16) as u16);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 30);
+
+        assert!(cartridge.write(0x208000, 0x28));
+        write_dsp1_word(&mut cartridge, 0x208000, 3);
+        write_dsp1_word(&mut cartridge, 0x208000, 4);
+        write_dsp1_word(&mut cartridge, 0x208000, 12);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 13);
+    }
+
+    #[test]
     fn dsp1_freeze_command_clears_ready_status() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "DSP1 FREEZE",
