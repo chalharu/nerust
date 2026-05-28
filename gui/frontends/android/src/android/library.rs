@@ -41,7 +41,9 @@ pub(crate) fn bind_app(app: &AndroidApp) {
 pub(crate) fn update_cached_entries(entries: &[RomLibraryEntry]) {
     let names: Vec<String> = entries.iter().map(|e| e.display_name.clone()).collect();
     let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
-    *CACHED_ENTRIES.lock().expect("cached entries mutex poisoned") = (names, ids);
+    *CACHED_ENTRIES
+        .lock()
+        .expect("cached entries mutex poisoned") = (names, ids);
 }
 
 /// Show the ROM library dialog synchronously from a JNI callback running on the
