@@ -12,6 +12,7 @@ use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
+use jni::jni_str;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
@@ -22,6 +23,7 @@ use nerust_gui_shell::touch::{
     PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
 };
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,6 +38,40 @@ use winit::window::{Window, WindowId};
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
 const FOREGROUND_RETRY_MAX_ATTEMPTS: u32 = 20;
+
+pub(crate) fn register_main_activity_natives(
+    env: &mut jni::Env<'_>,
+) -> Result<(), jni::errors::Error> {
+    let class = env.find_class(jni_str!("io/github/chalharu/nerust/MainActivity"))?;
+    let methods = unsafe {
+        [
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onFilePickerResult"),
+                jni_str!("(Ljava/lang/String;)V"),
+                picker::Java_io_github_chalharu_nerust_MainActivity_onFilePickerResult
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onMenuAction"),
+                jni_str!("(Ljava/lang/String;)V"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_onMenuAction as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onRomLibrarySelected"),
+                jni_str!("(Ljava/lang/String;)V"),
+                library::Java_io_github_chalharu_nerust_MainActivity_onRomLibrarySelected
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onSettingsDialogResult"),
+                jni_str!("(Ljava/lang/String;)V"),
+                settings::Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult
+                    as *mut c_void,
+            ),
+        ]
+    };
+    unsafe { env.register_native_methods(class, &methods) }
+}
 
 pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     picker::bind_app(&app);

@@ -241,6 +241,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "drawerShowing=$drawerShowing, drawerOverlay=${drawerOverlayView.debugViewState()}, " +
             "drawerCompose=${drawerComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest"
 
+    fun dispatchMenuActionForTest(action: String) {
+        dispatchMenuAction(action)
+    }
+
     /**
      * Show a modal ROM library dialog.
      *

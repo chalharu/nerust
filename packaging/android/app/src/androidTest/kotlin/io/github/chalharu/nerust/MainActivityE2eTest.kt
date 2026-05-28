@@ -89,6 +89,16 @@ class MainActivityE2eTest {
         }
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun menuRomLibraryActionInvokesNativeCallbackWithoutCrashing() {
+        exerciseMenuAction(MENU_ACTION_OPEN_LIBRARY)
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun menuSettingsActionInvokesNativeCallbackWithoutCrashing() {
+        exerciseMenuAction(MENU_ACTION_OPEN_SETTINGS)
+    }
+
     private fun launchMainActivity(
         instrumentation: Instrumentation,
         context: Context,
@@ -122,6 +132,28 @@ class MainActivityE2eTest {
             STARTUP_TIMEOUT_MS,
             "Menu button should be attached after startup",
         )
+    }
+
+    private fun exerciseMenuAction(action: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+
+        val activity = try {
+            launchMainActivity(instrumentation, context, monitor)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
+            activity.dispatchMenuActionForTest(action)
+        }
+        instrumentation.waitForIdleSync()
+        SystemClock.sleep(MENU_ACTION_SETTLE_DELAY_MS)
+        instrumentation.runOnMainSync {
+            require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
+        }
     }
 
     private fun assertChromeViewAvailable(
@@ -179,7 +211,10 @@ class MainActivityE2eTest {
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT = "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset"
+        const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+        const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
+        const val MENU_ACTION_SETTLE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
