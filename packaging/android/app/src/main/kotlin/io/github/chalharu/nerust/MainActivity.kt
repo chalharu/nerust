@@ -1,6 +1,7 @@
 package io.github.chalharu.nerust
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
@@ -16,6 +17,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -105,7 +107,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var controlsOverlayView: View? = null
     private var menuButtonPopup: PopupWindow? = null
     private var menuButtonView: View? = null
-    private var drawerPopup: PopupWindow? = null
+    private var drawerDialog: Dialog? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
 
@@ -213,9 +215,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         when (tag) {
             CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
                 controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerPopup?.isShowing == true &&
+            DRAWER_COMPOSE_TAG -> drawerDialog?.isShowing == true &&
                 drawerComposeView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerPopup?.isShowing == true &&
+            DRAWER_OVERLAY_TAG -> drawerDialog?.isShowing == true &&
                 drawerOverlayView.isShownInWindowForTest()
             MENU_BUTTON_TAG -> menuButtonPopup?.isShowing == true &&
                 menuButtonView.isShownInWindowForTest()
@@ -477,8 +479,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     private fun showDrawerOverlay() {
-        val anchor = popupAnchor() ?: return
-        val existing = drawerPopup
+        if (popupAnchor() == null) {
+            return
+        }
+        val existing = drawerDialog
         if (existing?.isShowing == true) {
             return
         }
@@ -511,30 +515,24 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         installComposeOwners(drawerContent)
         overlay.addView(drawerContent)
 
-        val popup = PopupWindow(
-            overlay,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            false,
-        ).apply {
-            isClippingEnabled = false
-            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setOnDismissListener { clearDrawerPopupReferences() }
+        val dialog = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setContentView(overlay)
+            setOnDismissListener { clearDrawerWindowReferences() }
         }
 
         drawerOverlayView = overlay
         drawerComposeView = drawerContent
-        drawerPopup = popup
-        if (!showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
-            clearDrawerPopupReferences()
+        drawerDialog = dialog
+        if (!showDrawerDialog(dialog)) {
+            clearDrawerWindowReferences()
         }
     }
 
     private fun removeDrawerOverlay(): Boolean {
-        val popup = drawerPopup ?: return false
-        popup.dismiss()
-        clearDrawerPopupReferences()
+        val dialog = drawerDialog ?: return false
+        dialog.dismiss()
+        clearDrawerWindowReferences()
         return true
     }
 
@@ -557,8 +555,23 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         }
 
-    private fun clearDrawerPopupReferences() {
-        drawerPopup = null
+    private fun showDrawerDialog(dialog: Dialog): Boolean =
+        try {
+            dialog.show()
+            dialog.window?.apply {
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            }
+            true
+        } catch (_: WindowManager.BadTokenException) {
+            false
+        } catch (_: IllegalStateException) {
+            false
+        }
+
+    private fun clearDrawerWindowReferences() {
+        drawerDialog = null
         drawerOverlayView = null
         drawerComposeView = null
     }
@@ -567,8 +580,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
 
     private fun dismissChromePopups() {
-        drawerPopup?.dismiss()
-        clearDrawerPopupReferences()
+        drawerDialog?.dismiss()
+        clearDrawerWindowReferences()
         menuButtonPopup?.dismiss()
         menuButtonPopup = null
         menuButtonView = null
