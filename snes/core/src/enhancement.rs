@@ -90,6 +90,184 @@ impl EnhancementState {
     }
 }
 
+const MSU1_STATUS_REVISION: u8 = 0x02;
+const MSU1_STATUS_AUDIO_ERROR: u8 = 0x08;
+const MSU1_STATUS_AUDIO_PLAYING: u8 = 0x10;
+const MSU1_STATUS_AUDIO_REPEATING: u8 = 0x20;
+const MSU1_STATUS_AUDIO_BUSY: u8 = 0x40;
+const MSU1_STATUS_DATA_BUSY: u8 = 0x80;
+const MSU1_SIGNATURE: [u8; 6] = *b"S-MSU1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Msu1State {
+    data_seek_offset: u32,
+    data_read_offset: u32,
+    audio_track: u16,
+    audio_volume: u8,
+    audio_error: bool,
+    audio_playing: bool,
+    audio_repeating: bool,
+    audio_busy: bool,
+    data_busy: bool,
+}
+
+impl Msu1State {
+    pub(crate) fn new() -> Self {
+        Self {
+            data_seek_offset: 0,
+            data_read_offset: 0,
+            audio_track: 0,
+            audio_volume: 0,
+            audio_error: true,
+            audio_playing: false,
+            audio_repeating: false,
+            audio_busy: false,
+            data_busy: false,
+        }
+    }
+
+    pub(crate) fn peek(&self, address: u32) -> Option<u8> {
+        let offset = msu1_register_offset(address)?;
+        Some(self.peek_register(offset))
+    }
+
+    pub(crate) fn read(&mut self, address: u32) -> Option<u8> {
+        let offset = msu1_register_offset(address)?;
+        Some(match offset {
+            0x2001 => self.read_data(),
+            _ => self.peek_register(offset),
+        })
+    }
+
+    pub(crate) fn write(&mut self, address: u32, value: u8) -> bool {
+        let Some(offset) = msu1_register_offset(address) else {
+            return false;
+        };
+
+        match offset {
+            0x2000 => {
+                self.data_seek_offset = (self.data_seek_offset & 0xFFFF_FF00) | u32::from(value);
+            }
+            0x2001 => {
+                self.data_seek_offset =
+                    (self.data_seek_offset & 0xFFFF_00FF) | (u32::from(value) << 8);
+            }
+            0x2002 => {
+                self.data_seek_offset =
+                    (self.data_seek_offset & 0xFF00_FFFF) | (u32::from(value) << 16);
+            }
+            0x2003 => {
+                self.data_seek_offset =
+                    (self.data_seek_offset & 0x00FF_FFFF) | (u32::from(value) << 24);
+                self.data_read_offset = self.data_seek_offset;
+            }
+            0x2004 => {
+                self.audio_track = (self.audio_track & 0xFF00) | u16::from(value);
+            }
+            0x2005 => {
+                self.audio_track = (self.audio_track & 0x00FF) | (u16::from(value) << 8);
+                self.audio_playing = false;
+                self.audio_repeating = false;
+                self.audio_error = true;
+            }
+            0x2006 => {
+                self.audio_volume = value;
+            }
+            0x2007 => {
+                if !self.audio_busy && !self.audio_error {
+                    self.audio_playing = value & 0x01 != 0;
+                    self.audio_repeating = value & 0x02 != 0;
+                }
+            }
+            _ => unreachable!("MSU-1 register offset outside $2000-$2007"),
+        }
+
+        true
+    }
+
+    fn peek_register(&self, offset: u16) -> u8 {
+        match offset {
+            0x2000 => self.status(),
+            0x2001 => 0x00,
+            0x2002..=0x2007 => MSU1_SIGNATURE[usize::from(offset - 0x2002)],
+            _ => unreachable!("MSU-1 register offset outside $2000-$2007"),
+        }
+    }
+
+    fn read_data(&mut self) -> u8 {
+        if self.data_busy {
+            return 0x00;
+        }
+        // No data.rom sidecar is mounted yet; bsnes returns 0 without advancing
+        // the read offset until backing data exists.
+        0x00
+    }
+
+    fn status(&self) -> u8 {
+        MSU1_STATUS_REVISION
+            | if self.audio_error {
+                MSU1_STATUS_AUDIO_ERROR
+            } else {
+                0
+            }
+            | if self.audio_playing {
+                MSU1_STATUS_AUDIO_PLAYING
+            } else {
+                0
+            }
+            | if self.audio_repeating {
+                MSU1_STATUS_AUDIO_REPEATING
+            } else {
+                0
+            }
+            | if self.audio_busy {
+                MSU1_STATUS_AUDIO_BUSY
+            } else {
+                0
+            }
+            | if self.data_busy {
+                MSU1_STATUS_DATA_BUSY
+            } else {
+                0
+            }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn data_seek_offset(&self) -> u32 {
+        self.data_seek_offset
+    }
+
+    #[cfg(test)]
+    pub(crate) fn data_read_offset(&self) -> u32 {
+        self.data_read_offset
+    }
+
+    #[cfg(test)]
+    pub(crate) fn audio_track(&self) -> u16 {
+        self.audio_track
+    }
+
+    #[cfg(test)]
+    pub(crate) fn audio_volume(&self) -> u8 {
+        self.audio_volume
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_audio_available_for_test(&mut self) {
+        self.audio_error = false;
+    }
+}
+
+fn msu1_register_offset(address: u32) -> Option<u16> {
+    let bank = ((address >> 16) & 0xFF) as u8;
+    let offset = (address & 0xFFFF) as u16;
+    if matches!(bank, 0x00..=0x3F | 0x80..=0xBF) && matches!(offset, 0x2000..=0x2007) {
+        Some(offset)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Sa1State {
     registers: ByteWindow,
