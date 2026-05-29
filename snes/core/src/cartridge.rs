@@ -2155,6 +2155,19 @@ mod tests {
     }
 
     #[test]
+    fn cx4_absent_sram_window_reads_as_zero() {
+        let mut rom = build_lorom_with_header("CX4 NO SRAM", 0x20, 0xF3, Some(0x10), 0x0A);
+        let rom_index = crate::mapper::lorom_rom_index(0x700123, rom.len()).unwrap();
+        rom[rom_index] = 0xCC;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        assert_eq!(cartridge.read(0x700123), Some(0x00));
+        assert!(cartridge.write(0x700123, 0xAA));
+        assert_eq!(cartridge.read(0x700123), Some(0x00));
+        assert_eq!(cartridge.read(0xF00123), Some(0x00));
+    }
+
+    #[test]
     fn cx4_executes_core_math_commands() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "CX4 COMMANDS",
