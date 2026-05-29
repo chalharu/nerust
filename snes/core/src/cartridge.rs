@@ -383,7 +383,7 @@ fn enhancement_chip_for_header(
     }
 
     match cartridge_coprocessor(chipset) {
-        0x0 => EnhancementChip::Dsp1Family,
+        0x0 => dsp1_enhancement_chip(map_mode, chipset),
         0x1 => {
             if chipset == 0x1A || rom_size_code > 0x0A {
                 EnhancementChip::SuperFxGsu2
@@ -396,6 +396,15 @@ fn enhancement_chip_for_header(
         }
         0xF if matches!(expansion_chip_subtype, Some(0x03 | 0x10)) => EnhancementChip::Cx4,
         _ => EnhancementChip::None,
+    }
+}
+
+fn dsp1_enhancement_chip(map_mode: u8, chipset: u8) -> EnhancementChip {
+    // DSP-1 and DSP-1A share firmware. Common DSP-1B boards are HiROM with DSP+RAM+Battery.
+    if map_mode & HIROM_MAP_MODE_MASK == HIROM_MAP_MODE_VALUE && chipset == 0x05 {
+        EnhancementChip::Dsp1B
+    } else {
+        EnhancementChip::Dsp1
     }
 }
 
@@ -679,7 +688,7 @@ mod tests {
                 0x03,
                 None,
                 0x0A,
-                EnhancementChip::Dsp1Family,
+                EnhancementChip::Dsp1,
             ),
             (
                 "DSP1B TEST HEADER",
@@ -688,7 +697,7 @@ mod tests {
                 0x05,
                 None,
                 0x0A,
-                EnhancementChip::Dsp1Family,
+                EnhancementChip::Dsp1B,
             ),
         ] {
             let rom = match mapper_kind {
@@ -2850,6 +2859,26 @@ mod tests {
         write_dsp1_word(&mut cartridge, 0x208000, 0xFFFF);
         assert_eq!(read_dsp1_word(&mut cartridge, 0x208000), 0x0000);
         assert_eq!(cartridge.read(0x20C000), Some(0x80));
+    }
+
+    #[test]
+    fn dsp1b_reports_fixed_rom_version() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "DSP1B VERSION",
+            0x21,
+            0x05,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            cartridge.header().enhancement_chip(),
+            EnhancementChip::Dsp1B
+        );
+        assert!(cartridge.write(0x006000, 0x2F));
+        write_dsp1_word(&mut cartridge, 0x006000, 0xFFFF);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x006000), 0x0101);
     }
 
     #[test]
