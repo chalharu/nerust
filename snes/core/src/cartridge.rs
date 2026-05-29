@@ -1338,6 +1338,9 @@ mod tests {
         0x03, 0x31, 0x3E, 0xFB, 0x0E, 0x03, 0xF0, 0x00, 0x40, 0xF6, 0x00, 0x40, 0xB0, 0x9F, 0xF1,
         0x10, 0x03, 0x31, 0xF0, 0x00, 0x40, 0x3D, 0x9F, 0xF1, 0x12, 0x03, 0x31, 0x00, 0x01,
     ];
+    const GSU_LOB_SIGN_PROGRAM: [u8; 6] = [0xF0, 0x80, 0x00, 0x9E, 0x00, 0x01];
+    const GSU_LOB_ZERO_PROGRAM: [u8; 6] = [0xF0, 0x00, 0x01, 0x9E, 0x00, 0x01];
+    const GSU_HIB_SIGN_PROGRAM: [u8; 6] = [0xF0, 0x00, 0x80, 0xC0, 0x00, 0x01];
     const GSU_BITMAP_2BPP_RPIX_PROGRAM: &[u8] = &[
         0xF0, 0x03, 0x00, 0x4E, 0x4C, 0xF1, 0x00, 0x00, 0x3D, 0x4C, 0xF1, 0x00, 0x01, 0x31, 0x00,
         0x01,
@@ -2032,6 +2035,32 @@ mod tests {
         assert_eq!(cartridge.read(0x700313), Some(0x10));
         assert_eq!(cartridge.read(0x003008), Some(0x00));
         assert_eq!(cartridge.read(0x003009), Some(0x00));
+    }
+
+    #[test]
+    fn super_fx_lob_and_hib_use_byte_sign_flags() {
+        for (program, expected_flags) in [
+            (GSU_LOB_SIGN_PROGRAM, 0x08),
+            (GSU_LOB_ZERO_PROGRAM, 0x02),
+            (GSU_HIB_SIGN_PROGRAM, 0x08),
+        ] {
+            let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+                "HIROM GSU BYTE FLAG",
+                0x31,
+                0x15,
+                None,
+                0x0C,
+            ))
+            .unwrap();
+
+            for (offset, value) in program.iter().copied().enumerate() {
+                assert!(cartridge.write(0x700080 + offset as u32, value));
+            }
+            assert!(cartridge.write(0x003030, 0x1E));
+            start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+            assert_eq!(cartridge.read(0x003030).unwrap() & 0x1E, expected_flags);
+        }
     }
 
     #[test]
