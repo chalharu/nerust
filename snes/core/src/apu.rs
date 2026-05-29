@@ -11,7 +11,9 @@ const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
 pub(crate) const SMP_IPL_ENTRY_DELAY_CPU_CYCLES: u8 = 32;
 const SMP_FLAG_C: u8 = 0x01;
 const SMP_FLAG_Z: u8 = 0x02;
+const SMP_FLAG_I: u8 = 0x04;
 const SMP_FLAG_H: u8 = 0x08;
+const SMP_FLAG_B: u8 = 0x10;
 const SMP_FLAG_P: u8 = 0x20;
 const SMP_FLAG_V: u8 = 0x40;
 const SMP_FLAG_N: u8 = 0x80;
@@ -339,6 +341,7 @@ impl Apu {
             }
             0x0D => self.push_smp_stack(self.smp_psw),
             0x0E => self.test_and_set_absolute(true),
+            0x0F => self.brk_smp_interrupt(),
             0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
             0x12 | 0x32 | 0x52 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
                 self.set_direct_bit(opcode >> 5, false);
@@ -1169,6 +1172,17 @@ impl Apu {
         let low = self.pop_smp_stack();
         let high = self.pop_smp_stack();
         self.smp_pc = u16::from_le_bytes([low, high]);
+    }
+
+    fn brk_smp_interrupt(&mut self) {
+        let [return_low, return_high] = self.smp_pc.to_le_bytes();
+        let old_psw = self.smp_psw;
+        self.push_smp_stack(return_high);
+        self.push_smp_stack(return_low);
+        self.push_smp_stack(old_psw);
+        self.set_flag(SMP_FLAG_B, true);
+        self.set_flag(SMP_FLAG_I, false);
+        self.smp_pc = self.read_smp_word_at(0xFFDE);
     }
 
     fn push_smp_stack(&mut self, value: u8) {
