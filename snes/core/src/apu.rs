@@ -865,7 +865,7 @@ impl Apu {
             0xC0 => self.set_flag(SMP_FLAG_I, false),
             0xCE => {
                 let value = self.pop_smp_stack();
-                self.mov_x(value);
+                self.smp_x = value;
             }
             0xC4 => {
                 let address = self.fetch_direct_address();
@@ -994,7 +994,7 @@ impl Apu {
             0xED => self.set_flag(SMP_FLAG_C, !self.flag(SMP_FLAG_C)),
             0xEE => {
                 let value = self.pop_smp_stack();
-                self.mov_y(value);
+                self.smp_y = value;
             }
             0xEF | 0xFF => {
                 self.smp_running = false;
@@ -1064,7 +1064,7 @@ impl Apu {
             }
             0xAE => {
                 let value = self.pop_smp_stack();
-                self.mov_a(value);
+                self.smp_a = value;
             }
             0xAF => {
                 let address = self.direct_address(self.smp_x);
