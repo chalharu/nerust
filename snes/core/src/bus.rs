@@ -1757,6 +1757,46 @@ mod tests {
         assert_eq!(bus.apu.read_smp(0x0200), 0x56);
     }
 
+    #[test]
+    fn apu_smp_timer_outputs_increment_and_reset_on_read() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.apu.write_smp(0x00FC, 0x01);
+        bus.apu.write_smp(0x00F1, 0x04);
+        for _ in 0..(56 * 3) {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.read_smp(0x00FF), 0x03);
+        assert_eq!(bus.apu.read_smp(0x00FF), 0x00);
+    }
+
+    #[test]
+    fn apu_smp_timer_disable_clears_output_and_divider() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.apu.write_smp(0x00FA, 0x02);
+        bus.apu.write_smp(0x00F1, 0x01);
+        for _ in 0..(448 * 2) {
+            bus.tick_cpu_cycle();
+        }
+        bus.apu.write_smp(0x00F1, 0x00);
+
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
+
+        bus.apu.write_smp(0x00F1, 0x01);
+        for _ in 0..447 {
+            bus.tick_cpu_cycle();
+        }
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
+        bus.tick_cpu_cycle();
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
+        for _ in 0..448 {
+            bus.tick_cpu_cycle();
+        }
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x01);
+    }
+
     fn upload_and_start_apu_program(bus: &mut Bus, entry: u16, program: &[u8]) {
         assert!(program.len() <= 0x100);
 
@@ -1893,6 +1933,26 @@ mod tests {
         }
 
         assert_eq!(bus.read(0x002140), 0xA5);
+    }
+
+    #[test]
+    fn apu_spc700_program_can_wait_for_timer_output() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x02, 0xFC, // MOV $FC,#$02
+            0x8F, 0x04, 0xF1, // MOV $F1,#$04
+            0xE4, 0xFF, // MOV A,$FF
+            0xF0, 0xFC, // BEQ read timer again
+            0xC4, 0xF4, // MOV $F4,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..160 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_ne!(bus.read(0x002140), 0x00);
     }
 
     #[test]
