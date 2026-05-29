@@ -5,6 +5,12 @@ const IPL_READY_PORTS: [u8; APU_PORT_COUNT] = [0xAA, 0xBB, 0x00, 0x00];
 const IPL_INITIAL_KICK: u8 = 0xCC;
 const SMP_CONTROL_RESET_PORTS_0_1: u8 = 0x10;
 const SMP_CONTROL_RESET_PORTS_2_3: u8 = 0x20;
+const SMP_FLAG_C: u8 = 0x01;
+const SMP_FLAG_Z: u8 = 0x02;
+const SMP_FLAG_H: u8 = 0x08;
+const SMP_FLAG_P: u8 = 0x20;
+const SMP_FLAG_V: u8 = 0x40;
+const SMP_FLAG_N: u8 = 0x80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IplState {
@@ -24,6 +30,11 @@ pub(crate) struct Apu {
     control: u8,
     ipl_state: IplState,
     ipl_upload_base: u16,
+    smp_a: u8,
+    smp_x: u8,
+    smp_y: u8,
+    smp_sp: u8,
+    smp_psw: u8,
     smp_pc: u16,
     smp_running: bool,
 }
@@ -40,6 +51,11 @@ impl Apu {
             control: 0xB0,
             ipl_state: IplState::WaitingForInitialKick,
             ipl_upload_base: 0,
+            smp_a: 0,
+            smp_x: 0,
+            smp_y: 0,
+            smp_sp: 0,
+            smp_psw: SMP_FLAG_Z,
             smp_pc: 0,
             smp_running: false,
         }
@@ -68,9 +84,8 @@ impl Apu {
 
     pub(crate) fn read_smp(&mut self, address: u16) -> u8 {
         match address {
-            0x00F0 => 0x0A,
-            0x00F1 => self.control,
-            0x00F2 => self.dsp_address,
+            0x00F0..=0x00F1 => 0,
+            0x00F2 => self.dsp_address & 0x7F,
             0x00F3 => self.dsp_registers[usize::from(self.dsp_address & 0x7F)],
             0x00F4..=0x00F7 => self.cpu_to_apu_ports[usize::from(address - 0x00F4)],
             0x00F8..=0x00F9 => self.aux_io[usize::from(address - 0x00F8)],
@@ -173,6 +188,11 @@ impl Apu {
     fn start_smp_at_entry(&mut self) {
         self.smp_pc =
             u16::from(self.cpu_to_apu_ports[2]) | (u16::from(self.cpu_to_apu_ports[3]) << 8);
+        self.smp_a = 0;
+        self.smp_x = 0;
+        self.smp_y = 0;
+        self.smp_sp = 0xEF;
+        self.smp_psw = SMP_FLAG_Z;
         self.smp_running = true;
     }
 
@@ -180,13 +200,201 @@ impl Apu {
         let opcode = self.fetch_smp_byte();
         match opcode {
             0x00 => {}
+            0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
+            0x20 => self.set_flag(SMP_FLAG_P, false),
+            0x2F => self.branch_relative(true),
+            0x30 => self.branch_relative(self.flag(SMP_FLAG_N)),
+            0x40 => self.set_flag(SMP_FLAG_P, true),
+            0x50 => self.branch_relative(!self.flag(SMP_FLAG_V)),
+            0x5D => self.mov_x(self.smp_a),
+            0x5F => {
+                let address = self.fetch_smp_word();
+                self.smp_pc = address;
+            }
+            0x60 => self.set_flag(SMP_FLAG_C, false),
+            0x64 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x65 => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x68 => {
+                let value = self.fetch_smp_byte();
+                self.compare_8(self.smp_a, value);
+            }
+            0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
+            0x7D => self.mov_a(self.smp_x),
+            0x80 => self.set_flag(SMP_FLAG_C, true),
+            0x8D => {
+                let value = self.fetch_smp_byte();
+                self.mov_y(value);
+            }
             0x8F => {
                 let value = self.fetch_smp_byte();
-                let address = u16::from(self.fetch_smp_byte());
+                let address = self.fetch_direct_address();
                 self.write_smp(address, value);
+            }
+            0x90 => self.branch_relative(!self.flag(SMP_FLAG_C)),
+            0x9C => {
+                self.smp_a = self.smp_a.wrapping_sub(1);
+                self.set_nz(self.smp_a);
+            }
+            0x9D => self.mov_x(self.smp_sp),
+            0xB0 => self.branch_relative(self.flag(SMP_FLAG_C)),
+            0xBC => {
+                self.smp_a = self.smp_a.wrapping_add(1);
+                self.set_nz(self.smp_a);
+            }
+            0xBD => {
+                self.smp_sp = self.smp_x;
+            }
+            0xC4 => {
+                let address = self.fetch_direct_address();
+                self.write_smp(address, self.smp_a);
+            }
+            0xC5 => {
+                let address = self.fetch_smp_word();
+                self.write_smp(address, self.smp_a);
+            }
+            0xC8 => {
+                let value = self.fetch_smp_byte();
+                self.compare_8(self.smp_x, value);
+            }
+            0xC9 => {
+                let address = self.fetch_smp_word();
+                self.write_smp(address, self.smp_x);
+            }
+            0xCB => {
+                let address = self.fetch_direct_address();
+                self.write_smp(address, self.smp_y);
+            }
+            0xCC => {
+                let address = self.fetch_smp_word();
+                self.write_smp(address, self.smp_y);
+            }
+            0xCD => {
+                let value = self.fetch_smp_byte();
+                self.mov_x(value);
+            }
+            0xD0 => self.branch_relative(!self.flag(SMP_FLAG_Z)),
+            0xD4 => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.write_smp(address, self.smp_a);
+            }
+            0xD8 => {
+                let address = self.fetch_direct_address();
+                self.write_smp(address, self.smp_x);
+            }
+            0xD9 => {
+                let address = self.fetch_direct_indexed_address(self.smp_y);
+                self.write_smp(address, self.smp_x);
+            }
+            0xDB => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.write_smp(address, self.smp_y);
+            }
+            0xDC => {
+                self.smp_y = self.smp_y.wrapping_sub(1);
+                self.set_nz(self.smp_y);
+            }
+            0xDD => self.mov_a(self.smp_y),
+            0xE0 => {
+                self.set_flag(SMP_FLAG_V, false);
+                self.set_flag(SMP_FLAG_H, false);
+            }
+            0xE4 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.mov_a(value);
+            }
+            0xE5 => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.mov_a(value);
+            }
+            0xE8 => {
+                let value = self.fetch_smp_byte();
+                self.mov_a(value);
+            }
+            0xE9 => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.mov_x(value);
+            }
+            0xEB => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.mov_y(value);
+            }
+            0xEC => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.mov_y(value);
             }
             0xEF | 0xFF => {
                 self.smp_running = false;
+            }
+            0xF0 => self.branch_relative(self.flag(SMP_FLAG_Z)),
+            0xF4 => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.mov_a(value);
+            }
+            0xF8 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.mov_x(value);
+            }
+            0xF9 => {
+                let address = self.fetch_direct_indexed_address(self.smp_y);
+                let value = self.read_smp(address);
+                self.mov_x(value);
+            }
+            0xFB => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.mov_y(value);
+            }
+            0xFC => {
+                self.smp_y = self.smp_y.wrapping_add(1);
+                self.set_nz(self.smp_y);
+            }
+            0xFD => self.mov_y(self.smp_a),
+            0x1D => {
+                self.smp_x = self.smp_x.wrapping_sub(1);
+                self.set_nz(self.smp_x);
+            }
+            0x3D => {
+                self.smp_x = self.smp_x.wrapping_add(1);
+                self.set_nz(self.smp_x);
+            }
+            0x7E => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_y, value);
+            }
+            0xAD => {
+                let value = self.fetch_smp_byte();
+                self.compare_8(self.smp_y, value);
+            }
+            0x1E => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_x, value);
+            }
+            0x3E => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_x, value);
+            }
+            0x5E => {
+                let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_y, value);
             }
             _ => {
                 self.smp_running = false;
@@ -198,6 +406,71 @@ impl Apu {
         let value = self.read_smp(self.smp_pc);
         self.smp_pc = self.smp_pc.wrapping_add(1);
         value
+    }
+
+    fn fetch_smp_word(&mut self) -> u16 {
+        let low = u16::from(self.fetch_smp_byte());
+        let high = u16::from(self.fetch_smp_byte());
+        low | (high << 8)
+    }
+
+    fn fetch_direct_address(&mut self) -> u16 {
+        let offset = self.fetch_smp_byte();
+        self.direct_address(offset)
+    }
+
+    fn fetch_direct_indexed_address(&mut self, index: u8) -> u16 {
+        let offset = self.fetch_smp_byte();
+        self.direct_address(offset.wrapping_add(index))
+    }
+
+    fn direct_address(&self, offset: u8) -> u16 {
+        u16::from(offset) | if self.flag(SMP_FLAG_P) { 0x0100 } else { 0 }
+    }
+
+    fn branch_relative(&mut self, condition: bool) {
+        let offset = self.fetch_smp_byte() as i8;
+        if condition {
+            self.smp_pc = ((i32::from(self.smp_pc) + i32::from(offset)) & 0xFFFF) as u16;
+        }
+    }
+
+    fn mov_a(&mut self, value: u8) {
+        self.smp_a = value;
+        self.set_nz(value);
+    }
+
+    fn mov_x(&mut self, value: u8) {
+        self.smp_x = value;
+        self.set_nz(value);
+    }
+
+    fn mov_y(&mut self, value: u8) {
+        self.smp_y = value;
+        self.set_nz(value);
+    }
+
+    fn compare_8(&mut self, left: u8, right: u8) {
+        let result = left.wrapping_sub(right);
+        self.set_nz(result);
+        self.set_flag(SMP_FLAG_C, left >= right);
+    }
+
+    fn set_nz(&mut self, value: u8) {
+        self.set_flag(SMP_FLAG_N, value & 0x80 != 0);
+        self.set_flag(SMP_FLAG_Z, value == 0);
+    }
+
+    fn flag(&self, mask: u8) -> bool {
+        self.smp_psw & mask != 0
+    }
+
+    fn set_flag(&mut self, mask: u8, enabled: bool) {
+        if enabled {
+            self.smp_psw |= mask;
+        } else {
+            self.smp_psw &= !mask;
+        }
     }
 
     #[cfg(test)]
