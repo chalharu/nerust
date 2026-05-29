@@ -2030,6 +2030,100 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_logical_alu_handles_immediate_and_direct_operands() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0x0F, // MOV A,#$0F
+            0x08, 0xF0, // OR A,#$F0
+            0xC4, 0xF4, // MOV $F4,A
+            0x28, 0x3C, // AND A,#$3C
+            0xC4, 0xF5, // MOV $F5,A
+            0x8F, 0x55, 0x10, // MOV $10,#$55
+            0x44, 0x10, // EOR A,$10
+            0xC4, 0xF6, // MOV $F6,A
+            0x24, 0x10, // AND A,$10
+            0xC4, 0xF7, // MOV $F7,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..20 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0xFF);
+        assert_eq!(bus.read(0x002141), 0x3C);
+        assert_eq!(bus.read(0x002142), 0x69);
+        assert_eq!(bus.read(0x002143), 0x41);
+    }
+
+    #[test]
+    fn apu_spc700_adc_sets_carry_halfcarry_and_overflow_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x60, // CLRC
+            0xE8, 0x7F, // MOV A,#$7F
+            0x88, 0x01, // ADC A,#$01
+            0xC4, 0xF4, // MOV $F4,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF5, // MOV $F5,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..12 {
+            bus.tick_cpu_cycle();
+        }
+
+        let psw = bus.read(0x002141);
+        assert_eq!(bus.read(0x002140), 0x80);
+        assert_eq!(psw & 0x01, 0);
+        assert_eq!(psw & 0x02, 0);
+        assert_ne!(psw & 0x08, 0);
+        assert_ne!(psw & 0x40, 0);
+        assert_ne!(psw & 0x80, 0);
+    }
+
+    #[test]
+    fn apu_spc700_sbc_uses_carry_as_not_borrow() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x80, // SETC
+            0xE8, 0x10, // MOV A,#$10
+            0xA8, 0x01, // SBC A,#$01
+            0xC4, 0xF4, // MOV $F4,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF5, // MOV $F5,A
+            0x60, // CLRC
+            0xE8, 0x00, // MOV A,#$00
+            0x8F, 0x00, 0x10, // MOV $10,#$00
+            0xA4, 0x10, // SBC A,$10
+            0xC4, 0xF6, // MOV $F6,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF7, // MOV $F7,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..28 {
+            bus.tick_cpu_cycle();
+        }
+
+        let no_borrow_psw = bus.read(0x002141);
+        let borrow_psw = bus.read(0x002143);
+        assert_eq!(bus.read(0x002140), 0x0F);
+        assert_ne!(no_borrow_psw & 0x01, 0);
+        assert_eq!(no_borrow_psw & 0x0A, 0);
+        assert_eq!(bus.read(0x002142), 0xFF);
+        assert_eq!(borrow_psw & 0x01, 0);
+        assert_eq!(borrow_psw & 0x02, 0);
+        assert_ne!(borrow_psw & 0x80, 0);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [

@@ -283,9 +283,27 @@ impl Apu {
                 let address = self.read_smp_word_at(vector);
                 self.call_smp_subroutine(address);
             }
+            0x04 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.or_a(value);
+            }
+            0x08 => {
+                let value = self.fetch_smp_byte();
+                self.or_a(value);
+            }
             0x0D => self.push_smp_stack(self.smp_psw),
             0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
             0x20 => self.set_flag(SMP_FLAG_P, false),
+            0x24 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.and_a(value);
+            }
+            0x28 => {
+                let value = self.fetch_smp_byte();
+                self.and_a(value);
+            }
             0x2D => self.push_smp_stack(self.smp_a),
             0x2F => self.branch_relative(true),
             0x30 => self.branch_relative(self.flag(SMP_FLAG_N)),
@@ -294,6 +312,15 @@ impl Apu {
                 self.call_smp_subroutine(address);
             }
             0x40 => self.set_flag(SMP_FLAG_P, true),
+            0x44 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.eor_a(value);
+            }
+            0x48 => {
+                let value = self.fetch_smp_byte();
+                self.eor_a(value);
+            }
             0x4D => self.push_smp_stack(self.smp_x),
             0x4F => {
                 let offset = self.fetch_smp_byte();
@@ -329,6 +356,15 @@ impl Apu {
                 self.return_smp_subroutine();
             }
             0x80 => self.set_flag(SMP_FLAG_C, true),
+            0x84 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.adc_a(value);
+            }
+            0x88 => {
+                let value = self.fetch_smp_byte();
+                self.adc_a(value);
+            }
             0x8E => self.smp_psw = self.pop_smp_stack(),
             0x8D => {
                 let value = self.fetch_smp_byte();
@@ -345,6 +381,15 @@ impl Apu {
                 self.set_nz(self.smp_a);
             }
             0x9D => self.mov_x(self.smp_sp),
+            0xA4 => {
+                let address = self.fetch_direct_address();
+                let value = self.read_smp(address);
+                self.sbc_a(value);
+            }
+            0xA8 => {
+                let value = self.fetch_smp_byte();
+                self.sbc_a(value);
+            }
             0xB0 => self.branch_relative(self.flag(SMP_FLAG_C)),
             0xBC => {
                 self.smp_a = self.smp_a.wrapping_add(1);
@@ -598,6 +643,58 @@ impl Apu {
         let result = left.wrapping_sub(right);
         self.set_nz(result);
         self.set_flag(SMP_FLAG_C, left >= right);
+    }
+
+    fn or_a(&mut self, value: u8) {
+        self.smp_a |= value;
+        self.set_nz(self.smp_a);
+    }
+
+    fn and_a(&mut self, value: u8) {
+        self.smp_a &= value;
+        self.set_nz(self.smp_a);
+    }
+
+    fn eor_a(&mut self, value: u8) {
+        self.smp_a ^= value;
+        self.set_nz(self.smp_a);
+    }
+
+    fn adc_a(&mut self, value: u8) {
+        let accumulator = self.smp_a;
+        let carry = u16::from(self.flag(SMP_FLAG_C));
+        let sum = u16::from(accumulator) + u16::from(value) + carry;
+        let result = sum as u8;
+        self.smp_a = result;
+        self.set_nz(result);
+        self.set_flag(SMP_FLAG_C, sum > 0xFF);
+        self.set_flag(
+            SMP_FLAG_H,
+            ((accumulator & 0x0F) + (value & 0x0F) + carry as u8) > 0x0F,
+        );
+        self.set_flag(
+            SMP_FLAG_V,
+            (!(accumulator ^ value) & (accumulator ^ result) & 0x80) != 0,
+        );
+    }
+
+    fn sbc_a(&mut self, value: u8) {
+        let accumulator = self.smp_a;
+        let carry = u16::from(self.flag(SMP_FLAG_C));
+        let inverted = !value;
+        let sum = u16::from(accumulator) + u16::from(inverted) + carry;
+        let result = sum as u8;
+        self.smp_a = result;
+        self.set_nz(result);
+        self.set_flag(SMP_FLAG_C, sum > 0xFF);
+        self.set_flag(
+            SMP_FLAG_H,
+            ((accumulator & 0x0F) + (inverted & 0x0F) + carry as u8) > 0x0F,
+        );
+        self.set_flag(
+            SMP_FLAG_V,
+            ((accumulator ^ value) & (accumulator ^ result) & 0x80) != 0,
+        );
     }
 
     fn set_nz(&mut self, value: u8) {
