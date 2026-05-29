@@ -2392,6 +2392,9 @@ impl Cx4State {
     }
 
     fn read(&self, address: u32) -> Option<u8> {
+        if is_cx4_absent_sram_address(address) {
+            return Some(0);
+        }
         if !is_system_bank(address) {
             return None;
         }
@@ -2405,6 +2408,9 @@ impl Cx4State {
     }
 
     fn write(&mut self, address: u32, value: u8, rom: &[u8]) -> bool {
+        if is_cx4_absent_sram_address(address) {
+            return true;
+        }
         if !is_system_bank(address) {
             return false;
         }
@@ -3295,6 +3301,10 @@ fn cx4_clip_trapezoid_span(left: i32, right: i32) -> (u8, u8) {
     }
 
     (left.clamp(0, 255) as u8, right.clamp(0, 255) as u8)
+}
+
+fn is_cx4_absent_sram_address(address: u32) -> bool {
+    matches!(bank(address) & 0x7F, 0x70..=0x77) && offset(address) < 0x8000
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
