@@ -1734,9 +1734,11 @@ mod tests {
 
         bus.apu.write_smp(0x00F2, 0x12);
         bus.apu.write_smp(0x00F3, 0xAB);
+        assert_eq!(bus.apu.read_smp(0x00F2), 0x12);
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
 
         bus.apu.write_smp(0x00F2, 0x92);
+        assert_eq!(bus.apu.read_smp(0x00F2), 0x12);
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
         bus.apu.write_smp(0x00F3, 0xCD);
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
@@ -1753,6 +1755,25 @@ mod tests {
         assert_eq!(bus.apu.read_smp(0x00F8), 0x12);
         assert_eq!(bus.apu.read_smp(0x00F9), 0x34);
         assert_eq!(bus.apu.read_smp(0x0200), 0x56);
+    }
+
+    fn upload_and_start_apu_program(bus: &mut Bus, entry: u16, program: &[u8]) {
+        assert!(program.len() <= 0x100);
+
+        bus.write(0x002142, entry as u8);
+        bus.write(0x002143, (entry >> 8) as u8);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+        for (index, value) in program.iter().copied().enumerate() {
+            bus.write(0x002141, value);
+            bus.write(0x002140, index as u8);
+        }
+
+        let kick = ((program.len() as u8).wrapping_add(2)) | 1;
+        bus.write(0x002142, entry as u8);
+        bus.write(0x002143, (entry >> 8) as u8);
+        bus.write(0x002141, 0x00);
+        bus.write(0x002140, kick);
     }
 
     #[test]
@@ -1777,6 +1798,100 @@ mod tests {
         assert_eq!(bus.read(0x002140), 0x5A);
         bus.tick_cpu_cycle();
         bus.apu.write_smp(0x00F4, 0xA5);
+        assert_eq!(bus.read(0x002140), 0xA5);
+    }
+
+    #[test]
+    fn apu_spc700_polling_loop_acknowledges_cpu_command() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE4, 0xF4, // MOV A,$F4
+            0x68, 0x7E, // CMP A,#$7E
+            0xD0, 0xFA, // BNE $0200
+            0x8F, 0xA5, 0xF4, // MOV $F4,#$A5
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..12 {
+            bus.tick_cpu_cycle();
+        }
+        assert_ne!(bus.read(0x002140), 0xA5);
+
+        bus.write(0x002140, 0x7E);
+        for _ in 0..12 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0xA5);
+    }
+
+    #[test]
+    fn apu_spc700_index_loop_runs_until_zero() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xCD, 0x03, // MOV X,#$03
+            0x1D, // DEC X
+            0xD0, 0xFD, // BNE DEC X
+            0xE8, 0x5A, // MOV A,#$5A
+            0xC4, 0xF4, // MOV $F4,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..10 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x5A);
+    }
+
+    #[test]
+    fn apu_spc700_direct_page_flag_selects_page() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0x11, // MOV A,#$11
+            0xC4, 0x10, // MOV $10,A
+            0x40, // SETP
+            0xE8, 0x22, // MOV A,#$22
+            0xC4, 0x10, // MOV $110,A
+            0xE4, 0x10, // MOV A,$110
+            0x20, // CLRP
+            0xC4, 0xF4, // MOV $F4,A
+            0xE4, 0x10, // MOV A,$10
+            0xC4, 0xF5, // MOV $F5,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..16 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x22);
+        assert_eq!(bus.read(0x002141), 0x11);
+    }
+
+    #[test]
+    fn apu_spc700_absolute_store_and_compare() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xCD, 0x42, // MOV X,#$42
+            0xC9, 0x00, 0x03, // MOV $0300,X
+            0xE8, 0x42, // MOV A,#$42
+            0x65, 0x00, 0x03, // CMP A,$0300
+            0xD0, 0x04, // BNE failure
+            0x8F, 0xA5, 0xF4, // MOV $F4,#$A5
+            0xFF, // STOP
+            0x8F, 0x00, 0xF4, // failure: MOV $F4,#$00
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..12 {
+            bus.tick_cpu_cycle();
+        }
+
         assert_eq!(bus.read(0x002140), 0xA5);
     }
 
