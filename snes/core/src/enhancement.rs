@@ -2064,7 +2064,7 @@ impl<'a> GsuInterpreter<'a> {
             3 => value as i8 as i16 as u16,
             _ => u16::from(value),
         };
-        self.write_result(result);
+        self.write_load_result(result);
     }
 
     fn read_rom_buffer(&self) -> u8 {

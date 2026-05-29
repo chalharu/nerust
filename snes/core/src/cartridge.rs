@@ -1367,6 +1367,7 @@ mod tests {
     const GSU_ROM_WITH_STORE_PROGRAM: [u8; 10] =
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
     const GSU_GETB_PROGRAM: [u8; 9] = [0xFE, 0x23, 0x81, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00];
+    const GSU_GETB_FLAGS_PROGRAM: [u8; 6] = [0xFE, 0x23, 0x01, 0xEF, 0x00, 0x01];
     const GSU_ROMB_GETB_PROGRAM: [u8; 15] = [
         0xF0, 0x01, 0x00, 0x3F, 0xDF, 0xFE, 0x00, 0x80, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x00,
     ];
@@ -1682,6 +1683,21 @@ mod tests {
         assert_eq!(cartridge.read(0x700100), Some(0x7A));
         assert_eq!(cartridge.read(0x700101), Some(0x00));
         assert_eq!(cartridge.read(0x003036), Some(0x00));
+    }
+
+    #[test]
+    fn super_fx_getb_preserves_alu_flags() {
+        let mut rom = build_hirom_with_header("HIROM GSU GETB FLAGS", 0x31, 0x15, None, 0x0C);
+        rom[0x0123] = 0x80;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        for (offset, value) in GSU_GETB_FLAGS_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003030, 0x1E));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x1E, 0x1E);
     }
 
     #[test]
