@@ -2205,6 +2205,65 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_decimal_adjust_matches_bcd_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let cases = [
+            (0xDF, 0x10, 0x00, 0x10, 0x00),
+            (0xDF, 0x1A, 0x00, 0x20, 0x00),
+            (0xDF, 0x10, 0x01, 0x70, 0x01),
+            (0xDF, 0x10, 0x09, 0x76, 0x09),
+            (0xDF, 0xFF, 0xF6, 0x65, 0x75),
+            (0xDF, 0x9A, 0x00, 0x00, 0x03),
+            (0xDF, 0x91, 0x01, 0xF1, 0x81),
+            (0xDF, 0x9A, 0x08, 0x00, 0x0B),
+            (0xDF, 0x99, 0x08, 0x9F, 0x88),
+            (0xBE, 0x10, 0x09, 0x10, 0x09),
+            (0xBE, 0x1A, 0x09, 0x14, 0x09),
+            (0xBE, 0xA1, 0xFF, 0x41, 0x7C),
+            (0xBE, 0xFF, 0x09, 0x99, 0x88),
+            (0xBE, 0x99, 0x00, 0x33, 0x00),
+            (0xBE, 0x9A, 0x01, 0x34, 0x00),
+            (0xBE, 0x66, 0x00, 0x00, 0x02),
+            (0xBE, 0x11, 0x00, 0xAB, 0x80),
+        ];
+        let mut program = Vec::new();
+        for (index, (opcode, input_a, input_psw, _, _)) in cases.iter().copied().enumerate() {
+            let address = 0x0340_u16 + (index as u16 * 2);
+            let [result_low, result_high] = address.to_le_bytes();
+            let [psw_low, psw_high] = address.wrapping_add(1).to_le_bytes();
+            program.extend_from_slice(&[
+                0xE8,
+                input_psw, // MOV A,#psw
+                0x2D,      // PUSH A
+                0x8E,      // POP PSW
+                0xE8,
+                input_a, // MOV A,#input
+                opcode,
+                0xC5,
+                result_low,
+                result_high, // MOV result,A
+                0x0D,        // PUSH PSW
+                0xAE,        // POP A
+                0xC5,
+                psw_low,
+                psw_high, // MOV psw,A
+            ]);
+        }
+        program.push(0xFF);
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..600 {
+            bus.tick_cpu_cycle();
+        }
+
+        for (index, (_, _, _, expected_a, expected_psw)) in cases.iter().copied().enumerate() {
+            let address = 0x0340_u16 + (index as u16 * 2);
+            assert_eq!(bus.apu.peek_ram(address), expected_a);
+            assert_eq!(bus.apu.peek_ram(address + 1), expected_psw);
+        }
+    }
+
+    #[test]
     fn apu_spc700_psw_control_ops_update_status_bits() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
