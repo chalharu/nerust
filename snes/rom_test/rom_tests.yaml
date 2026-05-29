@@ -65,6 +65,18 @@ cases:
       - kind: bus_u8
         address: "0x001E"
         expected: "0x00"
+  - id: spctest-opcodes-final-state
+    description: >
+      The public SPC-700 instruction test ROM completes all non-SLEEP/STOP opcode cases and leaves the CPU-visible result port clear, with a deterministic final screen capture.
+
+    rom: snes-tests/spctest/spctest.sfc
+    max_steps: 4000000
+    check_interval_steps: 4000000
+    expected_screen_hash: "0x6355F99FAC09A849"
+    assertions:
+      - kind: bus_u16
+        address: "0x002142"
+        expected: "0x0000"
   - id: arguments-after-jsr-300k-screen-state
     description: >
       The undisbeliever 65816 arguments-after-JSR example renders a deterministic text screen at 300000 steps after repeatedly reading fixed 16-bit and 24-bit arguments following JSR/JSL calls.
