@@ -70,14 +70,14 @@ impl<T: SurfaceTargetSource> RenderSurface<T> {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", target_arch = "x86_64"))]
 fn default_instance() -> Instance {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::GL;
     Instance::new(descriptor)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(all(target_os = "android", target_arch = "x86_64")))]
 fn default_instance() -> Instance {
     Instance::default()
 }
