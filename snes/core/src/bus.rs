@@ -1497,7 +1497,7 @@ mod tests {
     };
     use crate::{
         Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
-        PresentedMainScreenLine,
+        PresentedMainScreenLine, apu::SMP_IPL_ENTRY_DELAY_CPU_CYCLES,
     };
 
     const HEADER_OFFSET: usize = 0x7FC0;
@@ -1814,6 +1814,7 @@ mod tests {
         bus.write(0x002143, (entry >> 8) as u8);
         bus.write(0x002141, 0x00);
         bus.write(0x002140, kick);
+        tick_cpu_cycles(bus, SMP_IPL_ENTRY_DELAY_CPU_CYCLES);
     }
 
     #[test]
@@ -1834,9 +1835,12 @@ mod tests {
         bus.write(0x002141, 0x00);
         bus.write(0x002140, 0x06);
 
-        bus.tick_cpu_cycle();
+        for _ in 0..(SMP_IPL_ENTRY_DELAY_CPU_CYCLES / 2) {
+            bus.tick_cpu_cycle();
+        }
+        assert_eq!(bus.read(0x002140), 0x06);
+        tick_cpu_cycles(&mut bus, SMP_IPL_ENTRY_DELAY_CPU_CYCLES);
         assert_eq!(bus.read(0x002140), 0x5A);
-        bus.tick_cpu_cycle();
         bus.apu.write_smp(0x00F4, 0xA5);
         assert_eq!(bus.read(0x002140), 0xA5);
     }
@@ -1933,6 +1937,121 @@ mod tests {
         }
 
         assert_eq!(bus.read(0x002140), 0xA5);
+    }
+
+    #[test]
+    fn apu_spc700_compares_direct_immediate_and_ya_word() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x05, 0x10, // MOV $10,#$05
+            0x8F, 0x05, 0x11, // MOV $11,#$05
+            0x69, 0x11, 0x10, // CMP $10,$11
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF4, // MOV $F4,A
+            0x8F, 0x05, 0x12, // MOV $12,#$05
+            0x78, 0x06, 0x10, // CMP $10,#$06
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF5, // MOV $F5,A
+            0x8F, 0x34, 0x20, // MOV $20,#$34
+            0x8F, 0x34, 0x21, // MOV $21,#$34
+            0xCD, 0x20, // MOV X,#$20
+            0x8D, 0x21, // MOV Y,#$21
+            0x79, // CMP (X),(Y)
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF6, // MOV $F6,A
+            0x8F, 0x34, 0x30, // MOV $30,#$34
+            0x8F, 0x12, 0x31, // MOV $31,#$12
+            0xE8, 0x34, // MOV A,#$34
+            0x8D, 0x12, // MOV Y,#$12
+            0x5A, 0x30, // CMPW YA,$30
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0xF7, // MOV $F7,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..48 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140) & 0x83, 0x03);
+        assert_eq!(bus.read(0x002141) & 0x83, 0x80);
+        assert_eq!(bus.read(0x002142) & 0x83, 0x03);
+        assert_eq!(bus.read(0x002143) & 0x83, 0x03);
+    }
+
+    #[test]
+    fn apu_spc700_memory_alu_modes_update_destination() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x12, 0x01, // MOV $01,#$12
+            0x8F, 0x34, 0x02, // MOV $02,#$34
+            0x60, // CLRC
+            0x89, 0x02, 0x01, // ADC $01,$02
+            0xE4, 0x01, // MOV A,$01
+            0xC4, 0xF4, // MOV $F4,A
+            0x8F, 0xC0, 0x03, // MOV $03,#$C0
+            0x18, 0x0F, 0x03, // OR $03,#$0F
+            0xE4, 0x03, // MOV A,$03
+            0xC4, 0xF5, // MOV $F5,A
+            0x8F, 0xF0, 0x04, // MOV $04,#$F0
+            0x8F, 0x0F, 0x05, // MOV $05,#$0F
+            0x49, 0x05, 0x04, // EOR $04,$05
+            0xE4, 0x04, // MOV A,$04
+            0xC4, 0xF6, // MOV $F6,A
+            0x8F, 0xF0, 0x06, // MOV $06,#$F0
+            0x8F, 0x0F, 0x07, // MOV $07,#$0F
+            0xCD, 0x06, // MOV X,#$06
+            0x8D, 0x07, // MOV Y,#$07
+            0x39, // AND (X),(Y)
+            0xE4, 0x06, // MOV A,$06
+            0xC4, 0xF7, // MOV $F7,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..64 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x46);
+        assert_eq!(bus.read(0x002141), 0xCF);
+        assert_eq!(bus.read(0x002142), 0xFF);
+        assert_eq!(bus.read(0x002143), 0x00);
+    }
+
+    #[test]
+    fn apu_spc700_word_add_sub_updates_ya_and_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0xFF, 0x20, // MOV $20,#$FF
+            0x8F, 0x00, 0x21, // MOV $21,#$00
+            0xE8, 0x12, // MOV A,#$12
+            0x8D, 0x34, // MOV Y,#$34
+            0x7A, 0x20, // ADDW YA,$20
+            0xC4, 0xF4, // MOV $F4,A
+            0xCB, 0xF5, // MOV $F5,Y
+            0x8F, 0x01, 0x22, // MOV $22,#$01
+            0x8F, 0x00, 0x23, // MOV $23,#$00
+            0x9A, 0x22, // SUBW YA,$22
+            0xC4, 0xF6, // MOV $F6,A
+            0xCB, 0xF7, // MOV $F7,Y
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..48 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x11);
+        assert_eq!(bus.read(0x002141), 0x35);
+        assert_eq!(bus.read(0x002142), 0x10);
+        assert_eq!(bus.read(0x002143), 0x35);
     }
 
     #[test]
