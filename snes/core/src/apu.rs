@@ -277,11 +277,28 @@ impl Apu {
         let opcode = self.fetch_smp_byte();
         match opcode {
             0x00 => {}
+            0x01 | 0x11 | 0x21 | 0x31 | 0x41 | 0x51 | 0x61 | 0x71 | 0x81 | 0x91 | 0xA1 | 0xB1
+            | 0xC1 | 0xD1 | 0xE1 | 0xF1 => {
+                let vector = 0xFFDE - (u16::from(opcode >> 4) * 2);
+                let address = self.read_smp_word_at(vector);
+                self.call_smp_subroutine(address);
+            }
+            0x0D => self.push_smp_stack(self.smp_psw),
             0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
             0x20 => self.set_flag(SMP_FLAG_P, false),
+            0x2D => self.push_smp_stack(self.smp_a),
             0x2F => self.branch_relative(true),
             0x30 => self.branch_relative(self.flag(SMP_FLAG_N)),
+            0x3F => {
+                let address = self.fetch_smp_word();
+                self.call_smp_subroutine(address);
+            }
             0x40 => self.set_flag(SMP_FLAG_P, true),
+            0x4D => self.push_smp_stack(self.smp_x),
+            0x4F => {
+                let offset = self.fetch_smp_byte();
+                self.call_smp_subroutine(0xFF00 | u16::from(offset));
+            }
             0x50 => self.branch_relative(!self.flag(SMP_FLAG_V)),
             0x5D => self.mov_x(self.smp_a),
             0x5F => {
@@ -289,6 +306,8 @@ impl Apu {
                 self.smp_pc = address;
             }
             0x60 => self.set_flag(SMP_FLAG_C, false),
+            0x6D => self.push_smp_stack(self.smp_y),
+            0x6F => self.return_smp_subroutine(),
             0x64 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -305,7 +324,12 @@ impl Apu {
             }
             0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
             0x7D => self.mov_a(self.smp_x),
+            0x7F => {
+                self.smp_psw = self.pop_smp_stack();
+                self.return_smp_subroutine();
+            }
             0x80 => self.set_flag(SMP_FLAG_C, true),
+            0x8E => self.smp_psw = self.pop_smp_stack(),
             0x8D => {
                 let value = self.fetch_smp_byte();
                 self.mov_y(value);
@@ -328,6 +352,10 @@ impl Apu {
             }
             0xBD => {
                 self.smp_sp = self.smp_x;
+            }
+            0xCE => {
+                let value = self.pop_smp_stack();
+                self.mov_x(value);
             }
             0xC4 => {
                 let address = self.fetch_direct_address();
@@ -412,6 +440,10 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.mov_y(value);
             }
+            0xEE => {
+                let value = self.pop_smp_stack();
+                self.mov_y(value);
+            }
             0xEF | 0xFF => {
                 self.smp_running = false;
             }
@@ -458,6 +490,10 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.compare_8(self.smp_y, value);
             }
+            0xAE => {
+                let value = self.pop_smp_stack();
+                self.mov_a(value);
+            }
             0x1E => {
                 let address = self.fetch_smp_word();
                 let value = self.read_smp(address);
@@ -491,6 +527,12 @@ impl Apu {
         low | (high << 8)
     }
 
+    fn read_smp_word_at(&mut self, address: u16) -> u16 {
+        let low = u16::from(self.read_smp(address));
+        let high = u16::from(self.read_smp(address.wrapping_add(1)));
+        low | (high << 8)
+    }
+
     fn fetch_direct_address(&mut self) -> u16 {
         let offset = self.fetch_smp_byte();
         self.direct_address(offset)
@@ -510,6 +552,31 @@ impl Apu {
         if condition {
             self.smp_pc = ((i32::from(self.smp_pc) + i32::from(offset)) & 0xFFFF) as u16;
         }
+    }
+
+    fn call_smp_subroutine(&mut self, address: u16) {
+        let [return_low, return_high] = self.smp_pc.to_le_bytes();
+        self.push_smp_stack(return_high);
+        self.push_smp_stack(return_low);
+        self.smp_pc = address;
+    }
+
+    fn return_smp_subroutine(&mut self) {
+        let low = self.pop_smp_stack();
+        let high = self.pop_smp_stack();
+        self.smp_pc = u16::from_le_bytes([low, high]);
+    }
+
+    fn push_smp_stack(&mut self, value: u8) {
+        let address = 0x0100 | u16::from(self.smp_sp);
+        self.write_smp(address, value);
+        self.smp_sp = self.smp_sp.wrapping_sub(1);
+    }
+
+    fn pop_smp_stack(&mut self) -> u8 {
+        self.smp_sp = self.smp_sp.wrapping_add(1);
+        let address = 0x0100 | u16::from(self.smp_sp);
+        self.read_smp(address)
     }
 
     fn mov_a(&mut self, value: u8) {

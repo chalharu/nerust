@@ -1936,6 +1936,100 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_call_ret_restores_stack_and_resumes() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0x10, // MOV A,#$10
+            0x3F, 0x0B, 0x02, // CALL $020B
+            0xC4, 0xF4, // MOV $F4,A
+            0x9D, // MOV X,SP
+            0xD8, 0xF5, // MOV $F5,X
+            0xFF, // STOP
+            0xBC, // subroutine: INC A
+            0x6F, // RET
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..16 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x11);
+        assert_eq!(bus.read(0x002141), 0xEF);
+        assert_eq!(bus.apu.peek_ram(0x01EF), 0x02);
+        assert_eq!(bus.apu.peek_ram(0x01EE), 0x05);
+    }
+
+    #[test]
+    fn apu_spc700_push_pop_round_trips_registers_and_psw() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xCD, 0x12, // MOV X,#$12
+            0x4D, // PUSH X
+            0xCD, 0x00, // MOV X,#$00
+            0xCE, // POP X
+            0xD8, 0xF6, // MOV $F6,X
+            0x8D, 0x34, // MOV Y,#$34
+            0x6D, // PUSH Y
+            0x8D, 0x00, // MOV Y,#$00
+            0xEE, // POP Y
+            0xCB, 0xF7, // MOV $F7,Y
+            0xE8, 0x80, // MOV A,#$80
+            0x2D, // PUSH A
+            0xE8, 0x00, // MOV A,#$00
+            0xAE, // POP A
+            0xC4, 0xF5, // MOV $F5,A
+            0x0D, // PUSH PSW
+            0xE8, 0x00, // MOV A,#$00
+            0x8E, // POP PSW
+            0x10, 0x04, // BPL failure
+            0x8F, 0xA5, 0xF4, // MOV $F4,#$A5
+            0xFF, // STOP
+            0x8F, 0x00, 0xF4, // failure: MOV $F4,#$00
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..40 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0xA5);
+        assert_eq!(bus.read(0x002141), 0x80);
+        assert_eq!(bus.read(0x002142), 0x12);
+        assert_eq!(bus.read(0x002143), 0x34);
+    }
+
+    #[test]
+    fn apu_spc700_pcall_and_tcall_use_stack_vectors() {
+        let mut bus = Bus::new(test_cartridge());
+        for (offset, value) in [0x8F, 0x11, 0xF4, 0x6F].into_iter().enumerate() {
+            bus.apu.write_smp(0xFF80 + offset as u16, value);
+        }
+        for (offset, value) in [0x8F, 0x22, 0xF5, 0x6F].into_iter().enumerate() {
+            bus.apu.write_smp(0x0300 + offset as u16, value);
+        }
+        bus.apu.write_smp(0xFFDE, 0x00);
+        bus.apu.write_smp(0xFFDF, 0x03);
+
+        let program = [
+            0x4F, 0x80, // PCALL $80
+            0x01, // TCALL 0
+            0x8F, 0xA5, 0xF6, // MOV $F6,#$A5
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..24 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0x11);
+        assert_eq!(bus.read(0x002141), 0x22);
+        assert_eq!(bus.read(0x002142), 0xA5);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
