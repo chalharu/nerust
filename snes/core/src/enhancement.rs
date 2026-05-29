@@ -2005,13 +2005,13 @@ impl<'a> GsuInterpreter<'a> {
     fn high_byte(&mut self) {
         let result = self.registers[self.source] >> 8;
         self.clear_arithmetic_flags();
-        self.write_result(result);
+        self.write_byte_result(result);
     }
 
     fn low_byte(&mut self) {
         let result = self.registers[self.source] & 0x00FF;
         self.clear_arithmetic_flags();
-        self.write_result(result);
+        self.write_byte_result(result);
     }
 
     fn sign_extend(&mut self) {
@@ -2077,6 +2077,14 @@ impl<'a> GsuInterpreter<'a> {
     fn write_result(&mut self, result: u16) {
         let destination = self.destination.take().unwrap_or(0);
         self.set_register(destination, result);
+    }
+
+    fn write_byte_result(&mut self, result: u16) {
+        let destination = self.destination.take().unwrap_or(0);
+        self.registers[destination] = result;
+        self.zero = result == 0;
+        self.sign = result & 0x0080 != 0;
+        self.source = destination;
     }
 
     fn store_word(&mut self, register: usize) {
