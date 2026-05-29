@@ -2264,6 +2264,61 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_div_ya_x_matches_overflow_and_divide_by_zero() {
+        let mut bus = Bus::new(test_cartridge());
+        let cases = [
+            (0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xC8),
+            (0x23, 0x10, 0x01, 0x00, 0x12, 0x03, 0x08),
+            (0x10, 0x88, 0x01, 0xFF, 0x02, 0x00, 0x35),
+            (0x0F, 0x88, 0x01, 0xFF, 0x01, 0x87, 0x35),
+            (0x23, 0x01, 0x01, 0x00, 0x23, 0x00, 0x48),
+            (0xFF, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x4A),
+            (0xCD, 0x03, 0xAB, 0x00, 0x58, 0xC5, 0x48),
+        ];
+        let mut program = Vec::new();
+        for (index, (input_a, input_x, input_y, input_psw, _, _, _)) in
+            cases.iter().copied().enumerate()
+        {
+            let address = 0x0370_u16 + (index as u16 * 4);
+            let [a_low, a_high] = address.to_le_bytes();
+            let [x_low, x_high] = address.wrapping_add(1).to_le_bytes();
+            let [y_low, y_high] = address.wrapping_add(2).to_le_bytes();
+            let [psw_low, psw_high] = address.wrapping_add(3).to_le_bytes();
+            program.extend_from_slice(&[
+                0xE8, input_psw, // MOV A,#psw
+                0x2D,      // PUSH A
+                0x8E,      // POP PSW
+                0xCD, input_x, // MOV X,#input_x
+                0x8D, input_y, // MOV Y,#input_y
+                0xE8, input_a, // MOV A,#input_a
+                0x9E,    // DIV YA,X
+                0xC5, a_low, a_high, // MOV result_a,A
+                0xC9, x_low, x_high, // MOV result_x,X
+                0xCC, y_low, y_high, // MOV result_y,Y
+                0x0D,   // PUSH PSW
+                0xAE,   // POP A
+                0xC5, psw_low, psw_high, // MOV result_psw,A
+            ]);
+        }
+        program.push(0xFF);
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..700 {
+            bus.tick_cpu_cycle();
+        }
+
+        for (index, (_, expected_x, _, _, expected_a, expected_y, expected_psw)) in
+            cases.iter().copied().enumerate()
+        {
+            let address = 0x0370_u16 + (index as u16 * 4);
+            assert_eq!(bus.apu.peek_ram(address), expected_a);
+            assert_eq!(bus.apu.peek_ram(address + 1), expected_x);
+            assert_eq!(bus.apu.peek_ram(address + 2), expected_y);
+            assert_eq!(bus.apu.peek_ram(address + 3), expected_psw);
+        }
+    }
+
+    #[test]
     fn apu_spc700_psw_control_ops_update_status_bits() {
         let mut bus = Bus::new(test_cartridge());
         let program = [

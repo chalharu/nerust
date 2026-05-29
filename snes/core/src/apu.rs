@@ -725,6 +725,7 @@ impl Apu {
                 self.set_nz(self.smp_a);
             }
             0x9D => self.mov_x(self.smp_sp),
+            0x9E => self.div_ya_x(),
             0x9F => {
                 self.smp_a = self.smp_a.rotate_left(4);
                 self.set_nz(self.smp_a);
@@ -1088,9 +1089,6 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.compare_8(self.smp_y, value);
             }
-            _ => {
-                self.smp_running = false;
-            }
         }
     }
 
@@ -1367,6 +1365,27 @@ impl Apu {
         self.smp_a = low;
         self.smp_y = high;
         self.set_nz(high);
+    }
+
+    fn div_ya_x(&mut self) {
+        let dividend = u16::from_be_bytes([self.smp_y, self.smp_a]);
+        let divisor = u16::from(self.smp_x);
+        self.set_flag(SMP_FLAG_H, (self.smp_y & 0x0F) >= (self.smp_x & 0x0F));
+        self.set_flag(SMP_FLAG_V, self.smp_y >= self.smp_x);
+
+        let (quotient, remainder) = if u16::from(self.smp_y) < divisor * 2 {
+            (dividend / divisor, dividend % divisor)
+        } else {
+            let adjusted = dividend.wrapping_sub(divisor.wrapping_mul(0x0200));
+            let adjusted_divisor = 0x0100 - divisor;
+            (
+                0x00FF_u16.wrapping_sub(adjusted / adjusted_divisor),
+                divisor + (adjusted % adjusted_divisor),
+            )
+        };
+        self.smp_a = quotient as u8;
+        self.smp_y = remainder as u8;
+        self.set_nz(self.smp_a);
     }
 
     fn daa_a(&mut self) {
