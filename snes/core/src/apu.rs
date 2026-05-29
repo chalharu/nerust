@@ -761,6 +761,7 @@ impl Apu {
                 let result = self.subw_ya(value);
                 self.set_ya(result);
             }
+            0xA0 => self.set_flag(SMP_FLAG_I, true),
             0xA4 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -853,6 +854,7 @@ impl Apu {
             0xBD => {
                 self.smp_sp = self.smp_x;
             }
+            0xC0 => self.set_flag(SMP_FLAG_I, false),
             0xCE => {
                 let value = self.pop_smp_stack();
                 self.mov_x(value);
@@ -980,6 +982,7 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.mov_y(value);
             }
+            0xED => self.set_flag(SMP_FLAG_C, !self.flag(SMP_FLAG_C)),
             0xEE => {
                 let value = self.pop_smp_stack();
                 self.mov_y(value);

@@ -2142,6 +2142,68 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_psw_control_ops_update_status_bits() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xC0, // DI
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x20, 0x03, // MOV $0320,A
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xA0, // EI
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x21, 0x03, // MOV $0321,A
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xED, // NOTC
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x22, 0x03, // MOV $0322,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xC0, // DI
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x23, 0x03, // MOV $0323,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xA0, // EI
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x24, 0x03, // MOV $0324,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xED, // NOTC
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x25, 0x03, // MOV $0325,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..96 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0320), 0xFB);
+        assert_eq!(bus.apu.peek_ram(0x0321), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0322), 0xFE);
+        assert_eq!(bus.apu.peek_ram(0x0323), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0324), 0x04);
+        assert_eq!(bus.apu.peek_ram(0x0325), 0x01);
+    }
+
+    #[test]
     fn apu_spc700_pcall_and_tcall_use_stack_vectors() {
         let mut bus = Bus::new(test_cartridge());
         for (offset, value) in [0x8F, 0x11, 0xF4, 0x6F].into_iter().enumerate() {
