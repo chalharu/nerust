@@ -3421,7 +3421,7 @@ impl Dsp1State {
     }
 
     fn peek(&self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
-        let register_offset = dsp1_register_offset(mapper_kind, address)?;
+        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address)?;
         Some(if register_offset & 1 == 0 {
             self.peek_data()
         } else {
@@ -3430,7 +3430,7 @@ impl Dsp1State {
     }
 
     fn read(&mut self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
-        let register_offset = dsp1_register_offset(mapper_kind, address)?;
+        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address)?;
         Some(if register_offset & 1 == 0 {
             self.read_data()
         } else {
@@ -3439,7 +3439,7 @@ impl Dsp1State {
     }
 
     fn write(&mut self, mapper_kind: MapperKind, address: u32, value: u8) -> bool {
-        if let Some(register_offset) = dsp1_register_offset(mapper_kind, address) {
+        if let Some(register_offset) = dsp1_register_offset(self.variant, mapper_kind, address) {
             if register_offset & 1 == 0 {
                 self.write_data(value);
             }
@@ -4031,7 +4031,11 @@ impl ByteWindow {
     }
 }
 
-fn dsp1_register_offset(mapper_kind: MapperKind, address: u32) -> Option<u16> {
+fn dsp1_register_offset(
+    variant: Dsp1Variant,
+    mapper_kind: MapperKind,
+    address: u32,
+) -> Option<u16> {
     let bank = bank(address) & 0x7F;
     let offset = offset(address);
 
@@ -4042,11 +4046,18 @@ fn dsp1_register_offset(mapper_kind: MapperKind, address: u32) -> Option<u16> {
             _ => None,
         },
         MapperKind::HiRom => match (bank, offset) {
-            (0x00..=0x2F, 0x6000..=0x6FFF) => Some(0),
-            (0x00..=0x2F, 0x7000..=0x7FFF) => Some(1),
+            (_, 0x6000..=0x6FFF) if dsp1_hirom_bank_matches(variant, bank) => Some(0),
+            (_, 0x7000..=0x7FFF) if dsp1_hirom_bank_matches(variant, bank) => Some(1),
             _ => None,
         },
         MapperKind::Sa1 => None,
+    }
+}
+
+fn dsp1_hirom_bank_matches(variant: Dsp1Variant, bank: u8) -> bool {
+    match variant {
+        Dsp1Variant::Dsp1 => matches!(bank, 0x00..=0x1F),
+        Dsp1Variant::Dsp1B => matches!(bank, 0x00..=0x0F | 0x20..=0x2F),
     }
 }
 
