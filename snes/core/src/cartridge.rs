@@ -543,8 +543,20 @@ mod tests {
     }
 
     #[test]
-    fn msu1_status_and_identity_are_available_in_system_banks() {
+    fn msu1_registers_are_absent_without_sidecars() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert_eq!(cartridge.read(0x002000), None);
+        assert_eq!(cartridge.read(0x002002), None);
+        assert_eq!(cartridge.read(0x802002), None);
+        assert!(!cartridge.write(0x002000, 0x12));
+        assert_eq!(cartridge.read_mut(0x802007), None);
+    }
+
+    #[test]
+    fn msu1_status_and_identity_are_available_after_data_sidecar_load() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+        cartridge.load_msu1_data(&[]);
 
         assert_eq!(cartridge.read(0x002000), Some(0x0A));
         let signature: Vec<u8> = (0x2002_u32..=0x2007)
@@ -558,6 +570,7 @@ mod tests {
     #[test]
     fn msu1_data_seek_commits_on_high_byte_write() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+        cartridge.load_msu1_data(&[]);
 
         assert!(cartridge.write(0x002000, 0x12));
         assert!(cartridge.write(0x002001, 0x34));
