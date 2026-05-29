@@ -1334,6 +1334,14 @@ mod tests {
         assert_eq!(cartridge.read(0x003034), Some(0x7F));
         assert!(cartridge.write(0x003036, 0x12));
         assert_eq!(cartridge.read(0x003036), Some(0x00));
+        assert!(cartridge.write(0x003037, 0xAA));
+        assert!(cartridge.write(0x003038, 0x03));
+        assert!(cartridge.write(0x003039, 0x01));
+        assert!(cartridge.write(0x00303A, 0x15));
+        assert_eq!(cartridge.read(0x003037), Some(0x00));
+        assert_eq!(cartridge.read(0x003038), Some(0x00));
+        assert_eq!(cartridge.read(0x003039), Some(0x00));
+        assert_eq!(cartridge.read(0x00303A), Some(0x00));
         assert!(cartridge.write(0x00303C, 0x01));
         assert_eq!(cartridge.read(0x00303C), Some(0x00));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
