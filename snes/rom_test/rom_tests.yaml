@@ -994,11 +994,14 @@ cases:
     rom: snes-coprocessor-tests/hirom-gsu-test/build/HiRomGsuTest.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x58F085949A81CF09"
+    expected_screen_hash: "0x644ABCAE87D1AA3D"
     assertions:
       - kind: bus_u8
         address: "0x00303B"
         expected: "0x04"
+      - kind: bus_u8
+        address: "0x003039"
+        expected: "0x00"
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
