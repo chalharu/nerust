@@ -904,6 +904,7 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.mov_x(value);
             }
+            0xCF => self.mul_ya(),
             0xD0 => self.branch_relative(!self.flag(SMP_FLAG_Z)),
             0xD4 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
@@ -1356,6 +1357,14 @@ impl Apu {
         if self.smp_y != 0 {
             self.apply_relative_offset(offset);
         }
+    }
+
+    fn mul_ya(&mut self) {
+        let result = u16::from(self.smp_y) * u16::from(self.smp_a);
+        let [low, high] = result.to_le_bytes();
+        self.smp_a = low;
+        self.smp_y = high;
+        self.set_nz(high);
     }
 
     fn test_and_set_absolute(&mut self, set_bits: bool) {

@@ -2204,6 +2204,76 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_mul_ya_sets_result_and_high_byte_nz() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xE8, 0xAB, // MOV A,#$AB
+            0x8D, 0xCD, // MOV Y,#$CD
+            0xCF, // MUL YA
+            0xC5, 0x20, 0x03, // MOV $0320,A
+            0xCC, 0x21, 0x03, // MOV $0321,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x22, 0x03, // MOV $0322,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xE8, 0x05, // MOV A,#$05
+            0x8D, 0x02, // MOV Y,#$02
+            0xCF, // MUL YA
+            0xC5, 0x23, 0x03, // MOV $0323,A
+            0xCC, 0x24, 0x03, // MOV $0324,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x25, 0x03, // MOV $0325,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xE8, 0xFF, // MOV A,#$FF
+            0x8D, 0xFF, // MOV Y,#$FF
+            0xCF, // MUL YA
+            0xC5, 0x26, 0x03, // MOV $0326,A
+            0xCC, 0x27, 0x03, // MOV $0327,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x28, 0x03, // MOV $0328,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xE8, 0x80, // MOV A,#$80
+            0x8D, 0x02, // MOV Y,#$02
+            0xCF, // MUL YA
+            0xC5, 0x29, 0x03, // MOV $0329,A
+            0xCC, 0x2A, 0x03, // MOV $032A,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x2B, 0x03, // MOV $032B,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..160 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0320), 0xEF);
+        assert_eq!(bus.apu.peek_ram(0x0321), 0x88);
+        assert_eq!(bus.apu.peek_ram(0x0322), 0xFD);
+        assert_eq!(bus.apu.peek_ram(0x0323), 0x0A);
+        assert_eq!(bus.apu.peek_ram(0x0324), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0325), 0x02);
+        assert_eq!(bus.apu.peek_ram(0x0326), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x0327), 0xFE);
+        assert_eq!(bus.apu.peek_ram(0x0328), 0x80);
+        assert_eq!(bus.apu.peek_ram(0x0329), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x032A), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x032B), 0x00);
+    }
+
+    #[test]
     fn apu_spc700_pcall_and_tcall_use_stack_vectors() {
         let mut bus = Bus::new(test_cartridge());
         for (offset, value) in [0x8F, 0x11, 0xF4, 0x6F].into_iter().enumerate() {
