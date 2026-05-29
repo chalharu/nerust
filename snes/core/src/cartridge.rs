@@ -359,6 +359,13 @@ impl Cartridge {
     pub fn load_msu1_data(&mut self, data: &[u8]) {
         self.msu1.load_data(data);
     }
+
+    pub fn set_msu1_audio_tracks<I>(&mut self, tracks: I)
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        self.msu1.set_audio_tracks(tracks);
+    }
 }
 
 fn cartridge_coprocessor(chipset: u8) -> u8 {
@@ -586,19 +593,26 @@ mod tests {
     #[test]
     fn msu1_audio_registers_report_no_media_until_audio_is_available() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+        cartridge.set_msu1_audio_tracks([0x1234, 0x1234]);
 
         assert!(cartridge.write(0x002004, 0x34));
         assert!(cartridge.write(0x002005, 0x12));
         assert!(cartridge.write(0x002006, 0x7F));
+        assert_eq!(cartridge.read(0x002000), Some(0x02));
         assert!(cartridge.write(0x002007, 0x03));
 
         assert_eq!(cartridge.msu1.audio_track(), 0x1234);
+        assert_eq!(cartridge.msu1.audio_track_count(), 1);
         assert_eq!(cartridge.msu1.audio_volume(), 0x7F);
-        assert_eq!(cartridge.read(0x002000), Some(0x0A));
-
-        cartridge.msu1.set_audio_available_for_test();
-        assert!(cartridge.write(0x002007, 0x03));
         assert_eq!(cartridge.read(0x002000), Some(0x32));
+
+        assert!(cartridge.write(0x002007, 0x00));
+        assert_eq!(cartridge.read(0x002000), Some(0x02));
+
+        assert!(cartridge.write(0x002004, 0x35));
+        assert!(cartridge.write(0x002005, 0x12));
+        assert!(cartridge.write(0x002007, 0x03));
+        assert_eq!(cartridge.read(0x002000), Some(0x0A));
     }
 
     #[test]

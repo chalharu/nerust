@@ -18,7 +18,7 @@ use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::{Core, CpuState};
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
@@ -181,6 +181,7 @@ enum SnesCommand {
     Load {
         bytes: Vec<u8>,
         msu1_data: Option<Vec<u8>>,
+        msu1_audio_tracks: Vec<u16>,
         reply: Sender<Result<(), String>>,
     },
     Unload {
@@ -243,10 +244,11 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
-        let msu1_data = load_msu1_sidecar(media.path.as_deref())?;
+        let msu1_sidecars = load_msu1_sidecars(media.path.as_deref())?;
         self.request_unit(|reply| SnesCommand::Load {
             bytes: media.bytes.as_ref().to_vec(),
-            msu1_data,
+            msu1_data: msu1_sidecars.data,
+            msu1_audio_tracks: msu1_sidecars.audio_tracks,
             reply,
         })
     }
@@ -438,12 +440,14 @@ fn handle_command(
         SnesCommand::Load {
             bytes,
             msu1_data,
+            msu1_audio_tracks,
             reply,
         } => {
-            let core_result = match msu1_data.as_deref() {
-                Some(msu1_data) => Core::from_rom_bytes_with_msu1_data(&bytes, msu1_data),
-                None => Core::from_rom_bytes(&bytes),
-            };
+            let core_result = Core::from_rom_bytes_with_msu1_sidecars(
+                &bytes,
+                msu1_data.as_deref(),
+                &msu1_audio_tracks,
+            );
             let result = match core_result {
                 Ok(new_core) => {
                     *core = Some(new_core);
@@ -528,23 +532,80 @@ fn send_reply<T>(reply: Sender<Result<T, String>>, result: Result<T, String>) {
     }
 }
 
-fn load_msu1_sidecar(path: Option<&Path>) -> Result<Option<Vec<u8>>, String> {
+struct Msu1Sidecars {
+    data: Option<Vec<u8>>,
+    audio_tracks: Vec<u16>,
+}
+
+fn load_msu1_sidecars(path: Option<&Path>) -> Result<Msu1Sidecars, String> {
     let Some(path) = path else {
-        return Ok(None);
+        return Ok(Msu1Sidecars {
+            data: None,
+            audio_tracks: Vec::new(),
+        });
     };
-    let sidecar_path = msu1_sidecar_path(path);
-    match fs::read(&sidecar_path) {
+    Ok(Msu1Sidecars {
+        data: load_msu1_data_sidecar(path)?,
+        audio_tracks: discover_msu1_audio_tracks(path)?,
+    })
+}
+
+fn load_msu1_data_sidecar(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let data_path = path.with_extension("msu");
+    match fs::read(&data_path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
             "failed to read MSU-1 data sidecar `{}`: {error}",
-            sidecar_path.display()
+            data_path.display()
         )),
     }
 }
 
-fn msu1_sidecar_path(path: &Path) -> PathBuf {
-    path.with_extension("msu")
+fn discover_msu1_audio_tracks(path: &Path) -> Result<Vec<u16>, String> {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{stem}-");
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let entries = fs::read_dir(directory).map_err(|error| {
+        format!(
+            "failed to scan MSU-1 audio sidecars in `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    let mut tracks = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to scan MSU-1 audio sidecars in `{}`: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        if !path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pcm"))
+        {
+            continue;
+        }
+        let Some(file_stem) = path.file_stem().and_then(|file_stem| file_stem.to_str()) else {
+            continue;
+        };
+        if let Some(track) = file_stem
+            .strip_prefix(&prefix)
+            .and_then(|track| track.parse::<u16>().ok())
+        {
+            tracks.push(track);
+        }
+    }
+    tracks.sort_unstable();
+    tracks.dedup();
+    Ok(tracks)
 }
 
 fn step_snes_frame(core: &mut Core) -> Result<(), String> {

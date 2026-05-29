@@ -101,6 +101,7 @@ const MSU1_SIGNATURE: [u8; 6] = *b"S-MSU1";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Msu1State {
     data: Box<[u8]>,
+    audio_tracks: Box<[u16]>,
     data_seek_offset: u32,
     data_read_offset: u32,
     audio_track: u16,
@@ -116,6 +117,7 @@ impl Msu1State {
     pub(crate) fn new() -> Self {
         Self {
             data: Box::new([]),
+            audio_tracks: Box::new([]),
             data_seek_offset: 0,
             data_read_offset: 0,
             audio_track: 0,
@@ -130,6 +132,17 @@ impl Msu1State {
 
     pub(crate) fn load_data(&mut self, data: &[u8]) {
         self.data = data.to_vec().into_boxed_slice();
+    }
+
+    pub(crate) fn set_audio_tracks<I>(&mut self, tracks: I)
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        let mut tracks = tracks.into_iter().collect::<Vec<_>>();
+        tracks.sort_unstable();
+        tracks.dedup();
+        self.audio_tracks = tracks.into_boxed_slice();
+        self.refresh_audio_track_status();
     }
 
     pub(crate) fn peek(&self, address: u32) -> Option<u8> {
@@ -174,7 +187,7 @@ impl Msu1State {
                 self.audio_track = (self.audio_track & 0x00FF) | (u16::from(value) << 8);
                 self.audio_playing = false;
                 self.audio_repeating = false;
-                self.audio_error = true;
+                self.refresh_audio_track_status();
             }
             0x2006 => {
                 self.audio_volume = value;
@@ -214,6 +227,10 @@ impl Msu1State {
             .unwrap_or(0);
         self.data_read_offset = self.data_read_offset.wrapping_add(1);
         value
+    }
+
+    fn refresh_audio_track_status(&mut self) {
+        self.audio_error = self.audio_tracks.binary_search(&self.audio_track).is_err();
     }
 
     fn status(&self) -> u8 {
@@ -271,8 +288,8 @@ impl Msu1State {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_audio_available_for_test(&mut self) {
-        self.audio_error = false;
+    pub(crate) fn audio_track_count(&self) -> usize {
+        self.audio_tracks.len()
     }
 }
 

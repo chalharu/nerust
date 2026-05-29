@@ -98,6 +98,19 @@ impl Core {
         Ok(Self::new(cartridge))
     }
 
+    pub fn from_rom_bytes_with_msu1_sidecars(
+        bytes: &[u8],
+        msu1_data: Option<&[u8]>,
+        msu1_audio_tracks: &[u16],
+    ) -> Result<Self, CoreError> {
+        let mut cartridge = Cartridge::from_bytes(bytes)?;
+        if let Some(msu1_data) = msu1_data {
+            cartridge.load_msu1_data(msu1_data);
+        }
+        cartridge.set_msu1_audio_tracks(msu1_audio_tracks.iter().copied());
+        Ok(Self::new(cartridge))
+    }
+
     pub fn step(&mut self) -> Result<(), CoreError> {
         if self.cpu.current_state() == CpuState::Stopped {
             return Ok(());
@@ -147,6 +160,13 @@ impl Core {
 
     pub fn load_msu1_data(&mut self, data: &[u8]) {
         self.bus.cartridge_mut().load_msu1_data(data);
+    }
+
+    pub fn set_msu1_audio_tracks<I>(&mut self, tracks: I)
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        self.bus.cartridge_mut().set_msu1_audio_tracks(tracks);
     }
 
     pub fn set_standard_controller_buttons(&mut self, port: usize, buttons: u16) -> bool {
