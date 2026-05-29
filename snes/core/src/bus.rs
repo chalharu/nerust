@@ -1,3 +1,4 @@
+use crate::apu::Apu;
 use crate::{
     Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
     PresentedMainScreenLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2,
@@ -104,6 +105,7 @@ pub(crate) struct Bus {
     pub(crate) memory: Memory,
     pub(crate) ppu1: Ppu1,
     pub(crate) ppu2: Ppu2,
+    apu: Apu,
     cpu_io_registers: [u8; CPU_IO_REGISTER_COUNT],
     dma_registers: [u8; DMA_REGISTER_COUNT],
     video_phase: u16,
@@ -164,6 +166,7 @@ impl Bus {
             memory: Memory::new(),
             ppu1: Ppu1::new(),
             ppu2: Ppu2::new(),
+            apu: Apu::new(),
             cpu_io_registers: initial_cpu_io_registers(),
             dma_registers: [0; DMA_REGISTER_COUNT],
             video_phase: 0,
@@ -224,6 +227,7 @@ impl Bus {
         self.math_quotient = 0;
         self.math_result = 0;
         self.math_pending = None;
+        self.apu.reset();
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
@@ -743,6 +747,7 @@ impl Bus {
 
         match (bank, offset) {
             (0x00..=0x3F | 0x80..=0xBF, 0x2100..=0x213F) => self.read_ppu_register(offset),
+            (0x00..=0x3F | 0x80..=0xBF, 0x2140..=0x217F) => self.apu.read_cpu_port(offset),
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 self.memory.read_mmio(offset).unwrap_or(0)
             }
@@ -764,6 +769,7 @@ impl Bus {
 
         match (bank, offset) {
             (0x00..=0x3F | 0x80..=0xBF, 0x2100..=0x213F) => self.peek_ppu_register(offset),
+            (0x00..=0x3F | 0x80..=0xBF, 0x2140..=0x217F) => self.apu.peek_cpu_port(offset),
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 self.memory.peek_mmio(offset).unwrap_or(0)
             }
@@ -808,6 +814,9 @@ impl Bus {
         match (bank, offset) {
             (0x00..=0x3F | 0x80..=0xBF, 0x2100..=0x213F) => {
                 let _ = self.write_ppu_register(offset, value);
+            }
+            (0x00..=0x3F | 0x80..=0xBF, 0x2140..=0x217F) => {
+                self.apu.write_cpu_port(offset, value);
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 let _ = self.memory.write_mmio(offset, value);
@@ -1023,6 +1032,9 @@ impl Bus {
             0x2100..=0x213F => {
                 let _ = self.write_ppu_register(b_addr, value);
             }
+            0x2140..=0x217F => {
+                self.apu.write_cpu_port(b_addr, value);
+            }
             0x2180..=0x2183 => {
                 let _ = self.memory.write_mmio(b_addr, value);
             }
@@ -1034,6 +1046,7 @@ impl Bus {
     fn dma_read_bbus(&mut self, b_addr: u16) -> u8 {
         match b_addr {
             0x2100..=0x213F => self.read_ppu_register(b_addr),
+            0x2140..=0x217F => self.apu.read_cpu_port(b_addr),
             0x2180..=0x2183 => self.memory.read_mmio(b_addr).unwrap_or(0),
             _ => 0,
         }
@@ -1554,6 +1567,61 @@ mod tests {
     }
 
     #[test]
+    fn apu_ports_expose_ipl_ready_word_and_mirrors() {
+        let mut bus = Bus::new(test_cartridge());
+
+        assert_eq!(bus.read(0x002140), 0xAA);
+        assert_eq!(bus.read(0x002141), 0xBB);
+        assert_eq!(bus.read(0x002142), 0x00);
+        assert_eq!(bus.peek(0x802144), 0xAA);
+        assert_eq!(bus.read(0x80217D), 0xBB);
+        assert_eq!(bus.read(0x00217F), 0x00);
+    }
+
+    #[test]
+    fn apu_ipl_acknowledges_upload_then_stops_echoing_after_entry() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+        assert_eq!(bus.read(0x002140), 0xCC);
+        assert_eq!(bus.read(0x002141), 0xBB);
+
+        bus.write(0x002141, 0x42);
+        bus.write(0x002140, 0x00);
+        assert_eq!(bus.read(0x002140), 0x00);
+
+        bus.write(0x002141, 0x99);
+        bus.write(0x002140, 0x01);
+        assert_eq!(bus.read(0x002140), 0x01);
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x80);
+        bus.write(0x002141, 0x00);
+        bus.write(0x002140, 0x05);
+        assert_eq!(bus.read(0x002140), 0x05);
+
+        bus.write(0x002140, 0x77);
+        assert_eq!(bus.read(0x002140), 0x05);
+    }
+
+    #[test]
+    fn apu_reset_restores_ipl_ready_word() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+        assert_eq!(bus.read(0x002140), 0xCC);
+
+        bus.reset_ephemeral_state();
+
+        assert_eq!(bus.read(0x002140), 0xAA);
+        assert_eq!(bus.read(0x002141), 0xBB);
+    }
+
+    #[test]
     fn cartridge_sram_reads_writes_through_dma_abus() {
         let mut bus = Bus::new(test_cartridge());
 
@@ -1561,6 +1629,28 @@ mod tests {
 
         assert_eq!(bus.dma_read_abus(0x700321), 0x3C);
         assert_eq!(bus.read(0x702321), 0x3C);
+    }
+
+    #[test]
+    fn apu_ports_are_accessible_through_dma_bbus() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002141, 0x01);
+        bus.write(0x7E1000, 0xCC);
+        setup_dma_ch0(&mut bus, 0x00, 0x40, 0x7E1000, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x002140), 0xCC);
+
+        setup_dma_ch0(&mut bus, 0x80, 0x40, 0x7E1001, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E1001), 0xCC);
+
+        bus.dma_write_bbus(0x2142, 0x34);
+        bus.dma_write_bbus(0x2143, 0x12);
+        assert_eq!(bus.dma_read_bbus(0x2140), 0xCC);
+        assert_eq!(bus.dma_read_bbus(0x2141), 0xBB);
+        assert_eq!(bus.dma_read_bbus(0x2142), 0x00);
+        assert_eq!(bus.dma_read_bbus(0x2143), 0x00);
     }
 
     #[test]
