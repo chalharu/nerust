@@ -2105,7 +2105,6 @@ impl<'a> GsuInterpreter<'a> {
     fn load_absolute_word(&mut self, register: usize, address: u16) {
         let value = self.read_ram_word(address);
         self.registers[register] = value;
-        self.set_zero_sign(value);
         self.source = register;
     }
 
@@ -2129,9 +2128,9 @@ impl<'a> GsuInterpreter<'a> {
     fn write_load_result(&mut self, value: u16) {
         if let Some(destination) = self.destination.take() {
             self.registers[destination] = value;
-            self.set_zero_sign(value);
         } else {
-            self.set_register(0, value);
+            self.registers[0] = value;
+            self.source = 0;
         }
     }
 
