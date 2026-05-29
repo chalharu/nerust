@@ -1,4 +1,4 @@
-use crate::enhancement::{EnhancementChip, EnhancementState};
+use crate::enhancement::{EnhancementChip, EnhancementState, Msu1State};
 use crate::mapper::{HiRomMapper, LoRomMapper, Mapper, MapperKind, Sa1Mapper, superfx_ram_index};
 
 const COPIER_HEADER_LEN: usize = 512;
@@ -93,6 +93,7 @@ pub struct Cartridge {
     header: CartridgeHeader,
     mapper: Mapper,
     enhancement: EnhancementState,
+    msu1: Msu1State,
 }
 
 impl Cartridge {
@@ -118,6 +119,7 @@ impl Cartridge {
             header,
             mapper,
             enhancement,
+            msu1: Msu1State::new(),
         })
     }
 
@@ -220,6 +222,9 @@ impl Cartridge {
     }
 
     pub(crate) fn read_mut(&mut self, address: u32) -> Option<u8> {
+        if let Some(value) = self.msu1.read(address) {
+            return Some(value);
+        }
         if let Some(value) = self.enhancement.read(
             self.header.mapper_kind(),
             address,
@@ -243,6 +248,9 @@ impl Cartridge {
     }
 
     fn peek(&self, address: u32) -> Option<u8> {
+        if let Some(value) = self.msu1.peek(address) {
+            return Some(value);
+        }
         if let Some(value) = self.enhancement.peek(
             self.header.mapper_kind(),
             address,
@@ -293,6 +301,9 @@ impl Cartridge {
     }
 
     pub fn write(&mut self, address: u32, value: u8) -> bool {
+        if self.msu1.write(address, value) {
+            return true;
+        }
         if self.enhancement.write(
             self.header.mapper_kind(),
             address,
@@ -518,6 +529,54 @@ mod tests {
             *target = *source;
         }
         rom[header_offset..header_offset + title_bytes.len()].copy_from_slice(&title_bytes);
+    }
+
+    #[test]
+    fn msu1_status_and_identity_are_available_in_system_banks() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert_eq!(cartridge.read(0x002000), Some(0x0A));
+        let signature: Vec<u8> = (0x2002_u32..=0x2007)
+            .map(|offset| cartridge.read(offset).unwrap())
+            .collect();
+        assert_eq!(signature, b"S-MSU1");
+        assert_eq!(cartridge.read(0x802002), Some(b'S'));
+        assert_eq!(cartridge.read_mut(0x802007), Some(b'1'));
+    }
+
+    #[test]
+    fn msu1_data_seek_commits_on_high_byte_write() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert!(cartridge.write(0x002000, 0x12));
+        assert!(cartridge.write(0x002001, 0x34));
+        assert!(cartridge.write(0x002002, 0x56));
+        assert_eq!(cartridge.msu1.data_seek_offset(), 0x0056_3412);
+        assert_eq!(cartridge.msu1.data_read_offset(), 0);
+
+        assert!(cartridge.write(0x002003, 0x78));
+        assert_eq!(cartridge.msu1.data_seek_offset(), 0x7856_3412);
+        assert_eq!(cartridge.msu1.data_read_offset(), 0x7856_3412);
+        assert_eq!(cartridge.read_mut(0x002001), Some(0x00));
+        assert_eq!(cartridge.msu1.data_read_offset(), 0x7856_3412);
+    }
+
+    #[test]
+    fn msu1_audio_registers_report_no_media_until_audio_is_available() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+
+        assert!(cartridge.write(0x002004, 0x34));
+        assert!(cartridge.write(0x002005, 0x12));
+        assert!(cartridge.write(0x002006, 0x7F));
+        assert!(cartridge.write(0x002007, 0x03));
+
+        assert_eq!(cartridge.msu1.audio_track(), 0x1234);
+        assert_eq!(cartridge.msu1.audio_volume(), 0x7F);
+        assert_eq!(cartridge.read(0x002000), Some(0x0A));
+
+        cartridge.msu1.set_audio_available_for_test();
+        assert!(cartridge.write(0x002007, 0x03));
+        assert_eq!(cartridge.read(0x002000), Some(0x32));
     }
 
     #[test]
