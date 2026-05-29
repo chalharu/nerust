@@ -5,6 +5,9 @@ const IPL_READY_PORTS: [u8; APU_PORT_COUNT] = [0xAA, 0xBB, 0x00, 0x00];
 const IPL_INITIAL_KICK: u8 = 0xCC;
 const SMP_CONTROL_RESET_PORTS_0_1: u8 = 0x10;
 const SMP_CONTROL_RESET_PORTS_2_3: u8 = 0x20;
+const SMP_TIMER_COUNT: usize = 3;
+const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
+const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
 const SMP_FLAG_C: u8 = 0x01;
 const SMP_FLAG_Z: u8 = 0x02;
 const SMP_FLAG_H: u8 = 0x08;
@@ -19,6 +22,47 @@ enum IplState {
     Loaded,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SmpTimer {
+    target: u8,
+    divider: u16,
+    source_accumulator: u16,
+    output: u8,
+}
+
+impl SmpTimer {
+    fn reset(&mut self) {
+        self.divider = 0;
+        self.source_accumulator = 0;
+        self.output = 0;
+    }
+
+    fn tick_cpu_cycle(&mut self, source_period: u16) {
+        self.source_accumulator += 1;
+        while self.source_accumulator >= source_period {
+            self.source_accumulator -= source_period;
+            self.divider += 1;
+            if self.divider >= self.effective_target() {
+                self.divider = 0;
+                self.output = self.output.wrapping_add(1) & 0x0F;
+            }
+        }
+    }
+
+    fn effective_target(&self) -> u16 {
+        match self.target {
+            0 => 256,
+            value => u16::from(value),
+        }
+    }
+
+    fn read_output(&mut self) -> u8 {
+        let value = self.output & 0x0F;
+        self.output = 0;
+        value
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Apu {
     ram: Box<[u8; APU_RAM_LEN]>,
@@ -28,6 +72,7 @@ pub(crate) struct Apu {
     dsp_registers: [u8; DSP_REGISTER_COUNT],
     aux_io: [u8; 2],
     control: u8,
+    timers: [SmpTimer; SMP_TIMER_COUNT],
     ipl_state: IplState,
     ipl_upload_base: u16,
     smp_a: u8,
@@ -49,6 +94,7 @@ impl Apu {
             dsp_registers: [0; DSP_REGISTER_COUNT],
             aux_io: [0; 2],
             control: 0xB0,
+            timers: [SmpTimer::default(); SMP_TIMER_COUNT],
             ipl_state: IplState::WaitingForInitialKick,
             ipl_upload_base: 0,
             smp_a: 0,
@@ -89,7 +135,8 @@ impl Apu {
             0x00F3 => self.dsp_registers[usize::from(self.dsp_address & 0x7F)],
             0x00F4..=0x00F7 => self.cpu_to_apu_ports[usize::from(address - 0x00F4)],
             0x00F8..=0x00F9 => self.aux_io[usize::from(address - 0x00F8)],
-            0x00FA..=0x00FF => 0,
+            0x00FA..=0x00FC => 0,
+            0x00FD..=0x00FF => self.timers[usize::from(address - 0x00FD)].read_output(),
             _ => self.ram[usize::from(address)],
         }
     }
@@ -108,12 +155,16 @@ impl Apu {
             0x00F8..=0x00F9 => {
                 self.aux_io[usize::from(address - 0x00F8)] = value;
             }
-            0x00FA..=0x00FF => {}
+            0x00FA..=0x00FC => {
+                self.timers[usize::from(address - 0x00FA)].target = value;
+            }
+            0x00FD..=0x00FF => {}
             _ => self.ram[usize::from(address)] = value,
         }
     }
 
     pub(crate) fn tick_cpu_cycle(&mut self) {
+        self.tick_timers();
         if self.smp_running {
             self.execute_smp_instruction();
         }
@@ -160,7 +211,9 @@ impl Apu {
     }
 
     fn write_smp_control(&mut self, value: u8) {
+        let previous = self.control;
         self.control = value;
+        self.update_timer_enable(previous, value);
         if value & SMP_CONTROL_RESET_PORTS_0_1 != 0 {
             self.cpu_to_apu_ports[0] = 0;
             self.cpu_to_apu_ports[1] = 0;
@@ -168,6 +221,30 @@ impl Apu {
         if value & SMP_CONTROL_RESET_PORTS_2_3 != 0 {
             self.cpu_to_apu_ports[2] = 0;
             self.cpu_to_apu_ports[3] = 0;
+        }
+    }
+
+    fn update_timer_enable(&mut self, previous: u8, value: u8) {
+        for index in 0..SMP_TIMER_COUNT {
+            let mask = 1 << index;
+            if value & mask == 0 || previous & mask == 0 {
+                self.timers[index].reset();
+            }
+        }
+    }
+
+    fn tick_timers(&mut self) {
+        for index in 0..SMP_TIMER_COUNT {
+            if self.control & (1 << index) == 0 {
+                continue;
+            }
+
+            let source_period = if index == 2 {
+                SMP_TIMER2_SOURCE_CPU_CYCLES
+            } else {
+                SMP_TIMER01_SOURCE_CPU_CYCLES
+            };
+            self.timers[index].tick_cpu_cycle(source_period);
         }
     }
 
