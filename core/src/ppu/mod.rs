@@ -1458,6 +1458,22 @@ impl Core {
         result
     }
 
+    pub(crate) fn step_exact_many<S: Screen>(
+        &mut self,
+        screen: &mut S,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+        cycles: u64,
+    ) -> bool {
+        let mut result = false;
+        for _ in 0..cycles {
+            if self.step(screen, cartridge, interrupt) {
+                result = true;
+            }
+        }
+        result
+    }
+
     fn idle_skip_cycles(&self, max_cycles: u64) -> Option<u64> {
         if self.render_executing
             || self.post_render_executing

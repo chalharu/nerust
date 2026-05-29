@@ -360,15 +360,12 @@ impl Core {
             controller,
             &mut self.apu,
         );
-        for _ in 0..3 {
-            let mut ppu_cartridge =
-                crate::cartridge_bus::mapper_cartridge_bus(self.cartridge.as_mut());
-            if self
-                .ppu
-                .step(screen, &mut ppu_cartridge, self.cpu.interrupt_mut())
-            {
-                result = true;
-            }
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(self.cartridge.as_mut());
+        if self
+            .ppu
+            .step_exact_many(screen, &mut ppu_cartridge, self.cpu.interrupt_mut(), 3)
+        {
+            result = true;
         }
         self.cartridge.step(self.cpu.interrupt_mut());
         self.apu.step(
@@ -831,6 +828,35 @@ mod scheduler_tests {
     }
 
     #[test]
+    fn instruction_scheduler_matches_cycle_stepping_for_memory_fast_path_operations() {
+        assert_run_frame_matches_cycle_stepping(nrom_program_test_data(&[
+            0xA9, 0x3F, // LDA #$3F
+            0x85, 0x10, // STA $10
+            0xA2, 0x02, // LDX #$02
+            0xA0, 0x03, // LDY #$03
+            0xA5, 0x10, // LDA $10
+            0x65, 0x0E, // ADC $0E
+            0x95, 0x20, // STA $20,X
+            0xB5, 0x1E, // LDA $1E,X
+            0x2C, 0x22, 0x00, // BIT $0022
+            0xCD, 0x22, 0x00, // CMP $0022
+            0xBD, 0x20, 0x00, // LDA $0020,X
+            0xB9, 0x1F, 0x00, // LDA $001F,Y
+            0x8D, 0x30, 0x00, // STA $0030
+        ]));
+    }
+
+    #[test]
+    fn instruction_scheduler_matches_cycle_stepping_for_branch_fast_path() {
+        assert_run_frame_matches_cycle_stepping(nrom_program_test_data(&[
+            0xA2, 0x03, // LDX #$03
+            0xCA, // DEX
+            0xD0, 0xFD, // BNE $8002
+            0xA9, 0x01, // LDA #$01
+        ]));
+    }
+
+    #[test]
     fn instruction_scheduler_preserves_sxrom_write_spacing_across_fast_path() {
         assert_run_frame_matches_cycle_stepping(mapper_program_with_prefix_test_data(
             1,
@@ -890,6 +916,54 @@ mod scheduler_tests {
 
         assert!(
             core.step_instruction_event(&mut screen, &mut controller, &mut mixer, sample_rate)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn instruction_scheduler_falls_back_when_indexed_read_crosses_into_ppu_registers() {
+        let mut core = Core::new(nrom_program_test_data(&[
+            0xA2, 0x01, // LDX #$01
+            0xBD, 0xFF, 0x1F, // LDA $1FFF,X
+        ]))
+        .expect("core should construct");
+        let mut screen = NullScreen;
+        let mut controller = NullController;
+        let mut mixer = CountingMixer::default();
+        let sample_rate = mixer.sample_rate();
+
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 16);
+        assert!(
+            core.step_instruction_event(&mut screen, &mut controller, &mut mixer, sample_rate)
+                .is_some()
+        );
+        assert!(
+            core.cpu
+                .instruction_fast_path_max_cycles(core.cartridge.as_ref())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn instruction_scheduler_falls_back_when_store_targets_ppu_registers() {
+        let mut core = Core::new(nrom_program_test_data(&[
+            0xA9, 0x01, // LDA #$01
+            0x8D, 0x00, 0x20, // STA $2000
+        ]))
+        .expect("core should construct");
+        let mut screen = NullScreen;
+        let mut controller = NullController;
+        let mut mixer = CountingMixer::default();
+        let sample_rate = mixer.sample_rate();
+
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 16);
+        assert!(
+            core.step_instruction_event(&mut screen, &mut controller, &mut mixer, sample_rate)
+                .is_some()
+        );
+        assert!(
+            core.cpu
+                .instruction_fast_path_max_cycles(core.cartridge.as_ref())
                 .is_none()
         );
     }
