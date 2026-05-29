@@ -2149,6 +2149,50 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_brk_pushes_return_psw_and_vectors() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.apu.write_smp(0xFFDE, 0x00);
+        bus.apu.write_smp(0xFFDF, 0x03);
+        let target = [
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0x20, // CLRP so result stores use page 0
+            0xC4, 0x20, // MOV $20,A
+            0x9D, // MOV X,SP
+            0xD8, 0x21, // MOV $21,X
+            0xE5, 0xED, 0x01, // MOV A,$01ED
+            0xC4, 0x22, // MOV $22,A
+            0xE5, 0xEE, 0x01, // MOV A,$01EE
+            0xC4, 0x23, // MOV $23,A
+            0xE5, 0xEF, 0x01, // MOV A,$01EF
+            0xC4, 0x24, // MOV $24,A
+            0xFF, // STOP
+        ];
+        for (offset, value) in target.into_iter().enumerate() {
+            bus.apu.write_smp(0x0300 + offset as u16, value);
+        }
+
+        let program = [
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0x0F, // BRK
+            0xFF, // STOP if BRK fails to vector
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..80 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0020), 0xFB);
+        assert_eq!(bus.apu.peek_ram(0x0021), 0xEC);
+        assert_eq!(bus.apu.peek_ram(0x0022), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0023), 0x05);
+        assert_eq!(bus.apu.peek_ram(0x0024), 0x02);
+    }
+
+    #[test]
     fn apu_spc700_logical_alu_handles_immediate_and_direct_operands() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
