@@ -297,6 +297,12 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.or_a(value);
             }
+            0x0B => {
+                let address = self.fetch_direct_address();
+                let current = self.read_smp(address);
+                let value = self.asl_value(current);
+                self.write_smp(address, value);
+            }
             0x0D => self.push_smp_stack(self.smp_psw),
             0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
             0x14 => {
@@ -320,6 +326,7 @@ impl Apu {
                 self.write_direct_word(offset, value);
                 self.set_nz16(value);
             }
+            0x1C => self.smp_a = self.asl_value(self.smp_a),
             0x20 => self.set_flag(SMP_FLAG_P, false),
             0x24 => {
                 let address = self.fetch_direct_address();
@@ -334,6 +341,12 @@ impl Apu {
             0x28 => {
                 let value = self.fetch_smp_byte();
                 self.and_a(value);
+            }
+            0x2B => {
+                let address = self.fetch_direct_address();
+                let current = self.read_smp(address);
+                let value = self.rol_value(current);
+                self.write_smp(address, value);
             }
             0x2D => self.push_smp_stack(self.smp_a),
             0x2F => self.branch_relative(true),
@@ -359,6 +372,7 @@ impl Apu {
                 self.write_direct_word(offset, value);
                 self.set_nz16(value);
             }
+            0x3C => self.smp_a = self.rol_value(self.smp_a),
             0x3F => {
                 let address = self.fetch_smp_word();
                 self.call_smp_subroutine(address);
@@ -377,6 +391,12 @@ impl Apu {
             0x48 => {
                 let value = self.fetch_smp_byte();
                 self.eor_a(value);
+            }
+            0x4B => {
+                let address = self.fetch_direct_address();
+                let current = self.read_smp(address);
+                let value = self.lsr_value(current);
+                self.write_smp(address, value);
             }
             0x4D => self.push_smp_stack(self.smp_x),
             0x4F => {
@@ -399,6 +419,7 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.eor_a(value);
             }
+            0x5C => self.smp_a = self.lsr_value(self.smp_a),
             0x5D => self.mov_x(self.smp_a),
             0x5F => {
                 let address = self.fetch_smp_word();
@@ -421,7 +442,14 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.compare_8(self.smp_a, value);
             }
+            0x6B => {
+                let address = self.fetch_direct_address();
+                let current = self.read_smp(address);
+                let value = self.ror_value(current);
+                self.write_smp(address, value);
+            }
             0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
+            0x7C => self.smp_a = self.ror_value(self.smp_a),
             0x7D => self.mov_a(self.smp_x),
             0x7F => {
                 self.smp_psw = self.pop_smp_stack();
@@ -458,6 +486,10 @@ impl Apu {
                 self.set_nz(self.smp_a);
             }
             0x9D => self.mov_x(self.smp_sp),
+            0x9F => {
+                self.smp_a = self.smp_a.rotate_left(4);
+                self.set_nz(self.smp_a);
+            }
             0x94 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
@@ -807,6 +839,36 @@ impl Apu {
     fn eor_a(&mut self, value: u8) {
         self.smp_a ^= value;
         self.set_nz(self.smp_a);
+    }
+
+    fn asl_value(&mut self, value: u8) -> u8 {
+        let result = value << 1;
+        self.set_flag(SMP_FLAG_C, value & 0x80 != 0);
+        self.set_nz(result);
+        result
+    }
+
+    fn lsr_value(&mut self, value: u8) -> u8 {
+        let result = value >> 1;
+        self.set_flag(SMP_FLAG_C, value & 0x01 != 0);
+        self.set_nz(result);
+        result
+    }
+
+    fn rol_value(&mut self, value: u8) -> u8 {
+        let carry_in = u8::from(self.flag(SMP_FLAG_C));
+        let result = (value << 1) | carry_in;
+        self.set_flag(SMP_FLAG_C, value & 0x80 != 0);
+        self.set_nz(result);
+        result
+    }
+
+    fn ror_value(&mut self, value: u8) -> u8 {
+        let carry_in = if self.flag(SMP_FLAG_C) { 0x80 } else { 0 };
+        let result = (value >> 1) | carry_in;
+        self.set_flag(SMP_FLAG_C, value & 0x01 != 0);
+        self.set_nz(result);
+        result
     }
 
     fn adc_a(&mut self, value: u8) {

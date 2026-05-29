@@ -2333,6 +2333,89 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_shift_rotate_accumulator_and_xcn() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0x81, // MOV A,#$81
+            0x1C, // ASL A
+            0xC4, 0x20, // MOV $20,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x21, // MOV $21,A
+            0xE8, 0x01, // MOV A,#$01
+            0x5C, // LSR A
+            0xC4, 0x22, // MOV $22,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x23, // MOV $23,A
+            0x80, // SETC
+            0xE8, 0x40, // MOV A,#$40
+            0x3C, // ROL A
+            0xC4, 0x24, // MOV $24,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x25, // MOV $25,A
+            0x60, // CLRC
+            0xE8, 0x01, // MOV A,#$01
+            0x7C, // ROR A
+            0xC4, 0x26, // MOV $26,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x27, // MOV $27,A
+            0xE8, 0x3C, // MOV A,#$3C
+            0x9F, // XCN A
+            0xC4, 0x28, // MOV $28,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..48 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0020), 0x02);
+        assert_ne!(bus.apu.peek_ram(0x0021) & 0x01, 0);
+        assert_eq!(bus.apu.peek_ram(0x0022), 0x00);
+        assert_ne!(bus.apu.peek_ram(0x0023) & 0x01, 0);
+        assert_ne!(bus.apu.peek_ram(0x0023) & 0x02, 0);
+        assert_eq!(bus.apu.peek_ram(0x0024), 0x81);
+        assert_eq!(bus.apu.peek_ram(0x0025) & 0x01, 0);
+        assert_ne!(bus.apu.peek_ram(0x0025) & 0x80, 0);
+        assert_eq!(bus.apu.peek_ram(0x0026), 0x00);
+        assert_ne!(bus.apu.peek_ram(0x0027) & 0x01, 0);
+        assert_ne!(bus.apu.peek_ram(0x0027) & 0x02, 0);
+        assert_eq!(bus.apu.peek_ram(0x0028), 0xC3);
+    }
+
+    #[test]
+    fn apu_spc700_shift_rotate_direct_operands() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x80, 0x30, // MOV $30,#$80
+            0x0B, 0x30, // ASL $30
+            0x8F, 0x01, 0x31, // MOV $31,#$01
+            0x4B, 0x31, // LSR $31
+            0x80, // SETC
+            0x8F, 0x80, 0x32, // MOV $32,#$80
+            0x2B, 0x32, // ROL $32
+            0x80, // SETC
+            0x8F, 0x01, 0x33, // MOV $33,#$01
+            0x6B, 0x33, // ROR $33
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..32 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0030), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0031), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0032), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x0033), 0x80);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
