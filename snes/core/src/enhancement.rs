@@ -100,6 +100,7 @@ const MSU1_SIGNATURE: [u8; 6] = *b"S-MSU1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Msu1State {
+    present: bool,
     data: Box<[u8]>,
     audio_tracks: Box<[u16]>,
     data_seek_offset: u32,
@@ -116,6 +117,7 @@ pub(crate) struct Msu1State {
 impl Msu1State {
     pub(crate) fn new() -> Self {
         Self {
+            present: false,
             data: Box::new([]),
             audio_tracks: Box::new([]),
             data_seek_offset: 0,
@@ -131,6 +133,7 @@ impl Msu1State {
     }
 
     pub(crate) fn load_data(&mut self, data: &[u8]) {
+        self.present = true;
         self.data = data.to_vec().into_boxed_slice();
     }
 
@@ -141,16 +144,25 @@ impl Msu1State {
         let mut tracks = tracks.into_iter().collect::<Vec<_>>();
         tracks.sort_unstable();
         tracks.dedup();
+        if !tracks.is_empty() {
+            self.present = true;
+        }
         self.audio_tracks = tracks.into_boxed_slice();
         self.refresh_audio_track_status();
     }
 
     pub(crate) fn peek(&self, address: u32) -> Option<u8> {
+        if !self.present {
+            return None;
+        }
         let offset = msu1_register_offset(address)?;
         Some(self.peek_register(offset))
     }
 
     pub(crate) fn read(&mut self, address: u32) -> Option<u8> {
+        if !self.present {
+            return None;
+        }
         let offset = msu1_register_offset(address)?;
         Some(match offset {
             0x2001 => self.read_data(),
@@ -159,6 +171,9 @@ impl Msu1State {
     }
 
     pub(crate) fn write(&mut self, address: u32, value: u8) -> bool {
+        if !self.present {
+            return false;
+        }
         let Some(offset) = msu1_register_offset(address) else {
             return false;
         };
