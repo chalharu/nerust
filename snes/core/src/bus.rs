@@ -273,6 +273,7 @@ impl Bus {
 
     pub(crate) fn tick_cpu_cycle(&mut self) {
         self.tick_math_io();
+        self.apu.tick_cpu_cycle();
         self.video_master_clock_accumulator += CPU_MASTER_CLOCKS_PER_CYCLE;
         while self.video_master_clock_accumulator >= VIDEO_MASTER_CLOCKS_PER_SUBTICK {
             self.video_master_clock_accumulator -= VIDEO_MASTER_CLOCKS_PER_SUBTICK;
@@ -1682,6 +1683,101 @@ mod tests {
 
         assert_eq!(bus.read(0x002140), 0xAA);
         assert_eq!(bus.read(0x002141), 0xBB);
+    }
+
+    #[test]
+    fn apu_smp_ports_bridge_cpu_communication() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002140, 0x12);
+        bus.write(0x002141, 0x34);
+        bus.write(0x002142, 0x56);
+        bus.write(0x002143, 0x78);
+        assert_eq!(bus.apu.read_smp(0x00F4), 0x12);
+        assert_eq!(bus.apu.read_smp(0x00F5), 0x34);
+        assert_eq!(bus.apu.read_smp(0x00F6), 0x56);
+        assert_eq!(bus.apu.read_smp(0x00F7), 0x78);
+
+        bus.apu.write_smp(0x00F4, 0x9A);
+        bus.apu.write_smp(0x00F5, 0xBC);
+        bus.apu.write_smp(0x00F6, 0xDE);
+        bus.apu.write_smp(0x00F7, 0xF0);
+        assert_eq!(bus.read(0x002140), 0x9A);
+        assert_eq!(bus.read(0x002141), 0xBC);
+        assert_eq!(bus.read(0x002142), 0xDE);
+        assert_eq!(bus.read(0x002143), 0xF0);
+    }
+
+    #[test]
+    fn apu_smp_control_resets_cpu_input_latches() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002140, 0x12);
+        bus.write(0x002141, 0x34);
+        bus.write(0x002142, 0x56);
+        bus.write(0x002143, 0x78);
+
+        bus.apu.write_smp(0x00F1, 0x10);
+        assert_eq!(bus.apu.read_smp(0x00F4), 0x00);
+        assert_eq!(bus.apu.read_smp(0x00F5), 0x00);
+        assert_eq!(bus.apu.read_smp(0x00F6), 0x56);
+        assert_eq!(bus.apu.read_smp(0x00F7), 0x78);
+
+        bus.apu.write_smp(0x00F1, 0x20);
+        assert_eq!(bus.apu.read_smp(0x00F6), 0x00);
+        assert_eq!(bus.apu.read_smp(0x00F7), 0x00);
+    }
+
+    #[test]
+    fn apu_smp_dsp_registers_use_read_only_upper_mirrors() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.apu.write_smp(0x00F2, 0x12);
+        bus.apu.write_smp(0x00F3, 0xAB);
+        assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
+
+        bus.apu.write_smp(0x00F2, 0x92);
+        assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
+        bus.apu.write_smp(0x00F3, 0xCD);
+        assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
+    }
+
+    #[test]
+    fn apu_smp_aux_and_ram_are_readable_storage() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.apu.write_smp(0x00F8, 0x12);
+        bus.apu.write_smp(0x00F9, 0x34);
+        bus.apu.write_smp(0x0200, 0x56);
+
+        assert_eq!(bus.apu.read_smp(0x00F8), 0x12);
+        assert_eq!(bus.apu.read_smp(0x00F9), 0x34);
+        assert_eq!(bus.apu.read_smp(0x0200), 0x56);
+    }
+
+    #[test]
+    fn apu_runs_minimal_smp_code_after_ipl_entry() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+        for (index, value) in [0x8F, 0x5A, 0xF4, 0xFF].into_iter().enumerate() {
+            bus.write(0x002141, value);
+            bus.write(0x002140, index as u8);
+        }
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x00);
+        bus.write(0x002140, 0x06);
+
+        bus.tick_cpu_cycle();
+        assert_eq!(bus.read(0x002140), 0x5A);
+        bus.tick_cpu_cycle();
+        bus.apu.write_smp(0x00F4, 0xA5);
+        assert_eq!(bus.read(0x002140), 0xA5);
     }
 
     #[test]
