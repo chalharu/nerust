@@ -399,6 +399,10 @@ impl Apu {
                 self.modify_smp_memory(address, Self::asl_value);
             }
             0x1C => self.smp_a = self.asl_value(self.smp_a),
+            0x1F => {
+                let base = self.fetch_smp_word();
+                self.smp_pc = self.read_smp_word_at(base.wrapping_add(u16::from(self.smp_x)));
+            }
             0x20 => self.set_flag(SMP_FLAG_P, false),
             0x2A => self.or1_c_bit(true),
             0x24 => {

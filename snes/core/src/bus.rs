@@ -2233,6 +2233,28 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_absolute_indexed_indirect_jump_wraps_pointer() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xCD, 0xFF, // MOV X,#$FF
+            0x1F, 0x00, 0xFF, // JMP [$FF00+X]
+            0x8F, 0xEE, 0xF4, // fail: MOV $F4,#$EE
+            0xFF, // STOP
+            0x8F, 0xA5, 0xF4, // success: MOV $F4,#$A5
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+        bus.apu.write_smp(0xFFFF, 0x09);
+        bus.apu.write_smp(0x0000, 0x02);
+
+        for _ in 0..16 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.read(0x002140), 0xA5);
+    }
+
+    #[test]
     fn apu_spc700_brk_pushes_return_psw_and_vectors() {
         let mut bus = Bus::new(test_cartridge());
         bus.apu.write_smp(0xFFDE, 0x00);
