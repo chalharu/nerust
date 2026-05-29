@@ -293,6 +293,16 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.or_a(value);
             }
+            0x06 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.or_a(value);
+            }
+            0x07 => {
+                let address = self.fetch_direct_indexed_indirect_address();
+                let value = self.read_smp(address);
+                self.or_a(value);
+            }
             0x08 => {
                 let value = self.fetch_smp_byte();
                 self.or_a(value);
@@ -320,6 +330,11 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.or_a(value);
             }
+            0x17 => {
+                let address = self.fetch_direct_indirect_indexed_address();
+                let value = self.read_smp(address);
+                self.or_a(value);
+            }
             0x1A => {
                 let offset = self.fetch_smp_byte();
                 let value = self.read_direct_word(offset).wrapping_sub(1);
@@ -335,6 +350,16 @@ impl Apu {
             }
             0x25 => {
                 let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.and_a(value);
+            }
+            0x26 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.and_a(value);
+            }
+            0x27 => {
+                let address = self.fetch_direct_indexed_indirect_address();
                 let value = self.read_smp(address);
                 self.and_a(value);
             }
@@ -366,6 +391,11 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.and_a(value);
             }
+            0x37 => {
+                let address = self.fetch_direct_indirect_indexed_address();
+                let value = self.read_smp(address);
+                self.and_a(value);
+            }
             0x3A => {
                 let offset = self.fetch_smp_byte();
                 let value = self.read_direct_word(offset).wrapping_add(1);
@@ -385,6 +415,16 @@ impl Apu {
             }
             0x45 => {
                 let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.eor_a(value);
+            }
+            0x46 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.eor_a(value);
+            }
+            0x47 => {
+                let address = self.fetch_direct_indexed_indirect_address();
                 let value = self.read_smp(address);
                 self.eor_a(value);
             }
@@ -419,6 +459,11 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.eor_a(value);
             }
+            0x57 => {
+                let address = self.fetch_direct_indirect_indexed_address();
+                let value = self.read_smp(address);
+                self.eor_a(value);
+            }
             0x5C => self.smp_a = self.lsr_value(self.smp_a),
             0x5D => self.mov_x(self.smp_a),
             0x5F => {
@@ -438,6 +483,16 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.compare_8(self.smp_a, value);
             }
+            0x66 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x67 => {
+                let address = self.fetch_direct_indexed_indirect_address();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
             0x68 => {
                 let value = self.fetch_smp_byte();
                 self.compare_8(self.smp_a, value);
@@ -449,6 +504,26 @@ impl Apu {
                 self.write_smp(address, value);
             }
             0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
+            0x74 => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x75 => {
+                let address = self.fetch_absolute_indexed_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x76 => {
+                let address = self.fetch_absolute_indexed_address(self.smp_y);
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
+            0x77 => {
+                let address = self.fetch_direct_indirect_indexed_address();
+                let value = self.read_smp(address);
+                self.compare_8(self.smp_a, value);
+            }
             0x7C => self.smp_a = self.ror_value(self.smp_a),
             0x7D => self.mov_a(self.smp_x),
             0x7F => {
@@ -463,6 +538,16 @@ impl Apu {
             }
             0x85 => {
                 let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.adc_a(value);
+            }
+            0x86 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.adc_a(value);
+            }
+            0x87 => {
+                let address = self.fetch_direct_indexed_indirect_address();
                 let value = self.read_smp(address);
                 self.adc_a(value);
             }
@@ -505,6 +590,11 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.adc_a(value);
             }
+            0x97 => {
+                let address = self.fetch_direct_indirect_indexed_address();
+                let value = self.read_smp(address);
+                self.adc_a(value);
+            }
             0xA4 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -512,6 +602,16 @@ impl Apu {
             }
             0xA5 => {
                 let address = self.fetch_smp_word();
+                let value = self.read_smp(address);
+                self.sbc_a(value);
+            }
+            0xA6 => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.sbc_a(value);
+            }
+            0xA7 => {
+                let address = self.fetch_direct_indexed_indirect_address();
                 let value = self.read_smp(address);
                 self.sbc_a(value);
             }
@@ -532,6 +632,11 @@ impl Apu {
             }
             0xB6 => {
                 let address = self.fetch_absolute_indexed_address(self.smp_y);
+                let value = self.read_smp(address);
+                self.sbc_a(value);
+            }
+            0xB7 => {
+                let address = self.fetch_direct_indirect_indexed_address();
                 let value = self.read_smp(address);
                 self.sbc_a(value);
             }
