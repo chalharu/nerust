@@ -2058,6 +2058,80 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_logical_alu_handles_indexed_and_absolute_operands() {
+        let mut bus = Bus::new(test_cartridge());
+        for (address, value) in [
+            (0x0012, 0xF0),
+            (0x0013, 0x3C),
+            (0x0310, 0xF0),
+            (0x0402, 0x3C),
+            (0x0503, 0x3C),
+        ] {
+            bus.apu.write_smp(address, value);
+        }
+
+        let program = [
+            0xCD, 0x02, // MOV X,#$02
+            0x8D, 0x03, // MOV Y,#$03
+            0xE8, 0x0F, // MOV A,#$0F
+            0x14, 0x10, // OR A,$10+X
+            0xC4, 0x20, // MOV $20,A
+            0xE8, 0x0F, // MOV A,#$0F
+            0x15, 0x0E, 0x03, // OR A,!$030E+X
+            0xC4, 0x21, // MOV $21,A
+            0xE8, 0x0F, // MOV A,#$0F
+            0x16, 0x0D, 0x03, // OR A,!$030D+Y
+            0xC4, 0x22, // MOV $22,A
+            0xE8, 0xF0, // MOV A,#$F0
+            0x34, 0x11, // AND A,$11+X
+            0xC4, 0x23, // MOV $23,A
+            0xE8, 0xF0, // MOV A,#$F0
+            0x35, 0x00, 0x04, // AND A,!$0400+X
+            0xC4, 0x24, // MOV $24,A
+            0xE8, 0xF0, // MOV A,#$F0
+            0x36, 0x00, 0x05, // AND A,!$0500+Y
+            0xC4, 0x25, // MOV $25,A
+            0xE8, 0x55, // MOV A,#$55
+            0x54, 0x10, // EOR A,$10+X
+            0xC4, 0x26, // MOV $26,A
+            0xE8, 0x55, // MOV A,#$55
+            0x55, 0x0E, 0x03, // EOR A,!$030E+X
+            0xC4, 0x27, // MOV $27,A
+            0xE8, 0x55, // MOV A,#$55
+            0x56, 0x0D, 0x03, // EOR A,!$030D+Y
+            0xC4, 0x28, // MOV $28,A
+            0xE8, 0x0F, // MOV A,#$0F
+            0x05, 0x10, 0x03, // OR A,!$0310
+            0xC4, 0x29, // MOV $29,A
+            0xE8, 0xF0, // MOV A,#$F0
+            0x25, 0x02, 0x04, // AND A,!$0402
+            0xC4, 0x2A, // MOV $2A,A
+            0xE8, 0x55, // MOV A,#$55
+            0x45, 0x10, 0x03, // EOR A,!$0310
+            0xC4, 0x2B, // MOV $2B,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..80 {
+            bus.tick_cpu_cycle();
+        }
+
+        for address in 0x0020..=0x0022 {
+            assert_eq!(bus.apu.peek_ram(address), 0xFF);
+        }
+        for address in 0x0023..=0x0025 {
+            assert_eq!(bus.apu.peek_ram(address), 0x30);
+        }
+        for address in 0x0026..=0x0028 {
+            assert_eq!(bus.apu.peek_ram(address), 0xA5);
+        }
+        assert_eq!(bus.apu.peek_ram(0x0029), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x002A), 0x30);
+        assert_eq!(bus.apu.peek_ram(0x002B), 0xA5);
+    }
+
+    #[test]
     fn apu_spc700_adc_sets_carry_halfcarry_and_overflow_flags() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
@@ -2121,6 +2195,71 @@ mod tests {
         assert_eq!(borrow_psw & 0x01, 0);
         assert_eq!(borrow_psw & 0x02, 0);
         assert_ne!(borrow_psw & 0x80, 0);
+    }
+
+    #[test]
+    fn apu_spc700_adc_sbc_handle_indexed_and_absolute_operands() {
+        let mut bus = Bus::new(test_cartridge());
+        for (address, value) in [
+            (0x0012, 0x01),
+            (0x0310, 0x02),
+            (0x0402, 0x03),
+            (0x0503, 0x04),
+        ] {
+            bus.apu.write_smp(address, value);
+        }
+
+        let program = [
+            0xCD, 0x02, // MOV X,#$02
+            0x8D, 0x03, // MOV Y,#$03
+            0x60, // CLRC
+            0xE8, 0x10, // MOV A,#$10
+            0x94, 0x10, // ADC A,$10+X
+            0xC4, 0x30, // MOV $30,A
+            0x60, // CLRC
+            0xE8, 0x10, // MOV A,#$10
+            0x85, 0x10, 0x03, // ADC A,!$0310
+            0xC4, 0x31, // MOV $31,A
+            0x60, // CLRC
+            0xE8, 0x10, // MOV A,#$10
+            0x95, 0x00, 0x04, // ADC A,!$0400+X
+            0xC4, 0x32, // MOV $32,A
+            0x60, // CLRC
+            0xE8, 0x10, // MOV A,#$10
+            0x96, 0x00, 0x05, // ADC A,!$0500+Y
+            0xC4, 0x33, // MOV $33,A
+            0x80, // SETC
+            0xE8, 0x10, // MOV A,#$10
+            0xB4, 0x10, // SBC A,$10+X
+            0xC4, 0x34, // MOV $34,A
+            0x80, // SETC
+            0xE8, 0x10, // MOV A,#$10
+            0xA5, 0x10, 0x03, // SBC A,!$0310
+            0xC4, 0x35, // MOV $35,A
+            0x80, // SETC
+            0xE8, 0x10, // MOV A,#$10
+            0xB5, 0x00, 0x04, // SBC A,!$0400+X
+            0xC4, 0x36, // MOV $36,A
+            0x80, // SETC
+            0xE8, 0x10, // MOV A,#$10
+            0xB6, 0x00, 0x05, // SBC A,!$0500+Y
+            0xC4, 0x37, // MOV $37,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..80 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0030), 0x11);
+        assert_eq!(bus.apu.peek_ram(0x0031), 0x12);
+        assert_eq!(bus.apu.peek_ram(0x0032), 0x13);
+        assert_eq!(bus.apu.peek_ram(0x0033), 0x14);
+        assert_eq!(bus.apu.peek_ram(0x0034), 0x0F);
+        assert_eq!(bus.apu.peek_ram(0x0035), 0x0E);
+        assert_eq!(bus.apu.peek_ram(0x0036), 0x0D);
+        assert_eq!(bus.apu.peek_ram(0x0037), 0x0C);
     }
 
     #[test]
