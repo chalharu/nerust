@@ -5,6 +5,7 @@ const IPL_READY_PORTS: [u8; APU_PORT_COUNT] = [0xAA, 0xBB, 0x00, 0x00];
 const IPL_INITIAL_KICK: u8 = 0xCC;
 const SMP_CONTROL_RESET_PORTS_0_1: u8 = 0x10;
 const SMP_CONTROL_RESET_PORTS_2_3: u8 = 0x20;
+const SMP_CONTROL_ENABLE_IPL_ROM: u8 = 0x80;
 const SMP_TIMER_COUNT: usize = 3;
 const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
@@ -234,6 +235,16 @@ impl Apu {
             self.cpu_to_apu_ports[2] = 0;
             self.cpu_to_apu_ports[3] = 0;
         }
+        if value & SMP_CONTROL_ENABLE_IPL_ROM != 0 {
+            self.enter_ipl_loader();
+        }
+    }
+
+    fn enter_ipl_loader(&mut self) {
+        self.apu_to_cpu_ports = IPL_READY_PORTS;
+        self.ipl_state = IplState::WaitingForInitialKick;
+        self.smp_running = false;
+        self.smp_entry_delay_cpu_cycles = 0;
     }
 
     fn update_timer_enable(&mut self, previous: u8, value: u8) {

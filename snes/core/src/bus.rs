@@ -1846,6 +1846,28 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_ipl_enable_reenters_high_level_loader() {
+        let mut bus = Bus::new(test_cartridge());
+        let reenter_ipl = [
+            0x8F, 0x80, 0xF1, // MOV $F1,#$80
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &reenter_ipl);
+        tick_cpu_cycles(&mut bus, 8);
+
+        assert_eq!(bus.read(0x002140), 0xAA);
+        assert_eq!(bus.read(0x002141), 0xBB);
+
+        let second_program = [
+            0x8F, 0x5A, 0xF4, // MOV $F4,#$5A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0300, &second_program);
+        tick_cpu_cycles(&mut bus, 8);
+
+        assert_eq!(bus.read(0x002140), 0x5A);
+    }
+
+    #[test]
     fn apu_spc700_polling_loop_acknowledges_cpu_command() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
