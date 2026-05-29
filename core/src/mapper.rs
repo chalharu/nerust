@@ -159,6 +159,24 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
 
     fn step(&mut self, _interrupt: &mut Interrupt) {}
 
+    fn step_cpu_cycles(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        for _ in 0..cycles {
+            self.step(interrupt);
+        }
+    }
+
+    fn cycles_until_next_cpu_event(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn cpu_read_has_side_effect(&self, _address: usize) -> bool {
+        true
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        false
+    }
+
     /// Notify the mapper of an observable PPU bus event.
     ///
     /// The default implementation is a no-op. Mappers that count scanlines or

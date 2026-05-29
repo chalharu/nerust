@@ -935,6 +935,17 @@ impl Mapper for Mmc5 {
         self.clock_audio(interrupt);
     }
 
+    fn cpu_read_has_side_effect(&self, address: usize) -> bool {
+        matches!(
+            address,
+            0x5010 | 0x5204 | 0x5209 | 0x5800..=0x5BFF | 0xFFFA | 0xFFFB
+        ) || ((0x8000..=0xBFFF).contains(&address) && self.pcm_read_mode)
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        false
+    }
+
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
         let PpuBusEvent::AddressBusUpdate {
             address,

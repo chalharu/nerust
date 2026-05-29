@@ -1433,4 +1433,49 @@ impl Core {
         }
         result
     }
+
+    pub(crate) fn step_many<S: Screen>(
+        &mut self,
+        screen: &mut S,
+        cartridge: &mut dyn Cartridge,
+        interrupt: &mut Interrupt,
+        cycles: u64,
+    ) -> bool {
+        let mut result = false;
+        for _ in 0..cycles {
+            if self.step(screen, cartridge, interrupt) {
+                result = true;
+            }
+        }
+        result
+    }
+
+    pub(crate) fn cycles_until_next_scheduler_event(&self, max_cycles: u64) -> u64 {
+        if self.render_executing || self.post_render_executing || self.vram_addr_update_delay > 0 {
+            return 1;
+        }
+
+        let mut cycle = self.cycle;
+        let mut scan_line = self.scan_line;
+        for elapsed in 1..=max_cycles {
+            if cycle > 339 {
+                cycle = 0;
+                scan_line += 1;
+                match scan_line {
+                    241 | NMI_SCAN_LINE | TOTAL_SCAN_LINE => return elapsed,
+                    _ => {}
+                }
+                if scan_line == TOTAL_SCAN_LINE {
+                    scan_line = 0;
+                }
+            } else {
+                cycle += 1;
+                if scan_line == 0 && cycle == 1 {
+                    return elapsed;
+                }
+            }
+        }
+
+        max_cycles + 1
+    }
 }

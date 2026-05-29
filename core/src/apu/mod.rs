@@ -202,6 +202,48 @@ impl Core {
         }
     }
 
+    pub(crate) fn step_many<M: MixerInput>(
+        &mut self,
+        cpu: &mut Cpu,
+        mixer: &mut M,
+        mixer_sample_rate: u32,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+        cycles: u64,
+    ) {
+        for _ in 0..cycles {
+            self.step(
+                cpu,
+                mixer,
+                mixer_sample_rate,
+                expansion_audio_output,
+                expansion_audio_inverted,
+            );
+        }
+    }
+
+    pub(crate) fn cycles_until_next_scheduler_event(
+        &self,
+        interrupt: &Interrupt,
+        max_cycles: u64,
+    ) -> u64 {
+        let mut apu = self.clone();
+        let mut interrupt = *interrupt;
+        let irq_before = interrupt.irq_flag.bits();
+        let dmc_dma_before = interrupt.dmc_dma_request;
+
+        for elapsed in 1..=max_cycles {
+            apu.step_frame(&mut interrupt);
+            if interrupt.irq_flag.bits() != irq_before
+                || interrupt.dmc_dma_request != dmc_dma_before
+            {
+                return elapsed;
+            }
+        }
+
+        max_cycles + 1
+    }
+
     pub(crate) fn send_sample<M: MixerInput>(
         &self,
         mixer: &mut M,
