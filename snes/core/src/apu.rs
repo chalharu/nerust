@@ -615,6 +615,10 @@ impl Apu {
                 let address = self.fetch_smp_word();
                 self.modify_smp_memory(address, Self::ror_value);
             }
+            0x6E => {
+                let address = self.fetch_direct_address();
+                self.dbnz_direct(address);
+            }
             0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
             0x74 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
@@ -1035,6 +1039,7 @@ impl Apu {
                 self.set_nz(self.smp_y);
             }
             0xFD => self.mov_y(self.smp_a),
+            0xFE => self.dbnz_y(),
             0x1D => {
                 self.smp_x = self.smp_x.wrapping_sub(1);
                 self.set_nz(self.smp_x);
@@ -1328,6 +1333,23 @@ impl Apu {
     fn cbne(&mut self, address: u16) {
         let offset = self.fetch_smp_byte() as i8;
         if self.read_smp(address) != self.smp_a {
+            self.apply_relative_offset(offset);
+        }
+    }
+
+    fn dbnz_direct(&mut self, address: u16) {
+        let offset = self.fetch_smp_byte() as i8;
+        let value = self.read_smp(address).wrapping_sub(1);
+        self.write_smp(address, value);
+        if value != 0 {
+            self.apply_relative_offset(offset);
+        }
+    }
+
+    fn dbnz_y(&mut self) {
+        let offset = self.fetch_smp_byte() as i8;
+        self.smp_y = self.smp_y.wrapping_sub(1);
+        if self.smp_y != 0 {
             self.apply_relative_offset(offset);
         }
     }
