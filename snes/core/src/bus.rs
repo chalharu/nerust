@@ -1608,6 +1608,69 @@ mod tests {
     }
 
     #[test]
+    fn apu_ipl_upload_stores_data_bytes_in_apu_ram() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+
+        bus.write(0x002141, 0xDE);
+        bus.write(0x002140, 0x00);
+        bus.write(0x002141, 0xAD);
+        bus.write(0x002140, 0x01);
+
+        assert_eq!(bus.apu.peek_ram(0x0200), 0xDE);
+        assert_eq!(bus.apu.peek_ram(0x0201), 0xAD);
+    }
+
+    #[test]
+    fn apu_ipl_upload_continues_with_new_block_address() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+        bus.write(0x002141, 0x11);
+        bus.write(0x002140, 0x00);
+
+        bus.write(0x002142, 0x10);
+        bus.write(0x002143, 0x03);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0x03);
+        assert_eq!(bus.read(0x002140), 0x03);
+
+        bus.write(0x002141, 0x22);
+        bus.write(0x002140, 0x00);
+
+        assert_eq!(bus.apu.peek_ram(0x0200), 0x11);
+        assert_eq!(bus.apu.peek_ram(0x0310), 0x22);
+    }
+
+    #[test]
+    fn apu_ipl_upload_wraps_to_next_page_after_index_ff() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.write(0x002142, 0x00);
+        bus.write(0x002143, 0x02);
+        bus.write(0x002141, 0x01);
+        bus.write(0x002140, 0xCC);
+
+        for index in 0..=u8::MAX {
+            bus.write(0x002141, index.wrapping_add(1));
+            bus.write(0x002140, index);
+        }
+        bus.write(0x002141, 0x5A);
+        bus.write(0x002140, 0x00);
+
+        assert_eq!(bus.apu.peek_ram(0x0200), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x02FF), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0300), 0x5A);
+    }
+
+    #[test]
     fn apu_reset_restores_ipl_ready_word() {
         let mut bus = Bus::new(test_cartridge());
 
