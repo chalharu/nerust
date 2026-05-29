@@ -2817,6 +2817,116 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_absolute_bit_ops_update_carry_and_memory() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.apu.write_smp(0x0102, 0x0C);
+
+        let program = [
+            0x80, // SETC
+            0x4A, 0x02, 0x41, // AND1 C,$0102.2
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x20, // MOV $20,A
+            0x80, // SETC
+            0x6A, 0x02, 0x41, // AND1 C,/$0102.2
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x21, // MOV $21,A
+            0x60, // CLRC
+            0x0A, 0x02, 0x41, // OR1 C,$0102.2
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x22, // MOV $22,A
+            0x80, // SETC
+            0x8A, 0x02, 0x41, // EOR1 C,$0102.2
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x23, // MOV $23,A
+            0xAA, 0x02, 0x41, // MOV1 C,$0102.2
+            0xCA, 0x02, 0x61, // MOV1 $0102.3,C
+            0x60, // CLRC
+            0xCA, 0x02, 0x61, // MOV1 $0102.3,C
+            0xEA, 0x02, 0x41, // NOT1 $0102.2
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..80 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_ne!(bus.apu.peek_ram(0x0020) & 0x01, 0);
+        assert_eq!(bus.apu.peek_ram(0x0021) & 0x01, 0);
+        assert_ne!(bus.apu.peek_ram(0x0022) & 0x01, 0);
+        assert_eq!(bus.apu.peek_ram(0x0023) & 0x01, 0);
+        assert_eq!(bus.apu.peek_ram(0x0102), 0x00);
+    }
+
+    #[test]
+    fn apu_spc700_direct_bit_set_clear_and_branch_use_direct_page() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x00, 0x10, // MOV $10,#$00
+            0x02, 0x10, // SET1 $10.0
+            0x22, 0x10, // SET1 $10.1
+            0x12, 0x10, // CLR1 $10.0
+            0x03, 0x10, 0x03, // BBS $10.0,skip
+            0x8F, 0xA1, 0x20, // MOV $20,#$A1
+            0x23, 0x10, 0x03, // BBS $10.1,skip
+            0x8F, 0xEE, 0x20, // MOV $20,#$EE
+            0x33, 0x10, 0x03, // BBC $10.1,skip
+            0x8F, 0xA2, 0x21, // MOV $21,#$A2
+            0x13, 0x10, 0x03, // BBC $10.0,skip
+            0x8F, 0xEE, 0x21, // MOV $21,#$EE
+            0x40, // SETP
+            0xC2, 0x11, // SET1 $11.6
+            0x20, // CLRP
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..80 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0010), 0x02);
+        assert_eq!(bus.apu.peek_ram(0x0020), 0xA1);
+        assert_eq!(bus.apu.peek_ram(0x0021), 0xA2);
+        assert_eq!(bus.apu.peek_ram(0x0111), 0x40);
+    }
+
+    #[test]
+    fn apu_spc700_tset_tclr_update_memory_and_nz_from_test() {
+        let mut bus = Bus::new(test_cartridge());
+        bus.apu.write_smp(0x0300, 0x11);
+        bus.apu.write_smp(0x0301, 0x05);
+        let program = [
+            0xE8, 0x09, // MOV A,#$09
+            0x0E, 0x00, 0x03, // TSET1 $0300
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x20, // MOV $20,A
+            0xE8, 0x15, // MOV A,#$15
+            0x4E, 0x01, 0x03, // TCLR1 $0301
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x21, // MOV $21,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..36 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0300), 0x19);
+        assert_eq!(bus.apu.peek_ram(0x0301), 0x00);
+        assert_ne!(bus.apu.peek_ram(0x0020) & 0x80, 0);
+        assert_eq!(bus.apu.peek_ram(0x0020) & 0x02, 0);
+        assert_eq!(bus.apu.peek_ram(0x0021) & 0x82, 0);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [

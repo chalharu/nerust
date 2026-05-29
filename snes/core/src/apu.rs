@@ -294,6 +294,12 @@ impl Apu {
                 let address = self.read_smp_word_at(vector);
                 self.call_smp_subroutine(address);
             }
+            0x02 | 0x22 | 0x42 | 0x62 | 0x82 | 0xA2 | 0xC2 | 0xE2 => {
+                self.set_direct_bit(opcode >> 5, true);
+            }
+            0x03 | 0x23 | 0x43 | 0x63 | 0x83 | 0xA3 | 0xC3 | 0xE3 => {
+                self.branch_direct_bit(opcode >> 5, true);
+            }
             0x04 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -322,6 +328,7 @@ impl Apu {
                 let (address, left, right) = self.fetch_direct_source_dest_values();
                 self.write_logical_result(address, left | right);
             }
+            0x0A => self.or1_c_bit(false),
             0x0B => {
                 let address = self.fetch_direct_address();
                 let current = self.read_smp(address);
@@ -329,7 +336,14 @@ impl Apu {
                 self.write_smp(address, value);
             }
             0x0D => self.push_smp_stack(self.smp_psw),
+            0x0E => self.test_and_set_absolute(true),
             0x10 => self.branch_relative(!self.flag(SMP_FLAG_N)),
+            0x12 | 0x32 | 0x52 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
+                self.set_direct_bit(opcode >> 5, false);
+            }
+            0x13 | 0x33 | 0x53 | 0x73 | 0x93 | 0xB3 | 0xD3 | 0xF3 => {
+                self.branch_direct_bit(opcode >> 5, false);
+            }
             0x14 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
@@ -366,6 +380,7 @@ impl Apu {
             }
             0x1C => self.smp_a = self.asl_value(self.smp_a),
             0x20 => self.set_flag(SMP_FLAG_P, false),
+            0x2A => self.or1_c_bit(true),
             0x24 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -443,6 +458,8 @@ impl Apu {
                 self.call_smp_subroutine(address);
             }
             0x40 => self.set_flag(SMP_FLAG_P, true),
+            0x4A => self.and1_c_bit(false),
+            0x4E => self.test_and_set_absolute(false),
             0x44 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -523,6 +540,7 @@ impl Apu {
                 self.smp_pc = address;
             }
             0x60 => self.set_flag(SMP_FLAG_C, false),
+            0x6A => self.and1_c_bit(true),
             0x6D => self.push_smp_stack(self.smp_y),
             0x6F => self.return_smp_subroutine(),
             0x64 => {
@@ -645,6 +663,7 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.mov_y(value);
             }
+            0x8A => self.eor1_c_bit(),
             0x8F => {
                 let value = self.fetch_smp_byte();
                 let address = self.fetch_direct_address();
@@ -724,6 +743,7 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.sbc_a(value);
             }
+            0xAA => self.mov1_c_bit(),
             0xA9 => {
                 let (address, left, right) = self.fetch_direct_source_dest_values();
                 let result = self.sbc_values(left, right);
@@ -819,6 +839,7 @@ impl Apu {
                 let address = self.fetch_smp_word();
                 self.write_smp(address, self.smp_x);
             }
+            0xCA => self.mov1_bit_c(),
             0xCB => {
                 let address = self.fetch_direct_address();
                 self.write_smp(address, self.smp_y);
@@ -902,6 +923,7 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.mov_x(value);
             }
+            0xEA => self.not1_bit(),
             0xEB => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -1023,6 +1045,13 @@ impl Apu {
         low | (high << 8)
     }
 
+    fn fetch_absolute_bit_address(&mut self) -> (u16, u8) {
+        let operand = self.fetch_smp_word();
+        let address = operand & 0x1FFF;
+        let bit = (operand >> 13) as u8;
+        (address, bit)
+    }
+
     fn read_smp_word_at(&mut self, address: u16) -> u16 {
         let low = u16::from(self.read_smp(address));
         let high = u16::from(self.read_smp(address.wrapping_add(1)));
@@ -1097,8 +1126,12 @@ impl Apu {
     fn branch_relative(&mut self, condition: bool) {
         let offset = self.fetch_smp_byte() as i8;
         if condition {
-            self.smp_pc = ((i32::from(self.smp_pc) + i32::from(offset)) & 0xFFFF) as u16;
+            self.apply_relative_offset(offset);
         }
+    }
+
+    fn apply_relative_offset(&mut self, offset: i8) {
+        self.smp_pc = ((i32::from(self.smp_pc) + i32::from(offset)) & 0xFFFF) as u16;
     }
 
     fn call_smp_subroutine(&mut self, address: u16) {
@@ -1161,6 +1194,81 @@ impl Apu {
         let value = self.read_smp(address).wrapping_sub(1);
         self.write_smp(address, value);
         self.set_nz(value);
+    }
+
+    fn absolute_bit_value(&mut self, inverted: bool) -> bool {
+        let (address, bit) = self.fetch_absolute_bit_address();
+        let bit_set = self.read_smp(address) & (1u8 << bit) != 0;
+        bit_set ^ inverted
+    }
+
+    fn or1_c_bit(&mut self, inverted: bool) {
+        let result = self.flag(SMP_FLAG_C) | self.absolute_bit_value(inverted);
+        self.set_flag(SMP_FLAG_C, result);
+    }
+
+    fn and1_c_bit(&mut self, inverted: bool) {
+        let result = self.flag(SMP_FLAG_C) & self.absolute_bit_value(inverted);
+        self.set_flag(SMP_FLAG_C, result);
+    }
+
+    fn eor1_c_bit(&mut self) {
+        let result = self.flag(SMP_FLAG_C) ^ self.absolute_bit_value(false);
+        self.set_flag(SMP_FLAG_C, result);
+    }
+
+    fn mov1_c_bit(&mut self) {
+        let value = self.absolute_bit_value(false);
+        self.set_flag(SMP_FLAG_C, value);
+    }
+
+    fn mov1_bit_c(&mut self) {
+        let (address, bit) = self.fetch_absolute_bit_address();
+        let mask = 1u8 << bit;
+        let value = if self.flag(SMP_FLAG_C) {
+            self.read_smp(address) | mask
+        } else {
+            self.read_smp(address) & !mask
+        };
+        self.write_smp(address, value);
+    }
+
+    fn not1_bit(&mut self) {
+        let (address, bit) = self.fetch_absolute_bit_address();
+        let value = self.read_smp(address) ^ (1u8 << bit);
+        self.write_smp(address, value);
+    }
+
+    fn set_direct_bit(&mut self, bit: u8, enabled: bool) {
+        let address = self.fetch_direct_address();
+        let mask = 1u8 << bit;
+        let value = if enabled {
+            self.read_smp(address) | mask
+        } else {
+            self.read_smp(address) & !mask
+        };
+        self.write_smp(address, value);
+    }
+
+    fn branch_direct_bit(&mut self, bit: u8, branch_when_set: bool) {
+        let address = self.fetch_direct_address();
+        let offset = self.fetch_smp_byte() as i8;
+        let bit_set = self.read_smp(address) & (1u8 << bit) != 0;
+        if bit_set == branch_when_set {
+            self.apply_relative_offset(offset);
+        }
+    }
+
+    fn test_and_set_absolute(&mut self, set_bits: bool) {
+        let address = self.fetch_smp_word();
+        let memory = self.read_smp(address);
+        self.set_nz(self.smp_a.wrapping_sub(memory));
+        let value = if set_bits {
+            memory | self.smp_a
+        } else {
+            memory & !self.smp_a
+        };
+        self.write_smp(address, value);
     }
 
     fn compare_8(&mut self, left: u8, right: u8) {
