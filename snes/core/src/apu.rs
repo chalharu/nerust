@@ -555,6 +555,14 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.adc_a(value);
             }
+            0x8B => {
+                let address = self.fetch_direct_address();
+                self.dec_smp_memory(address);
+            }
+            0x8C => {
+                let address = self.fetch_smp_word();
+                self.dec_smp_memory(address);
+            }
             0x8E => self.smp_psw = self.pop_smp_stack(),
             0x8D => {
                 let value = self.fetch_smp_byte();
@@ -579,6 +587,10 @@ impl Apu {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
                 self.adc_a(value);
+            }
+            0x9B => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.dec_smp_memory(address);
             }
             0x95 => {
                 let address = self.fetch_absolute_indexed_address(self.smp_x);
@@ -619,11 +631,23 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.sbc_a(value);
             }
+            0xAB => {
+                let address = self.fetch_direct_address();
+                self.inc_smp_memory(address);
+            }
+            0xAC => {
+                let address = self.fetch_smp_word();
+                self.inc_smp_memory(address);
+            }
             0xB0 => self.branch_relative(self.flag(SMP_FLAG_C)),
             0xB4 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
                 self.sbc_a(value);
+            }
+            0xBB => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.inc_smp_memory(address);
             }
             0xB5 => {
                 let address = self.fetch_absolute_indexed_address(self.smp_x);
@@ -979,6 +1003,18 @@ impl Apu {
         let [low, high] = value.to_le_bytes();
         self.smp_a = low;
         self.smp_y = high;
+    }
+
+    fn inc_smp_memory(&mut self, address: u16) {
+        let value = self.read_smp(address).wrapping_add(1);
+        self.write_smp(address, value);
+        self.set_nz(value);
+    }
+
+    fn dec_smp_memory(&mut self, address: u16) {
+        let value = self.read_smp(address).wrapping_sub(1);
+        self.write_smp(address, value);
+        self.set_nz(value);
     }
 
     fn compare_8(&mut self, left: u8, right: u8) {
