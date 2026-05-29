@@ -1768,18 +1768,22 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn set_register_with_moves_flags(&mut self, register: usize, value: u16) {
-        self.set_register(register, value);
+        self.registers[register] = value;
+        self.set_zero_sign(value);
         self.overflow = value & 0x0080 != 0;
+        self.destination = None;
     }
 
     fn move_register(&mut self, destination: usize, source: usize) {
         self.registers[destination] = self.registers[source];
-        self.source = destination;
         self.destination = None;
     }
 
     fn load_register(&mut self, register: usize, value: u16) {
         self.registers[register] = value;
+        if register == 0 {
+            self.source = 0;
+        }
     }
 
     fn compare_register(&mut self, register: usize) {
@@ -2089,13 +2093,13 @@ impl<'a> GsuInterpreter<'a> {
 
     fn store_word(&mut self, register: usize) {
         let address = self.registers[register];
-        self.write_ram_word(address, self.registers[0]);
+        self.write_ram_word(address, self.registers[self.source]);
         self.destination = None;
     }
 
     fn store_byte(&mut self, register: usize) {
         let address = self.registers[register];
-        self.write_ram(address, self.registers[0] as u8);
+        self.write_ram(address, self.registers[self.source] as u8);
         self.destination = None;
     }
 
