@@ -8,6 +8,7 @@ const SMP_CONTROL_RESET_PORTS_2_3: u8 = 0x20;
 const SMP_TIMER_COUNT: usize = 3;
 const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
+pub(crate) const SMP_IPL_ENTRY_DELAY_CPU_CYCLES: u8 = 32;
 const SMP_FLAG_C: u8 = 0x01;
 const SMP_FLAG_Z: u8 = 0x02;
 const SMP_FLAG_H: u8 = 0x08;
@@ -82,6 +83,7 @@ pub(crate) struct Apu {
     smp_psw: u8,
     smp_pc: u16,
     smp_running: bool,
+    smp_entry_delay_cpu_cycles: u8,
 }
 
 impl Apu {
@@ -104,6 +106,7 @@ impl Apu {
             smp_psw: SMP_FLAG_Z,
             smp_pc: 0,
             smp_running: false,
+            smp_entry_delay_cpu_cycles: 0,
         }
     }
 
@@ -165,6 +168,13 @@ impl Apu {
 
     pub(crate) fn tick_cpu_cycle(&mut self) {
         self.tick_timers();
+        if self.smp_entry_delay_cpu_cycles > 0 {
+            self.smp_entry_delay_cpu_cycles -= 1;
+            if self.smp_entry_delay_cpu_cycles == 0 {
+                self.smp_running = true;
+            }
+            return;
+        }
         if self.smp_running {
             self.execute_smp_instruction();
         }
@@ -270,7 +280,8 @@ impl Apu {
         self.smp_y = 0;
         self.smp_sp = 0xEF;
         self.smp_psw = SMP_FLAG_Z;
-        self.smp_running = true;
+        self.smp_running = false;
+        self.smp_entry_delay_cpu_cycles = SMP_IPL_ENTRY_DELAY_CPU_CYCLES;
     }
 
     fn execute_smp_instruction(&mut self) {
@@ -307,6 +318,10 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.or_a(value);
             }
+            0x09 => {
+                let (address, left, right) = self.fetch_direct_source_dest_values();
+                self.write_logical_result(address, left | right);
+            }
             0x0B => {
                 let address = self.fetch_direct_address();
                 let current = self.read_smp(address);
@@ -334,6 +349,14 @@ impl Apu {
                 let address = self.fetch_direct_indirect_indexed_address();
                 let value = self.read_smp(address);
                 self.or_a(value);
+            }
+            0x18 => {
+                let (address, left, right) = self.fetch_direct_immediate_dest_value();
+                self.write_logical_result(address, left | right);
+            }
+            0x19 => {
+                let (address, left, right) = self.indexed_source_dest_values();
+                self.write_logical_result(address, left | right);
             }
             0x1A => {
                 let offset = self.fetch_smp_byte();
@@ -367,6 +390,10 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.and_a(value);
             }
+            0x29 => {
+                let (address, left, right) = self.fetch_direct_source_dest_values();
+                self.write_logical_result(address, left & right);
+            }
             0x2B => {
                 let address = self.fetch_direct_address();
                 let current = self.read_smp(address);
@@ -395,6 +422,14 @@ impl Apu {
                 let address = self.fetch_direct_indirect_indexed_address();
                 let value = self.read_smp(address);
                 self.and_a(value);
+            }
+            0x38 => {
+                let (address, left, right) = self.fetch_direct_immediate_dest_value();
+                self.write_logical_result(address, left & right);
+            }
+            0x39 => {
+                let (address, left, right) = self.indexed_source_dest_values();
+                self.write_logical_result(address, left & right);
             }
             0x3A => {
                 let offset = self.fetch_smp_byte();
@@ -432,6 +467,10 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.eor_a(value);
             }
+            0x49 => {
+                let (address, left, right) = self.fetch_direct_source_dest_values();
+                self.write_logical_result(address, left ^ right);
+            }
             0x4B => {
                 let address = self.fetch_direct_address();
                 let current = self.read_smp(address);
@@ -463,6 +502,19 @@ impl Apu {
                 let address = self.fetch_direct_indirect_indexed_address();
                 let value = self.read_smp(address);
                 self.eor_a(value);
+            }
+            0x58 => {
+                let (address, left, right) = self.fetch_direct_immediate_dest_value();
+                self.write_logical_result(address, left ^ right);
+            }
+            0x59 => {
+                let (address, left, right) = self.indexed_source_dest_values();
+                self.write_logical_result(address, left ^ right);
+            }
+            0x5A => {
+                let offset = self.fetch_smp_byte();
+                let value = self.read_direct_word(offset);
+                self.compare_16(self.ya(), value);
             }
             0x5C => self.smp_a = self.lsr_value(self.smp_a),
             0x5D => self.mov_x(self.smp_a),
@@ -497,6 +549,10 @@ impl Apu {
                 let value = self.fetch_smp_byte();
                 self.compare_8(self.smp_a, value);
             }
+            0x69 => {
+                let (_, left, right) = self.fetch_direct_source_dest_values();
+                self.compare_8(left, right);
+            }
             0x6B => {
                 let address = self.fetch_direct_address();
                 let current = self.read_smp(address);
@@ -523,6 +579,22 @@ impl Apu {
                 let address = self.fetch_direct_indirect_indexed_address();
                 let value = self.read_smp(address);
                 self.compare_8(self.smp_a, value);
+            }
+            0x78 => {
+                let value = self.fetch_smp_byte();
+                let address = self.fetch_direct_address();
+                let left = self.read_smp(address);
+                self.compare_8(left, value);
+            }
+            0x79 => {
+                let (_, left, right) = self.indexed_source_dest_values();
+                self.compare_8(left, right);
+            }
+            0x7A => {
+                let offset = self.fetch_smp_byte();
+                let value = self.read_direct_word(offset);
+                let result = self.addw_ya(value);
+                self.set_ya(result);
             }
             0x7C => self.smp_a = self.ror_value(self.smp_a),
             0x7D => self.mov_a(self.smp_x),
@@ -554,6 +626,11 @@ impl Apu {
             0x88 => {
                 let value = self.fetch_smp_byte();
                 self.adc_a(value);
+            }
+            0x89 => {
+                let (address, left, right) = self.fetch_direct_source_dest_values();
+                let result = self.adc_values(left, right);
+                self.write_smp(address, result);
             }
             0x8B => {
                 let address = self.fetch_direct_address();
@@ -607,6 +684,22 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.adc_a(value);
             }
+            0x98 => {
+                let (address, left, right) = self.fetch_direct_immediate_dest_value();
+                let result = self.adc_values(left, right);
+                self.write_smp(address, result);
+            }
+            0x99 => {
+                let (address, left, right) = self.indexed_source_dest_values();
+                let result = self.adc_values(left, right);
+                self.write_smp(address, result);
+            }
+            0x9A => {
+                let offset = self.fetch_smp_byte();
+                let value = self.read_direct_word(offset);
+                let result = self.subw_ya(value);
+                self.set_ya(result);
+            }
             0xA4 => {
                 let address = self.fetch_direct_address();
                 let value = self.read_smp(address);
@@ -630,6 +723,11 @@ impl Apu {
             0xA8 => {
                 let value = self.fetch_smp_byte();
                 self.sbc_a(value);
+            }
+            0xA9 => {
+                let (address, left, right) = self.fetch_direct_source_dest_values();
+                let result = self.sbc_values(left, right);
+                self.write_smp(address, result);
             }
             0xAB => {
                 let address = self.fetch_direct_address();
@@ -664,11 +762,27 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.sbc_a(value);
             }
+            0xB8 => {
+                let (address, left, right) = self.fetch_direct_immediate_dest_value();
+                let result = self.sbc_values(left, right);
+                self.write_smp(address, result);
+            }
+            0xB9 => {
+                let (address, left, right) = self.indexed_source_dest_values();
+                let result = self.sbc_values(left, right);
+                self.write_smp(address, result);
+            }
             0xBA => {
                 let offset = self.fetch_smp_byte();
                 let value = self.read_direct_word(offset);
                 self.set_ya(value);
                 self.set_nz16(value);
+            }
+            0xBF => {
+                let address = self.direct_address(self.smp_x);
+                let value = self.read_smp(address);
+                self.smp_x = self.smp_x.wrapping_add(1);
+                self.mov_a(value);
             }
             0xBC => {
                 self.smp_a = self.smp_a.wrapping_add(1);
@@ -836,6 +950,10 @@ impl Apu {
                 let value = self.read_smp(address);
                 self.mov_x(value);
             }
+            0xFA => {
+                let (address, _, value) = self.fetch_direct_source_dest_values();
+                self.write_smp(address, value);
+            }
             0xFB => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
@@ -866,6 +984,11 @@ impl Apu {
             0xAE => {
                 let value = self.pop_smp_stack();
                 self.mov_a(value);
+            }
+            0xAF => {
+                let address = self.direct_address(self.smp_x);
+                self.write_smp(address, self.smp_a);
+                self.smp_x = self.smp_x.wrapping_add(1);
             }
             0x1E => {
                 let address = self.fetch_smp_word();
@@ -942,6 +1065,29 @@ impl Apu {
         let offset = self.fetch_smp_byte();
         self.read_direct_word(offset)
             .wrapping_add(u16::from(self.smp_y))
+    }
+
+    fn fetch_direct_source_dest_values(&mut self) -> (u16, u8, u8) {
+        let source_address = self.fetch_direct_address();
+        let dest_address = self.fetch_direct_address();
+        let source = self.read_smp(source_address);
+        let dest = self.read_smp(dest_address);
+        (dest_address, dest, source)
+    }
+
+    fn fetch_direct_immediate_dest_value(&mut self) -> (u16, u8, u8) {
+        let value = self.fetch_smp_byte();
+        let dest_address = self.fetch_direct_address();
+        let dest = self.read_smp(dest_address);
+        (dest_address, dest, value)
+    }
+
+    fn indexed_source_dest_values(&mut self) -> (u16, u8, u8) {
+        let source_address = self.direct_address(self.smp_y);
+        let dest_address = self.direct_address(self.smp_x);
+        let source = self.read_smp(source_address);
+        let dest = self.read_smp(dest_address);
+        (dest_address, dest, source)
     }
 
     fn direct_address(&self, offset: u8) -> u16 {
@@ -1023,6 +1169,17 @@ impl Apu {
         self.set_flag(SMP_FLAG_C, left >= right);
     }
 
+    fn compare_16(&mut self, left: u16, right: u16) {
+        let result = left.wrapping_sub(right);
+        self.set_nz16(result);
+        self.set_flag(SMP_FLAG_C, left >= right);
+    }
+
+    fn write_logical_result(&mut self, address: u16, value: u8) {
+        self.write_smp(address, value);
+        self.set_nz(value);
+    }
+
     fn or_a(&mut self, value: u8) {
         self.smp_a |= value;
         self.set_nz(self.smp_a);
@@ -1069,40 +1226,64 @@ impl Apu {
     }
 
     fn adc_a(&mut self, value: u8) {
-        let accumulator = self.smp_a;
+        self.smp_a = self.adc_values(self.smp_a, value);
+    }
+
+    fn adc_values(&mut self, left: u8, right: u8) -> u8 {
         let carry = u16::from(self.flag(SMP_FLAG_C));
-        let sum = u16::from(accumulator) + u16::from(value) + carry;
+        let sum = u16::from(left) + u16::from(right) + carry;
         let result = sum as u8;
-        self.smp_a = result;
         self.set_nz(result);
         self.set_flag(SMP_FLAG_C, sum > 0xFF);
         self.set_flag(
             SMP_FLAG_H,
-            ((accumulator & 0x0F) + (value & 0x0F) + carry as u8) > 0x0F,
+            ((left & 0x0F) + (right & 0x0F) + carry as u8) > 0x0F,
         );
-        self.set_flag(
-            SMP_FLAG_V,
-            (!(accumulator ^ value) & (accumulator ^ result) & 0x80) != 0,
-        );
+        self.set_flag(SMP_FLAG_V, (!(left ^ right) & (left ^ result) & 0x80) != 0);
+        result
     }
 
     fn sbc_a(&mut self, value: u8) {
-        let accumulator = self.smp_a;
+        self.smp_a = self.sbc_values(self.smp_a, value);
+    }
+
+    fn sbc_values(&mut self, left: u8, right: u8) -> u8 {
         let carry = u16::from(self.flag(SMP_FLAG_C));
-        let inverted = !value;
-        let sum = u16::from(accumulator) + u16::from(inverted) + carry;
+        let inverted = !right;
+        let sum = u16::from(left) + u16::from(inverted) + carry;
         let result = sum as u8;
-        self.smp_a = result;
         self.set_nz(result);
         self.set_flag(SMP_FLAG_C, sum > 0xFF);
         self.set_flag(
             SMP_FLAG_H,
-            ((accumulator & 0x0F) + (inverted & 0x0F) + carry as u8) > 0x0F,
+            ((left & 0x0F) + (inverted & 0x0F) + carry as u8) > 0x0F,
         );
+        self.set_flag(SMP_FLAG_V, ((left ^ right) & (left ^ result) & 0x80) != 0);
+        result
+    }
+
+    fn addw_ya(&mut self, value: u16) -> u16 {
+        let left = self.ya();
+        let sum = u32::from(left) + u32::from(value);
+        let result = sum as u16;
+        self.set_nz16(result);
+        self.set_flag(SMP_FLAG_C, sum > 0xFFFF);
+        self.set_flag(SMP_FLAG_H, (left & 0x0FFF) + (value & 0x0FFF) > 0x0FFF);
         self.set_flag(
             SMP_FLAG_V,
-            ((accumulator ^ value) & (accumulator ^ result) & 0x80) != 0,
+            (!(left ^ value) & (left ^ result) & 0x8000) != 0,
         );
+        result
+    }
+
+    fn subw_ya(&mut self, value: u16) -> u16 {
+        let left = self.ya();
+        let result = left.wrapping_sub(value);
+        self.set_nz16(result);
+        self.set_flag(SMP_FLAG_C, left >= value);
+        self.set_flag(SMP_FLAG_H, (left & 0x0FFF) >= (value & 0x0FFF));
+        self.set_flag(SMP_FLAG_V, ((left ^ value) & (left ^ result) & 0x8000) != 0);
+        result
     }
 
     fn set_nz(&mut self, value: u8) {
