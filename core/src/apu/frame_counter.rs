@@ -124,6 +124,26 @@ impl FrameCounter {
         result
     }
 
+    pub(crate) fn cycles_until_next_irq_change(
+        &self,
+        interrupt: &Interrupt,
+        max_cycles: u64,
+    ) -> u64 {
+        if !self.irq
+            || self.period
+            || self.write_counter > 0
+            || interrupt.irq_flag.contains(IrqSource::FRAME_COUNTER)
+        {
+            return max_cycles + 1;
+        }
+
+        match self.cycle {
+            0..=29827 => u64::from(29828 - self.cycle),
+            29828 | 29829 => 1,
+            _ => max_cycles + 1,
+        }
+    }
+
     pub(crate) fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = ((value >> 6) & 1) == 0;
         self.new_value = value;

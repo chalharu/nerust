@@ -1442,12 +1442,36 @@ impl Core {
         cycles: u64,
     ) -> bool {
         let mut result = false;
-        for _ in 0..cycles {
+        let mut remaining = cycles;
+        while remaining > 0 {
+            if let Some(skip_cycles) = self.idle_skip_cycles(remaining) {
+                self.bus_tick += skip_cycles;
+                self.cycle += skip_cycles as u16;
+                remaining -= skip_cycles;
+                continue;
+            }
             if self.step(screen, cartridge, interrupt) {
                 result = true;
             }
+            remaining -= 1;
         }
         result
+    }
+
+    fn idle_skip_cycles(&self, max_cycles: u64) -> Option<u64> {
+        if self.render_executing
+            || self.post_render_executing
+            || self.vram_addr_update_delay > 0
+            || self.cycle > 339
+            || self.scan_line == 0 && self.cycle == 0
+            || (1..=240).contains(&self.scan_line) && self.cycle < 256
+        {
+            return None;
+        }
+
+        let cycles_until_line_boundary = u64::from(340 - self.cycle);
+        let cycles = max_cycles.min(cycles_until_line_boundary);
+        (cycles > 0).then_some(cycles)
     }
 
     pub(crate) fn cycles_until_next_scheduler_event(&self, max_cycles: u64) -> u64 {
