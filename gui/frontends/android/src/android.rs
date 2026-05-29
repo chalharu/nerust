@@ -160,10 +160,14 @@ impl AndroidFrontend {
             return Ok(());
         };
         if self.storage.rom_library.rom_path(&id).is_none() {
+            self.session.clear_hidden_lifecycle_state();
             return Ok(());
         }
-        self.load_from_library_with_autosave(&id, true)
-            .map_err(|error| format!("failed to restore Android lifecycle session: {error}"))
+        // Hidden lifecycle autosaves are only intended for warm activity
+        // resumes; applying them on a fresh launch can revive stale state from
+        // an older app build.
+        self.load_from_library_with_autosave(&id, false)
+            .map_err(|error| format!("failed to restore Android last ROM: {error}"))
     }
 
     /// Update the cached library entries and settings so synchronous JNI

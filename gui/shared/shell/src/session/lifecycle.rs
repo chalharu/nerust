@@ -317,15 +317,28 @@ impl SessionHandle {
         let path = autosave_state_slot_path(&sidecars.states_dir);
         match load_state_slot_for_identity(&path, identity) {
             Ok(Some(slot)) => {
+                if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
+                    log::warn!(
+                        "ignoring hidden lifecycle state from emulator version {} on {}",
+                        slot.summary.emulator_version,
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    clear_hidden_lifecycle_state_path(&path);
+                    return false;
+                }
                 if let Err(error) = self.runtime.import_state(&slot.machine_state) {
                     log::warn!("hidden lifecycle state import failed: {error}");
+                    clear_hidden_lifecycle_state_path(&path);
                     false
                 } else {
                     self.sync_input_from_runtime();
                     true
                 }
             }
-            Ok(None) => false,
+            Ok(None) => {
+                clear_hidden_lifecycle_state_path(&path);
+                false
+            }
             Err(nerust_persistence::error::PersistenceError::Io(error))
                 if error.kind() == ErrorKind::NotFound =>
             {
@@ -333,6 +346,7 @@ impl SessionHandle {
             }
             Err(error) => {
                 log::warn!("loading hidden lifecycle state failed: {error}");
+                clear_hidden_lifecycle_state_path(&path);
                 false
             }
         }
@@ -343,9 +357,7 @@ impl SessionHandle {
             return;
         };
         let path = autosave_state_slot_path(&sidecars.states_dir);
-        if let Err(error) = delete_state_slot(&path) {
-            log::warn!("deleting hidden lifecycle state failed: {error}");
-        }
+        clear_hidden_lifecycle_state_path(&path);
     }
 
     pub fn persistence_identity(&self) -> Option<nerust_contract_persistence::PersistenceIdentity> {
@@ -682,6 +694,12 @@ fn adjacent_slot_id(
         current_index - 1
     };
     Some(slots[next_index].slot_id)
+}
+
+fn clear_hidden_lifecycle_state_path(path: &Path) {
+    if let Err(error) = delete_state_slot(path) {
+        log::warn!("deleting hidden lifecycle state failed: {error}");
+    }
 }
 
 fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {

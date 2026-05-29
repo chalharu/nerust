@@ -319,6 +319,7 @@ struct ImportCounters(Arc<Mutex<ImportCounts>>);
 struct PersistenceDefinition {
     imports: ImportCounters,
     identity: CanonicalMediaIdentity,
+    fail_state_import: bool,
 }
 
 struct PersistenceRuntime {
@@ -326,6 +327,7 @@ struct PersistenceRuntime {
     identity: CanonicalMediaIdentity,
     loaded: bool,
     paused: bool,
+    fail_state_import: bool,
 }
 
 impl SystemRuntime for PersistenceRuntime {
@@ -380,6 +382,9 @@ impl SystemRuntime for PersistenceRuntime {
     }
 
     fn import_state(&mut self, _state_blob: &[u8]) -> Result<(), String> {
+        if self.fail_state_import {
+            return Err("state import failed".into());
+        }
         self.imports.0.lock().unwrap().state_imports += 1;
         Ok(())
     }
@@ -455,6 +460,7 @@ impl SystemDefinition for PersistenceDefinition {
             identity: self.identity,
             loaded: false,
             paused: true,
+            fail_state_import: self.fail_state_import,
         }))
     }
 }
@@ -477,6 +483,13 @@ fn test_rom_identity() -> RomIdentity {
         chr_rom_crc64: 2,
         trainer_crc64: 3,
     }
+}
+
+fn test_rom_identity_variant() -> RomIdentity {
+    let mut identity = test_rom_identity();
+    identity.prg_rom_crc64 = 11;
+    identity.chr_rom_crc64 = 12;
+    identity
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {
@@ -611,6 +624,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
         imports: imports.clone(),
         identity,
+        fail_state_import: false,
     });
     let runtime = definition
         .create_runtime(
@@ -664,6 +678,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
         imports: imports.clone(),
         identity,
+        fail_state_import: false,
     });
     let runtime = definition
         .create_runtime(
@@ -710,6 +725,139 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     session.clear_hidden_lifecycle_state();
     assert!(!autosave_path.exists());
     assert!(!session.load_hidden_lifecycle_state());
+
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn hidden_lifecycle_state_is_deleted_after_import_failure() {
+    let temp_dir = unique_temp_dir("hidden-lifecycle-import-failure");
+    let rom_path = temp_dir.join("test.nes");
+    let imports = ImportCounters::default();
+    let identity = CanonicalMediaIdentity::rom(test_rom_identity());
+    let definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
+        imports: imports.clone(),
+        identity,
+        fail_state_import: true,
+    });
+    let runtime = definition
+        .create_runtime(
+            &RuntimeHostServices {
+                host_backend: HostBackendIdentity::android_wgpu(),
+            },
+            &SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
+        )
+        .unwrap();
+    let mut session =
+        SessionHandle::from_runtime(HostBackendIdentity::android_wgpu(), runtime, definition);
+
+    session
+        .load(
+            MediaObject::new(Some(rom_path), vec![0; 16]),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+
+    assert!(session.save_hidden_lifecycle_state());
+    let autosave_path = autosave_state_slot_path(
+        &session
+            .persistence
+            .sidecars
+            .as_ref()
+            .expect("load should configure sidecars")
+            .states_dir,
+    );
+    assert!(autosave_path.is_file());
+
+    assert!(!session.load_hidden_lifecycle_state());
+    assert!(!autosave_path.exists());
+    let counts = imports.0.lock().unwrap();
+    assert_eq!(counts.state_imports, 0);
+
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
+    let temp_dir = unique_temp_dir("hidden-lifecycle-identity-mismatch");
+    let rom_path = temp_dir.join("test.nes");
+    let imports = ImportCounters::default();
+    let definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
+        imports: imports.clone(),
+        identity: CanonicalMediaIdentity::rom(test_rom_identity()),
+        fail_state_import: false,
+    });
+    let runtime = definition
+        .create_runtime(
+            &RuntimeHostServices {
+                host_backend: HostBackendIdentity::android_wgpu(),
+            },
+            &SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
+        )
+        .unwrap();
+    let mut session =
+        SessionHandle::from_runtime(HostBackendIdentity::android_wgpu(), runtime, definition);
+
+    session
+        .load(
+            MediaObject::new(Some(rom_path.clone()), vec![0; 16]),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+    assert!(session.save_hidden_lifecycle_state());
+
+    let autosave_path = autosave_state_slot_path(
+        &session
+            .persistence
+            .sidecars
+            .as_ref()
+            .expect("load should configure sidecars")
+            .states_dir,
+    );
+    assert!(autosave_path.is_file());
+
+    let second_definition: Box<dyn SystemDefinition> = Box::new(PersistenceDefinition {
+        imports: imports.clone(),
+        identity: CanonicalMediaIdentity::rom(test_rom_identity_variant()),
+        fail_state_import: false,
+    });
+    let second_runtime = second_definition
+        .create_runtime(
+            &RuntimeHostServices {
+                host_backend: HostBackendIdentity::android_wgpu(),
+            },
+            &SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
+        )
+        .unwrap();
+    let mut second_session = SessionHandle::from_runtime(
+        HostBackendIdentity::android_wgpu(),
+        second_runtime,
+        second_definition,
+    );
+
+    second_session
+        .load(
+            MediaObject::new(Some(rom_path), vec![0; 16]),
+            LoadRequest::Auto,
+        )
+        .unwrap();
+
+    assert!(!second_session.load_hidden_lifecycle_state());
+    assert!(!autosave_path.exists());
+    let counts = imports.0.lock().unwrap();
+    assert_eq!(counts.state_imports, 0);
 
     let _ = fs::remove_dir_all(temp_dir);
 }
