@@ -3166,6 +3166,80 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_dbnz_decrements_and_branches_without_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8D, 0x00, // MOV Y,#$00
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xFE, 0x05, // DBNZ Y,skip_fail
+            0xE8, 0xEE, // fail: MOV A,#$EE
+            0xC5, 0x2F, 0x03, // MOV $032F,A
+            0xCC, 0x20, 0x03, // MOV $0320,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x21, 0x03, // MOV $0321,A
+            0x8D, 0x01, // MOV Y,#$01
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xFE, 0x05, // DBNZ Y,skip_capture
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x23, 0x03, // MOV $0323,A
+            0xCC, 0x22, 0x03, // MOV $0322,Y
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0x8F, 0x00, 0x10, // MOV $10,#$00
+            0x6E, 0x10, 0x05, // DBNZ $10,skip_fail
+            0xE8, 0xEE, // fail: MOV A,#$EE
+            0xC5, 0x2F, 0x03, // MOV $032F,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x30, 0x03, // MOV $0330,A
+            0xE8, 0x01, // MOV A,#$01
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0x8F, 0x01, 0x12, // MOV $12,#$01
+            0x6E, 0x12, 0x05, // DBNZ $12,skip_capture
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x32, 0x03, // MOV $0332,A
+            0xE8, 0x00, // MOV A,#$00
+            0xC5, 0x02, 0x01, // MOV $0102,A
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0x6E, 0x02, 0x05, // DBNZ $02,skip_fail
+            0xE8, 0xEE, // fail: MOV A,#$EE
+            0xC5, 0x2F, 0x03, // MOV $032F,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x31, 0x03, // MOV $0331,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..180 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x032F), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0320), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0321), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0322), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0323), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0010), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0330), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0012), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0332), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x0102), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0331), 0xFF);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
