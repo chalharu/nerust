@@ -1617,7 +1617,6 @@ impl<'a> GsuInterpreter<'a> {
         let alt_mode = std::mem::take(&mut self.alt_mode);
         match (alt_mode, opcode) {
             (_, 0x00) => {
-                self.pc = self.pc.wrapping_add(1);
                 self.sync_program_counter();
                 self.halted = true;
             }
