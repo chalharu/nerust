@@ -164,17 +164,20 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performAttach()
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
+        Log.i(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         scheduleChromeAttach()
     }
 
     override fun onStart() {
         super.onStart()
+        Log.i(TAG, "onStart")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
     }
 
     override fun onResume() {
         super.onResume()
+        Log.i(TAG, "onResume")
         activeActivityForTest = this
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
@@ -183,6 +186,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        Log.i(TAG, "onWindowFocusChanged: hasFocus=$hasFocus")
         if (hasFocus) {
             scheduleChromeAttach()
         }
@@ -192,6 +196,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         if (activeActivityForTest === this) {
             activeActivityForTest = null
         }
+        Log.i(TAG, "onPause")
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -199,6 +204,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     override fun onStop() {
+        Log.i(TAG, "onStop")
         removePendingChromeAttachCallbacks()
         dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -207,6 +213,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        Log.i(TAG, "onSaveInstanceState")
         registryController.performSave(outState)
     }
 
@@ -214,6 +221,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         if (activeActivityForTest === this) {
             activeActivityForTest = null
         }
+        Log.i(
+            TAG,
+            "onDestroy: isFinishing=$isFinishing isDestroyed=$isDestroyed " +
+                "lastDrawerState=$lastDrawerStateForTest lastDialogState=$lastDialogStateForTest",
+        )
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
         dismissChromePopups()
@@ -232,6 +244,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     @Suppress("DEPRECATION")
     fun startRomPicker() {
+        Log.i(TAG, "startRomPicker")
         startActivityForResult(createRomPickerIntent(), ROM_PICKER_REQUEST_CODE)
     }
 
@@ -241,6 +254,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         if (requestCode != ROM_PICKER_REQUEST_CODE) {
             return
         }
+        Log.i(TAG, "onActivityResult: requestCode=$requestCode resultCode=$resultCode uri=${data?.data}")
 
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri != null) {
@@ -467,24 +481,39 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private fun scheduleChromeAttach() {
         if (!chromeAttachEnabled || isFinishing || isDestroyed) {
+            Log.i(
+                TAG,
+                "scheduleChromeAttach: skipped (enabled=$chromeAttachEnabled finishing=$isFinishing destroyed=$isDestroyed)",
+            )
             return
         }
         chromeAttachAttempts = 0
+        Log.i(TAG, "scheduleChromeAttach: decor=${window.decorView.debugViewState()}")
         ensureChromeAttached()
         window.decorView.post(ensureChromeAttachedRunnable)
     }
 
     private fun ensureChromeAttached() {
         if (!chromeAttachEnabled || isFinishing || isDestroyed) {
+            Log.i(
+                TAG,
+                "ensureChromeAttached: skipped (enabled=$chromeAttachEnabled finishing=$isFinishing destroyed=$isDestroyed)",
+            )
             return
         }
         val anchor = popupAnchor() ?: run {
+            Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
             retryChromeAttach()
             return
         }
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
+        Log.i(
+            TAG,
+            "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
+                "anchor=${anchor.debugViewState()}",
+        )
         if (!controlsAttached || !drawerAttached) {
             retryChromeAttach()
         }
@@ -496,6 +525,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             return
         }
         chromeAttachAttempts += 1
+        Log.i(
+            TAG,
+            "retryChromeAttach: scheduling attempt $chromeAttachAttempts/$MENU_CHROME_MAX_ATTACH_ATTEMPTS",
+        )
         window.decorView.postDelayed(ensureChromeAttachedRunnable, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
     }
 
@@ -526,7 +559,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         controlsOverlayView = view
         controlsOverlayPopup = popup
-        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
+        if (showPopupAtLocation("controls-overlay", popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
             return true
         }
         controlsOverlayPopup = null
@@ -561,7 +594,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         drawerChromeContainer = container
         drawerEdgeHandleView = edgeHandle
         drawerChromePopup = popup
-        if (showPopupAtLocation(popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
+        if (showPopupAtLocation("drawer-edge-handle", popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
             return true
         }
         drawerChromePopup = null
@@ -607,13 +640,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun showDrawerOverlay() {
         val anchor = popupAnchor() ?: run {
             lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
+            Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
             return
         }
         if (drawerShowing) {
             lastDrawerStateForTest = "already showing"
+            Log.i(TAG, "showDrawerOverlay: already showing")
             return
         }
         lastDrawerStateForTest = "creating"
+        Log.i(TAG, "showDrawerOverlay: creating")
 
         // Hide the edge-handle popup while the drawer is open.
         drawerChromePopup?.dismiss()
@@ -672,7 +708,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         drawerEdgeHandleView = null
         drawerShowing = true
 
-        val shown = showPopupAtLocation(fullScreenPopup, anchor, Gravity.TOP or Gravity.START, 0, 0)
+        val shown =
+            showPopupAtLocation("drawer-fullscreen", fullScreenPopup, anchor, Gravity.TOP or Gravity.START, 0, 0)
         if (shown) {
             drawerFullScreenPopup = fullScreenPopup
         } else {
@@ -680,12 +717,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
         lastDrawerStateForTest =
             "showInDrawerPopup=$shown, popup=${fullScreenPopup.debugPopupState()}, overlay=${overlay.debugViewState()}"
+        Log.i(TAG, "showDrawerOverlay: shown=$shown state=$lastDrawerStateForTest")
     }
 
     private fun removeDrawerOverlay(): Boolean {
         if (!drawerShowing) {
             return false
         }
+        Log.i(TAG, "removeDrawerOverlay")
         drawerFullScreenPopup?.setOnDismissListener(null)
         drawerFullScreenPopup?.dismiss()
         drawerFullScreenPopup = null
@@ -755,21 +794,25 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             dismissCallback?.invoke()
         }
         try {
+            Log.i(TAG, "showComposeDialog: showing $dialogTag")
             dialog.show()
             dialog.window?.setLayout(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             lastDialogStateForTest = "showing $dialogTag"
-        } catch (_: WindowManager.BadTokenException) {
+            Log.i(TAG, "showComposeDialog: showing $dialogTag succeeded")
+        } catch (error: WindowManager.BadTokenException) {
             dialog.setOnDismissListener(null)
             clearComposeDialogWindowReferences()
             lastDialogStateForTest = "show failed for $dialogTag: bad token"
+            Log.w(TAG, "showComposeDialog: failed for $dialogTag with bad token", error)
             onDismiss()
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
             dialog.setOnDismissListener(null)
             clearComposeDialogWindowReferences()
             lastDialogStateForTest = "show failed for $dialogTag: illegal state"
+            Log.w(TAG, "showComposeDialog: failed for $dialogTag with illegal state", error)
             onDismiss()
         }
     }
@@ -789,6 +832,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
 
     private fun showPopupAtLocation(
+        popupName: String,
         popup: PopupWindow,
         anchor: View,
         gravity: Int,
@@ -797,10 +841,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     ): Boolean =
         try {
             popup.showAtLocation(anchor, gravity, x, y)
+            Log.i(
+                TAG,
+                "showPopupAtLocation: $popupName shown at ($x,$y) anchor=${anchor.debugViewState()}",
+            )
             true
-        } catch (_: WindowManager.BadTokenException) {
+        } catch (error: WindowManager.BadTokenException) {
+            Log.w(TAG, "showPopupAtLocation: $popupName failed with bad token", error)
             false
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "showPopupAtLocation: $popupName failed with illegal state", error)
             false
         }
 
@@ -809,10 +859,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             popup.width = width
             popup.height = height
             popup.update(x, y, width, height)
+            Log.i(TAG, "updatePopupWindow: updated popup to ($x,$y ${width}x$height)")
             true
-        } catch (_: WindowManager.BadTokenException) {
+        } catch (error: WindowManager.BadTokenException) {
+            Log.w(TAG, "updatePopupWindow: failed with bad token", error)
             false
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "updatePopupWindow: failed with illegal state", error)
             false
         }
 
@@ -905,16 +958,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private external fun onSettingsDialogResult(result: String?)
 
     companion object {
+        private const val TAG = "Nerust"
+
         init {
             // Load the native library via the app classloader so the JVM can
             // resolve `external fun` declarations on this class.  NativeActivity
             // loads the library later via native dlopen which bypasses Java's
             // classloader registration; without this explicit load, standard JNI
             // name lookup fails with UnsatisfiedLinkError.
+            Log.i(TAG, "MainActivity companion: loading native library main")
             System.loadLibrary("main")
+            Log.i(TAG, "MainActivity companion: loaded native library main")
         }
 
-        private const val TAG = "Nerust"
         private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100

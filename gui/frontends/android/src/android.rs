@@ -91,6 +91,10 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     let storage_root = app
         .internal_data_path()
         .ok_or_else(|| "Android internal data path is unavailable".to_string())?;
+    log::info!(
+        "android::run: opening Android storage under {}",
+        storage_root.join("nerust").display()
+    );
     let storage = AndroidStorage::open(storage_root.join("nerust"))?;
     let mut builder = EventLoop::<()>::with_user_event();
     builder.with_android_app(app);
@@ -101,6 +105,7 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut state = AndroidFrontend::new(frontend_app, storage);
+    log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
         .map_err(|error| format!("Android event loop failed: {error}"))
@@ -127,6 +132,7 @@ struct AndroidFrontend {
 
 impl AndroidFrontend {
     fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
+        log::info!("AndroidFrontend::new: building frontend state");
         let mut frontend = Self {
             app,
             session: SessionHandle::new_with_settings_manager(
@@ -152,14 +158,19 @@ impl AndroidFrontend {
             log::warn!("{error}");
         }
         frontend.refresh_dialog_caches();
+        log::info!("AndroidFrontend::new: ready");
         frontend
     }
 
     fn restore_last_session(&mut self) -> Result<(), String> {
+        log::info!("restore_last_session: checking previous ROM");
         let Some(id) = self.storage.load_last_rom_id()? else {
+            log::info!("restore_last_session: no previous ROM recorded");
             return Ok(());
         };
+        log::info!("restore_last_session: last ROM id={id}");
         if self.storage.rom_library.rom_path(&id).is_none() {
+            log::warn!("restore_last_session: stored ROM id={id} is missing");
             self.session.clear_hidden_lifecycle_state();
             return Ok(());
         }
@@ -187,6 +198,9 @@ impl AndroidFrontend {
         id: &str,
         restore_hidden_state: bool,
     ) -> Result<(), String> {
+        log::info!(
+            "load_from_library_with_autosave: loading id={id} restore_hidden_state={restore_hidden_state}"
+        );
         let bytes = self
             .storage
             .rom_library
@@ -204,12 +218,19 @@ impl AndroidFrontend {
             log::warn!("{error}");
         }
         if restore_hidden_state {
+            log::info!(
+                "load_from_library_with_autosave: restoring hidden lifecycle state for id={id}"
+            );
             self.session.load_hidden_lifecycle_state();
         } else {
+            log::info!(
+                "load_from_library_with_autosave: clearing hidden lifecycle state for cold start id={id}"
+            );
             self.session.clear_hidden_lifecycle_state();
         }
         self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
+        log::info!("load_from_library_with_autosave: session ready for id={id}");
         self.request_redraw();
         Ok(())
     }
@@ -237,8 +258,14 @@ impl AndroidFrontend {
     }
 
     fn import_rom_from_uri(&mut self, uri: &str) -> Result<(), String> {
+        log::info!("import_rom_from_uri: importing URI {uri}");
         let bytes = picker::read_uri_bytes(&self.app, uri)?;
         let (display_name, extension) = infer_import_metadata(uri);
+        log::info!(
+            "import_rom_from_uri: read '{}' ({} bytes)",
+            display_name,
+            bytes.len()
+        );
         let entry = self
             .storage
             .rom_library
@@ -273,14 +300,21 @@ impl AndroidFrontend {
             log::warn!("{error}");
         }
         self.session.clear_hidden_lifecycle_state();
+        log::info!(
+            "import_rom_from_uri: imported '{}' as id={}",
+            entry.display_name,
+            entry.id
+        );
         self.request_redraw();
         Ok(())
     }
 
     fn handle_picker_result(&mut self, result: RomPickerResult) {
         let RomPickerResult::Selected(uri) = result else {
+            log::info!("handle_picker_result: ROM picker dismissed");
             return;
         };
+        log::info!("handle_picker_result: picker returned URI {uri}");
         if let Err(error) = self.import_rom_from_uri(&uri) {
             log::error!("{error}");
         }
@@ -290,8 +324,10 @@ impl AndroidFrontend {
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
         let SettingsDialogResult::Applied(raw) = result else {
+            log::info!("handle_settings_result: settings dialog dismissed");
             return;
         };
+        log::info!("handle_settings_result: applying Android settings");
         let Some(android_settings) = AndroidSettings::from_choice_indices(&raw) else {
             log::error!("Android settings dialog returned an unrecognisable result: {raw:?}");
             return;
@@ -325,9 +361,16 @@ impl AndroidFrontend {
     }
 
     fn save_lifecycle_state(&mut self) {
+        log::info!(
+            "save_lifecycle_state: paused={} lifecycle_auto_paused={} restore_pending={}",
+            self.session.paused(),
+            self.lifecycle_auto_paused,
+            self.lifecycle_restore_pending
+        );
         if !self.lifecycle_auto_paused && !self.session.paused() {
             let _ = self.session.run_command(SessionCommand::Pause);
             self.lifecycle_auto_paused = true;
+            log::info!("save_lifecycle_state: auto-paused session");
         }
         if let Err(error) = self.session.clear_input() {
             log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
@@ -340,8 +383,12 @@ impl AndroidFrontend {
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
+            log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
+        } else {
+            log::info!("save_lifecycle_state: hidden lifecycle state saved");
         }
         self.session.flush_before_exit();
+        log::info!("save_lifecycle_state: flushed session state");
     }
 
     fn release_window_resources(&mut self) {
@@ -358,6 +405,7 @@ impl AndroidFrontend {
     }
 
     fn handle_surface_close(&mut self) {
+        log::warn!("handle_surface_close: surface closed");
         self.save_lifecycle_state();
         self.release_window_resources();
         if self.is_resumed {
@@ -404,12 +452,19 @@ impl AndroidFrontend {
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if let Some(window) = self.window.as_ref().cloned() {
             if self.renderer.is_none() {
+                let size = window.inner_size();
+                log::info!(
+                    "ensure_window: reusing existing window {}x{} and rebuilding renderer",
+                    size.width,
+                    size.height
+                );
                 self.rebuild_renderer(window);
                 self.rebuild_overlay();
             }
             return Ok(());
         }
 
+        log::info!("ensure_window: creating Android window");
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -421,6 +476,12 @@ impl AndroidFrontend {
                 .map_err(|error| format!("failed to create Android window: {error}"))?,
         );
         self.window_id = Some(window.id());
+        let size = window.inner_size();
+        log::info!(
+            "ensure_window: created Android window {}x{}",
+            size.width,
+            size.height
+        );
         self.rebuild_renderer(window.clone());
         self.window = Some(window);
         self.rebuild_overlay();
@@ -428,8 +489,17 @@ impl AndroidFrontend {
     }
 
     fn rebuild_renderer(&mut self, window: Arc<Window>) {
+        let size = window.inner_size();
+        log::info!(
+            "rebuild_renderer: initializing renderer for {}x{}",
+            size.width,
+            size.height
+        );
         self.renderer = match WgpuRenderer::new(window, &self.session) {
-            Ok(renderer) => Some(renderer),
+            Ok(renderer) => {
+                log::info!("rebuild_renderer: renderer ready");
+                Some(renderer)
+            }
             Err(error) => {
                 log::error!("failed to initialize Android renderer: {error}");
                 None
@@ -445,6 +515,14 @@ impl AndroidFrontend {
     }
 
     fn begin_foreground_resume(&mut self) {
+        log::info!(
+            "begin_foreground_resume: is_resumed={} window_present={} renderer_present={} restore_pending={} auto_paused={}",
+            self.is_resumed,
+            self.window.is_some(),
+            self.renderer.is_some(),
+            self.lifecycle_restore_pending,
+            self.lifecycle_auto_paused
+        );
         self.foreground_resume_pending = true;
         self.foreground_retry_attempts = 0;
         self.foreground_retry_at = None;
@@ -469,6 +547,11 @@ impl AndroidFrontend {
             .min(FOREGROUND_RETRY_MAX_DELAY);
         self.foreground_retry_attempts += 1;
         self.foreground_retry_at = Some(Instant::now() + delay);
+        log::info!(
+            "schedule_foreground_retry: scheduled attempt {} in {:?}",
+            self.foreground_retry_attempts,
+            delay
+        );
         true
     }
 
@@ -476,6 +559,7 @@ impl AndroidFrontend {
         if !self.is_resumed || !self.foreground_resume_pending {
             return;
         }
+        let attempt = self.foreground_retry_attempts + 1;
         if let Some(retry_at) = self.foreground_retry_at {
             if Instant::now() < retry_at {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
@@ -483,6 +567,7 @@ impl AndroidFrontend {
             }
             self.foreground_retry_at = None;
         }
+        log::info!("try_resume_foreground: attempt {attempt}");
         match self.ensure_window(event_loop) {
             Ok(()) => {
                 self.last_foreground_error = None;
@@ -490,19 +575,20 @@ impl AndroidFrontend {
                 self.foreground_retry_attempts = 0;
                 self.foreground_retry_at = None;
                 if self.lifecycle_restore_pending {
+                    log::info!("try_resume_foreground: restoring hidden lifecycle state");
                     self.session.load_hidden_lifecycle_state();
                     self.lifecycle_restore_pending = false;
                 }
                 if self.lifecycle_auto_paused {
                     let _ = self.session.run_command(SessionCommand::Resume);
                     self.lifecycle_auto_paused = false;
+                    log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
+                log::info!("try_resume_foreground: attempt {attempt} succeeded");
                 self.request_redraw();
             }
             Err(error) => {
-                if self.last_foreground_error.as_deref() != Some(error.as_str()) {
-                    log::warn!("{error}");
-                }
+                log::warn!("try_resume_foreground: attempt {attempt} failed: {error}");
                 self.last_foreground_error = Some(error);
                 if self.schedule_foreground_retry()
                     && let Some(retry_at) = self.foreground_retry_at
@@ -542,7 +628,15 @@ impl AndroidFrontend {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
             }
-            RenderResult::Skipped | RenderResult::Error => {
+            RenderResult::Skipped => {
+                self.shell.needs_redraw = true;
+            }
+            RenderResult::Error => {
+                log::warn!(
+                    "render: renderer reported an error for {}x{}",
+                    size.width,
+                    size.height
+                );
                 self.shell.needs_redraw = true;
             }
         }
@@ -602,12 +696,14 @@ impl AndroidFrontend {
 
 impl ApplicationHandler for AndroidFrontend {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        log::info!("ApplicationHandler::resumed");
         self.is_resumed = true;
         self.begin_foreground_resume();
         self.try_resume_foreground(event_loop);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        log::info!("ApplicationHandler::suspended");
         self.is_resumed = false;
         self.foreground_resume_pending = false;
         self.foreground_retry_attempts = 0;
@@ -633,12 +729,15 @@ impl ApplicationHandler for AndroidFrontend {
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                log::warn!("window_event: {event:?}");
                 self.handle_surface_close();
             }
             WindowEvent::Focused(false) => {
+                log::info!("window_event: focus lost");
                 let _ = self.session.clear_input();
             }
             WindowEvent::Resized(size) => {
+                log::info!("window_event: resized to {}x{}", size.width, size.height);
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.reconfigure(nerust_screen_wgpu::surface::SurfaceSize::new(
                         size.width,
