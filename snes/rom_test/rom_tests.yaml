@@ -1017,6 +1017,27 @@ cases:
       - kind: bus_u8
         address: "0x002100"
         expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002000"
+        expected: "0x0A"
+      - kind: bus_u8
+        address: "0x002002"
+        expected: "0x53"
+      - kind: bus_u8
+        address: "0x002003"
+        expected: "0x2D"
+      - kind: bus_u8
+        address: "0x002004"
+        expected: "0x4D"
+      - kind: bus_u8
+        address: "0x002005"
+        expected: "0x53"
+      - kind: bus_u8
+        address: "0x002006"
+        expected: "0x55"
+      - kind: bus_u8
+        address: "0x002007"
+        expected: "0x31"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
