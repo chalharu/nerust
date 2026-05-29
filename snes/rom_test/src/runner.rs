@@ -11,7 +11,7 @@ use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn validate_case(case: &RomCase) -> CaseOutcome {
     validate_case_with_options(case, ValidationOptions::testing())
@@ -32,15 +32,16 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
         }
     };
 
-    let msu1_data = match load_msu1_sidecar(case.rom_path()) {
-        Ok(msu1_data) => msu1_data,
+    let msu1_sidecars = match load_msu1_sidecars(case.rom_path()) {
+        Ok(msu1_sidecars) => msu1_sidecars,
         Err(error) => return internal_error(case, error),
     };
 
-    let core_result = match msu1_data.as_deref() {
-        Some(msu1_data) => Core::from_rom_bytes_with_msu1_data(&rom, msu1_data),
-        None => Core::from_rom_bytes(&rom),
-    };
+    let core_result = Core::from_rom_bytes_with_msu1_sidecars(
+        &rom,
+        msu1_sidecars.data.as_deref(),
+        &msu1_sidecars.audio_tracks,
+    );
     let mut core = match core_result {
         Ok(core) => core,
         Err(error) => {
@@ -97,20 +98,74 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
     }
 }
 
-fn load_msu1_sidecar(rom_path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let sidecar_path = msu1_sidecar_path(rom_path);
-    match fs::read(&sidecar_path) {
+struct Msu1Sidecars {
+    data: Option<Vec<u8>>,
+    audio_tracks: Vec<u16>,
+}
+
+fn load_msu1_sidecars(rom_path: &Path) -> Result<Msu1Sidecars, String> {
+    Ok(Msu1Sidecars {
+        data: load_msu1_data_sidecar(rom_path)?,
+        audio_tracks: discover_msu1_audio_tracks(rom_path)?,
+    })
+}
+
+fn load_msu1_data_sidecar(rom_path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let data_path = rom_path.with_extension("msu");
+    match fs::read(&data_path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
             "failed to read MSU-1 data sidecar `{}`: {error}",
-            sidecar_path.display()
+            data_path.display()
         )),
     }
 }
 
-fn msu1_sidecar_path(rom_path: &Path) -> PathBuf {
-    rom_path.with_extension("msu")
+fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
+    let Some(stem) = rom_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{stem}-");
+    let directory = rom_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let entries = fs::read_dir(directory).map_err(|error| {
+        format!(
+            "failed to scan MSU-1 audio sidecars in `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    let mut tracks = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to scan MSU-1 audio sidecars in `{}`: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        if !path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pcm"))
+        {
+            continue;
+        }
+        let Some(file_stem) = path.file_stem().and_then(|file_stem| file_stem.to_str()) else {
+            continue;
+        };
+        if let Some(track) = file_stem
+            .strip_prefix(&prefix)
+            .and_then(|track| track.parse::<u16>().ok())
+        {
+            tracks.push(track);
+        }
+    }
+    tracks.sort_unstable();
+    tracks.dedup();
+    Ok(tracks)
 }
 
 fn finalize_validation(
@@ -285,7 +340,7 @@ fn assertion_kind(assertion: &Assertion) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_case;
+    use super::{discover_msu1_audio_tracks, validate_case};
     use crate::manifest::load_manifest;
     use crate::results::CaseOutcome;
     use std::fs;
@@ -311,6 +366,26 @@ mod tests {
         rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2].copy_from_slice(&0x8000u16.to_le_bytes());
         rom[0x0000] = 0xEA;
         fs::write(path, rom).expect("test rom should be written");
+    }
+
+    #[test]
+    fn msu1_audio_discovery_matches_decimal_pcm_tracks() {
+        let directory = unique_temp_path("msu1-audio-discovery", "dir");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("temporary directory should be created");
+        fs::write(directory.join("Game-1.pcm"), []).expect("pcm file should be written");
+        fs::write(directory.join("Game-3.PCM"), []).expect("pcm file should be written");
+        fs::write(directory.join("Game-0012.pcm"), []).expect("pcm file should be written");
+        fs::write(directory.join("Game-12.pcm"), []).expect("pcm file should be written");
+        fs::write(directory.join("Game-70000.pcm"), []).expect("pcm file should be written");
+        fs::write(directory.join("Other-2.pcm"), []).expect("pcm file should be written");
+        fs::write(directory.join("Game.msu"), []).expect("msu data file should be written");
+
+        let tracks = discover_msu1_audio_tracks(&directory.join("Game.sfc"))
+            .expect("audio track discovery should succeed");
+
+        let _ = fs::remove_dir_all(&directory);
+        assert_eq!(tracks, [1, 3, 12]);
     }
 
     #[test]
