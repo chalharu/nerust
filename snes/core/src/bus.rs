@@ -3032,6 +3032,56 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_cbne_branches_without_changing_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x80, // SETC
+            0xE8, 0x12, // MOV A,#$12
+            0x8F, 0x13, 0x10, // MOV $10,#$13
+            0x2E, 0x10, 0x03, // CBNE $10,skip
+            0x8F, 0xEE, 0x20, // MOV $20,#$EE
+            0x8F, 0xA1, 0x20, // MOV $20,#$A1
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x24, // MOV $24,A
+            0xE8, 0x80, // MOV A,#$80
+            0x8F, 0x80, 0x11, // MOV $11,#$80
+            0x2E, 0x11, 0x03, // CBNE $11,fail
+            0x8F, 0xA2, 0x21, // MOV $21,#$A2
+            0x2F, 0x03, // BRA skip_fail
+            0x8F, 0xEE, 0x21, // MOV $21,#$EE
+            0xCD, 0x02, // MOV X,#$02
+            0xE8, 0xFF, // MOV A,#$FF
+            0x8F, 0x00, 0x01, // MOV $01,#$00
+            0xDE, 0xFF, 0x03, // CBNE $FF+X,skip
+            0x8F, 0xEE, 0x22, // MOV $22,#$EE
+            0x8F, 0xA3, 0x22, // MOV $22,#$A3
+            0x40, // SETP
+            0xCD, 0x04, // MOV X,#$04
+            0x8F, 0x00, 0x03, // MOV $03,#$00
+            0xDE, 0xFF, 0x06, // CBNE $FF+X,skip
+            0x20, // CLRP
+            0x8F, 0xEE, 0x23, // MOV $23,#$EE
+            0x2F, 0x04, // BRA done
+            0x20, // CLRP
+            0x8F, 0xA4, 0x23, // MOV $23,#$A4
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..140 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0020), 0xA1);
+        assert_eq!(bus.apu.peek_ram(0x0021), 0xA2);
+        assert_eq!(bus.apu.peek_ram(0x0022), 0xA3);
+        assert_eq!(bus.apu.peek_ram(0x0023), 0xA4);
+        assert_eq!(bus.apu.peek_ram(0x0024) & 0x83, 0x01);
+        assert_eq!(bus.apu.peek_ram(0x0103), 0x00);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
