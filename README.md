@@ -135,6 +135,21 @@ ROM import on Android uses the system document picker (`ACTION_OPEN_DOCUMENT`)
 and persists the user-selected URI grant, so no broad storage permission is
 declared in the manifest.
 
+#### Android logcat capture
+
+Rust and Kotlin Android logs share the `Nerust` tag. When the app closes
+immediately on a device, clear logcat, start a filtered capture, then launch the
+app:
+
+```sh
+adb logcat -c
+adb logcat -v threadtime -s Nerust
+```
+
+Keep the capture running until the app closes so `JNI_OnLoad`, `android_main`,
+lifecycle, popup attach, renderer resume, and panic breadcrumbs are included in
+the output.
+
 ## Usage
 
 ### Tao Frontend (official)
