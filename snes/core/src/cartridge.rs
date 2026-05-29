@@ -2882,6 +2882,43 @@ mod tests {
     }
 
     #[test]
+    fn dsp1_hirom_uses_legacy_bank_window() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "DSP1 HIROM",
+            0x21,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::Dsp1);
+        assert_eq!(cartridge.read(0x007000), Some(0x84));
+        assert!(cartridge.write(0x207000, 0x5A));
+        assert_eq!(cartridge.read(0x207000), Some(0x5A));
+    }
+
+    #[test]
+    fn dsp1b_hirom_uses_split_bank_window() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "DSP1B HIROM",
+            0x21,
+            0x05,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            cartridge.header().enhancement_chip(),
+            EnhancementChip::Dsp1B
+        );
+        assert_eq!(cartridge.read(0x207000), Some(0x84));
+        assert!(!cartridge.write(0x107000, 0x5A));
+        assert_eq!(cartridge.read(0x107000), None);
+    }
+
+    #[test]
     fn dsp1_hirom_register_window_reports_ready_status() {
         let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
             "DSP1B MMIO",
