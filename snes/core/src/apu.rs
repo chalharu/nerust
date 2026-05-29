@@ -331,9 +331,11 @@ impl Apu {
             0x0A => self.or1_c_bit(false),
             0x0B => {
                 let address = self.fetch_direct_address();
-                let current = self.read_smp(address);
-                let value = self.asl_value(current);
-                self.write_smp(address, value);
+                self.modify_smp_memory(address, Self::asl_value);
+            }
+            0x0C => {
+                let address = self.fetch_smp_word();
+                self.modify_smp_memory(address, Self::asl_value);
             }
             0x0D => self.push_smp_stack(self.smp_psw),
             0x0E => self.test_and_set_absolute(true),
@@ -378,6 +380,10 @@ impl Apu {
                 self.write_direct_word(offset, value);
                 self.set_nz16(value);
             }
+            0x1B => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.modify_smp_memory(address, Self::asl_value);
+            }
             0x1C => self.smp_a = self.asl_value(self.smp_a),
             0x20 => self.set_flag(SMP_FLAG_P, false),
             0x2A => self.or1_c_bit(true),
@@ -411,9 +417,11 @@ impl Apu {
             }
             0x2B => {
                 let address = self.fetch_direct_address();
-                let current = self.read_smp(address);
-                let value = self.rol_value(current);
-                self.write_smp(address, value);
+                self.modify_smp_memory(address, Self::rol_value);
+            }
+            0x2C => {
+                let address = self.fetch_smp_word();
+                self.modify_smp_memory(address, Self::rol_value);
             }
             0x2D => self.push_smp_stack(self.smp_a),
             0x2F => self.branch_relative(true),
@@ -451,6 +459,10 @@ impl Apu {
                 let value = self.read_direct_word(offset).wrapping_add(1);
                 self.write_direct_word(offset, value);
                 self.set_nz16(value);
+            }
+            0x3B => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.modify_smp_memory(address, Self::rol_value);
             }
             0x3C => self.smp_a = self.rol_value(self.smp_a),
             0x3F => {
@@ -490,9 +502,11 @@ impl Apu {
             }
             0x4B => {
                 let address = self.fetch_direct_address();
-                let current = self.read_smp(address);
-                let value = self.lsr_value(current);
-                self.write_smp(address, value);
+                self.modify_smp_memory(address, Self::lsr_value);
+            }
+            0x4C => {
+                let address = self.fetch_smp_word();
+                self.modify_smp_memory(address, Self::lsr_value);
             }
             0x4D => self.push_smp_stack(self.smp_x),
             0x4F => {
@@ -532,6 +546,10 @@ impl Apu {
                 let offset = self.fetch_smp_byte();
                 let value = self.read_direct_word(offset);
                 self.compare_16(self.ya(), value);
+            }
+            0x5B => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.modify_smp_memory(address, Self::lsr_value);
             }
             0x5C => self.smp_a = self.lsr_value(self.smp_a),
             0x5D => self.mov_x(self.smp_a),
@@ -573,9 +591,11 @@ impl Apu {
             }
             0x6B => {
                 let address = self.fetch_direct_address();
-                let current = self.read_smp(address);
-                let value = self.ror_value(current);
-                self.write_smp(address, value);
+                self.modify_smp_memory(address, Self::ror_value);
+            }
+            0x6C => {
+                let address = self.fetch_smp_word();
+                self.modify_smp_memory(address, Self::ror_value);
             }
             0x70 => self.branch_relative(self.flag(SMP_FLAG_V)),
             0x74 => {
@@ -613,6 +633,10 @@ impl Apu {
                 let value = self.read_direct_word(offset);
                 let result = self.addw_ya(value);
                 self.set_ya(result);
+            }
+            0x7B => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.modify_smp_memory(address, Self::ror_value);
             }
             0x7C => self.smp_a = self.ror_value(self.smp_a),
             0x7D => self.mov_a(self.smp_x),
@@ -1194,6 +1218,12 @@ impl Apu {
         let value = self.read_smp(address).wrapping_sub(1);
         self.write_smp(address, value);
         self.set_nz(value);
+    }
+
+    fn modify_smp_memory(&mut self, address: u16, operation: fn(&mut Self, u8) -> u8) {
+        let current = self.read_smp(address);
+        let value = operation(self, current);
+        self.write_smp(address, value);
     }
 
     fn absolute_bit_value(&mut self, inverted: bool) -> bool {

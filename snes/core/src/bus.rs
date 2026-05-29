@@ -2817,6 +2817,67 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_shift_rotate_indexed_and_absolute_operands() {
+        let mut bus = Bus::new(test_cartridge());
+        for (address, value) in [
+            (0x0000, 0x80),
+            (0x0001, 0xFF),
+            (0x0101, 0x80),
+            (0x0400, 0x01),
+            (0x0401, 0x01),
+        ] {
+            bus.apu.write_smp(address, value);
+        }
+
+        let program = [
+            0xCD, 0x02, // MOV X,#$02
+            0x1B, 0xFF, // ASL $FF+X
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x20, // MOV $20,A
+            0x40, // SETP
+            0x1B, 0xFF, // ASL $FF+X
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0x20, // CLRP
+            0xC4, 0x21, // MOV $21,A
+            0x4C, 0x00, 0x04, // LSR $0400
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x22, // MOV $22,A
+            0x80, // SETC
+            0x3B, 0xFE, // ROL $FE+X
+            0x60, // CLRC
+            0x6C, 0x01, 0x04, // ROR $0401
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x23, // MOV $23,A
+            0x80, // SETC
+            0x7B, 0xFF, // ROR $FF+X
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC4, 0x24, // MOV $24,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..120 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0020) & 0x83, 0x81);
+        assert_eq!(bus.apu.peek_ram(0x0021) & 0xA3, 0x23);
+        assert_eq!(bus.apu.peek_ram(0x0022) & 0x83, 0x03);
+        assert_eq!(bus.apu.peek_ram(0x0023) & 0x83, 0x03);
+        assert_eq!(bus.apu.peek_ram(0x0024) & 0x83, 0x80);
+        assert_eq!(bus.apu.peek_ram(0x0000), 0x01);
+        assert_eq!(bus.apu.peek_ram(0x0001), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0101), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0400), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0401), 0x00);
+    }
+
+    #[test]
     fn apu_spc700_absolute_bit_ops_update_carry_and_memory() {
         let mut bus = Bus::new(test_cartridge());
         bus.apu.write_smp(0x0102, 0x0C);
