@@ -818,6 +818,7 @@ impl Apu {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 self.inc_smp_memory(address);
             }
+            0xBE => self.das_a(),
             0xB5 => {
                 let address = self.fetch_absolute_indexed_address(self.smp_x);
                 let value = self.read_smp(address);
@@ -947,6 +948,7 @@ impl Apu {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
                 self.cbne(address);
             }
+            0xDF => self.daa_a(),
             0xE0 => {
                 self.set_flag(SMP_FLAG_V, false);
                 self.set_flag(SMP_FLAG_H, false);
@@ -1365,6 +1367,32 @@ impl Apu {
         self.smp_a = low;
         self.smp_y = high;
         self.set_nz(high);
+    }
+
+    fn daa_a(&mut self) {
+        let mut result = self.smp_a;
+        if result > 0x99 || self.flag(SMP_FLAG_C) {
+            result = result.wrapping_add(0x60);
+            self.set_flag(SMP_FLAG_C, true);
+        }
+        if (result & 0x0F) > 0x09 || self.flag(SMP_FLAG_H) {
+            result = result.wrapping_add(0x06);
+        }
+        self.smp_a = result;
+        self.set_nz(result);
+    }
+
+    fn das_a(&mut self) {
+        let mut result = self.smp_a;
+        if result > 0x99 || !self.flag(SMP_FLAG_C) {
+            result = result.wrapping_sub(0x60);
+            self.set_flag(SMP_FLAG_C, false);
+        }
+        if (result & 0x0F) > 0x09 || !self.flag(SMP_FLAG_H) {
+            result = result.wrapping_sub(0x06);
+        }
+        self.smp_a = result;
+        self.set_nz(result);
     }
 
     fn test_and_set_absolute(&mut self, set_bits: bool) {
