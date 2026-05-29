@@ -427,6 +427,10 @@ impl Apu {
                 self.modify_smp_memory(address, Self::rol_value);
             }
             0x2D => self.push_smp_stack(self.smp_a),
+            0x2E => {
+                let address = self.fetch_direct_address();
+                self.cbne(address);
+            }
             0x2F => self.branch_relative(true),
             0x30 => self.branch_relative(self.flag(SMP_FLAG_N)),
             0x34 => {
@@ -917,6 +921,10 @@ impl Apu {
                 self.set_nz(self.smp_y);
             }
             0xDD => self.mov_a(self.smp_y),
+            0xDE => {
+                let address = self.fetch_direct_indexed_address(self.smp_x);
+                self.cbne(address);
+            }
             0xE0 => {
                 self.set_flag(SMP_FLAG_V, false);
                 self.set_flag(SMP_FLAG_H, false);
@@ -1299,6 +1307,13 @@ impl Apu {
         let offset = self.fetch_smp_byte() as i8;
         let bit_set = self.read_smp(address) & (1u8 << bit) != 0;
         if bit_set == branch_when_set {
+            self.apply_relative_offset(offset);
+        }
+    }
+
+    fn cbne(&mut self, address: u16) {
+        let offset = self.fetch_smp_byte() as i8;
+        if self.read_smp(address) != self.smp_a {
             self.apply_relative_offset(offset);
         }
     }
