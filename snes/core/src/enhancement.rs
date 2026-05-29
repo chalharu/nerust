@@ -7,7 +7,8 @@ pub enum EnhancementChip {
     SuperFxGsu1,
     SuperFxGsu2,
     Cx4,
-    Dsp1Family,
+    Dsp1,
+    Dsp1B,
 }
 
 impl EnhancementChip {
@@ -34,7 +35,8 @@ impl EnhancementState {
                 Self::SuperFx(SuperFxState::new())
             }
             EnhancementChip::Cx4 => Self::Cx4(Cx4State::new()),
-            EnhancementChip::Dsp1Family => Self::Dsp1(Dsp1State::new()),
+            EnhancementChip::Dsp1 => Self::Dsp1(Dsp1State::new(Dsp1Variant::Dsp1)),
+            EnhancementChip::Dsp1B => Self::Dsp1(Dsp1State::new(Dsp1Variant::Dsp1B)),
         }
     }
 
@@ -3297,6 +3299,7 @@ fn cx4_clip_trapezoid_span(left: i32, right: i32) -> (u8, u8) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Dsp1State {
+    variant: Dsp1Variant,
     data: u8,
     status: u8,
     phase: Dsp1Phase,
@@ -3308,6 +3311,21 @@ pub(crate) struct Dsp1State {
     output_index: usize,
     matrices: [[[i16; 3]; 3]; 3],
     projection: Dsp1ProjectionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dsp1Variant {
+    Dsp1,
+    Dsp1B,
+}
+
+impl Dsp1Variant {
+    fn rom_version(self) -> u16 {
+        match self {
+            Self::Dsp1 => 0x0100,
+            Self::Dsp1B => 0x0101,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3385,8 +3403,9 @@ const DSP1_STATUS_RQM: u8 = 0x80;
 const DSP1_RESET_STATUS: u8 = DSP1_STATUS_DRC | DSP1_STATUS_RQM;
 
 impl Dsp1State {
-    fn new() -> Self {
+    fn new(variant: Dsp1Variant) -> Self {
         Self {
+            variant,
             data: 0,
             status: DSP1_RESET_STATUS,
             phase: Dsp1Phase::WaitingCommand,
@@ -3528,7 +3547,7 @@ impl Dsp1State {
                 vec![dsp1_multiply(self.input_words[0], self.input_words[1], 1)]
             }
             Dsp1Operation::MemoryTest => vec![0x0000],
-            Dsp1Operation::MemorySize => vec![0x0100],
+            Dsp1Operation::MemorySize => vec![self.variant.rom_version()],
             Dsp1Operation::Radius => dsp1_radius(&self.input_words),
             Dsp1Operation::Range => vec![dsp1_range(&self.input_words, 0)],
             Dsp1Operation::Range2 => vec![dsp1_range(&self.input_words, 1)],
