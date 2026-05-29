@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{DeviceLimitProfile, PresentationOptions, Renderer};
+use super::{DeviceLimitProfile, PresentationOptions, Renderer, fit_surface_size_to_limit};
 use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
@@ -81,17 +81,24 @@ impl Renderer {
             })
             .await
             .map_err(|err| format!("failed to request wgpu adapter: {err:?}"))?;
+        let adapter_limits = adapter.limits();
+        let mut required_limits = device_limit_profile.required_limits();
+        let requested_surface_dimension = surface_size.width.max(surface_size.height).max(1);
+        required_limits.max_texture_dimension_2d = required_limits
+            .max_texture_dimension_2d
+            .max(requested_surface_dimension)
+            .min(adapter_limits.max_texture_dimension_2d);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("nerust_wgpu_device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: device_limit_profile.required_limits(),
+                required_limits,
                 ..Default::default()
             })
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
-        let mut config = Self::surface_config(surface, &adapter, surface_size)?;
+        let mut config = Self::surface_config(surface, &adapter, surface_size, &device)?;
         let caps = surface.get_capabilities(&adapter);
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
@@ -337,12 +344,15 @@ impl Renderer {
         surface: &Surface<'_>,
         adapter: &wgpu::Adapter,
         surface_size: SurfaceSize,
+        device: &Device,
     ) -> Result<SurfaceConfiguration, String> {
+        let normalized_size =
+            fit_surface_size_to_limit(surface_size, device.limits().max_texture_dimension_2d);
         surface
             .get_default_config(
                 adapter,
-                surface_size.width.max(1),
-                surface_size.height.max(1),
+                normalized_size.width.max(1),
+                normalized_size.height.max(1),
             )
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
     }
