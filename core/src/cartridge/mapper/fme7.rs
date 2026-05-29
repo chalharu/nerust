@@ -253,6 +253,34 @@ impl Mapper for Fme7 {
     fn step(&mut self, interrupt: &mut Interrupt) {
         self.step_irq(interrupt);
     }
+
+    fn step_cpu_cycles(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        if (self.irq_control & IRQ_COUNT) == 0 {
+            return;
+        }
+
+        let previous = self.irq_counter;
+        self.irq_counter = previous.wrapping_sub(cycles as u16);
+        if (self.irq_control & IRQ_ENABLE) != 0 && cycles > u64::from(previous) {
+            interrupt.set_irq(IrqSource::EXTERNAL);
+        }
+    }
+
+    fn cycles_until_next_cpu_event(&self) -> u64 {
+        if (self.irq_control & (IRQ_COUNT | IRQ_ENABLE)) == (IRQ_COUNT | IRQ_ENABLE) {
+            u64::from(self.irq_counter) + 1
+        } else {
+            u64::MAX
+        }
+    }
+
+    fn cpu_read_has_side_effect(&self, _address: usize) -> bool {
+        false
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        true
+    }
 }
 
 impl Fme7 {

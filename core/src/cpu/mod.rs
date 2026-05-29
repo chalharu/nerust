@@ -314,8 +314,143 @@ impl Core {
                 && !self.register.get_i());
     }
 
+    pub(crate) fn step_until_instruction_boundary(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn MapperCartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> u64 {
+        let mut cycles = 0;
+        loop {
+            cycles += 1;
+            self.step(ppu, cartridge, controller, apu);
+            if self.is_instruction_boundary() {
+                return cycles;
+            }
+        }
+    }
+
+    pub(crate) fn instruction_fast_path_max_cycles(
+        &self,
+        cartridge: &dyn MapperCartridge,
+    ) -> Option<u64> {
+        if !self.is_instruction_boundary() || self.has_pending_dma() || self.has_pending_interrupt()
+        {
+            return None;
+        }
+
+        let opcode = self.internal_stat.get_opcode();
+        let addressing = self.addressing_tables.get(opcode);
+        let operation = self.opcode_tables.get(opcode);
+        let pc = self.register.get_pc();
+        let next_opcode_pc = pc.wrapping_add(Self::fast_path_operand_bytes(addressing));
+        if Self::addressing_mode_is_fast_path_safe(addressing)
+            && Self::operation_is_fast_path_safe(operation)
+            && Self::cpu_read_is_fast_path_safe(usize::from(pc), cartridge)
+            && Self::cpu_read_is_fast_path_safe(usize::from(next_opcode_pc), cartridge)
+        {
+            Some(8)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn has_pending_dma(&self) -> bool {
+        self.interrupt.oam_dma.is_some()
+            || self.interrupt.dmc_dma_request.is_some()
+            || self.dmc_dma.is_some()
+            || self
+                .oam_dma
+                .as_ref()
+                .is_some_and(OamDmaState::has_transaction)
+    }
+
+    fn is_instruction_boundary(&self) -> bool {
+        self.internal_stat.get_state() == CpuStatesEnum::FetchOpCode
+            && self.internal_stat.get_step() == 1
+    }
+
+    fn has_pending_interrupt(&self) -> bool {
+        self.interrupt.nmi
+            || self.interrupt.detected
+            || self.interrupt.executing
+            || !self.interrupt.irq_flag.is_empty()
+    }
+
+    fn cpu_read_is_fast_path_safe(address: usize, cartridge: &dyn MapperCartridge) -> bool {
+        match address {
+            0x0000..=0x1FFF => true,
+            0x6000..=0xFFFF => !cartridge.cpu_read_has_side_effect(address),
+            _ => false,
+        }
+    }
+
+    fn addressing_mode_is_fast_path_safe(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::Accumulator | CpuStatesEnum::Immediate | CpuStatesEnum::Implied
+        )
+    }
+
+    fn fast_path_operand_bytes(state: CpuStatesEnum) -> u16 {
+        match state {
+            CpuStatesEnum::Immediate => 1,
+            _ => 0,
+        }
+    }
+
+    fn operation_is_fast_path_safe(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::Adc
+                | CpuStatesEnum::Alr
+                | CpuStatesEnum::Anc
+                | CpuStatesEnum::And
+                | CpuStatesEnum::Arr
+                | CpuStatesEnum::AslAcc
+                | CpuStatesEnum::Axs
+                | CpuStatesEnum::Clc
+                | CpuStatesEnum::Cld
+                | CpuStatesEnum::Cli
+                | CpuStatesEnum::Clv
+                | CpuStatesEnum::Cmp
+                | CpuStatesEnum::Cpx
+                | CpuStatesEnum::Cpy
+                | CpuStatesEnum::Dex
+                | CpuStatesEnum::Dey
+                | CpuStatesEnum::Eor
+                | CpuStatesEnum::Inx
+                | CpuStatesEnum::Iny
+                | CpuStatesEnum::Lax
+                | CpuStatesEnum::Lda
+                | CpuStatesEnum::Ldx
+                | CpuStatesEnum::Ldy
+                | CpuStatesEnum::LsrAcc
+                | CpuStatesEnum::Nop
+                | CpuStatesEnum::Ora
+                | CpuStatesEnum::RolAcc
+                | CpuStatesEnum::RorAcc
+                | CpuStatesEnum::Sbc
+                | CpuStatesEnum::Sec
+                | CpuStatesEnum::Sed
+                | CpuStatesEnum::Sei
+                | CpuStatesEnum::Tax
+                | CpuStatesEnum::Tay
+                | CpuStatesEnum::Tsx
+                | CpuStatesEnum::Txa
+                | CpuStatesEnum::Txs
+                | CpuStatesEnum::Tya
+                | CpuStatesEnum::Xaa
+        )
+    }
+
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {
         &mut self.interrupt
+    }
+
+    pub(crate) fn interrupt_ref(&self) -> &Interrupt {
+        &self.interrupt
     }
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
