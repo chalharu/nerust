@@ -10,6 +10,8 @@ use crate::render::render_screen;
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 pub fn validate_case(case: &RomCase) -> CaseOutcome {
     validate_case_with_options(case, ValidationOptions::testing())
@@ -30,7 +32,16 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
         }
     };
 
-    let mut core = match Core::from_rom_bytes(&rom) {
+    let msu1_data = match load_msu1_sidecar(case.rom_path()) {
+        Ok(msu1_data) => msu1_data,
+        Err(error) => return internal_error(case, error),
+    };
+
+    let core_result = match msu1_data.as_deref() {
+        Some(msu1_data) => Core::from_rom_bytes_with_msu1_data(&rom, msu1_data),
+        None => Core::from_rom_bytes(&rom),
+    };
+    let mut core = match core_result {
         Ok(core) => core,
         Err(error) => {
             return internal_error(
@@ -84,6 +95,22 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
         }
         Err(error) => internal_error(case, error.to_string()),
     }
+}
+
+fn load_msu1_sidecar(rom_path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let sidecar_path = msu1_sidecar_path(rom_path);
+    match fs::read(&sidecar_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "failed to read MSU-1 data sidecar `{}`: {error}",
+            sidecar_path.display()
+        )),
+    }
+}
+
+fn msu1_sidecar_path(rom_path: &Path) -> PathBuf {
+    rom_path.with_extension("msu")
 }
 
 fn finalize_validation(

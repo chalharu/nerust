@@ -16,6 +16,9 @@ use nerust_input_schema::{
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::{Core, CpuState};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
@@ -177,6 +180,7 @@ struct SnesRuntimeShared {
 enum SnesCommand {
     Load {
         bytes: Vec<u8>,
+        msu1_data: Option<Vec<u8>>,
         reply: Sender<Result<(), String>>,
     },
     Unload {
@@ -239,8 +243,10 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
+        let msu1_data = load_msu1_sidecar(media.path.as_deref())?;
         self.request_unit(|reply| SnesCommand::Load {
             bytes: media.bytes.as_ref().to_vec(),
+            msu1_data,
             reply,
         })
     }
@@ -429,8 +435,16 @@ fn handle_command(
     shared: &SnesRuntimeShared,
 ) {
     match command {
-        SnesCommand::Load { bytes, reply } => {
-            let result = match Core::from_rom_bytes(&bytes) {
+        SnesCommand::Load {
+            bytes,
+            msu1_data,
+            reply,
+        } => {
+            let core_result = match msu1_data.as_deref() {
+                Some(msu1_data) => Core::from_rom_bytes_with_msu1_data(&bytes, msu1_data),
+                None => Core::from_rom_bytes(&bytes),
+            };
+            let result = match core_result {
                 Ok(new_core) => {
                     *core = Some(new_core);
                     if let Some(core) = core.as_mut() {
@@ -512,6 +526,25 @@ fn send_reply<T>(reply: Sender<Result<T, String>>, result: Result<T, String>) {
     if reply.send(result).is_err() {
         log::warn!("SNES runtime reply send failed");
     }
+}
+
+fn load_msu1_sidecar(path: Option<&Path>) -> Result<Option<Vec<u8>>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let sidecar_path = msu1_sidecar_path(path);
+    match fs::read(&sidecar_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "failed to read MSU-1 data sidecar `{}`: {error}",
+            sidecar_path.display()
+        )),
+    }
+}
+
+fn msu1_sidecar_path(path: &Path) -> PathBuf {
+    path.with_extension("msu")
 }
 
 fn step_snes_frame(core: &mut Core) -> Result<(), String> {
