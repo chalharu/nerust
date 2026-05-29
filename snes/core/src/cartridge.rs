@@ -1720,6 +1720,26 @@ mod tests {
     }
 
     #[test]
+    fn super_fx_stop_advances_program_counter_once() {
+        let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
+            "HIROM GSU STOP PC",
+            0x31,
+            0x15,
+            None,
+            0x0C,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x700080, 0x00));
+        assert!(cartridge.write(0x700081, 0x01));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x003030).unwrap() & 0x20, 0x00);
+        assert_eq!(cartridge.read(0x00301E), Some(0x81));
+        assert_eq!(cartridge.read(0x00301F), Some(0x00));
+    }
+
+    #[test]
     fn super_fx_executes_program_from_rom_pbr() {
         let mut rom = build_hirom_with_header("HIROM GSU ROM OPS", 0x31, 0x15, None, 0x0C);
         rom[..GSU_ROM_STORE_PROGRAM.len()].copy_from_slice(&GSU_ROM_STORE_PROGRAM);
@@ -1763,7 +1783,7 @@ mod tests {
         assert_eq!(cartridge.read(0x700103), Some(0x00));
         assert_eq!(cartridge.read(0x003000), Some(0xEF));
         assert_eq!(cartridge.read(0x003001), Some(0xBE));
-        assert_eq!(cartridge.read(0x00301E), Some(0x09));
+        assert_eq!(cartridge.read(0x00301E), Some(0x08));
         assert_eq!(cartridge.read(0x00301F), Some(0x80));
 
         assert!(cartridge.write(0x003030, 0x20));
