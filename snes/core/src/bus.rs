@@ -2263,6 +2263,76 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_movw_incw_decw_transfer_words() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x8F, 0x34, 0x20, // MOV $20,#$34
+            0x8F, 0x12, 0x21, // MOV $21,#$12
+            0xBA, 0x20, // MOVW YA,$20
+            0xDA, 0x22, // MOVW $22,YA
+            0x3A, 0x22, // INCW $22
+            0x1A, 0x22, // DECW $22
+            0xBA, 0x22, // MOVW YA,$22
+            0xC4, 0xF4, // MOV $F4,A
+            0xCB, 0xF5, // MOV $F5,Y
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..24 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0022), 0x34);
+        assert_eq!(bus.apu.peek_ram(0x0023), 0x12);
+        assert_eq!(bus.read(0x002140), 0x34);
+        assert_eq!(bus.read(0x002141), 0x12);
+    }
+
+    #[test]
+    fn apu_spc700_word_ops_set_16bit_flags_and_wrap_direct_page() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0x40, // SETP
+            0x8F, 0xFF, 0xFF, // MOV $FF,#$FF
+            0x8F, 0xFF, 0x00, // MOV $00,#$FF
+            0x3A, 0xFF, // INCW $FF
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0x20, // CLRP
+            0xC4, 0xF4, // MOV $F4,A
+            0x40, // SETP
+            0x1A, 0xFF, // DECW $FF
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0x20, // CLRP
+            0xC4, 0xF5, // MOV $F5,A
+            0x40, // SETP
+            0xBA, 0xFF, // MOVW YA,$FF
+            0x20, // CLRP
+            0xC4, 0xF6, // MOV $F6,A
+            0xCB, 0xF7, // MOV $F7,Y
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..32 {
+            bus.tick_cpu_cycle();
+        }
+
+        let zero_psw = bus.read(0x002140);
+        let negative_psw = bus.read(0x002141);
+        assert_ne!(zero_psw & 0x02, 0);
+        assert_eq!(zero_psw & 0x80, 0);
+        assert_eq!(negative_psw & 0x02, 0);
+        assert_ne!(negative_psw & 0x80, 0);
+        assert_eq!(bus.apu.peek_ram(0x01FF), 0xFF);
+        assert_eq!(bus.apu.peek_ram(0x0100), 0xFF);
+        assert_eq!(bus.read(0x002142), 0xFF);
+        assert_eq!(bus.read(0x002143), 0xFF);
+    }
+
+    #[test]
     fn apu_spc700_program_can_wait_for_timer_output() {
         let mut bus = Bus::new(test_cartridge());
         let program = [
