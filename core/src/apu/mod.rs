@@ -212,13 +212,15 @@ impl Core {
         cycles: u64,
     ) {
         for _ in 0..cycles {
-            self.step(
-                cpu,
-                mixer,
-                mixer_sample_rate,
-                expansion_audio_output,
-                expansion_audio_inverted,
-            );
+            self.step_frame(cpu.interrupt_mut());
+            if self.sample_accumulator >= CLOCK_RATE {
+                self.sample_accumulator %= CLOCK_RATE;
+            }
+            self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
+            if self.sample_accumulator >= CLOCK_RATE {
+                self.sample_accumulator -= CLOCK_RATE;
+                self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
+            }
         }
     }
 
@@ -227,21 +229,9 @@ impl Core {
         interrupt: &Interrupt,
         max_cycles: u64,
     ) -> u64 {
-        let mut apu = self.clone();
-        let mut interrupt = *interrupt;
-        let irq_before = interrupt.irq_flag.bits();
-        let dmc_dma_before = interrupt.dmc_dma_request;
-
-        for elapsed in 1..=max_cycles {
-            apu.step_frame(&mut interrupt);
-            if interrupt.irq_flag.bits() != irq_before
-                || interrupt.dmc_dma_request != dmc_dma_before
-            {
-                return elapsed;
-            }
-        }
-
-        max_cycles + 1
+        self.frame_counter
+            .cycles_until_next_irq_change(interrupt, max_cycles)
+            .min(self.dmc.cycles_until_next_dma_request(max_cycles))
     }
 
     pub(crate) fn send_sample<M: MixerInput>(

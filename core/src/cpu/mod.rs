@@ -308,10 +308,7 @@ impl Core {
             self.internal_stat.step = 1;
             machine = self.cpu_stepfunc;
         }
-        self.interrupt.executing = self.interrupt.detected;
-        self.interrupt.detected = self.interrupt.nmi
-            || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
-                && !self.register.get_i());
+        self.sample_interrupt();
     }
 
     pub(crate) fn step_until_instruction_boundary(
@@ -350,10 +347,71 @@ impl Core {
             && Self::cpu_read_is_fast_path_safe(usize::from(pc), cartridge)
             && Self::cpu_read_is_fast_path_safe(usize::from(next_opcode_pc), cartridge)
         {
-            Some(8)
+            Some(2)
         } else {
             None
         }
+    }
+
+    pub(crate) fn step_fast_path_instruction(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn MapperCartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> Option<u64> {
+        let cycles = self.instruction_fast_path_max_cycles(cartridge)?;
+        let opcode = self.internal_stat.get_opcode();
+        let addressing = self.addressing_tables.get(opcode);
+        let operation = self.opcode_tables.get(opcode);
+        let mut cartridge = mapper_cartridge_bus(cartridge);
+
+        self.cycles = self.cycles.wrapping_add(1);
+        let operand = match addressing {
+            CpuStatesEnum::Immediate => {
+                let address = self.register.get_pc();
+                self.internal_stat.set_address(usize::from(address));
+                Some(self.memory.read_next(
+                    &mut self.register,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                ))
+            }
+            CpuStatesEnum::Accumulator | CpuStatesEnum::Implied => {
+                let pc = usize::from(self.register.get_pc());
+                let _ = self.memory.read(
+                    pc,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                );
+                None
+            }
+            _ => return None,
+        };
+        self.apply_fast_path_operation(operation, operand)?;
+        self.sample_interrupt();
+
+        self.cycles = self.cycles.wrapping_add(1);
+        let next_opcode = self.memory.read_next(
+            &mut self.register,
+            ppu,
+            &mut cartridge,
+            controller,
+            apu,
+            &mut self.interrupt,
+        );
+        self.internal_stat.set_opcode(usize::from(next_opcode));
+        self.set_cpu_state(CpuStatesEnum::FetchOpCode);
+        self.internal_stat.set_step(1);
+        self.sample_interrupt();
+
+        Some(cycles)
     }
 
     pub(crate) fn has_pending_dma(&self) -> bool {
@@ -404,12 +462,8 @@ impl Core {
         matches!(
             state,
             CpuStatesEnum::Adc
-                | CpuStatesEnum::Alr
-                | CpuStatesEnum::Anc
                 | CpuStatesEnum::And
-                | CpuStatesEnum::Arr
                 | CpuStatesEnum::AslAcc
-                | CpuStatesEnum::Axs
                 | CpuStatesEnum::Clc
                 | CpuStatesEnum::Cld
                 | CpuStatesEnum::Cli
@@ -422,12 +476,10 @@ impl Core {
                 | CpuStatesEnum::Eor
                 | CpuStatesEnum::Inx
                 | CpuStatesEnum::Iny
-                | CpuStatesEnum::Lax
                 | CpuStatesEnum::Lda
                 | CpuStatesEnum::Ldx
                 | CpuStatesEnum::Ldy
                 | CpuStatesEnum::LsrAcc
-                | CpuStatesEnum::Nop
                 | CpuStatesEnum::Ora
                 | CpuStatesEnum::RolAcc
                 | CpuStatesEnum::RorAcc
@@ -441,8 +493,135 @@ impl Core {
                 | CpuStatesEnum::Txa
                 | CpuStatesEnum::Txs
                 | CpuStatesEnum::Tya
-                | CpuStatesEnum::Xaa
         )
+    }
+
+    fn apply_fast_path_operation(
+        &mut self,
+        operation: CpuStatesEnum,
+        operand: Option<u8>,
+    ) -> Option<()> {
+        match operation {
+            CpuStatesEnum::Adc => {
+                let a = u16::from(self.register.get_a());
+                let b = u16::from(operand?);
+                let c = if self.register.get_c() { 1 } else { 0 };
+                let result = a + b + c;
+                self.register.set_c(result > 0xFF);
+                self.register
+                    .set_v((a ^ b) & 0x80 == 0 && (a ^ result) & 0x80 != 0);
+                self.set_accumulator_result((result & 0xFF) as u8);
+            }
+            CpuStatesEnum::And => self.set_accumulator_result(self.register.get_a() & operand?),
+            CpuStatesEnum::AslAcc => {
+                let value = self.register.get_a();
+                self.register.set_c(value & 0x80 != 0);
+                self.set_accumulator_result(value << 1);
+            }
+            CpuStatesEnum::Clc => self.register.set_c(false),
+            CpuStatesEnum::Cld => self.register.set_d(false),
+            CpuStatesEnum::Cli => self.register.set_i(false),
+            CpuStatesEnum::Clv => self.register.set_v(false),
+            CpuStatesEnum::Cmp => self.compare_fast_path(self.register.get_a(), operand?),
+            CpuStatesEnum::Cpx => self.compare_fast_path(self.register.get_x(), operand?),
+            CpuStatesEnum::Cpy => self.compare_fast_path(self.register.get_y(), operand?),
+            CpuStatesEnum::Dex => {
+                let value = self.register.get_x().wrapping_sub(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_x(value);
+            }
+            CpuStatesEnum::Dey => {
+                let value = self.register.get_y().wrapping_sub(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_y(value);
+            }
+            CpuStatesEnum::Eor => self.set_accumulator_result(self.register.get_a() ^ operand?),
+            CpuStatesEnum::Inx => {
+                let value = self.register.get_x().wrapping_add(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_x(value);
+            }
+            CpuStatesEnum::Iny => {
+                let value = self.register.get_y().wrapping_add(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_y(value);
+            }
+            CpuStatesEnum::Lda => self.load_a_fast_path(operand?),
+            CpuStatesEnum::Ldx => self.load_x_fast_path(operand?),
+            CpuStatesEnum::Ldy => self.load_y_fast_path(operand?),
+            CpuStatesEnum::LsrAcc => {
+                let value = self.register.get_a();
+                self.register.set_c(value & 0x01 != 0);
+                self.set_accumulator_result(value >> 1);
+            }
+            CpuStatesEnum::Nop => {}
+            CpuStatesEnum::Ora => self.set_accumulator_result(self.register.get_a() | operand?),
+            CpuStatesEnum::RolAcc => {
+                let value = self.register.get_a();
+                let carry = if self.register.get_c() { 1 } else { 0 };
+                self.register.set_c(value & 0x80 != 0);
+                self.set_accumulator_result(value << 1 | carry);
+            }
+            CpuStatesEnum::RorAcc => {
+                let value = self.register.get_a();
+                let carry = if self.register.get_c() { 0x80 } else { 0 };
+                self.register.set_c(value & 0x01 != 0);
+                self.set_accumulator_result(value >> 1 | carry);
+            }
+            CpuStatesEnum::Sbc => {
+                let a = u16::from(self.register.get_a());
+                let b = u16::from(operand?);
+                let c = if self.register.get_c() { 0 } else { 1 };
+                let result = a.wrapping_sub(b).wrapping_sub(c);
+                self.register.set_c(result <= 0xFF);
+                self.register
+                    .set_v((a ^ b) & 0x80 != 0 && (a ^ result) & 0x80 != 0);
+                self.set_accumulator_result((result & 0xFF) as u8);
+            }
+            CpuStatesEnum::Sec => self.register.set_c(true),
+            CpuStatesEnum::Sed => self.register.set_d(true),
+            CpuStatesEnum::Sei => self.register.set_i(true),
+            CpuStatesEnum::Tax => self.load_x_fast_path(self.register.get_a()),
+            CpuStatesEnum::Tay => self.load_y_fast_path(self.register.get_a()),
+            CpuStatesEnum::Tsx => self.load_x_fast_path(self.register.get_sp()),
+            CpuStatesEnum::Txa => self.load_a_fast_path(self.register.get_x()),
+            CpuStatesEnum::Txs => self.register.set_sp(self.register.get_x()),
+            CpuStatesEnum::Tya => self.load_a_fast_path(self.register.get_y()),
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn sample_interrupt(&mut self) {
+        self.interrupt.executing = self.interrupt.detected;
+        self.interrupt.detected = self.interrupt.nmi
+            || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
+                && !self.register.get_i());
+    }
+
+    fn set_accumulator_result(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_a(value);
+    }
+
+    fn compare_fast_path(&mut self, left: u8, right: u8) {
+        self.register.set_nz_from_value(left.wrapping_sub(right));
+        self.register.set_c(left >= right);
+    }
+
+    fn load_a_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_a(value);
+    }
+
+    fn load_x_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_x(value);
+    }
+
+    fn load_y_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_y(value);
     }
 
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {

@@ -41,6 +41,14 @@ impl TimerDao {
         }
     }
 
+    pub(crate) fn value(&self) -> u16 {
+        self.value
+    }
+
+    pub(crate) fn period(&self) -> u16 {
+        self.period
+    }
+
     pub(crate) fn get_period(&mut self) -> u16 {
         self.period
     }

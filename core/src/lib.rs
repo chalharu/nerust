@@ -128,6 +128,9 @@ struct MachineStatePayload {
 }
 
 impl Core {
+    const INSTRUCTION_SCHEDULER_MAX_BATCH_CYCLES: u64 = 24;
+    const INSTRUCTION_SCHEDULER_DISABLE_MISSES: u64 = 2048;
+
     pub fn new(cartridge_data: CartridgeData) -> Result<Core, Error> {
         Self::new_with_options(cartridge_data, CoreOptions::default())
     }
@@ -309,15 +312,29 @@ impl Core {
     ) -> u64 {
         let mut cycles = 0;
         let mixer_sample_rate = mixer.sample_rate();
+        let mut scheduler_enabled = true;
+        let mut scheduler_misses = 0;
+        let mut scheduler_cycles = 0;
         loop {
-            if let Some((elapsed_cycles, screen_updated)) =
-                self.step_instruction_event(screen, controller, mixer, mixer_sample_rate)
-            {
-                cycles += elapsed_cycles;
-                if screen_updated {
-                    return cycles;
+            if scheduler_enabled {
+                if let Some((elapsed_cycles, screen_updated)) =
+                    self.step_instruction_event(screen, controller, mixer, mixer_sample_rate)
+                {
+                    cycles += elapsed_cycles;
+                    scheduler_cycles += elapsed_cycles;
+                    scheduler_misses = 0;
+                    if screen_updated {
+                        return cycles;
+                    }
+                    continue;
+                } else {
+                    scheduler_misses += 1;
+                    if scheduler_misses >= Self::INSTRUCTION_SCHEDULER_DISABLE_MISSES
+                        && scheduler_cycles * 4 < cycles
+                    {
+                        scheduler_enabled = false;
+                    }
                 }
-                continue;
             }
 
             cycles += 1;
@@ -376,26 +393,42 @@ impl Core {
             return None;
         }
 
-        let max_cpu_cycles = self
+        let mut instruction_cycles = self
             .cpu
             .instruction_fast_path_max_cycles(self.cartridge.as_ref())?;
-        let max_ppu_cycles = max_cpu_cycles * 3;
-        if self.cartridge.cycles_until_next_cpu_event() <= max_cpu_cycles
-            || self.ppu.cycles_until_next_scheduler_event(max_ppu_cycles) <= max_ppu_cycles
-            || self
-                .apu
-                .cycles_until_next_scheduler_event(self.cpu.interrupt_ref(), max_cpu_cycles)
-                <= max_cpu_cycles
-        {
+        let max_cpu_cycles = self.scheduler_fast_path_window();
+        if max_cpu_cycles < instruction_cycles {
             return None;
         }
 
-        let cpu_cycles = self.cpu.step_until_instruction_boundary(
-            &mut self.ppu,
-            self.cartridge.as_mut(),
-            controller,
-            &mut self.apu,
-        );
+        let mut cpu_cycles = 0;
+        while cpu_cycles + instruction_cycles <= max_cpu_cycles {
+            if instruction_cycles == 0 {
+                break;
+            }
+            let elapsed = self.cpu.step_fast_path_instruction(
+                &mut self.ppu,
+                self.cartridge.as_mut(),
+                controller,
+                &mut self.apu,
+            )?;
+            debug_assert_eq!(elapsed, instruction_cycles);
+            cpu_cycles += elapsed;
+            if cpu_cycles >= max_cpu_cycles {
+                break;
+            }
+            let Some(next_instruction_cycles) = self
+                .cpu
+                .instruction_fast_path_max_cycles(self.cartridge.as_ref())
+            else {
+                break;
+            };
+            instruction_cycles = next_instruction_cycles;
+        }
+        if cpu_cycles == 0 {
+            return None;
+        }
+
         let ppu_cycles = cpu_cycles * 3;
         let screen_updated = {
             let mut ppu_cartridge =
@@ -419,6 +452,27 @@ impl Core {
         );
 
         Some((cpu_cycles, screen_updated))
+    }
+
+    fn scheduler_fast_path_window(&self) -> u64 {
+        let max_cpu_cycles = Self::INSTRUCTION_SCHEDULER_MAX_BATCH_CYCLES;
+        let ppu_event_cycles = self
+            .ppu
+            .cycles_until_next_scheduler_event(max_cpu_cycles * 3);
+        let ppu_safe_cpu_cycles = ppu_event_cycles.saturating_sub(1) / 3;
+        let apu_safe_cpu_cycles = self
+            .apu
+            .cycles_until_next_scheduler_event(self.cpu.interrupt_ref(), max_cpu_cycles)
+            .saturating_sub(1);
+        let mapper_safe_cpu_cycles = self
+            .cartridge
+            .cycles_until_next_cpu_event()
+            .saturating_sub(1);
+
+        max_cpu_cycles
+            .min(ppu_safe_cpu_cycles)
+            .min(apu_safe_cpu_cycles)
+            .min(mapper_safe_cpu_cycles)
     }
 
     fn validate_persistence_target(
@@ -553,6 +607,32 @@ fn nrom_program_test_data(program: &[u8]) -> CartridgeData {
 #[cfg(test)]
 fn nrom_nop_program_test_data() -> CartridgeData {
     nrom_program_test_data(&[])
+}
+
+#[cfg(test)]
+fn nrom_repeating_fast_path_program_test_data() -> CartridgeData {
+    let mut prog_rom = Vec::with_capacity(0x8000);
+    while prog_rom.len() < 0x8000 {
+        prog_rom.push(0xA9);
+        prog_rom.push(0x01);
+    }
+    prog_rom[0x7FFC] = 0x00;
+    prog_rom[0x7FFD] = 0x80;
+    CartridgeData::new(CartridgeDataParts {
+        format: RomFormat::INes,
+        prog_rom,
+        char_rom: vec![0; 0x2000],
+        pram_length: 0,
+        save_pram_length: 0,
+        vram_length: 0,
+        save_vram_length: 0,
+        mapper_type: 0,
+        mirror_mode: MirrorMode::Horizontal,
+        has_battery: false,
+        sub_mapper_type: 0,
+        trainer: Vec::new(),
+    })
+    .expect("test cartridge data should be valid")
 }
 
 #[cfg(test)]
@@ -712,6 +792,45 @@ mod scheduler_tests {
     }
 
     #[test]
+    fn instruction_scheduler_matches_cycle_stepping_for_fast_cpu_operations() {
+        assert_run_frame_matches_cycle_stepping(nrom_program_test_data(&[
+            0xA9, 0x55, // LDA #$55
+            0x69, 0x0A, // ADC #$0A
+            0x29, 0x0F, // AND #$0F
+            0x49, 0xF0, // EOR #$F0
+            0x09, 0x01, // ORA #$01
+            0xC9, 0x20, // CMP #$20
+            0xA2, 0x03, // LDX #$03
+            0xE0, 0x04, // CPX #$04
+            0xA0, 0x05, // LDY #$05
+            0xC0, 0x05, // CPY #$05
+            0xAA, // TAX
+            0xA8, // TAY
+            0x8A, // TXA
+            0x98, // TYA
+            0xBA, // TSX
+            0x9A, // TXS
+            0xE8, // INX
+            0xC8, // INY
+            0xCA, // DEX
+            0x88, // DEY
+            0x0A, // ASL A
+            0x4A, // LSR A
+            0x2A, // ROL A
+            0x6A, // ROR A
+            0x18, // CLC
+            0x38, // SEC
+            0xD8, // CLD
+            0xF8, // SED
+            0x58, // CLI
+            0x78, // SEI
+            0xB8, // CLV
+            0xE9, 0x01, // SBC #$01
+            0xEA, // NOP
+        ]));
+    }
+
+    #[test]
     fn instruction_scheduler_preserves_sxrom_write_spacing_across_fast_path() {
         assert_run_frame_matches_cycle_stepping(mapper_program_with_prefix_test_data(
             1,
@@ -721,7 +840,7 @@ mod scheduler_tests {
             &[
                 0xA9, 0x80, // LDA #$80
                 0x8D, 0x00, 0x80, // STA $8000
-                0xEA, // NOP, eligible for the instruction fast path
+                0xA9, 0x00, // LDA #$00, eligible for the instruction fast path
                 0x8D, 0x00, 0x80, // STA $8000
             ],
         ));
@@ -729,7 +848,8 @@ mod scheduler_tests {
 
     #[test]
     fn instruction_scheduler_fast_path_runs_at_safe_instruction_boundary() {
-        let mut core = Core::new(nrom_nop_program_test_data()).expect("core should construct");
+        let mut core =
+            Core::new(nrom_program_test_data(&[0xA9, 0x01])).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
@@ -758,7 +878,8 @@ mod scheduler_tests {
 
     #[test]
     fn instruction_scheduler_falls_back_when_dma_is_pending() {
-        let mut core = Core::new(nrom_nop_program_test_data()).expect("core should construct");
+        let mut core =
+            Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
@@ -775,7 +896,8 @@ mod scheduler_tests {
 
     #[test]
     fn instruction_scheduler_falls_back_before_ppu_event() {
-        let mut core = Core::new(nrom_nop_program_test_data()).expect("core should construct");
+        let mut core =
+            Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
@@ -808,7 +930,8 @@ mod scheduler_tests {
 
     #[test]
     fn instruction_scheduler_falls_back_before_apu_irq_event() {
-        let mut core = Core::new(nrom_nop_program_test_data()).expect("core should construct");
+        let mut core =
+            Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
@@ -842,11 +965,12 @@ mod scheduler_tests {
 
     #[test]
     fn instruction_scheduler_falls_back_before_mapper_cpu_event() {
-        let mut core = Core::new(mapper_program_test_data(
+        let mut core = Core::new(mapper_program_with_prefix_test_data(
             69,
             RomFormat::INes,
             0x8000,
             0x2000,
+            &[0xA9, 0x01],
         ))
         .expect("core should construct");
         let mut screen = NullScreen;
@@ -858,13 +982,13 @@ mod scheduler_tests {
 
         let mut interrupt = Interrupt::new();
         core.cartridge.write(0x8000, 0x0E, &mut interrupt);
-        core.cartridge.write(0xA000, 0x03, &mut interrupt);
+        core.cartridge.write(0xA000, 0x01, &mut interrupt);
         core.cartridge.write(0x8000, 0x0F, &mut interrupt);
         core.cartridge.write(0xA000, 0x00, &mut interrupt);
         core.cartridge.write(0x8000, 0x0D, &mut interrupt);
         core.cartridge.write(0xA000, 0x81, &mut interrupt);
 
-        assert!(core.cartridge.cycles_until_next_cpu_event() <= 8);
+        assert!(core.cartridge.cycles_until_next_cpu_event() <= 2);
         assert!(
             core.step_instruction_event(&mut screen, &mut controller, &mut mixer, sample_rate)
                 .is_none()
