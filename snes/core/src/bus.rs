@@ -2120,6 +2120,7 @@ mod tests {
             0xE8, 0x00, // MOV A,#$00
             0xAE, // POP A
             0xC4, 0xF5, // MOV $F5,A
+            0xE8, 0x80, // MOV A,#$80
             0x0D, // PUSH PSW
             0xE8, 0x00, // MOV A,#$00
             0x8E, // POP PSW
@@ -2139,6 +2140,68 @@ mod tests {
         assert_eq!(bus.read(0x002141), 0x80);
         assert_eq!(bus.read(0x002142), 0x12);
         assert_eq!(bus.read(0x002143), 0x34);
+    }
+
+    #[test]
+    fn apu_spc700_pop_registers_preserve_psw_flags() {
+        let mut bus = Bus::new(test_cartridge());
+        let program = [
+            0xE8, 0x98, // MOV A,#$98
+            0x2D, // PUSH A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xAE, // POP A
+            0xC5, 0x20, 0x03, // MOV $0320,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x21, 0x03, // MOV $0321,A
+            0xE8, 0x98, // MOV A,#$98
+            0x2D, // PUSH A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xCE, // POP X
+            0xC9, 0x22, 0x03, // MOV $0322,X
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x23, 0x03, // MOV $0323,A
+            0xE8, 0x98, // MOV A,#$98
+            0x2D, // PUSH A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xEE, // POP Y
+            0xCC, 0x24, 0x03, // MOV $0324,Y
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x25, 0x03, // MOV $0325,A
+            0xE8, 0x00, // MOV A,#$00
+            0x2D, // PUSH A
+            0xE8, 0xFF, // MOV A,#$FF
+            0x2D, // PUSH A
+            0x8E, // POP PSW
+            0xAE, // POP A
+            0xC5, 0x26, 0x03, // MOV $0326,A
+            0x0D, // PUSH PSW
+            0xAE, // POP A
+            0xC5, 0x27, 0x03, // MOV $0327,A
+            0xFF, // STOP
+        ];
+        upload_and_start_apu_program(&mut bus, 0x0200, &program);
+
+        for _ in 0..120 {
+            bus.tick_cpu_cycle();
+        }
+
+        assert_eq!(bus.apu.peek_ram(0x0320), 0x98);
+        assert_eq!(bus.apu.peek_ram(0x0321), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0322), 0x98);
+        assert_eq!(bus.apu.peek_ram(0x0323), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0324), 0x98);
+        assert_eq!(bus.apu.peek_ram(0x0325), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0326), 0x00);
+        assert_eq!(bus.apu.peek_ram(0x0327), 0xFF);
     }
 
     #[test]
