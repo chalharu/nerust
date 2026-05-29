@@ -355,6 +355,10 @@ impl Cartridge {
         self.save_ram.copy_from_slice(save_ram);
         Ok(())
     }
+
+    pub fn load_msu1_data(&mut self, data: &[u8]) {
+        self.msu1.load_data(data);
+    }
 }
 
 fn cartridge_coprocessor(chipset: u8) -> u8 {
@@ -559,6 +563,24 @@ mod tests {
         assert_eq!(cartridge.msu1.data_read_offset(), 0x7856_3412);
         assert_eq!(cartridge.read_mut(0x002001), Some(0x00));
         assert_eq!(cartridge.msu1.data_read_offset(), 0x7856_3412);
+    }
+
+    #[test]
+    fn msu1_data_port_reads_mounted_sidecar_and_advances() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom()).unwrap();
+        cartridge.load_msu1_data(&[0x11, 0x22, 0x33]);
+
+        assert_eq!(cartridge.msu1.data_len(), 3);
+        assert!(cartridge.write(0x002000, 0x01));
+        assert!(cartridge.write(0x002001, 0x00));
+        assert!(cartridge.write(0x002002, 0x00));
+        assert!(cartridge.write(0x002003, 0x00));
+
+        assert_eq!(cartridge.read_mut(0x002001), Some(0x22));
+        assert_eq!(cartridge.read_mut(0x002001), Some(0x33));
+        assert_eq!(cartridge.read_mut(0x002001), Some(0x00));
+        assert_eq!(cartridge.msu1.data_read_offset(), 4);
+        assert_eq!(cartridge.read(0x002000), Some(0x0A));
     }
 
     #[test]

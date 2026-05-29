@@ -89,6 +89,15 @@ impl Core {
         Ok(Self::new(Cartridge::from_bytes(bytes)?))
     }
 
+    pub fn from_rom_bytes_with_msu1_data(
+        bytes: &[u8],
+        msu1_data: &[u8],
+    ) -> Result<Self, CoreError> {
+        let mut cartridge = Cartridge::from_bytes(bytes)?;
+        cartridge.load_msu1_data(msu1_data);
+        Ok(Self::new(cartridge))
+    }
+
     pub fn step(&mut self) -> Result<(), CoreError> {
         if self.cpu.current_state() == CpuState::Stopped {
             return Ok(());
@@ -134,6 +143,10 @@ impl Core {
     pub fn load_save_ram(&mut self, save_ram: &[u8]) -> Result<(), CoreError> {
         self.bus.cartridge_mut().load_save_ram(save_ram)?;
         Ok(())
+    }
+
+    pub fn load_msu1_data(&mut self, data: &[u8]) {
+        self.bus.cartridge_mut().load_msu1_data(data);
     }
 
     pub fn set_standard_controller_buttons(&mut self, port: usize, buttons: u16) -> bool {

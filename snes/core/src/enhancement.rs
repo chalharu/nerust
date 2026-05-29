@@ -100,6 +100,7 @@ const MSU1_SIGNATURE: [u8; 6] = *b"S-MSU1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Msu1State {
+    data: Box<[u8]>,
     data_seek_offset: u32,
     data_read_offset: u32,
     audio_track: u16,
@@ -114,6 +115,7 @@ pub(crate) struct Msu1State {
 impl Msu1State {
     pub(crate) fn new() -> Self {
         Self {
+            data: Box::new([]),
             data_seek_offset: 0,
             data_read_offset: 0,
             audio_track: 0,
@@ -124,6 +126,10 @@ impl Msu1State {
             audio_busy: false,
             data_busy: false,
         }
+    }
+
+    pub(crate) fn load_data(&mut self, data: &[u8]) {
+        self.data = data.to_vec().into_boxed_slice();
     }
 
     pub(crate) fn peek(&self, address: u32) -> Option<u8> {
@@ -198,9 +204,16 @@ impl Msu1State {
         if self.data_busy {
             return 0x00;
         }
-        // No data.rom sidecar is mounted yet; bsnes returns 0 without advancing
-        // the read offset until backing data exists.
-        0x00
+        if self.data.is_empty() {
+            return 0x00;
+        }
+
+        let value = usize::try_from(self.data_read_offset)
+            .ok()
+            .and_then(|offset| self.data.get(offset).copied())
+            .unwrap_or(0);
+        self.data_read_offset = self.data_read_offset.wrapping_add(1);
+        value
     }
 
     fn status(&self) -> u8 {
@@ -240,6 +253,11 @@ impl Msu1State {
     #[cfg(test)]
     pub(crate) fn data_read_offset(&self) -> u32 {
         self.data_read_offset
+    }
+
+    #[cfg(test)]
+    pub(crate) fn data_len(&self) -> usize {
+        self.data.len()
     }
 
     #[cfg(test)]
