@@ -44,9 +44,18 @@ pub(super) fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalS
     let width = content_size.width * rate;
     let height = content_size.height * rate;
 
+    // On Android prefer slightly top-aligned viewport so on-screen controls
+    // (drawn as overlays) do not overlap the game's important content. Non-Android
+    // builds keep centered behavior.
+    let y_bias = if cfg!(target_os = "android") {
+        0.25_f32
+    } else {
+        0.5_f32
+    };
+
     Viewport {
         x: (window_size.width as f32 - width) * 0.5,
-        y: (window_size.height as f32 - height) * 0.5,
+        y: (window_size.height as f32 - height) * y_bias,
         width,
         height,
     }
