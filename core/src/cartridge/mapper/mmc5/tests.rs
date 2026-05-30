@@ -388,6 +388,63 @@ fn mmc5a_timer_counts_cpu_cycles_and_acknowledges_on_read() {
 }
 
 #[test]
+fn step_cpu_cycles_matches_repeated_step_for_timer_audio_and_idle_state() {
+    fn configure(mapper: &mut Mmc5, interrupt: &mut Interrupt) {
+        Cartridge::initialize(mapper);
+        mapper.write_expansion(0x5000, 0x3F, interrupt);
+        mapper.write_expansion(0x5002, 0x08, interrupt);
+        mapper.write_expansion(0x5003, 0xF8, interrupt);
+        mapper.write_expansion(0x5004, 0x3F, interrupt);
+        mapper.write_expansion(0x5006, 0x10, interrupt);
+        mapper.write_expansion(0x5007, 0xF8, interrupt);
+        mapper.write_expansion(0x5015, 0x03, interrupt);
+        mapper.write_expansion(0x5207, 0x03, interrupt);
+        mapper.write_expansion(0x5800, 0x00, interrupt);
+        mapper.write_expansion(0x520A, 0x00, interrupt);
+        mapper.write_expansion(0x5209, 0x40, interrupt);
+        mapper.in_frame = true;
+        mapper.ppu_read_seen_this_cpu_cycle = true;
+    }
+
+    let mut exact = Mmc5::new(test_data());
+    let mut batched = Mmc5::new(test_data());
+    let mut exact_interrupt = Interrupt::new();
+    let mut batched_interrupt = Interrupt::new();
+    configure(&mut exact, &mut exact_interrupt);
+    configure(&mut batched, &mut batched_interrupt);
+
+    for _ in 0..64 {
+        exact.step(&mut exact_interrupt);
+    }
+    batched.step_cpu_cycles(64, &mut batched_interrupt);
+
+    assert_eq!(
+        Cartridge::export_runtime_state(&batched)
+            .expect("batched state should export")
+            .extra_body,
+        Cartridge::export_runtime_state(&exact)
+            .expect("exact state should export")
+            .extra_body
+    );
+    assert_eq!(
+        batched_interrupt.irq_flag.bits(),
+        exact_interrupt.irq_flag.bits()
+    );
+}
+
+#[test]
+fn hardware_timer_reports_next_cpu_event_distance() {
+    let mut mapper = Mmc5::new(test_data());
+    Cartridge::initialize(&mut mapper);
+    let mut interrupt = Interrupt::new();
+
+    mapper.write_expansion(0x520A, 0x00, &mut interrupt);
+    mapper.write_expansion(0x5209, 0x03, &mut interrupt);
+
+    assert_eq!(mapper.cycles_until_next_cpu_event(), 3);
+}
+
+#[test]
 fn mmc5a_port_status_reflects_configured_output_levels() {
     let mut mapper = Mmc5::new(test_data());
     Cartridge::initialize(&mut mapper);

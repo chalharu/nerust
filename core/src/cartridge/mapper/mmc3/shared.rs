@@ -764,6 +764,14 @@ where
         self.shared_mut().write_register(address, value, interrupt);
     }
 
+    fn cpu_read_has_side_effect(&self, _address: usize) -> bool {
+        false
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        true
+    }
+
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {
         self.shared_mut().notify_ppu_bus_event(event, interrupt);
     }

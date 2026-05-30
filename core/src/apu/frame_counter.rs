@@ -144,6 +144,45 @@ impl FrameCounter {
         }
     }
 
+    pub(crate) fn cycles_until_next_frame_event(&self) -> u64 {
+        let mut cycles = if self.period {
+            match self.cycle {
+                0..=7456 => 7457 - self.cycle,
+                7457..=14912 => 14913 - self.cycle,
+                14913..=22370 => 22371 - self.cycle,
+                22371..=37280 => 37281 - self.cycle,
+                _ => 37282 - self.cycle,
+            }
+        } else {
+            match self.cycle {
+                0..=7456 => 7457 - self.cycle,
+                7457..=14912 => 14913 - self.cycle,
+                14913..=22370 => 22371 - self.cycle,
+                22371..=29827 => 29828 - self.cycle,
+                29828..=29829 => 1,
+                _ => 29830 - self.cycle,
+            }
+        };
+
+        if self.write_counter > 0 {
+            cycles = cycles.min(self.write_counter as u16);
+        }
+
+        u64::from(cycles.max(1))
+    }
+
+    pub(crate) fn advance_no_event(&mut self, cycles: u64) {
+        if cycles == 0 {
+            return;
+        }
+
+        debug_assert!(cycles < self.cycles_until_next_frame_event());
+        self.clock_cycle = self.clock_cycle.wrapping_add(cycles);
+        self.cycle += cycles as u16;
+        self.write_counter = self.write_counter.saturating_sub(cycles as usize);
+        self.block = self.block.saturating_sub(cycles as usize);
+    }
+
     pub(crate) fn write_frame_counter(&mut self, value: u8, interrupt: &mut Interrupt) {
         self.irq = ((value >> 6) & 1) == 0;
         self.new_value = value;

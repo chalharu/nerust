@@ -34,6 +34,7 @@ use nerust_sound_traits::MixerInput;
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
 // const FRAME_COUNTER_RATE: f64 = 29829.55;
 const CLOCK_RATE: u64 = 1_789_773;
+const MIN_BULK_SAMPLE_INTERVAL: u64 = 32;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Core {
@@ -224,6 +225,64 @@ impl Core {
         }
     }
 
+    pub(crate) fn step_many_batched<M: MixerInput>(
+        &mut self,
+        cpu: &mut Cpu,
+        mixer: &mut M,
+        mixer_sample_rate: u32,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+        cycles: u64,
+    ) {
+        let mut remaining = cycles;
+        while remaining > 0 {
+            let next_frame = self.frame_counter.cycles_until_next_frame_event();
+            let next_dmc_dma = self.dmc.cycles_until_next_dma_request(remaining);
+            if next_frame == 1 || next_dmc_dma == 1 {
+                self.step(
+                    cpu,
+                    mixer,
+                    mixer_sample_rate,
+                    expansion_audio_output,
+                    expansion_audio_inverted,
+                );
+                remaining -= 1;
+                continue;
+            }
+
+            let segment = remaining
+                .min(next_frame - 1)
+                .min(next_dmc_dma - 1)
+                .min(self.cycles_until_next_sample(mixer_sample_rate));
+            self.advance_no_frame_event(
+                segment,
+                cpu.interrupt_mut(),
+                mixer,
+                mixer_sample_rate,
+                expansion_audio_output,
+                expansion_audio_inverted,
+            );
+            remaining -= segment;
+        }
+    }
+
+    pub(crate) fn should_step_many_exact(mixer_sample_rate: u32) -> bool {
+        u64::from(mixer_sample_rate)
+            .min(CLOCK_RATE)
+            .saturating_mul(MIN_BULK_SAMPLE_INTERVAL)
+            > CLOCK_RATE
+    }
+
+    pub(crate) fn cycles_until_next_sample(&self, mixer_sample_rate: u32) -> u64 {
+        let increment = u64::from(mixer_sample_rate).min(CLOCK_RATE);
+        if increment == 0 {
+            return u64::MAX;
+        }
+
+        let accumulator = self.sample_accumulator % CLOCK_RATE;
+        (CLOCK_RATE - accumulator).div_ceil(increment).max(1)
+    }
+
     pub(crate) fn cycles_until_next_scheduler_event(
         &self,
         interrupt: &Interrupt,
@@ -283,6 +342,65 @@ impl Core {
         self.triangle.step_timer();
     }
 
+    fn advance_no_frame_event<M: MixerInput>(
+        &mut self,
+        cycles: u64,
+        interrupt: &mut Interrupt,
+        mixer: &mut M,
+        mixer_sample_rate: u32,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+    ) {
+        debug_assert!(cycles > 0);
+        debug_assert!(cycles < self.frame_counter.cycles_until_next_frame_event());
+        debug_assert!(cycles <= self.cycles_until_next_sample(mixer_sample_rate));
+
+        self.frame_counter.advance_no_event(cycles);
+        self.advance_timers(cycles, interrupt);
+        self.advance_sample_accumulator(
+            cycles,
+            mixer,
+            mixer_sample_rate,
+            expansion_audio_output,
+            expansion_audio_inverted,
+        );
+    }
+
+    fn advance_timers(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        self.pulse1.step_length_counter();
+        self.pulse2.step_length_counter();
+        self.noise.step_length_counter();
+        self.pulse1.step_timer_many(cycles);
+        self.pulse2.step_timer_many(cycles);
+        self.noise.step_timer_many(cycles);
+        self.dmc.step_timer_many(cycles, interrupt);
+        self.triangle.step_timer_many(cycles);
+    }
+
+    fn advance_sample_accumulator<M: MixerInput>(
+        &mut self,
+        cycles: u64,
+        mixer: &mut M,
+        mixer_sample_rate: u32,
+        expansion_audio_output: f32,
+        expansion_audio_inverted: bool,
+    ) {
+        let increment = u64::from(mixer_sample_rate).min(CLOCK_RATE);
+        if increment == 0 {
+            return;
+        }
+
+        if self.sample_accumulator >= CLOCK_RATE {
+            self.sample_accumulator %= CLOCK_RATE;
+        }
+        let total = self.sample_accumulator + cycles * increment;
+        debug_assert!(total < CLOCK_RATE * 2);
+        self.sample_accumulator = total % CLOCK_RATE;
+        if total >= CLOCK_RATE {
+            self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
+        }
+    }
+
     fn step_envelope(&mut self) {
         self.pulse1.step_envelope();
         self.pulse2.step_envelope();
@@ -334,7 +452,64 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::Core;
+    use crate::cpu::Core as Cpu;
     use crate::interrupt::Interrupt;
+    use nerust_sound_traits::MixerInput;
+
+    struct CapturingMixer {
+        samples: Vec<f32>,
+        sample_rate: u32,
+    }
+
+    impl CapturingMixer {
+        fn new(sample_rate: u32) -> Self {
+            Self {
+                samples: Vec::new(),
+                sample_rate,
+            }
+        }
+    }
+
+    impl Default for CapturingMixer {
+        fn default() -> Self {
+            Self::new(44_100)
+        }
+    }
+
+    impl MixerInput for CapturingMixer {
+        fn push(&mut self, data: f32) {
+            self.samples.push(data);
+        }
+
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+    }
+
+    fn configured_test_apu() -> (Core, Interrupt) {
+        let mut interrupt = Interrupt::new();
+        let mut apu = Core::new(&mut interrupt);
+        apu.write_register(0x4015, 0x0F, &mut interrupt);
+        apu.write_register(0x4000, 0x3F, &mut interrupt);
+        apu.write_register(0x4002, 0x08, &mut interrupt);
+        apu.write_register(0x4003, 0xF8, &mut interrupt);
+        apu.write_register(0x4008, 0xFF, &mut interrupt);
+        apu.write_register(0x400A, 0x20, &mut interrupt);
+        apu.write_register(0x400B, 0xF8, &mut interrupt);
+        apu.write_register(0x400C, 0x3F, &mut interrupt);
+        apu.write_register(0x400E, 0x03, &mut interrupt);
+        apu.write_register(0x400F, 0xF8, &mut interrupt);
+        apu.write_register(0x4010, 0x0F, &mut interrupt);
+        apu.write_register(0x4011, 0x20, &mut interrupt);
+        apu.write_register(0x4012, 0x00, &mut interrupt);
+        apu.write_register(0x4013, 0x00, &mut interrupt);
+        apu.write_register(0x4015, 0x1F, &mut interrupt);
+        if interrupt.dmc_dma_request.take().is_some() {
+            apu.dmc_fill(0xAA, &mut interrupt);
+        }
+        apu.write_register(0x4017, 0x00, &mut interrupt);
+        (apu, interrupt)
+    }
 
     #[test]
     fn inverted_expansion_audio_mix_centers_silence_and_flips_contribution() {
@@ -344,5 +519,70 @@ mod tests {
         assert!((apu.output(0.0, false) - 0.0).abs() < f32::EPSILON);
         assert!((apu.output(0.0, true) - 0.5).abs() < f32::EPSILON);
         assert!(apu.output(0.25, true) < 0.5);
+    }
+
+    #[test]
+    fn step_many_matches_repeated_step_across_samples_and_frame_events() {
+        let (mut exact, interrupt) = configured_test_apu();
+        let mut batched = exact.clone();
+        let mut exact_cpu = Cpu::new();
+        let mut batched_cpu = Cpu::new();
+        *exact_cpu.interrupt_mut() = interrupt;
+        *batched_cpu.interrupt_mut() = interrupt;
+        let mut exact_mixer = CapturingMixer::default();
+        let mut batched_mixer = CapturingMixer::default();
+        let sample_rate = exact_mixer.sample_rate();
+
+        for _ in 0..40_000 {
+            exact.step(&mut exact_cpu, &mut exact_mixer, sample_rate, 0.0, false);
+        }
+        batched.step_many_batched(
+            &mut batched_cpu,
+            &mut batched_mixer,
+            sample_rate,
+            0.0,
+            false,
+            40_000,
+        );
+
+        assert_eq!(batched_mixer.samples, exact_mixer.samples);
+        assert_eq!(format!("{:?}", batched), format!("{:?}", exact));
+        assert_eq!(
+            format!("{:?}", batched_cpu.interrupt_ref()),
+            format!("{:?}", exact_cpu.interrupt_ref())
+        );
+    }
+
+    #[test]
+    fn step_many_exact_matches_repeated_step_at_high_sample_rate() {
+        let (mut exact, interrupt) = configured_test_apu();
+        let mut many = exact.clone();
+        let mut exact_cpu = Cpu::new();
+        let mut many_cpu = Cpu::new();
+        *exact_cpu.interrupt_mut() = interrupt;
+        *many_cpu.interrupt_mut() = interrupt;
+        let mut exact_mixer = CapturingMixer::new(192_000);
+        let mut many_mixer = CapturingMixer::new(192_000);
+        let sample_rate = exact_mixer.sample_rate();
+
+        assert!(Core::should_step_many_exact(sample_rate));
+        for _ in 0..40_000 {
+            exact.step(&mut exact_cpu, &mut exact_mixer, sample_rate, 0.0, false);
+        }
+        many.step_many(
+            &mut many_cpu,
+            &mut many_mixer,
+            sample_rate,
+            0.0,
+            false,
+            40_000,
+        );
+
+        assert_eq!(many_mixer.samples, exact_mixer.samples);
+        assert_eq!(format!("{:?}", many), format!("{:?}", exact));
+        assert_eq!(
+            format!("{:?}", many_cpu.interrupt_ref()),
+            format!("{:?}", exact_cpu.interrupt_ref())
+        );
     }
 }
