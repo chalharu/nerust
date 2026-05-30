@@ -2901,6 +2901,48 @@ mod tests {
     }
 
     #[test]
+    fn dsp1_raster_command_streams_successive_scanlines() {
+        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+            "DSP1 RASTER STREAM",
+            0x20,
+            0x03,
+            None,
+            0x0A,
+        ))
+        .unwrap();
+
+        assert!(cartridge.write(0x308000, 0x02));
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        write_dsp1_word(&mut cartridge, 0x308000, 0x0100);
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        write_dsp1_word(&mut cartridge, 0x308000, 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x0100);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+
+        assert!(cartridge.write(0x308000, 0x0A));
+        write_dsp1_word(&mut cartridge, 0x308000, 1);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x00FF);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x00FF);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x00FE);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x00FE);
+
+        assert!(cartridge.write(0x308000, 0x04));
+        write_dsp1_word(&mut cartridge, 0x308000, 0x4000);
+        write_dsp1_word(&mut cartridge, 0x308000, 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0x4000);
+        assert_eq!(read_dsp1_word(&mut cartridge, 0x308000), 0);
+    }
+
+    #[test]
     fn dsp1_lorom_executes_matrix_commands() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "DSP1 MATRICES",

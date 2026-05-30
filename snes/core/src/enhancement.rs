@@ -3571,6 +3571,7 @@ pub(crate) struct Dsp1State {
     output_index: usize,
     matrices: [[[i16; 3]; 3]; 3],
     projection: Dsp1ProjectionState,
+    raster_line: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3677,6 +3678,7 @@ impl Dsp1State {
             output_index: 0,
             matrices: [[[0; 3]; 3]; 3],
             projection: Dsp1ProjectionState::default(),
+            raster_line: 0,
         }
     }
 
@@ -3731,6 +3733,7 @@ impl Dsp1State {
             return self.data;
         }
 
+        self.prepare_next_raster_output_if_needed();
         let word = self
             .output_words
             .get(self.output_index)
@@ -3748,7 +3751,11 @@ impl Dsp1State {
         self.data = value;
         self.output_index += 1;
         if self.output_index >= self.output_words.len() {
-            self.finish_command();
+            if self.current_command_is_raster() {
+                self.status = (self.status & !DSP1_STATUS_DRS) | DSP1_STATUS_RQM;
+            } else {
+                self.finish_command();
+            }
         }
         value
     }
@@ -3758,6 +3765,7 @@ impl Dsp1State {
         match self.phase {
             Dsp1Phase::WaitingCommand => self.start_command(value),
             Dsp1Phase::ReadingData => self.write_input_byte(value),
+            Dsp1Phase::WritingData if self.raster_output_drained() => self.start_command(value),
             Dsp1Phase::WritingData => {}
         }
     }
@@ -3816,7 +3824,7 @@ impl Dsp1State {
                 self.projection = Dsp1ProjectionState::from_words(&self.input_words);
                 self.projection.parameter()
             }
-            Dsp1Operation::Raster => self.projection.raster(self.input_words[0]),
+            Dsp1Operation::Raster => self.start_raster_output(self.input_words[0]),
             Dsp1Operation::ProjectObject => self.projection.project(&self.input_words),
             Dsp1Operation::Target => self.projection.target(&self.input_words),
             Dsp1Operation::SetMatrix(kind) => {
@@ -3860,6 +3868,36 @@ impl Dsp1State {
         self.input_words.clear();
         self.output_words.clear();
         self.output_index = 0;
+    }
+
+    fn start_raster_output(&mut self, screen_line: u16) -> Vec<u16> {
+        self.raster_line = screen_line.wrapping_add(1);
+        self.projection.raster(screen_line)
+    }
+
+    fn prepare_next_raster_output_if_needed(&mut self) {
+        if !self.raster_output_drained() {
+            return;
+        }
+
+        let screen_line = self.raster_line;
+        self.output_words = self.projection.raster(screen_line);
+        self.raster_line = screen_line.wrapping_add(1);
+        self.output_index = 0;
+        self.status = (self.status & !DSP1_STATUS_DRS) | DSP1_STATUS_RQM;
+    }
+
+    fn raster_output_drained(&self) -> bool {
+        self.current_command_is_raster()
+            && !self.output_words.is_empty()
+            && self.output_index >= self.output_words.len()
+    }
+
+    fn current_command_is_raster(&self) -> bool {
+        matches!(
+            dsp1_command_spec(self.command).operation,
+            Dsp1Operation::Raster
+        )
     }
 }
 
