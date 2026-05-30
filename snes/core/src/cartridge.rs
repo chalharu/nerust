@@ -2698,18 +2698,21 @@ mod tests {
         ))
         .unwrap();
 
+        assert_eq!(cartridge.read(0x208000), Some(0x00));
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
         assert_eq!(cartridge.read(0x308000), Some(0x00));
         assert_eq!(cartridge.read(0x30C000), Some(0x84));
         assert!(cartridge.write(0x30C000, 0x00));
         assert_eq!(cartridge.read(0x30C000), Some(0x84));
         assert!(cartridge.write(0x308000, 0x99));
         assert_eq!(cartridge.read(0x308000), Some(0x99));
+        assert_eq!(cartridge.read(0xA0C000), Some(0x84));
         assert_eq!(cartridge.read(0xB0C000), Some(0x84));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
     }
 
     #[test]
-    fn dsp1_lorom_does_not_intercept_dsp2_bank_window() {
+    fn dsp1_lorom_small_uses_20_3f_bank_window() {
         let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
             "DSP1 MMIO BANKS",
             0x20,
@@ -2719,10 +2722,12 @@ mod tests {
         ))
         .unwrap();
 
+        assert_eq!(cartridge.read(0x20C000), Some(0x84));
         assert_eq!(cartridge.read(0x30C000), Some(0x84));
-        assert_eq!(cartridge.read(0x20C000), Some(0x00));
-        assert!(!cartridge.write(0x208000, 0x2F));
-        assert_eq!(cartridge.read(0x30C000), Some(0x84));
+        assert!(cartridge.write(0x208000, 0x2F));
+        assert_eq!(cartridge.read(0x208000), Some(0x2F));
+        assert!(!cartridge.write(0x600000, 0x2F));
+        assert_eq!(cartridge.read(0x604000), Some(0x00));
     }
 
     fn write_dsp1_word(cartridge: &mut Cartridge, data_address: u32, word: u16) {
@@ -3189,19 +3194,16 @@ mod tests {
 
     #[test]
     fn dsp1_register_window_supports_documented_board_maps() {
-        let mut cartridge = Cartridge::from_bytes(&build_lorom_with_header(
-            "DSP1 2MB MMIO",
-            0x20,
-            0x03,
-            None,
-            0x0B,
-        ))
-        .unwrap();
+        let mut rom = build_lorom_with_header("DSP1 2MB MMIO", 0x20, 0x03, None, 0x0B);
+        rom.resize(0x200000, 0xEA);
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
 
         assert!(cartridge.write(0x600000, 0x55));
         assert_eq!(cartridge.read(0x600000), Some(0x55));
         assert_eq!(cartridge.read(0x604000), Some(0x84));
         assert_eq!(cartridge.read(0xE04000), Some(0x84));
+        assert!(!cartridge.write(0x308000, 0x66));
+        assert_eq!(cartridge.read(0x30C000), Some(0xEA));
 
         let mut cartridge = Cartridge::from_bytes(&build_hirom_with_header(
             "DSP1B MAD2 MMIO",
