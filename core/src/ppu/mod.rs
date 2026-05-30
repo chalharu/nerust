@@ -35,7 +35,7 @@ struct DecayableOpenBus {
 
 #[cfg(test)]
 mod tests {
-    use super::Core;
+    use super::{Core, Mask, NMI_SCAN_LINE};
     use crate::cart_device::Cartridge;
     use crate::cartridge;
     use crate::cartridge_data_parts::CartridgeDataParts;
@@ -155,6 +155,131 @@ mod tests {
         let _ = ppu.read_data(&mut ppu_cartridge, &mut interrupt);
 
         assert_eq!(cartridge.read(0x0000).data, 0x03);
+    }
+
+    fn run_repeated_step(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = NullScreen;
+        let mut result = false;
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        for _ in 0..cycles {
+            result |= ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
+        }
+        (ppu, interrupt, result)
+    }
+
+    fn run_exact_many(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = NullScreen;
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
+        (ppu, interrupt, result)
+    }
+
+    fn run_step_many(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = NullScreen;
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        let result = ppu.step_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
+        (ppu, interrupt, result)
+    }
+
+    fn assert_idle_advance_matches(
+        left: &(Core, Interrupt, bool),
+        right: &(Core, Interrupt, bool),
+    ) {
+        assert_eq!(left.2, right.2);
+        assert_eq!(left.1.nmi, right.1.nmi);
+        assert_eq!(left.0.scan_line, right.0.scan_line);
+        assert_eq!(left.0.cycle, right.0.cycle);
+        assert_eq!(left.0.frames, right.0.frames);
+        assert_eq!(left.0.bus_tick, right.0.bus_tick);
+        assert_eq!(left.0.vram_read_delay, right.0.vram_read_delay);
+        assert_eq!(left.0.render_executing, right.0.render_executing);
+        assert_eq!(left.0.post_render_executing, right.0.post_render_executing);
+        assert_eq!(left.0.status.nmi_occurred, right.0.status.nmi_occurred);
+        assert_eq!(left.0.openbus_io.data, right.0.openbus_io.data);
+        assert_eq!(left.0.openbus_io.decay, right.0.openbus_io.decay);
+    }
+
+    #[test]
+    fn step_exact_many_idle_skip_matches_repeated_step_with_read_delay() {
+        let mut ppu = Core::new();
+        ppu.scan_line = NMI_SCAN_LINE;
+        ppu.cycle = 12;
+        ppu.bus_tick = 100;
+        ppu.vram_read_delay = 6;
+
+        let repeated = run_repeated_step(ppu.clone(), 4);
+        let batched = run_exact_many(ppu, 4);
+
+        assert_idle_advance_matches(&repeated, &batched);
+        assert_eq!(batched.0.vram_read_delay, 2);
+    }
+
+    #[test]
+    fn step_many_idle_skip_matches_repeated_step_with_read_delay() {
+        let mut ppu = Core::new();
+        ppu.scan_line = NMI_SCAN_LINE;
+        ppu.cycle = 20;
+        ppu.bus_tick = 200;
+        ppu.vram_read_delay = 5;
+
+        let repeated = run_repeated_step(ppu.clone(), 3);
+        let batched = run_step_many(ppu, 3);
+
+        assert_idle_advance_matches(&repeated, &batched);
+        assert_eq!(batched.0.vram_read_delay, 2);
+    }
+
+    #[test]
+    fn step_exact_many_idle_skip_saturates_read_delay() {
+        let mut ppu = Core::new();
+        ppu.scan_line = NMI_SCAN_LINE;
+        ppu.cycle = 24;
+        ppu.bus_tick = 250;
+        ppu.vram_read_delay = 3;
+
+        let repeated = run_repeated_step(ppu.clone(), 7);
+        let batched = run_exact_many(ppu, 7);
+
+        assert_idle_advance_matches(&repeated, &batched);
+        assert_eq!(batched.0.vram_read_delay, 0);
+    }
+
+    #[test]
+    fn step_exact_many_does_not_skip_when_rendering_was_just_enabled() {
+        let mut ppu = Core::new();
+        ppu.scan_line = NMI_SCAN_LINE;
+        ppu.cycle = 30;
+        ppu.mask = Mask::from(0x08);
+
+        let repeated = run_repeated_step(ppu.clone(), 3);
+        let batched = run_exact_many(ppu, 3);
+
+        assert_idle_advance_matches(&repeated, &batched);
+        assert!(batched.0.render_executing);
+        assert!(batched.0.post_render_executing);
+    }
+
+    #[test]
+    fn step_exact_many_does_not_skip_across_line_boundary_events() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 240;
+        ppu.cycle = 338;
+        ppu.bus_tick = 300;
+        ppu.openbus_io.write(0xFF);
+
+        let repeated = run_repeated_step(ppu.clone(), 4);
+        let batched = run_exact_many(ppu, 4);
+
+        assert_idle_advance_matches(&repeated, &batched);
+        assert_eq!(batched.0.scan_line, 241);
+        assert_eq!(batched.0.frames, 1);
+        assert!(batched.2);
     }
 }
 
@@ -1445,8 +1570,7 @@ impl Core {
         let mut remaining = cycles;
         while remaining > 0 {
             if let Some(skip_cycles) = self.idle_skip_cycles(remaining) {
-                self.bus_tick += skip_cycles;
-                self.cycle += skip_cycles as u16;
+                self.advance_idle_cycles(skip_cycles);
                 remaining -= skip_cycles;
                 continue;
             }
@@ -1466,10 +1590,17 @@ impl Core {
         cycles: u64,
     ) -> bool {
         let mut result = false;
-        for _ in 0..cycles {
+        let mut remaining = cycles;
+        while remaining > 0 {
+            if let Some(skip_cycles) = self.idle_skip_cycles(remaining) {
+                self.advance_idle_cycles(skip_cycles);
+                remaining -= skip_cycles;
+                continue;
+            }
             if self.step(screen, cartridge, interrupt) {
                 result = true;
             }
+            remaining -= 1;
         }
         result
     }
@@ -1477,6 +1608,8 @@ impl Core {
     fn idle_skip_cycles(&self, max_cycles: u64) -> Option<u64> {
         if self.render_executing
             || self.post_render_executing
+            || self.mask.show_background
+            || self.mask.show_sprites
             || self.vram_addr_update_delay > 0
             || self.cycle > 339
             || self.scan_line == 0 && self.cycle == 0
@@ -1490,8 +1623,23 @@ impl Core {
         (cycles > 0).then_some(cycles)
     }
 
+    fn advance_idle_cycles(&mut self, cycles: u64) {
+        self.bus_tick += cycles;
+        self.cycle += cycles as u16;
+        self.vram_read_delay = if cycles >= u64::from(self.vram_read_delay) {
+            0
+        } else {
+            self.vram_read_delay - cycles as u8
+        };
+    }
+
     pub(crate) fn cycles_until_next_scheduler_event(&self, max_cycles: u64) -> u64 {
-        if self.render_executing || self.post_render_executing || self.vram_addr_update_delay > 0 {
+        if self.render_executing
+            || self.post_render_executing
+            || self.mask.show_background
+            || self.mask.show_sprites
+            || self.vram_addr_update_delay > 0
+        {
             return 1;
         }
 
