@@ -1007,15 +1007,15 @@ mod scheduler_tests {
             0xA9, 0x08, 0x8D, 0x02, 0x50, // LDA #$08; STA $5002
             0xA9, 0xF8, 0x8D, 0x03, 0x50, // LDA #$F8; STA $5003
         ];
-        program.extend(std::iter::repeat(0xEA).take(128));
+        program.extend([0xEA; 128]);
         program.extend_from_slice(&[
             0xA9, 0x20, 0x8D, 0x11, 0x50, // LDA #$20; STA $5011
         ]);
-        program.extend(std::iter::repeat(0xEA).take(128));
+        program.extend([0xEA; 128]);
         program.extend_from_slice(&[
             0xA9, 0x70, 0x8D, 0x11, 0x50, // LDA #$70; STA $5011
         ]);
-        program.extend(std::iter::repeat(0xEA).take(128));
+        program.extend([0xEA; 128]);
         program.extend_from_slice(&[0xA9, 0x01, 0x69, 0x01, 0xEA]);
 
         let mut prog_rom = vec![0xEA; 0x20000];
