@@ -600,6 +600,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc
     max_steps: 5000
     check_interval_steps: 5000
+    expected_screen_hash: "0xFE2DBC14C9DE1641"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -635,6 +636,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
     max_steps: 114688
     check_interval_steps: 114688
+    expected_screen_hash: "0xFE2DBC14C9DE1641"
     assertions:
       - kind: bus_u8
         address: "0x004200"
@@ -1252,6 +1254,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
     max_steps: 53248
     check_interval_steps: 53248
+    expected_screen_hash: "0xBEFDE8E114DA5C1E"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1285,6 +1288,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc
     max_steps: 16384
     check_interval_steps: 16384
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1324,6 +1328,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc
     max_steps: 16384
     check_interval_steps: 16384
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1363,6 +1368,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/joyser0-read-during-autojoy.sfc
     max_steps: 49152
     check_interval_steps: 49152
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
     assertions:
       - kind: bus_u8
         address: "0x002100"
