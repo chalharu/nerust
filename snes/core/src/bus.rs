@@ -89,7 +89,8 @@ enum MathPending {
 pub(crate) trait CpuBus {
     fn read(&mut self, addr: u32) -> u8;
     fn write(&mut self, addr: u32, data: u8);
-    fn tick(&mut self) {}
+    fn tick(&mut self);
+    fn tick_many(&mut self, cycles: u32);
     /// Returns `true` and clears the pending-NMI flag when an NMI is waiting
     /// for the CPU to service.  Returns `false` otherwise.
     fn poll_nmi(&mut self) -> bool {
@@ -272,16 +273,53 @@ impl Bus {
     }
 
     pub(crate) fn tick_cpu_cycle(&mut self) {
-        self.tick_math_io();
-        self.apu.tick_cpu_cycle();
-        self.video_master_clock_accumulator += CPU_MASTER_CLOCKS_PER_CYCLE;
-        while self.video_master_clock_accumulator >= VIDEO_MASTER_CLOCKS_PER_SUBTICK {
-            self.video_master_clock_accumulator -= VIDEO_MASTER_CLOCKS_PER_SUBTICK;
+        self.step_cpu_cycles(1);
+    }
+
+    pub(crate) fn step_cpu_cycles(&mut self, cycles: u32) {
+        if cycles == 0 {
+            return;
+        }
+
+        self.tick_math_io(cycles);
+        self.apu.step_cpu_cycles(cycles);
+
+        let total_master_clocks = u64::from(self.video_master_clock_accumulator)
+            + u64::from(cycles) * u64::from(CPU_MASTER_CLOCKS_PER_CYCLE);
+        let video_subticks = total_master_clocks / u64::from(VIDEO_MASTER_CLOCKS_PER_SUBTICK);
+        self.video_master_clock_accumulator =
+            (total_master_clocks % u64::from(VIDEO_MASTER_CLOCKS_PER_SUBTICK)) as u32;
+        for _ in 0..video_subticks {
             self.advance_video_one_subtick();
         }
     }
 
-    fn tick_math_io(&mut self) {
+    pub(crate) fn next_event_cycles(&self) -> u32 {
+        let video_master_clocks_remaining =
+            VIDEO_MASTER_CLOCKS_PER_SUBTICK - self.video_master_clock_accumulator;
+        let video_cycles = video_master_clocks_remaining.div_ceil(CPU_MASTER_CLOCKS_PER_CYCLE);
+        let math_cycles = self.math_pending_cycles().unwrap_or(u32::MAX);
+
+        video_cycles.min(math_cycles).max(1)
+    }
+
+    fn math_pending_cycles(&self) -> Option<u32> {
+        match self.math_pending {
+            Some(MathPending::Multiply {
+                cycles_remaining, ..
+            })
+            | Some(MathPending::Divide {
+                cycles_remaining, ..
+            }) => Some(u32::from(cycles_remaining)),
+            None => None,
+        }
+    }
+
+    fn tick_math_io(&mut self, cycles: u32) {
+        if cycles == 0 {
+            return;
+        }
+
         let Some(pending) = self.math_pending else {
             return;
         };
@@ -289,7 +327,7 @@ impl Bus {
             MathPending::Multiply {
                 cycles_remaining,
                 result,
-            } if cycles_remaining <= 1 => {
+            } if u32::from(cycles_remaining) <= cycles => {
                 self.math_result = result;
                 None
             }
@@ -297,14 +335,14 @@ impl Bus {
                 cycles_remaining,
                 result,
             } => Some(MathPending::Multiply {
-                cycles_remaining: cycles_remaining - 1,
+                cycles_remaining: (u32::from(cycles_remaining) - cycles) as u8,
                 result,
             }),
             MathPending::Divide {
                 cycles_remaining,
                 quotient,
                 remainder,
-            } if cycles_remaining <= 1 => {
+            } if u32::from(cycles_remaining) <= cycles => {
                 self.math_quotient = quotient;
                 self.math_result = remainder;
                 None
@@ -314,7 +352,7 @@ impl Bus {
                 quotient,
                 remainder,
             } => Some(MathPending::Divide {
-                cycles_remaining: cycles_remaining - 1,
+                cycles_remaining: (u32::from(cycles_remaining) - cycles) as u8,
                 quotient,
                 remainder,
             }),
@@ -1401,12 +1439,72 @@ impl CpuBus for Bus {
         self.tick_cpu_cycle();
     }
 
+    fn tick_many(&mut self, cycles: u32) {
+        self.step_cpu_cycles(cycles);
+    }
+
     fn poll_nmi(&mut self) -> bool {
         Bus::poll_nmi(self)
     }
 
     fn poll_irq(&mut self) -> bool {
         Bus::poll_irq(self)
+    }
+}
+
+pub(crate) struct ScheduledCpuBus<'a> {
+    bus: &'a mut Bus,
+    pending_cycles: u32,
+}
+
+impl<'a> ScheduledCpuBus<'a> {
+    pub(crate) fn new(bus: &'a mut Bus) -> Self {
+        Self {
+            bus,
+            pending_cycles: 0,
+        }
+    }
+
+    pub(crate) fn flush(&mut self) {
+        if self.pending_cycles == 0 {
+            return;
+        }
+        let cycles = self.pending_cycles;
+        self.pending_cycles = 0;
+        self.bus.step_cpu_cycles(cycles);
+    }
+}
+
+impl CpuBus for ScheduledCpuBus<'_> {
+    fn read(&mut self, addr: u32) -> u8 {
+        self.flush();
+        self.bus.read(addr)
+    }
+
+    fn write(&mut self, addr: u32, data: u8) {
+        self.flush();
+        self.bus.write(addr, data);
+    }
+
+    fn tick(&mut self) {
+        self.tick_many(1);
+    }
+
+    fn tick_many(&mut self, cycles: u32) {
+        self.pending_cycles = self
+            .pending_cycles
+            .checked_add(cycles)
+            .expect("scheduled CPU bus pending cycle accumulator overflowed");
+    }
+
+    fn poll_nmi(&mut self) -> bool {
+        self.flush();
+        self.bus.poll_nmi()
+    }
+
+    fn poll_irq(&mut self) -> bool {
+        self.flush();
+        self.bus.poll_irq()
     }
 }
 
@@ -1491,9 +1589,9 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus,
+        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, CPU_MASTER_CLOCKS_PER_CYCLE,
         STANDARD_CONTROLLER_PAYLOAD_BITS, STANDARD_CONTROLLER_PORT_COUNT, VBLANK_STUB_ACTIVE_START,
-        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE,
+        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE, VIDEO_MASTER_CLOCKS_PER_SUBTICK,
     };
     use crate::{
         Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
@@ -1823,6 +1921,57 @@ mod tests {
         assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
         bus.tick_cpu_cycle();
         assert_eq!(bus.apu.read_smp(0x00FD), 0x01);
+    }
+
+    #[test]
+    fn bulk_cpu_cycle_step_matches_single_cycle_apu_timer_progress() {
+        let mut single = Bus::new(test_cartridge());
+        let mut bulk = Bus::new(test_cartridge());
+
+        for bus in [&mut single, &mut bulk] {
+            bus.apu.write_smp(0x00FC, 0x03);
+            bus.apu.write_smp(0x00F1, 0x04);
+        }
+        for _ in 0..(56 * 4 + 19) {
+            single.tick_cpu_cycle();
+        }
+        bulk.step_cpu_cycles(56 * 4 + 19);
+
+        assert_eq!(bulk.apu.read_smp(0x00FF), single.apu.read_smp(0x00FF));
+        assert_eq!(bulk.apu.read_smp(0x00FF), single.apu.read_smp(0x00FF));
+    }
+
+    #[test]
+    fn bulk_cpu_cycle_step_matches_single_cycle_math_completion() {
+        let mut single = Bus::new(test_cartridge());
+        let mut bulk = Bus::new(test_cartridge());
+
+        for bus in [&mut single, &mut bulk] {
+            bus.write(0x004202, 0x12);
+            bus.write(0x004203, 0x34);
+        }
+        for _ in 0..8 {
+            single.tick_cpu_cycle();
+        }
+        bulk.step_cpu_cycles(8);
+
+        assert_eq!(bulk.read(0x004216), single.read(0x004216));
+        assert_eq!(bulk.read(0x004217), single.read(0x004217));
+    }
+
+    #[test]
+    fn bulk_cpu_cycle_step_keeps_nmi_pending_after_vblank_window() {
+        fn cycles_for_subticks(subticks: u32) -> u32 {
+            (subticks * VIDEO_MASTER_CLOCKS_PER_SUBTICK).div_ceil(CPU_MASTER_CLOCKS_PER_CYCLE)
+        }
+
+        let mut bus = Bus::new(test_cartridge());
+        bus.write(0x004200, 0x80);
+
+        bus.step_cpu_cycles(cycles_for_subticks(u32::from(VBLANK_STUB_PERIOD) + 1));
+
+        assert!(bus.poll_nmi());
+        assert!(!bus.poll_nmi());
     }
 
     fn upload_and_start_apu_program(bus: &mut Bus, entry: u16, program: &[u8]) {

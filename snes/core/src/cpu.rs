@@ -1325,6 +1325,59 @@ impl Cpu {
         self.refresh_state();
     }
 
+    pub(crate) fn execute_instruction(&mut self, bus: &mut dyn CpuBus) -> u32 {
+        if self.current_state == CpuState::Stopped || self.fault.is_some() {
+            return 0;
+        }
+
+        let start_cycles = self.cycles;
+        loop {
+            bus.tick();
+            self.step(bus);
+
+            if self.current_state == CpuState::Stopped || self.fault.is_some() {
+                break;
+            }
+            if matches!(self.micro_state, MicroState::Fetch) {
+                break;
+            }
+            if self.current_state == CpuState::Waiting
+                && matches!(self.micro_state, MicroState::WaitingForInterrupt)
+            {
+                break;
+            }
+        }
+
+        self.cycles.wrapping_sub(start_cycles) as u32
+    }
+
+    pub(crate) fn execute_until(
+        &mut self,
+        bus: &mut dyn CpuBus,
+        allowed_cycles: u32,
+    ) -> (u32, bool) {
+        if allowed_cycles == 0 || self.current_state == CpuState::Stopped || self.fault.is_some() {
+            return (0, false);
+        }
+
+        let start_cycles = self.cycles;
+        loop {
+            let used_cycles = self.cycles.wrapping_sub(start_cycles);
+            if used_cycles >= u64::from(allowed_cycles)
+                || self.current_state == CpuState::Stopped
+                || self.fault.is_some()
+            {
+                return (used_cycles as u32, used_cycles > u64::from(allowed_cycles));
+            }
+
+            let instruction_cycles = self.execute_instruction(bus);
+            if instruction_cycles == 0 {
+                let used_cycles = self.cycles.wrapping_sub(start_cycles);
+                return (used_cycles as u32, used_cycles > u64::from(allowed_cycles));
+            }
+        }
+    }
+
     fn step_reset(&mut self, bus: &mut dyn CpuBus, remaining: u8, low: u8) {
         match remaining {
             0 => self.micro_state = MicroState::Fetch,
@@ -4341,10 +4394,8 @@ impl Cpu {
     }
 
     fn burn_internal_cycles(&mut self, bus: &mut dyn CpuBus, additional: u8) {
-        for _ in 0..additional {
-            self.cycles = self.cycles.wrapping_add(1);
-            bus.tick();
-        }
+        self.cycles = self.cycles.wrapping_add(u64::from(additional));
+        bus.tick_many(u32::from(additional));
     }
 
     fn direct_page_cycle_penalty(&self) -> u8 {
@@ -4628,6 +4679,10 @@ mod tests {
         fn write(&mut self, addr: u32, data: u8) {
             self.memory.insert(addr, data);
         }
+
+        fn tick(&mut self) {}
+
+        fn tick_many(&mut self, _cycles: u32) {}
 
         fn poll_nmi(&mut self) -> bool {
             core::mem::take(&mut self.nmi_pending)

@@ -15,7 +15,7 @@ use nerust_input_schema::{
 };
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_snes_core::{Core, CpuState};
+use nerust_snes_core::Core;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -609,11 +609,8 @@ fn discover_msu1_audio_tracks(path: &Path) -> Result<Vec<u16>, String> {
 }
 
 fn step_snes_frame(core: &mut Core) -> Result<(), String> {
-    let target_cycles = core.cycles().wrapping_add(CPU_CYCLES_PER_FRAME);
-    while core.cycles() < target_cycles && core.current_state() != CpuState::Stopped {
-        core.step().map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    core.run_for_cycles(CPU_CYCLES_PER_FRAME)
+        .map_err(|error| error.to_string())
 }
 
 fn publish_metrics(
