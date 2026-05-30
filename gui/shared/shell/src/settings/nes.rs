@@ -7,7 +7,7 @@ use nerust_contract_settings::{
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
-use nerust_sound_openal::OpenAl;
+use nerust_sound_openal::{AudioFilterProfile, OpenAl};
 use nerust_timer::CLOCK_RATE;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,13 +30,22 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
 }
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> OpenAl {
+    build_speaker_with_profile(settings, CLOCK_RATE as i32, AudioFilterProfile::Nes)
+}
+
+pub fn build_speaker_with_profile(
+    settings: &HostBackendLocalSettings,
+    source_sample_rate: i32,
+    filter_profile: AudioFilterProfile,
+) -> OpenAl {
     let spec = audio_backend_spec(settings.audio.clone());
-    OpenAl::with_gain(
+    OpenAl::with_gain_and_filter(
         spec.requested_sample_rate,
-        CLOCK_RATE as i32,
+        source_sample_rate,
         spec.buffer_width,
         spec.buffer_count,
         spec.gain,
+        filter_profile,
     )
 }
 

@@ -51,6 +51,11 @@ pub(super) fn render_bg1(
         } else {
             8
         },
+        horizontal_scale: if screen_mode == 5 || screen_mode == 6 {
+            2
+        } else {
+            1
+        },
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
     };
@@ -76,7 +81,7 @@ pub(super) fn render_bg1(
             % tilemap_height_pixels.max(1);
         let bg_y = (screen_y + vofs) % tilemap_height_pixels;
         for screen_x in 0..SCREEN_WIDTH {
-            let bg_x = (screen_x + hofs) % tilemap_width_pixels;
+            let bg_x = (screen_x * context.horizontal_scale + hofs) % tilemap_width_pixels;
             if let Some(color) = bg1_pixel(core, &context, &palette, bg_x, bg_y) {
                 put_pixel(rgba, screen_x, screen_y, color);
             }
@@ -158,6 +163,7 @@ struct Bg1RenderContext {
     tilemap_base: usize,
     chr_base: usize,
     tile_size: usize,
+    horizontal_scale: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
 }
@@ -177,9 +183,15 @@ impl BgRenderMode {
             (BgLayer::Bg1 | BgLayer::Bg2, 1) => Ok(Some(Self::Bpp4)),
             (BgLayer::Bg3, 1) => Ok(Some(Self::Bpp2)),
             (BgLayer::Bg4, 1) => Ok(None),
+            (BgLayer::Bg1 | BgLayer::Bg2, 2) => Ok(Some(Self::Bpp4)),
             (BgLayer::Bg1, 3) => Ok(Some(Self::Bpp8)),
+            (BgLayer::Bg2, 3) => Ok(Some(Self::Bpp4)),
+            (BgLayer::Bg1, 4) => Ok(Some(Self::Bpp8)),
+            (BgLayer::Bg2, 4) => Ok(Some(Self::Bpp2)),
+            (BgLayer::Bg1, 5 | 6) => Ok(Some(Self::Bpp4)),
+            (BgLayer::Bg2, 5) => Ok(Some(Self::Bpp2)),
             (BgLayer::Bg1, 7) => Ok(Some(Self::Mode7)),
-            (_, 3 | 7) => Ok(None),
+            (_, 2..=7) => Ok(None),
             _ => Err(RenderError::UnsupportedBgMode { mode }),
         }
     }
@@ -251,7 +263,7 @@ impl BgLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{BgLayer, bpp2_palette_base};
+    use super::{BgLayer, BgRenderMode, bpp2_palette_base};
 
     #[test]
     fn bpp2_palette_base_uses_mode0_layer_blocks() {
@@ -264,5 +276,14 @@ mod tests {
     #[test]
     fn mode1_bg3_uses_first_palette_block() {
         assert_eq!(bpp2_palette_base(BgLayer::Bg3, 1), 0);
+    }
+
+    #[test]
+    fn all_snes_bg_modes_have_render_mapping() {
+        for mode in 0..=7 {
+            for layer in [BgLayer::Bg1, BgLayer::Bg2, BgLayer::Bg3, BgLayer::Bg4] {
+                assert!(BgRenderMode::from_bgmode(layer, mode).is_ok());
+            }
+        }
     }
 }

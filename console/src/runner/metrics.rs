@@ -32,7 +32,6 @@ impl SharedConsoleMetrics {
             speed_multiplier,
             loaded,
             paused,
-            ..ConsoleMetrics::default()
         };
     }
 }
