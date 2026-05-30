@@ -1008,6 +1008,21 @@ cases:
     check_interval_steps: 300000
     expected_screen_hash: "0xFC95F36A460D3625"
     assertions:
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0005"
+        expected: "0x04"
+      - kind: wram_u8
+        address: "0x0007"
+        expected: "0x3E"
+      - kind: wram_u8
+        address: "0x000A"
+        expected: "0x01"
       - kind: bus_u8
         address: "0x00303B"
         expected: "0x04"
@@ -1038,6 +1053,27 @@ cases:
       - kind: bus_u8
         address: "0x002007"
         expected: "0x31"
+      - kind: vram_u16
+        address: "0x8000"
+        expected: "0x66AA"
+      - kind: vram_u16
+        address: "0x8002"
+        expected: "0xCC55"
+      - kind: vram_u16
+        address: "0x8004"
+        expected: "0x99AA"
+      - kind: vram_u16
+        address: "0x8006"
+        expected: "0x3355"
+      - kind: vram_u16
+        address: "0x801E"
+        expected: "0xFF0F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x9C78"
+      - kind: oam_u16
+        address: "0x0002"
+        expected: "0x3000"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
