@@ -64,4 +64,12 @@ impl Mapper for NRom {
     fn name(&self) -> &str {
         "NROM (Mapper0)"
     }
+
+    fn cpu_read_has_side_effect(&self, _address: usize) -> bool {
+        false
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        true
+    }
 }
