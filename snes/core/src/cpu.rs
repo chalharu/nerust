@@ -1,6 +1,9 @@
 use crate::bus::CpuBus;
 
 pub(crate) const RESET_CYCLES: u8 = 7;
+const BRA_OPCODE: u8 = 0x80;
+const BRA_SELF_OFFSET: u8 = 0xFE;
+const BRA_SELF_LOOP_CYCLES: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CpuFault {
@@ -1370,12 +1373,64 @@ impl Cpu {
                 return (used_cycles as u32, used_cycles > u64::from(allowed_cycles));
             }
 
+            let remaining_cycles = (u64::from(allowed_cycles) - used_cycles) as u32;
+            if self.try_fast_forward_waiting(bus, remaining_cycles) != 0 {
+                continue;
+            }
+            if self.try_fast_forward_self_branch(bus, remaining_cycles) != 0 {
+                continue;
+            }
+
             let instruction_cycles = self.execute_instruction(bus);
             if instruction_cycles == 0 {
                 let used_cycles = self.cycles.wrapping_sub(start_cycles);
                 return (used_cycles as u32, used_cycles > u64::from(allowed_cycles));
             }
+            if self.current_state == CpuState::Waiting {
+                let used_cycles = self.cycles.wrapping_sub(start_cycles);
+                return (used_cycles as u32, used_cycles > u64::from(allowed_cycles));
+            }
         }
+    }
+
+    fn try_fast_forward_waiting(&mut self, bus: &mut dyn CpuBus, allowed_cycles: u32) -> u32 {
+        if allowed_cycles == 0
+            || self.current_state != CpuState::Waiting
+            || !matches!(self.micro_state, MicroState::WaitingForInterrupt)
+            || bus.has_pending_interrupt()
+        {
+            return 0;
+        }
+
+        bus.tick_many(allowed_cycles);
+        self.cycles = self.cycles.wrapping_add(u64::from(allowed_cycles));
+        allowed_cycles
+    }
+
+    fn try_fast_forward_self_branch(&mut self, bus: &mut dyn CpuBus, allowed_cycles: u32) -> u32 {
+        if allowed_cycles < BRA_SELF_LOOP_CYCLES
+            || self.current_state != CpuState::Running
+            || !matches!(self.micro_state, MicroState::Fetch)
+            || self.defer_irq_for_one_fetch
+            || bus.has_pending_interrupt()
+        {
+            return 0;
+        }
+
+        let opcode_address = self.full_pc();
+        let operand_address =
+            (u32::from(self.registers.pb) << 16) | u32::from(self.registers.pc.wrapping_add(1));
+        if bus.peek_side_effect_free(opcode_address) != Some(BRA_OPCODE)
+            || bus.peek_side_effect_free(operand_address) != Some(BRA_SELF_OFFSET)
+        {
+            return 0;
+        }
+
+        let cycles = (allowed_cycles / BRA_SELF_LOOP_CYCLES) * BRA_SELF_LOOP_CYCLES;
+        bus.tick_many(cycles);
+        self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+        self.current_opcode = BRA_OPCODE;
+        cycles
     }
 
     fn step_reset(&mut self, bus: &mut dyn CpuBus, remaining: u8, low: u8) {

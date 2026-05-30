@@ -22,6 +22,7 @@ const SNES_NTSC_MASTER_CLOCK_HZ: f64 = 21_477_272.0;
 const SNES_MASTER_CLOCKS_PER_SCANLINE: u64 = 1364;
 const SNES_SCANLINES_PER_FRAME: u64 = 262;
 const CPU_MASTER_CLOCKS_PER_CYCLE: u64 = 6;
+const DEFAULT_BENCHMARK_THRESHOLD: &str = "5.0";
 
 fn main() {
     if let Err(message) = run() {
@@ -71,8 +72,9 @@ fn run() -> Result<(), String> {
                     Arg::new("threshold")
                         .long("threshold")
                         .value_name("RATIO")
-                        .default_value("1.0")
-                        .value_parser(clap::value_parser!(f64)),
+                        .default_value(DEFAULT_BENCHMARK_THRESHOLD)
+                        .value_parser(clap::value_parser!(f64))
+                        .help("Minimum emulation speed ratio required for each benchmark case"),
                 )
                 .arg(
                     Arg::new("enhancement-only")
@@ -81,6 +83,12 @@ fn run() -> Result<(), String> {
                         .help(
                             "Benchmark only cases with an enhancement-chip header or MSU-1 sidecars",
                         ),
+                )
+                .arg(
+                    Arg::new("fail-on-slow")
+                        .long("fail-on-slow")
+                        .action(ArgAction::SetTrue)
+                        .help("Exit with an error when any selected case runs below threshold"),
                 ),
         )
         .subcommand(Command::new("list").about("List configured SNES ROM cases"))
@@ -118,6 +126,7 @@ fn run() -> Result<(), String> {
                 .get_one::<f64>("threshold")
                 .ok_or_else(|| "missing benchmark threshold".to_string())?,
             subcommand_matches.get_flag("enhancement-only"),
+            subcommand_matches.get_flag("fail-on-slow"),
         ),
         Some(("list", _)) => run_list(&manifest, &case_ids),
         _ => Err("subcommand required: validate, benchmark, or list".to_string()),
@@ -147,6 +156,7 @@ fn run_benchmark(
     render_each_frame: bool,
     threshold: f64,
     enhancement_only: bool,
+    fail_on_slow: bool,
 ) -> Result<(), String> {
     if case_ids.is_empty() && !enhancement_only {
         return Err("benchmark requires at least one --case ID or --enhancement-only".to_string());
@@ -237,11 +247,14 @@ fn run_benchmark(
         );
     }
 
-    println!(
-        "summary realtime={} slow={}",
-        realtime_cases,
-        total.saturating_sub(realtime_cases)
-    );
+    let slow_cases = total.saturating_sub(realtime_cases);
+    println!("summary realtime={} slow={}", realtime_cases, slow_cases);
+
+    if fail_on_slow && slow_cases > 0 {
+        return Err(format!(
+            "{slow_cases} SNES ROM benchmark case(s) ran below the {threshold:.2}x threshold"
+        ));
+    }
 
     Ok(())
 }

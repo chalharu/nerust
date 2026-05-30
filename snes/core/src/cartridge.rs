@@ -237,6 +237,25 @@ impl Cartridge {
         self.read_mapped_mut(address)
     }
 
+    pub(crate) fn read_side_effect_free(&self, address: u32) -> Option<u8> {
+        if self.msu1.peek(address).is_some() {
+            return None;
+        }
+        if self
+            .enhancement
+            .peek(
+                self.header.mapper_kind(),
+                address,
+                &self.rom,
+                &self.save_ram,
+            )
+            .is_some()
+        {
+            return None;
+        }
+        self.read_mapped(address)
+    }
+
     pub(crate) fn tick_sa1_timer(
         &mut self,
         h_subtick: u16,
