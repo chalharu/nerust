@@ -2,4 +2,5 @@
 <resources>
     <item name="nerust_drawer_content_probe" type="id" />
     <item name="nerust_dialog_content_probe" type="id" />
+    <item name="nerust_dialog_presentation_probe" type="id" />
 </resources>

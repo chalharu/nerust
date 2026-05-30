@@ -100,6 +100,10 @@ class MainActivityE2eTest {
                 "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
                 dialogRoot.getTag(R.id.nerust_dialog_content_probe),
             )
+            assertEquals(
+                DIALOG_PRESENTATION_FULL_SCREEN,
+                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
+            )
             activity.dismissComposeDialogForTest()
         }
 
@@ -132,6 +136,10 @@ class MainActivityE2eTest {
             assertEquals(
                 "Settings\nVideo Filter: LCD\nTouch Overlay: On",
                 dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            )
+            assertEquals(
+                DIALOG_PRESENTATION_CARD,
+                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
             )
             activity.dismissComposeDialogForTest()
         }
@@ -325,6 +333,8 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
+        const val DIALOG_PRESENTATION_CARD = "card"
+        const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"

@@ -1,3 +1,4 @@
+use crate::import_metadata;
 use jni::objects::{JObject, JString, JValue};
 use jni::refs::Global;
 use jni::sys::jobject;
@@ -116,6 +117,115 @@ pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, Str
         })
     })
     .map_err(|error| format!("failed to read Android document URI {uri}: {error:?}"))
+}
+
+pub(crate) fn infer_import_metadata(app: &AndroidApp, uri: &str) -> (String, String) {
+    let display_name_hint = match read_display_name(app, uri) {
+        Ok(display_name_hint) => display_name_hint,
+        Err(error) => {
+            log::warn!("{error}");
+            None
+        }
+    };
+    import_metadata::infer_import_metadata(display_name_hint.as_deref(), uri)
+}
+
+fn read_display_name(app: &AndroidApp, uri: &str) -> Result<Option<String>, String> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
+    vm.attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+        env.with_local_frame(32, |env| -> jni::errors::Result<Option<String>> {
+            let activity_raw = app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let resolver = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("getContentResolver"),
+                    jni_sig!("()Landroid/content/ContentResolver;"),
+                    &[],
+                )?
+                .l()?;
+            let uri_string = JString::from_str(env, uri)?;
+            let uri_object = env
+                .call_static_method(
+                    jni_str!("android/net/Uri"),
+                    jni_str!("parse"),
+                    jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                    &[JValue::Object(uri_string.as_ref())],
+                )?
+                .l()?;
+            let display_name_column = env
+                .get_static_field(
+                    jni_str!("android/provider/OpenableColumns"),
+                    jni_str!("DISPLAY_NAME"),
+                    jni_sig!("Ljava/lang/String;"),
+                )?
+                .l()?;
+            let string_class = env.find_class(jni_str!("java/lang/String"))?;
+            let projection = env.new_object_array(1, &string_class, JObject::null())?;
+            projection.set_element(env, 0, &display_name_column)?;
+            let null = JObject::null();
+            let cursor = env
+                .call_method(
+                    &resolver,
+                    jni_str!("query"),
+                    jni_sig!(
+                        "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;"
+                    ),
+                    &[
+                        JValue::Object(&uri_object),
+                        JValue::Object(projection.as_ref()),
+                        JValue::Object(&null),
+                        JValue::Object(&null),
+                        JValue::Object(&null),
+                    ],
+                )?
+                .l()?;
+            if cursor.is_null() {
+                return Ok(None);
+            }
+            let read_result: jni::errors::Result<Option<String>> = (|| {
+                if !env
+                    .call_method(&cursor, jni_str!("moveToFirst"), jni_sig!("()Z"), &[])?
+                    .z()?
+                {
+                    return Ok(None);
+                }
+                let column_index = env
+                    .call_method(
+                        &cursor,
+                        jni_str!("getColumnIndex"),
+                        jni_sig!("(Ljava/lang/String;)I"),
+                        &[JValue::Object(&display_name_column)],
+                    )?
+                    .i()?;
+                if column_index < 0 {
+                    return Ok(None);
+                }
+                let value = env
+                    .call_method(
+                        &cursor,
+                        jni_str!("getString"),
+                        jni_sig!("(I)Ljava/lang/String;"),
+                        &[JValue::Int(column_index)],
+                    )?
+                    .l()?;
+                if value.is_null() {
+                    return Ok(None);
+                }
+                let value = unsafe { JString::from_raw(env, value.into_raw()) };
+                let value = value.try_to_string(env)?;
+                let value = value.trim();
+                Ok((!value.is_empty()).then(|| value.to_string()))
+            })();
+            let close_result = env.call_method(&cursor, jni_str!("close"), jni_sig!("()V"), &[]);
+            let display_name = read_result?;
+            close_result?;
+            Ok(display_name)
+        })
+    })
+    .map_err(|error: jni::errors::Error| {
+        format!("failed to read Android document display name for {uri}: {error:?}")
+    })
 }
 
 fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
