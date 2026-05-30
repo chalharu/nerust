@@ -1089,6 +1089,33 @@ cases:
       - kind: oam_u16
         address: "0x0002"
         expected: "0x3000"
+  - id: sa1-bwram-smoke-final-state
+    description: >
+      The self-authored SA-1 BWRAM smoke ROM declares an SA-1 cartridge header and verifies host-visible BWRAM protection/write-enable behavior plus BMAPS page selection from S-CPU code.
+
+    rom: snes-coprocessor-tests/sa1-bwram-smoke/build/Sa1BwramSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x5A"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0xA5"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x5A"
+      - kind: bus_u8
+        address: "0x002224"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002226"
+        expected: "0x80"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
