@@ -1149,6 +1149,87 @@ cases:
       - kind: bus_u8
         address: "0x007F5E"
         expected: "0x00"
+  - id: dsp1-smoke-final-state
+    description: >
+      The self-authored DSP-1 smoke ROM declares a DSP-1 LoROM cartridge header and verifies host-visible DSP-1 multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1Smoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1a-smoke-final-state
+    description: >
+      The self-authored DSP-1A-compatible smoke ROM declares a DSP-1A-style LoROM cartridge header and verifies the shared DSP-1 multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1aSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1b-smoke-final-state
+    description: >
+      The self-authored DSP-1B smoke ROM declares a DSP-1B HiROM cartridge header and verifies host-visible DSP-1B multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1bSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x007000"
+        expected: "0x84"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
