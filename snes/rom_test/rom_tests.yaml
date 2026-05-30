@@ -131,6 +131,7 @@ cases:
     rom: snes-test-roms/bin/examples/vram-writes-without-dma.sfc
     max_steps: 300000
     check_interval_steps: 256
+    expected_screen_hash: "0x164C473087C35D5D"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -154,6 +155,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-to-cgram.sfc
     max_steps: 500000
     check_interval_steps: 256
+    expected_screen_hash: "0x573DA5CCE4D37653"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
