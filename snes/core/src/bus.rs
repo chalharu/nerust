@@ -91,6 +91,12 @@ pub(crate) trait CpuBus {
     fn write(&mut self, addr: u32, data: u8);
     fn tick(&mut self);
     fn tick_many(&mut self, cycles: u32);
+    fn peek_side_effect_free(&self, _addr: u32) -> Option<u8> {
+        None
+    }
+    fn has_pending_interrupt(&self) -> bool {
+        true
+    }
     /// Returns `true` and clears the pending-NMI flag when an NMI is waiting
     /// for the CPU to service.  Returns `false` otherwise.
     fn poll_nmi(&mut self) -> bool {
@@ -616,12 +622,30 @@ impl Bus {
         core::mem::take(&mut self.nmi_pending)
     }
 
-    pub(crate) fn poll_irq(&mut self) -> bool {
+    pub(crate) fn poll_irq(&self) -> bool {
         self.irq_flag && (self.vcounter_irq_enabled() || self.hcounter_irq_enabled())
+    }
+
+    pub(crate) fn has_pending_interrupt(&self) -> bool {
+        self.nmi_pending || self.poll_irq()
     }
 
     pub(crate) fn peek(&self, address: u32) -> u8 {
         self.peek_resolved(address & ADDRESS_MASK)
+    }
+
+    pub(crate) fn peek_side_effect_free(&self, address: u32) -> Option<u8> {
+        let address = address & ADDRESS_MASK;
+        let bank = ((address >> 16) & 0xFF) as u8;
+        let offset = (address & 0xFFFF) as u16;
+
+        if let Some(value) = self.memory.peek_cpu_bus(bank, offset) {
+            return Some(value);
+        }
+        if Self::is_cpu_internal_register(bank, offset) {
+            return None;
+        }
+        self.cartridge.read_side_effect_free(address)
     }
 
     pub(crate) fn peek_apu_ram(&self, address: u16) -> u8 {
@@ -634,6 +658,18 @@ impl Bus {
 
     pub(crate) fn write(&mut self, address: u32, value: u8) {
         self.write_resolved(address & ADDRESS_MASK, value);
+    }
+
+    fn is_cpu_internal_register(bank: u8, offset: u16) -> bool {
+        matches!(bank, 0x00..=0x3F | 0x80..=0xBF)
+            && matches!(
+                offset,
+                0x2100..=0x217F
+                    | 0x2180..=0x2183
+                    | 0x4016..=0x4017
+                    | 0x4200..=0x421F
+                    | 0x4300..=0x437F
+            )
     }
 
     fn in_vblank(&self) -> bool {
@@ -1447,6 +1483,14 @@ impl CpuBus for Bus {
         self.step_cpu_cycles(cycles);
     }
 
+    fn peek_side_effect_free(&self, addr: u32) -> Option<u8> {
+        Bus::peek_side_effect_free(self, addr)
+    }
+
+    fn has_pending_interrupt(&self) -> bool {
+        Bus::has_pending_interrupt(self)
+    }
+
     fn poll_nmi(&mut self) -> bool {
         Bus::poll_nmi(self)
     }
@@ -1499,6 +1543,16 @@ impl CpuBus for ScheduledCpuBus<'_> {
             .pending_cycles
             .checked_add(cycles)
             .expect("scheduled CPU bus pending cycle accumulator overflowed");
+    }
+
+    fn peek_side_effect_free(&self, addr: u32) -> Option<u8> {
+        (self.pending_cycles == 0)
+            .then(|| self.bus.peek_side_effect_free(addr))
+            .flatten()
+    }
+
+    fn has_pending_interrupt(&self) -> bool {
+        self.pending_cycles != 0 || self.bus.has_pending_interrupt()
     }
 
     fn poll_nmi(&mut self) -> bool {

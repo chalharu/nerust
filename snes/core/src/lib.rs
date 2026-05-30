@@ -415,6 +415,35 @@ mod tests {
     }
 
     #[test]
+    fn core_run_for_cycles_fast_forwards_self_branch_idle_loop() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x0000..0x0002].copy_from_slice(&[0x80, 0xFE]);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        core.run_for_cycles(10_000).unwrap();
+
+        assert_eq!(core.current_state(), CpuState::Running);
+        assert_eq!(core.current_opcode(), 0x80);
+        assert_eq!(core.registers().pc(), 0x8000);
+        assert!(core.cycles() >= 10_000);
+        assert_eq!(core.master_cycles(), core.cycles());
+    }
+
+    #[test]
+    fn core_run_for_cycles_fast_forwards_wai_until_interrupt_event() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x0000..0x0006].copy_from_slice(&[0xA9, 0x80, 0x8D, 0x00, 0x42, 0xCB]);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        core.run_for_cycles(1_000).unwrap();
+
+        assert_eq!(core.current_state(), CpuState::Waiting);
+        assert_eq!(core.current_opcode(), 0xCB);
+        assert!(core.cycles() >= 1_000);
+        assert_eq!(core.master_cycles(), core.cycles());
+    }
+
+    #[test]
     fn core_executes_bootstrap_rom_across_cpu_ppu_and_memory() {
         let program = [
             0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA2, 0xEF, 0x01, 0x9A, 0xA9, 0x8F, 0x8D, 0x00,
