@@ -599,7 +599,9 @@ mod tests {
         assert_eq!(cartridge.read_mut(0x002001), Some(0x22));
         assert_eq!(cartridge.read_mut(0x002001), Some(0x33));
         assert_eq!(cartridge.read_mut(0x002001), Some(0x00));
-        assert_eq!(cartridge.msu1.data_read_offset(), 4);
+        assert_eq!(cartridge.msu1.data_read_offset(), 3);
+        assert_eq!(cartridge.read_mut(0x002001), Some(0x00));
+        assert_eq!(cartridge.msu1.data_read_offset(), 3);
         assert_eq!(cartridge.read(0x002000), Some(0x0A));
     }
 
