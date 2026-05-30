@@ -504,6 +504,10 @@ impl Cartridge for Mmc5 {
     fn expansion_audio_inverted(&self) -> bool {
         true
     }
+
+    fn expansion_audio_cpu_step_synchronized(&self) -> bool {
+        true
+    }
 }
 
 impl Mmc5 {
@@ -740,6 +744,47 @@ impl Mmc5 {
 
         self.hardware_timer_counter = previous - 1;
     }
+
+    fn step_hardware_timer_many(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        if !self.hardware_timer_running || cycles == 0 {
+            return;
+        }
+
+        if cycles >= u64::from(self.hardware_timer_counter) {
+            self.hardware_timer_counter = 0;
+            self.hardware_timer_running = false;
+            self.hardware_timer_irq_pending = true;
+            self.update_external_irq(interrupt);
+        } else {
+            self.hardware_timer_counter -= cycles as u16;
+        }
+    }
+
+    fn advance_idle_cpu_cycles(&mut self, cycles: u64) {
+        if cycles == 0 {
+            return;
+        }
+
+        if self.ppu_read_seen_this_cpu_cycle {
+            self.idle_cpu_cycles = 0;
+            if cycles > 1 {
+                self.idle_cpu_cycles = self
+                    .idle_cpu_cycles
+                    .saturating_add(u8::try_from(cycles - 1).unwrap_or(u8::MAX));
+            }
+        } else {
+            self.idle_cpu_cycles = self
+                .idle_cpu_cycles
+                .saturating_add(u8::try_from(cycles).unwrap_or(u8::MAX));
+        }
+
+        if self.idle_cpu_cycles >= 3 {
+            self.end_frame_due_to_idle();
+        }
+        self.ppu_read_seen_this_cpu_cycle = false;
+        self.mmc5a_cl3_strobe_low = false;
+        self.mmc5a_sl3_strobe_low = false;
+    }
 }
 
 impl CartridgeDataDao for Mmc5 {
@@ -933,6 +978,31 @@ impl Mapper for Mmc5 {
         self.mmc5a_cl3_strobe_low = false;
         self.mmc5a_sl3_strobe_low = false;
         self.clock_audio(interrupt);
+    }
+
+    fn step_cpu_cycles(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        self.step_hardware_timer_many(cycles, interrupt);
+        self.advance_idle_cpu_cycles(cycles);
+        self.clock_audio_many(cycles, interrupt);
+    }
+
+    fn cycles_until_next_cpu_event(&self) -> u64 {
+        if self.hardware_timer_running {
+            u64::from(self.hardware_timer_counter)
+        } else {
+            u64::MAX
+        }
+    }
+
+    fn cpu_read_has_side_effect(&self, address: usize) -> bool {
+        matches!(
+            address,
+            0x5010 | 0x5204 | 0x5209 | 0x5800..=0x5BFF | 0xFFFA | 0xFFFB
+        ) || ((0x8000..=0xBFFF).contains(&address) && self.pcm_read_mode)
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        !self.ppu_read_seen_this_cpu_cycle
     }
 
     fn notify_ppu_bus_event(&mut self, event: PpuBusEvent, interrupt: &mut Interrupt) {

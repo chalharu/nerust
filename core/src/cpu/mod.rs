@@ -80,6 +80,39 @@ struct DmcDmaState {
     phase: DmcDmaPhase,
 }
 
+#[derive(Clone, Copy)]
+struct FastPathPlan {
+    cycles: u64,
+    kind: FastPathPlanKind,
+}
+
+#[derive(Clone, Copy)]
+enum FastPathPlanKind {
+    ImpliedOrAccumulator,
+    Immediate,
+    ReadMemory(FastPathMemoryAccess),
+    StoreMemory(FastPathMemoryAccess),
+    Branch(FastPathBranch),
+}
+
+#[derive(Clone, Copy)]
+struct FastPathMemoryAccess {
+    final_address: usize,
+    next_opcode_pc: u16,
+    operand_bytes: u8,
+    dummy_read_address: Option<usize>,
+    temp_address: Option<usize>,
+    cycles: u64,
+}
+
+#[derive(Clone, Copy)]
+struct FastPathBranch {
+    taken: bool,
+    target: u16,
+    fallthrough: u16,
+    crossed: bool,
+}
+
 impl DmcDmaState {
     fn from_kind(kind: DmcDmaKind) -> Self {
         match kind {
@@ -308,14 +341,737 @@ impl Core {
             self.internal_stat.step = 1;
             machine = self.cpu_stepfunc;
         }
+        self.sample_interrupt();
+    }
+
+    pub(crate) fn step_until_instruction_boundary(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn MapperCartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> u64 {
+        let mut cycles = 0;
+        loop {
+            cycles += 1;
+            self.step(ppu, cartridge, controller, apu);
+            if self.is_instruction_boundary() {
+                return cycles;
+            }
+        }
+    }
+
+    pub(crate) fn instruction_fast_path_max_cycles(
+        &self,
+        cartridge: &dyn MapperCartridge,
+    ) -> Option<u64> {
+        self.fast_path_plan(cartridge).map(|plan| plan.cycles)
+    }
+
+    fn fast_path_plan(&self, cartridge: &dyn MapperCartridge) -> Option<FastPathPlan> {
+        if !self.is_instruction_boundary() || self.has_pending_dma() || self.has_pending_interrupt()
+        {
+            return None;
+        }
+
+        let opcode = self.internal_stat.get_opcode();
+        let addressing = self.addressing_tables.get(opcode);
+        let operation = self.opcode_tables.get(opcode);
+        let pc = self.register.get_pc();
+
+        if Self::operation_is_fast_path_branch(operation) {
+            return self.fast_path_branch_plan(pc, operation, cartridge);
+        }
+
+        match addressing {
+            CpuStatesEnum::Immediate => {
+                if !Self::operation_uses_fast_path_read_operand(operation) {
+                    return None;
+                }
+                let next_opcode_pc = pc.wrapping_add(1);
+                self.peek_cpu_read(usize::from(pc), cartridge)?;
+                self.peek_cpu_read(usize::from(next_opcode_pc), cartridge)?;
+                Some(FastPathPlan {
+                    cycles: 2,
+                    kind: FastPathPlanKind::Immediate,
+                })
+            }
+            CpuStatesEnum::Accumulator | CpuStatesEnum::Implied => {
+                if !Self::operation_is_fast_path_implied_or_accumulator(operation) {
+                    return None;
+                }
+                self.peek_cpu_read(usize::from(pc), cartridge)?;
+                Some(FastPathPlan {
+                    cycles: 2,
+                    kind: FastPathPlanKind::ImpliedOrAccumulator,
+                })
+            }
+            CpuStatesEnum::ZeroPage
+            | CpuStatesEnum::ZeroPageX
+            | CpuStatesEnum::ZeroPageY
+            | CpuStatesEnum::Absolute
+            | CpuStatesEnum::AbsoluteX
+            | CpuStatesEnum::AbsoluteY => {
+                let access = self.fast_path_memory_access(addressing, pc, cartridge)?;
+                if Self::operation_uses_fast_path_read_operand(operation) {
+                    self.peek_cpu_read(access.final_address, cartridge)?;
+                    Some(FastPathPlan {
+                        cycles: access.cycles,
+                        kind: FastPathPlanKind::ReadMemory(access),
+                    })
+                } else if Self::operation_uses_fast_path_store_operand(operation)
+                    && Self::cpu_write_is_fast_path_safe(access.final_address)
+                {
+                    Some(FastPathPlan {
+                        cycles: access.cycles,
+                        kind: FastPathPlanKind::StoreMemory(access),
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn step_fast_path_instruction(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn MapperCartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> Option<u64> {
+        let plan = self.fast_path_plan(cartridge)?;
+        let opcode = self.internal_stat.get_opcode();
+        let operation = self.opcode_tables.get(opcode);
+        let mut cartridge = mapper_cartridge_bus(cartridge);
+
+        match plan.kind {
+            FastPathPlanKind::Immediate => {
+                self.cycles = self.cycles.wrapping_add(1);
+                let address = self.register.get_pc();
+                self.internal_stat.set_address(usize::from(address));
+                let operand = self.memory.read_next(
+                    &mut self.register,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                );
+                self.apply_fast_path_operation(operation, Some(operand))?;
+                self.sample_interrupt();
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+            }
+            FastPathPlanKind::ImpliedOrAccumulator => {
+                self.cycles = self.cycles.wrapping_add(1);
+                let pc = usize::from(self.register.get_pc());
+                let _ = self.memory.read(
+                    pc,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                );
+                self.apply_fast_path_operation(operation, None)?;
+                self.sample_interrupt();
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+            }
+            FastPathPlanKind::ReadMemory(access) => {
+                self.execute_fast_path_addressing(access, ppu, &mut cartridge, controller, apu);
+                self.cycles = self.cycles.wrapping_add(1);
+                self.internal_stat.set_address(access.final_address);
+                let operand = self.memory.read(
+                    access.final_address,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                );
+                self.apply_fast_path_operation(operation, Some(operand))?;
+                self.sample_interrupt();
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+            }
+            FastPathPlanKind::StoreMemory(access) => {
+                self.execute_fast_path_addressing(access, ppu, &mut cartridge, controller, apu);
+                self.cycles = self.cycles.wrapping_add(1);
+                self.internal_stat.set_address(access.final_address);
+                let value = self.fast_path_store_value(operation)?;
+                self.memory.write(
+                    access.final_address,
+                    value,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                    &mut self.interrupt,
+                );
+                self.sample_interrupt();
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+            }
+            FastPathPlanKind::Branch(branch) => {
+                self.execute_fast_path_branch(
+                    branch,
+                    operation,
+                    ppu,
+                    &mut cartridge,
+                    controller,
+                    apu,
+                )?;
+            }
+        }
+
+        Some(plan.cycles)
+    }
+
+    pub(crate) fn has_pending_dma(&self) -> bool {
+        self.interrupt.oam_dma.is_some()
+            || self.interrupt.dmc_dma_request.is_some()
+            || self.dmc_dma.is_some()
+            || self
+                .oam_dma
+                .as_ref()
+                .is_some_and(OamDmaState::has_transaction)
+    }
+
+    fn is_instruction_boundary(&self) -> bool {
+        self.internal_stat.get_state() == CpuStatesEnum::FetchOpCode
+            && self.internal_stat.get_step() == 1
+    }
+
+    fn has_pending_interrupt(&self) -> bool {
+        self.interrupt.nmi
+            || self.interrupt.detected
+            || self.interrupt.executing
+            || !self.interrupt.irq_flag.is_empty()
+    }
+
+    fn fast_path_memory_access(
+        &self,
+        addressing: CpuStatesEnum,
+        pc: u16,
+        cartridge: &dyn MapperCartridge,
+    ) -> Option<FastPathMemoryAccess> {
+        let operand_low = self.peek_cpu_read(usize::from(pc), cartridge)?;
+        let next_opcode_pc;
+        let final_address;
+        let dummy_read_address;
+        let temp_address;
+        let operand_bytes;
+        let cycles;
+
+        match addressing {
+            CpuStatesEnum::ZeroPage => {
+                next_opcode_pc = pc.wrapping_add(1);
+                final_address = usize::from(operand_low);
+                dummy_read_address = None;
+                temp_address = None;
+                operand_bytes = 1;
+                cycles = 3;
+            }
+            CpuStatesEnum::ZeroPageX | CpuStatesEnum::ZeroPageY => {
+                next_opcode_pc = pc.wrapping_add(1);
+                let index = if addressing == CpuStatesEnum::ZeroPageX {
+                    self.register.get_x()
+                } else {
+                    self.register.get_y()
+                };
+                final_address = usize::from(operand_low.wrapping_add(index));
+                let dummy = (usize::from(next_opcode_pc) & 0xFF00) | usize::from(operand_low);
+                self.peek_cpu_read(dummy, cartridge)?;
+                dummy_read_address = Some(dummy);
+                temp_address = None;
+                operand_bytes = 1;
+                cycles = 4;
+            }
+            CpuStatesEnum::Absolute => {
+                let high_pc = pc.wrapping_add(1);
+                let operand_high = self.peek_cpu_read(usize::from(high_pc), cartridge)?;
+                next_opcode_pc = pc.wrapping_add(2);
+                final_address = usize::from(operand_low) | (usize::from(operand_high) << 8);
+                dummy_read_address = None;
+                temp_address = None;
+                operand_bytes = 2;
+                cycles = 4;
+            }
+            CpuStatesEnum::AbsoluteX | CpuStatesEnum::AbsoluteY => {
+                let high_pc = pc.wrapping_add(1);
+                let operand_high = self.peek_cpu_read(usize::from(high_pc), cartridge)?;
+                next_opcode_pc = pc.wrapping_add(2);
+                let base = usize::from(operand_low) | (usize::from(operand_high) << 8);
+                let index = if addressing == CpuStatesEnum::AbsoluteX {
+                    usize::from(self.register.get_x())
+                } else {
+                    usize::from(self.register.get_y())
+                };
+                final_address = base.wrapping_add(index) & 0xFFFF;
+                if page_crossed(base, final_address) {
+                    let dummy = (base & 0xFF00) | (final_address & 0x00FF);
+                    self.peek_cpu_read(dummy, cartridge)?;
+                    dummy_read_address = Some(dummy);
+                    cycles = 5;
+                } else {
+                    dummy_read_address = None;
+                    cycles = 4;
+                }
+                temp_address = Some(base);
+                operand_bytes = 2;
+            }
+            _ => return None,
+        }
+
+        self.peek_cpu_read(usize::from(next_opcode_pc), cartridge)?;
+        Some(FastPathMemoryAccess {
+            final_address,
+            next_opcode_pc,
+            operand_bytes,
+            dummy_read_address,
+            temp_address,
+            cycles,
+        })
+    }
+
+    fn fast_path_branch_plan(
+        &self,
+        pc: u16,
+        operation: CpuStatesEnum,
+        cartridge: &dyn MapperCartridge,
+    ) -> Option<FastPathPlan> {
+        let offset = self.peek_cpu_read(usize::from(pc), cartridge)?;
+        let fallthrough = pc.wrapping_add(1);
+        let target = fallthrough
+            .wrapping_add(u16::from(offset))
+            .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 });
+        let taken = Self::fast_path_branch_condition(operation, &self.register)?;
+        if !taken {
+            self.peek_cpu_read(usize::from(fallthrough), cartridge)?;
+            return Some(FastPathPlan {
+                cycles: 2,
+                kind: FastPathPlanKind::Branch(FastPathBranch {
+                    taken: false,
+                    target,
+                    fallthrough,
+                    crossed: false,
+                }),
+            });
+        }
+
+        self.peek_cpu_read(usize::from(fallthrough), cartridge)?;
+        let crossed = page_crossed(usize::from(target), usize::from(fallthrough));
+        self.peek_cpu_read(usize::from(target), cartridge)?;
+        Some(FastPathPlan {
+            cycles: if crossed { 4 } else { 3 },
+            kind: FastPathPlanKind::Branch(FastPathBranch {
+                taken,
+                target,
+                fallthrough,
+                crossed,
+            }),
+        })
+    }
+
+    fn execute_fast_path_addressing(
+        &mut self,
+        access: FastPathMemoryAccess,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) {
+        for _ in 0..access.operand_bytes {
+            self.cycles = self.cycles.wrapping_add(1);
+            let _ = self.memory.read_next(
+                &mut self.register,
+                ppu,
+                cartridge,
+                controller,
+                apu,
+                &mut self.interrupt,
+            );
+            self.sample_interrupt();
+        }
+
+        if let Some(dummy_read_address) = access.dummy_read_address {
+            self.cycles = self.cycles.wrapping_add(1);
+            let _ = self.memory.read(
+                dummy_read_address,
+                ppu,
+                cartridge,
+                controller,
+                apu,
+                &mut self.interrupt,
+            );
+            self.sample_interrupt();
+        }
+
+        if let Some(temp_address) = access.temp_address {
+            self.internal_stat.set_tempaddr(temp_address);
+        }
+        debug_assert_eq!(self.register.get_pc(), access.next_opcode_pc);
+    }
+
+    fn execute_fast_path_branch(
+        &mut self,
+        branch: FastPathBranch,
+        operation: CpuStatesEnum,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> Option<()> {
+        self.cycles = self.cycles.wrapping_add(1);
+        let offset = self.memory.read_next(
+            &mut self.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut self.interrupt,
+        );
+        let pc = self.register.get_pc();
+        let target = pc
+            .wrapping_add(u16::from(offset))
+            .wrapping_sub(if offset < 0x80 { 0 } else { 0x100 });
+        debug_assert_eq!(target, branch.target);
+        self.internal_stat.set_address(usize::from(target));
+        self.sample_interrupt();
+
+        self.cycles = self.cycles.wrapping_add(1);
+        self.internal_stat.set_crossed(true);
+        self.internal_stat.set_interrupt(self.interrupt.executing);
+        if !Self::fast_path_branch_condition(operation, &self.register)? {
+            debug_assert!(!branch.taken);
+            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+            return Some(());
+        }
+        debug_assert!(branch.taken);
+        let _ = self.memory.read(
+            usize::from(branch.fallthrough),
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut self.interrupt,
+        );
+        self.internal_stat.set_crossed(branch.crossed);
+        self.sample_interrupt();
+
+        if branch.crossed {
+            self.cycles = self.cycles.wrapping_add(1);
+            let _ = self.memory.read(
+                usize::from(branch.fallthrough),
+                ppu,
+                cartridge,
+                controller,
+                apu,
+                &mut self.interrupt,
+            );
+            self.register.set_pc(branch.target);
+            self.sample_interrupt();
+            self.fetch_fast_path_next_opcode(ppu, cartridge, controller, apu);
+        } else {
+            self.cycles = self.cycles.wrapping_add(1);
+            self.register.set_pc(branch.target);
+            if !self.internal_stat.get_interrupt() {
+                self.interrupt.executing = false;
+            }
+            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+        }
+
+        Some(())
+    }
+
+    fn fetch_fast_path_next_opcode(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) {
+        self.cycles = self.cycles.wrapping_add(1);
+        self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+    }
+
+    fn fetch_fast_path_next_opcode_without_cycle_sample(
+        &mut self,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn Cartridge,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) {
+        let next_opcode = self.memory.read_next(
+            &mut self.register,
+            ppu,
+            cartridge,
+            controller,
+            apu,
+            &mut self.interrupt,
+        );
+        self.internal_stat.set_opcode(usize::from(next_opcode));
+        self.set_cpu_state(CpuStatesEnum::FetchOpCode);
+        self.internal_stat.set_step(1);
+        self.sample_interrupt();
+    }
+
+    fn peek_cpu_read(&self, address: usize, cartridge: &dyn MapperCartridge) -> Option<u8> {
+        if !Self::cpu_read_is_fast_path_safe(address, cartridge) {
+            return None;
+        }
+
+        match address {
+            0x0000..=0x1FFF => self.memory.peek_work_ram(address),
+            0x6000..=0xFFFF => {
+                let result = cartridge.read(address);
+                (result.mask == 0xFF).then_some(result.data)
+            }
+            _ => None,
+        }
+    }
+
+    fn cpu_read_is_fast_path_safe(address: usize, cartridge: &dyn MapperCartridge) -> bool {
+        match address {
+            0x0000..=0x1FFF => true,
+            0x6000..=0xFFFF => !cartridge.cpu_read_has_side_effect(address),
+            _ => false,
+        }
+    }
+
+    fn cpu_write_is_fast_path_safe(address: usize) -> bool {
+        address <= 0x1FFF
+    }
+
+    fn operation_uses_fast_path_read_operand(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::Adc
+                | CpuStatesEnum::And
+                | CpuStatesEnum::Bit
+                | CpuStatesEnum::Cmp
+                | CpuStatesEnum::Cpx
+                | CpuStatesEnum::Cpy
+                | CpuStatesEnum::Eor
+                | CpuStatesEnum::Lda
+                | CpuStatesEnum::Ldx
+                | CpuStatesEnum::Ldy
+                | CpuStatesEnum::Ora
+                | CpuStatesEnum::Sbc
+        )
+    }
+
+    fn operation_uses_fast_path_store_operand(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::Sta | CpuStatesEnum::Stx | CpuStatesEnum::Sty
+        )
+    }
+
+    fn operation_is_fast_path_implied_or_accumulator(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::AslAcc
+                | CpuStatesEnum::Clc
+                | CpuStatesEnum::Cld
+                | CpuStatesEnum::Cli
+                | CpuStatesEnum::Clv
+                | CpuStatesEnum::Dex
+                | CpuStatesEnum::Dey
+                | CpuStatesEnum::Inx
+                | CpuStatesEnum::Iny
+                | CpuStatesEnum::LsrAcc
+                | CpuStatesEnum::Nop
+                | CpuStatesEnum::RolAcc
+                | CpuStatesEnum::RorAcc
+                | CpuStatesEnum::Sec
+                | CpuStatesEnum::Sed
+                | CpuStatesEnum::Sei
+                | CpuStatesEnum::Tax
+                | CpuStatesEnum::Tay
+                | CpuStatesEnum::Tsx
+                | CpuStatesEnum::Txa
+                | CpuStatesEnum::Txs
+                | CpuStatesEnum::Tya
+        )
+    }
+
+    fn operation_is_fast_path_branch(state: CpuStatesEnum) -> bool {
+        matches!(
+            state,
+            CpuStatesEnum::Bcc
+                | CpuStatesEnum::Bcs
+                | CpuStatesEnum::Beq
+                | CpuStatesEnum::Bmi
+                | CpuStatesEnum::Bne
+                | CpuStatesEnum::Bpl
+                | CpuStatesEnum::Bvc
+                | CpuStatesEnum::Bvs
+        )
+    }
+
+    fn fast_path_branch_condition(state: CpuStatesEnum, register: &Register) -> Option<bool> {
+        Some(match state {
+            CpuStatesEnum::Bcc => !register.get_c(),
+            CpuStatesEnum::Bcs => register.get_c(),
+            CpuStatesEnum::Beq => register.get_z(),
+            CpuStatesEnum::Bmi => register.get_n(),
+            CpuStatesEnum::Bne => !register.get_z(),
+            CpuStatesEnum::Bpl => !register.get_n(),
+            CpuStatesEnum::Bvc => !register.get_v(),
+            CpuStatesEnum::Bvs => register.get_v(),
+            _ => return None,
+        })
+    }
+
+    fn fast_path_store_value(&self, operation: CpuStatesEnum) -> Option<u8> {
+        Some(match operation {
+            CpuStatesEnum::Sta => self.register.get_a(),
+            CpuStatesEnum::Stx => self.register.get_x(),
+            CpuStatesEnum::Sty => self.register.get_y(),
+            _ => return None,
+        })
+    }
+
+    fn apply_fast_path_operation(
+        &mut self,
+        operation: CpuStatesEnum,
+        operand: Option<u8>,
+    ) -> Option<()> {
+        match operation {
+            CpuStatesEnum::Adc => {
+                let a = u16::from(self.register.get_a());
+                let b = u16::from(operand?);
+                let c = if self.register.get_c() { 1 } else { 0 };
+                let result = a + b + c;
+                self.register.set_c(result > 0xFF);
+                self.register
+                    .set_v((a ^ b) & 0x80 == 0 && (a ^ result) & 0x80 != 0);
+                self.set_accumulator_result((result & 0xFF) as u8);
+            }
+            CpuStatesEnum::And => self.set_accumulator_result(self.register.get_a() & operand?),
+            CpuStatesEnum::AslAcc => {
+                let value = self.register.get_a();
+                self.register.set_c(value & 0x80 != 0);
+                self.set_accumulator_result(value << 1);
+            }
+            CpuStatesEnum::Clc => self.register.set_c(false),
+            CpuStatesEnum::Cld => self.register.set_d(false),
+            CpuStatesEnum::Cli => self.register.set_i(false),
+            CpuStatesEnum::Clv => self.register.set_v(false),
+            CpuStatesEnum::Bit => {
+                let data = operand?;
+                self.register.set_v(data & 0x40 != 0);
+                self.register.set_z_from_value(data & self.register.get_a());
+                self.register.set_n_from_value(data);
+            }
+            CpuStatesEnum::Cmp => self.compare_fast_path(self.register.get_a(), operand?),
+            CpuStatesEnum::Cpx => self.compare_fast_path(self.register.get_x(), operand?),
+            CpuStatesEnum::Cpy => self.compare_fast_path(self.register.get_y(), operand?),
+            CpuStatesEnum::Dex => {
+                let value = self.register.get_x().wrapping_sub(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_x(value);
+            }
+            CpuStatesEnum::Dey => {
+                let value = self.register.get_y().wrapping_sub(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_y(value);
+            }
+            CpuStatesEnum::Eor => self.set_accumulator_result(self.register.get_a() ^ operand?),
+            CpuStatesEnum::Inx => {
+                let value = self.register.get_x().wrapping_add(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_x(value);
+            }
+            CpuStatesEnum::Iny => {
+                let value = self.register.get_y().wrapping_add(1);
+                self.register.set_nz_from_value(value);
+                self.register.set_y(value);
+            }
+            CpuStatesEnum::Lda => self.load_a_fast_path(operand?),
+            CpuStatesEnum::Ldx => self.load_x_fast_path(operand?),
+            CpuStatesEnum::Ldy => self.load_y_fast_path(operand?),
+            CpuStatesEnum::LsrAcc => {
+                let value = self.register.get_a();
+                self.register.set_c(value & 0x01 != 0);
+                self.set_accumulator_result(value >> 1);
+            }
+            CpuStatesEnum::Nop => {}
+            CpuStatesEnum::Ora => self.set_accumulator_result(self.register.get_a() | operand?),
+            CpuStatesEnum::RolAcc => {
+                let value = self.register.get_a();
+                let carry = if self.register.get_c() { 1 } else { 0 };
+                self.register.set_c(value & 0x80 != 0);
+                self.set_accumulator_result(value << 1 | carry);
+            }
+            CpuStatesEnum::RorAcc => {
+                let value = self.register.get_a();
+                let carry = if self.register.get_c() { 0x80 } else { 0 };
+                self.register.set_c(value & 0x01 != 0);
+                self.set_accumulator_result(value >> 1 | carry);
+            }
+            CpuStatesEnum::Sbc => {
+                let a = u16::from(self.register.get_a());
+                let b = u16::from(operand?);
+                let c = if self.register.get_c() { 0 } else { 1 };
+                let result = a.wrapping_sub(b).wrapping_sub(c);
+                self.register.set_c(result <= 0xFF);
+                self.register
+                    .set_v((a ^ b) & 0x80 != 0 && (a ^ result) & 0x80 != 0);
+                self.set_accumulator_result((result & 0xFF) as u8);
+            }
+            CpuStatesEnum::Sec => self.register.set_c(true),
+            CpuStatesEnum::Sed => self.register.set_d(true),
+            CpuStatesEnum::Sei => self.register.set_i(true),
+            CpuStatesEnum::Tax => self.load_x_fast_path(self.register.get_a()),
+            CpuStatesEnum::Tay => self.load_y_fast_path(self.register.get_a()),
+            CpuStatesEnum::Tsx => self.load_x_fast_path(self.register.get_sp()),
+            CpuStatesEnum::Txa => self.load_a_fast_path(self.register.get_x()),
+            CpuStatesEnum::Txs => self.register.set_sp(self.register.get_x()),
+            CpuStatesEnum::Tya => self.load_a_fast_path(self.register.get_y()),
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn sample_interrupt(&mut self) {
         self.interrupt.executing = self.interrupt.detected;
         self.interrupt.detected = self.interrupt.nmi
             || (!((self.interrupt.irq_flag & self.interrupt.irq_mask).is_empty())
                 && !self.register.get_i());
     }
 
+    fn set_accumulator_result(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_a(value);
+    }
+
+    fn compare_fast_path(&mut self, left: u8, right: u8) {
+        self.register.set_nz_from_value(left.wrapping_sub(right));
+        self.register.set_c(left >= right);
+    }
+
+    fn load_a_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_a(value);
+    }
+
+    fn load_x_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_x(value);
+    }
+
+    fn load_y_fast_path(&mut self, value: u8) {
+        self.register.set_nz_from_value(value);
+        self.register.set_y(value);
+    }
+
     pub(crate) fn interrupt_mut(&mut self) -> &mut Interrupt {
         &mut self.interrupt
+    }
+
+    pub(crate) fn interrupt_ref(&self) -> &Interrupt {
+        &self.interrupt
     }
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
