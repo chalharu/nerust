@@ -158,25 +158,6 @@ impl AndroidFrontend {
         frontend
     }
 
-    #[allow(dead_code)]
-    fn restore_last_session(&mut self) -> Result<(), String> {
-        log::info!("restore_last_session: checking previous ROM");
-        let Some(id) = self.storage.load_last_rom_id()? else {
-            log::info!("restore_last_session: no previous ROM recorded");
-            return Ok(());
-        };
-        log::info!("restore_last_session: last ROM id={id}");
-        if self.storage.rom_library.rom_path(&id).is_none() {
-            log::warn!("restore_last_session: stored ROM id={id} is missing");
-            self.session.clear_hidden_lifecycle_state();
-            return Ok(());
-        }
-        // Hidden lifecycle autosaves are only intended for warm activity
-        // resumes; applying them on a fresh launch can revive stale state from
-        // an older app build.
-        self.load_from_library_with_autosave(&id, false)
-            .map_err(|error| format!("failed to restore Android last ROM: {error}"))
-    }
 
     /// Update the cached library entries and settings so synchronous JNI
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
