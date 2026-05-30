@@ -1702,6 +1702,10 @@ mod tests {
         bus.apu.write_smp(0x00F5, 0xBC);
         bus.apu.write_smp(0x00F6, 0xDE);
         bus.apu.write_smp(0x00F7, 0xF0);
+        assert_eq!(bus.apu.peek_ram(0x00F4), 0x9A);
+        assert_eq!(bus.apu.peek_ram(0x00F5), 0xBC);
+        assert_eq!(bus.apu.peek_ram(0x00F6), 0xDE);
+        assert_eq!(bus.apu.peek_ram(0x00F7), 0xF0);
         assert_eq!(bus.read(0x002140), 0x9A);
         assert_eq!(bus.read(0x002141), 0xBC);
         assert_eq!(bus.read(0x002142), 0xDE);
