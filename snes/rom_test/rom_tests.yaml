@@ -8,6 +8,7 @@ cases:
     rom: snes-tests/cputest/cputest-basic.sfc
     max_steps: 6651904
     check_interval_steps: 6651904
+    expected_screen_hash: "0xB6B9DE953F18A401"
     assertions:
       - kind: bus_u16
         address: "0x0010"
@@ -40,6 +41,7 @@ cases:
     rom: snes-tests/cputest/cputest-full.sfc
     max_steps: 9633792
     check_interval_steps: 9633792
+    expected_screen_hash: "0xA05D7EE0B5E1FD17"
     assertions:
       - kind: bus_u16
         address: "0x0010"
