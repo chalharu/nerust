@@ -42,16 +42,18 @@ struct SmpTimer {
 }
 
 impl SmpTimer {
-    fn reset(&mut self) {
+    fn reset_output_stages(&mut self) {
         self.divider = 0;
-        self.source_accumulator = 0;
         self.output = 0;
     }
 
-    fn tick_cpu_cycle(&mut self, source_period: u16) {
+    fn tick_cpu_cycle(&mut self, source_period: u16, enabled: bool) {
         self.source_accumulator += 1;
         while self.source_accumulator >= source_period {
             self.source_accumulator -= source_period;
+            if !enabled {
+                continue;
+            }
             self.divider += 1;
             if self.divider >= self.effective_target() {
                 self.divider = 0;
@@ -263,23 +265,19 @@ impl Apu {
         for index in 0..SMP_TIMER_COUNT {
             let mask = 1 << index;
             if previous & mask == 0 && value & mask != 0 {
-                self.timers[index].reset();
+                self.timers[index].reset_output_stages();
             }
         }
     }
 
     fn tick_timers(&mut self) {
         for index in 0..SMP_TIMER_COUNT {
-            if self.control & (1 << index) == 0 {
-                continue;
-            }
-
             let source_period = if index == 2 {
                 SMP_TIMER2_SOURCE_CPU_CYCLES
             } else {
                 SMP_TIMER01_SOURCE_CPU_CYCLES
             };
-            self.timers[index].tick_cpu_cycle(source_period);
+            self.timers[index].tick_cpu_cycle(source_period, self.control & (1 << index) != 0);
         }
     }
 
