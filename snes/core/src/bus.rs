@@ -1846,6 +1846,25 @@ mod tests {
     }
 
     #[test]
+    fn apu_spc700_ipl_rom_overlays_high_ram_when_enabled() {
+        let mut bus = Bus::new(test_cartridge());
+
+        assert_eq!(bus.apu.read_smp(0xFFC0), 0xCD);
+        assert_eq!(bus.apu.read_smp(0xFFFE), 0xC0);
+        assert_eq!(bus.apu.read_smp(0xFFFF), 0xFF);
+
+        bus.apu.write_smp(0xFFC0, 0x42);
+        assert_eq!(bus.apu.peek_ram(0xFFC0), 0x42);
+        assert_eq!(bus.apu.read_smp(0xFFC0), 0xCD);
+
+        bus.apu.write_smp(0x00F1, 0x00);
+        assert_eq!(bus.apu.read_smp(0xFFC0), 0x42);
+
+        bus.apu.write_smp(0x00F1, 0x80);
+        assert_eq!(bus.apu.read_smp(0xFFC0), 0xCD);
+    }
+
+    #[test]
     fn apu_spc700_ipl_enable_reenters_high_level_loader() {
         let mut bus = Bus::new(test_cartridge());
         let reenter_ipl = [

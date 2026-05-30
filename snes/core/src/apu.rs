@@ -6,6 +6,13 @@ const IPL_INITIAL_KICK: u8 = 0xCC;
 const SMP_CONTROL_RESET_PORTS_0_1: u8 = 0x10;
 const SMP_CONTROL_RESET_PORTS_2_3: u8 = 0x20;
 const SMP_CONTROL_ENABLE_IPL_ROM: u8 = 0x80;
+const SMP_IPL_ROM_START: u16 = 0xFFC0;
+const SMP_IPL_ROM: [u8; 64] = [
+    0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0, 0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78,
+    0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4, 0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5,
+    0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB, 0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA,
+    0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD, 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF,
+];
 const SMP_TIMER_COUNT: usize = 3;
 const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
@@ -135,6 +142,10 @@ impl Apu {
     }
 
     pub(crate) fn read_smp(&mut self, address: u16) -> u8 {
+        if self.control & SMP_CONTROL_ENABLE_IPL_ROM != 0 && address >= SMP_IPL_ROM_START {
+            return SMP_IPL_ROM[usize::from(address - SMP_IPL_ROM_START)];
+        }
+
         match address {
             0x00F0..=0x00F1 => 0,
             0x00F2 => self.dsp_address & 0x7F,
@@ -288,6 +299,7 @@ impl Apu {
     fn start_smp_at_entry(&mut self) {
         self.smp_pc =
             u16::from(self.cpu_to_apu_ports[2]) | (u16::from(self.cpu_to_apu_ports[3]) << 8);
+        self.control &= !SMP_CONTROL_ENABLE_IPL_ROM;
         self.smp_a = 0;
         self.smp_x = 0;
         self.smp_y = 0;
