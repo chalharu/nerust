@@ -385,6 +385,14 @@ impl Screen for PerfScreen {
         self.frame_pixels += 1;
     }
 
+    fn push_many(&mut self, value: u8, count: u16) {
+        for _ in 0..count {
+            self.checksum ^= u64::from(value);
+            self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
+        }
+        self.frame_pixels += u32::from(count);
+    }
+
     fn render(&mut self) {
         self.checksum ^= u64::from(self.frame_pixels);
         self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);

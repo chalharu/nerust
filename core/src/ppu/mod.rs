@@ -27,6 +27,11 @@ const PALETTE_ADDRESS: [usize; 32] = [
     0x00, 0x11, 0x12, 0x13, 0x04, 0x15, 0x16, 0x17, 0x08, 0x19, 0x1A, 0x1B, 0x0C, 0x1D, 0x1E, 0x1F,
 ];
 
+enum InactiveSkip {
+    VisibleDisabledPixels(u64),
+    Idle(u64),
+}
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
 struct DecayableOpenBus {
     data: u8,
@@ -200,9 +205,73 @@ mod tests {
         assert_eq!(left.0.vram_read_delay, right.0.vram_read_delay);
         assert_eq!(left.0.render_executing, right.0.render_executing);
         assert_eq!(left.0.post_render_executing, right.0.post_render_executing);
+        assert_eq!(left.0.state.low_bit_shift, right.0.state.low_bit_shift);
+        assert_eq!(left.0.state.high_bit_shift, right.0.state.high_bit_shift);
+        assert_eq!(left.0.sprite_index, right.0.sprite_index);
+        assert_eq!(left.0.has_next_sprite, right.0.has_next_sprite);
         assert_eq!(left.0.status.nmi_occurred, right.0.status.nmi_occurred);
         assert_eq!(left.0.openbus_io.data, right.0.openbus_io.data);
         assert_eq!(left.0.openbus_io.decay, right.0.openbus_io.decay);
+    }
+
+    #[derive(Default)]
+    struct RecordingScreen {
+        pixels: Vec<u8>,
+        renders: usize,
+    }
+
+    impl Screen for RecordingScreen {
+        fn push(&mut self, index: u8) {
+            self.pixels.push(index);
+        }
+
+        fn push_many(&mut self, index: u8, count: u16) {
+            self.pixels
+                .extend(std::iter::repeat_n(index, usize::from(count)));
+        }
+
+        fn render(&mut self) {
+            self.renders += 1;
+        }
+    }
+
+    fn run_repeated_step_recording(
+        mut ppu: Core,
+        cycles: u64,
+    ) -> (Core, Interrupt, bool, RecordingScreen) {
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = RecordingScreen::default();
+        let mut result = false;
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        for _ in 0..cycles {
+            result |= ppu.step(&mut screen, &mut ppu_cartridge, &mut interrupt);
+        }
+        (ppu, interrupt, result, screen)
+    }
+
+    fn run_exact_many_recording(
+        mut ppu: Core,
+        cycles: u64,
+    ) -> (Core, Interrupt, bool, RecordingScreen) {
+        let mut cartridge = nrom_cartridge();
+        let mut interrupt = Interrupt::new();
+        let mut screen = RecordingScreen::default();
+        let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
+        let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
+        (ppu, interrupt, result, screen)
+    }
+
+    fn assert_visible_advance_matches(
+        left: &(Core, Interrupt, bool, RecordingScreen),
+        right: &(Core, Interrupt, bool, RecordingScreen),
+    ) {
+        assert_idle_advance_matches(
+            &(left.0.clone(), left.1, left.2),
+            &(right.0.clone(), right.1, right.2),
+        );
+        assert_eq!(left.3.pixels, right.3.pixels);
+        assert_eq!(left.3.renders, right.3.renders);
     }
 
     #[test]
@@ -248,6 +317,57 @@ mod tests {
 
         assert_idle_advance_matches(&repeated, &batched);
         assert_eq!(batched.0.vram_read_delay, 0);
+    }
+
+    #[test]
+    fn step_exact_many_visible_disabled_skip_matches_repeated_step() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 1;
+        ppu.cycle = 10;
+        ppu.bus_tick = 500;
+        ppu.vram_read_delay = 4;
+        ppu.state.vram_addr = 0;
+        ppu.state.low_bit_shift = 0xAAAA;
+        ppu.state.high_bit_shift = 0x5555;
+        ppu.palette[0] = 0x2A;
+
+        let repeated = run_repeated_step_recording(ppu.clone(), 5);
+        let batched = run_exact_many_recording(ppu, 5);
+
+        assert_visible_advance_matches(&repeated, &batched);
+        assert_eq!(batched.3.pixels, vec![0x2A; 5]);
+        assert_eq!(batched.0.vram_read_delay, 0);
+    }
+
+    #[test]
+    fn step_exact_many_visible_disabled_skip_uses_palette_address_color() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 12;
+        ppu.cycle = 20;
+        ppu.state.vram_addr = 0x3F04;
+        ppu.palette[4] = 0x31;
+
+        let repeated = run_repeated_step_recording(ppu.clone(), 12);
+        let batched = run_exact_many_recording(ppu, 12);
+
+        assert_visible_advance_matches(&repeated, &batched);
+        assert_eq!(batched.3.pixels, vec![0x31; 12]);
+    }
+
+    #[test]
+    fn step_exact_many_visible_disabled_skip_hands_off_at_cycle_257() {
+        let mut ppu = Core::new();
+        ppu.scan_line = 33;
+        ppu.cycle = 250;
+        ppu.sprite_index = 7;
+        ppu.has_next_sprite = true;
+
+        let repeated = run_repeated_step_recording(ppu.clone(), 10);
+        let batched = run_exact_many_recording(ppu, 10);
+
+        assert_visible_advance_matches(&repeated, &batched);
+        assert_eq!(batched.0.cycle, 260);
+        assert_eq!(batched.3.pixels.len(), 6);
     }
 
     #[test]
@@ -1569,9 +1689,17 @@ impl Core {
         let mut result = false;
         let mut remaining = cycles;
         while remaining > 0 {
-            if let Some(skip_cycles) = self.idle_skip_cycles(remaining) {
-                self.advance_idle_cycles(skip_cycles);
-                remaining -= skip_cycles;
+            if let Some(skip) = self.inactive_skip(remaining) {
+                match skip {
+                    InactiveSkip::VisibleDisabledPixels(skip_cycles) => {
+                        self.advance_visible_disabled_pixel_cycles(screen, skip_cycles);
+                        remaining -= skip_cycles;
+                    }
+                    InactiveSkip::Idle(skip_cycles) => {
+                        self.advance_idle_cycles(skip_cycles);
+                        remaining -= skip_cycles;
+                    }
+                }
                 continue;
             }
             if self.step(screen, cartridge, interrupt) {
@@ -1592,9 +1720,17 @@ impl Core {
         let mut result = false;
         let mut remaining = cycles;
         while remaining > 0 {
-            if let Some(skip_cycles) = self.idle_skip_cycles(remaining) {
-                self.advance_idle_cycles(skip_cycles);
-                remaining -= skip_cycles;
+            if let Some(skip) = self.inactive_skip(remaining) {
+                match skip {
+                    InactiveSkip::VisibleDisabledPixels(skip_cycles) => {
+                        self.advance_visible_disabled_pixel_cycles(screen, skip_cycles);
+                        remaining -= skip_cycles;
+                    }
+                    InactiveSkip::Idle(skip_cycles) => {
+                        self.advance_idle_cycles(skip_cycles);
+                        remaining -= skip_cycles;
+                    }
+                }
                 continue;
             }
             if self.step(screen, cartridge, interrupt) {
@@ -1605,27 +1741,63 @@ impl Core {
         result
     }
 
-    fn idle_skip_cycles(&self, max_cycles: u64) -> Option<u64> {
+    fn inactive_skip(&self, max_cycles: u64) -> Option<InactiveSkip> {
         if self.render_executing
             || self.post_render_executing
             || self.mask.show_background
             || self.mask.show_sprites
             || self.vram_addr_update_delay > 0
-            || self.cycle > 339
-            || self.scan_line == 0 && self.cycle == 0
-            || (1..=240).contains(&self.scan_line) && self.cycle < 256
         {
             return None;
         }
 
-        let cycles_until_line_boundary = u64::from(340 - self.cycle);
-        let cycles = max_cycles.min(cycles_until_line_boundary);
-        (cycles > 0).then_some(cycles)
+        if (1..=240).contains(&self.scan_line) && self.cycle < 256 {
+            let cycles = max_cycles.min(u64::from(256 - self.cycle));
+            return (cycles > 0).then_some(InactiveSkip::VisibleDisabledPixels(cycles));
+        }
+
+        if self.cycle > 339 || self.scan_line == 0 && self.cycle == 0 {
+            return None;
+        }
+
+        let cycles = max_cycles.min(u64::from(340 - self.cycle));
+        (cycles > 0).then_some(InactiveSkip::Idle(cycles))
+    }
+
+    fn advance_visible_disabled_pixel_cycles<S: Screen>(&mut self, screen: &mut S, cycles: u64) {
+        let color = if (self.state.vram_addr & 0x3F00) == 0 {
+            self.read_palette(0)
+        } else {
+            self.read_palette(self.state.vram_addr as usize)
+        } & 0x3F;
+        screen.push_many(
+            color,
+            cycles
+                .try_into()
+                .expect("visible pixel batching never exceeds one scanline"),
+        );
+
+        if cycles >= u64::from(u16::BITS) {
+            self.state.low_bit_shift = 0;
+            self.state.high_bit_shift = 0;
+        } else {
+            self.state.low_bit_shift <<= cycles;
+            self.state.high_bit_shift <<= cycles;
+        }
+        self.advance_idle_cycles(cycles);
+        debug_assert!(self.cycle <= 256);
+        debug_assert!((1..=240).contains(&self.scan_line));
     }
 
     fn advance_idle_cycles(&mut self, cycles: u64) {
+        let start_cycle = self.cycle;
+        let end_cycle = self.cycle + cycles as u16;
+        if self.scan_line <= 240 && start_cycle < 257 && end_cycle >= 257 {
+            self.sprite_index = 0;
+            self.has_next_sprite = false;
+        }
         self.bus_tick += cycles;
-        self.cycle += cycles as u16;
+        self.cycle = end_cycle;
         self.vram_read_delay = if cycles >= u64::from(self.vram_read_delay) {
             0
         } else {
