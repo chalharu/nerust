@@ -37,6 +37,11 @@ def copy_long_to_wram(source_bank, source_address, destination):
     return [*lda_long(source_bank, source_address), *sta_long(0x7E, destination)]
 
 
+def copy_dsp_word_to_wram(code, data_bank, data_address, destination):
+    code += copy_long_to_wram(data_bank, data_address, destination)
+    code += copy_long_to_wram(data_bank, data_address, destination + 1)
+
+
 def write_dsp_word(code, data_bank, data_address, value):
     code += write_imm_long(value & 0xFF, data_bank, data_address)
     code += write_imm_long((value >> 8) & 0xFF, data_bank, data_address)
@@ -49,15 +54,65 @@ def build_program(data_bank, data_address, status_bank, status_address):
     code += write_imm_long(0x00, data_bank, data_address)
     write_dsp_word(code, data_bank, data_address, 0x4000)
     write_dsp_word(code, data_bank, data_address, 0x4000)
-    code += copy_long_to_wram(data_bank, data_address, 0x0000)
-    code += copy_long_to_wram(data_bank, data_address, 0x0001)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0000)
 
     # Command $27: memory size / ROM version. DSP-1/1A return $0100, DSP-1B returns $0101.
     code += write_imm_long(0x27, data_bank, data_address)
     write_dsp_word(code, data_bank, data_address, 0x0000)
-    code += copy_long_to_wram(data_bank, data_address, 0x0002)
-    code += copy_long_to_wram(data_bank, data_address, 0x0003)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0002)
     code += copy_long_to_wram(status_bank, status_address, 0x0004)
+
+    # Stay alive for benchmark frame loops.
+    code += [0x80, 0xFE]
+    return bytes(code)
+
+
+def build_geometry_program(data_bank, data_address, status_bank, status_address):
+    code = []
+
+    # Command $04: sin/cos. angle 0, radius $4000 => sin 0, cos $4000.
+    code += write_imm_long(0x04, data_bank, data_address)
+    write_dsp_word(code, data_bank, data_address, 0x0000)
+    write_dsp_word(code, data_bank, data_address, 0x4000)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0010)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0012)
+
+    # Command $0C: 2D rotation. angle 0 leaves X/Y unchanged.
+    code += write_imm_long(0x0C, data_bank, data_address)
+    write_dsp_word(code, data_bank, data_address, 0x0000)
+    write_dsp_word(code, data_bank, data_address, 0x0123)
+    write_dsp_word(code, data_bank, data_address, 0xFEDC)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0014)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0016)
+
+    # Command $1C: 3D rotation. zero Euler angles leave X/Y/Z unchanged.
+    code += write_imm_long(0x1C, data_bank, data_address)
+    for value in (0x0000, 0x0000, 0x0000, 0x0003, 0xFFFC, 0x000C):
+        write_dsp_word(code, data_bank, data_address, value)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0018)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x001A)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x001C)
+
+    # Command $28: vector length. sqrt(3^2 + 4^2 + 12^2) => 13.
+    code += write_imm_long(0x28, data_bank, data_address)
+    for value in (0x0003, 0x0004, 0x000C):
+        write_dsp_word(code, data_bank, data_address, value)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x001E)
+
+    # Command $08: radius/squared-length. 3^2 + 4^2 + 12^2 => $000000A9.
+    code += write_imm_long(0x08, data_bank, data_address)
+    for value in (0x0003, 0x0004, 0x000C):
+        write_dsp_word(code, data_bank, data_address, value)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0020)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0022)
+
+    # Command $10: inverse. coefficient $4000, exponent 0 => $7FFF, $0001.
+    code += write_imm_long(0x10, data_bank, data_address)
+    write_dsp_word(code, data_bank, data_address, 0x4000)
+    write_dsp_word(code, data_bank, data_address, 0x0000)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0024)
+    copy_dsp_word_to_wram(code, data_bank, data_address, 0x0026)
+    code += copy_long_to_wram(status_bank, status_address, 0x0028)
 
     # Stay alive for benchmark frame loops.
     code += [0x80, 0xFE]
@@ -136,6 +191,43 @@ def main():
             "header_offset": HIROM_HEADER_OFFSET,
             "reset_vector_offset": HIROM_RESET_VECTOR_OFFSET,
             "title": "NERUST DSP1B SMOKE  ",
+            "map_mode": 0x21,
+            "chipset": 0x05,
+            "ram_size": 0x02,
+        },
+        HIROM_PROGRAM_OFFSET,
+    )
+    write_rom(
+        "Dsp1GeometrySmoke.sfc",
+        build_geometry_program(0x20, 0x8000, 0x20, 0xC000),
+        {
+            "header_offset": LOROM_HEADER_OFFSET,
+            "reset_vector_offset": LOROM_RESET_VECTOR_OFFSET,
+            "title": "NERUST DSP1 GEOM    ",
+            "map_mode": 0x20,
+            "chipset": 0x03,
+        },
+        LOROM_PROGRAM_OFFSET,
+    )
+    write_rom(
+        "Dsp1aGeometrySmoke.sfc",
+        build_geometry_program(0x20, 0x8000, 0x20, 0xC000),
+        {
+            "header_offset": LOROM_HEADER_OFFSET,
+            "reset_vector_offset": LOROM_RESET_VECTOR_OFFSET,
+            "title": "NERUST DSP1A GEOM   ",
+            "map_mode": 0x30,
+            "chipset": 0x05,
+        },
+        LOROM_PROGRAM_OFFSET,
+    )
+    write_rom(
+        "Dsp1bGeometrySmoke.sfc",
+        build_geometry_program(0x00, 0x6000, 0x00, 0x7000),
+        {
+            "header_offset": HIROM_HEADER_OFFSET,
+            "reset_vector_offset": HIROM_RESET_VECTOR_OFFSET,
+            "title": "NERUST DSP1B GEOM   ",
             "map_mode": 0x21,
             "chipset": 0x05,
             "ram_size": 0x02,
