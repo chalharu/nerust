@@ -158,7 +158,6 @@ impl AndroidFrontend {
         frontend
     }
 
-
     /// Update the cached library entries and settings so synchronous JNI
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
     fn refresh_dialog_caches(&self) {
