@@ -236,10 +236,12 @@ impl Msu1State {
             return 0x00;
         }
 
-        let value = usize::try_from(self.data_read_offset)
+        let Some(value) = usize::try_from(self.data_read_offset)
             .ok()
             .and_then(|offset| self.data.get(offset).copied())
-            .unwrap_or(0);
+        else {
+            return 0x00;
+        };
         self.data_read_offset = self.data_read_offset.wrapping_add(1);
         value
     }
