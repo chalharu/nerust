@@ -237,11 +237,13 @@ fn assertion_failures(case: &RomCase, core: &Core) -> Result<Vec<String>, Manife
         .iter()
         .map(|assertion| match assertion {
             Assertion::BusU8 { .. }
+            | Assertion::ApuRamU8 { .. }
             | Assertion::WramU8 { .. }
             | Assertion::VramU8 { .. }
             | Assertion::CgramU8 { .. }
             | Assertion::OamU8 { .. } => evaluate_u8_assertion(assertion, core),
             Assertion::BusU16 { .. }
+            | Assertion::ApuRamU16 { .. }
             | Assertion::WramU16 { .. }
             | Assertion::VramU16 { .. }
             | Assertion::CgramU16 { .. }
@@ -259,6 +261,7 @@ fn evaluate_u8_assertion(
     let expected = assertion.expected_u8()?;
     let actual = match assertion {
         Assertion::BusU8 { .. } => core.peek(address),
+        Assertion::ApuRamU8 { .. } => core.peek_apu_ram(address as u16),
         Assertion::WramU8 { .. } => core.peek_wram(address as usize),
         Assertion::VramU8 { .. } => core.peek_vram(address as usize),
         Assertion::CgramU8 { .. } => core.peek_cgram(address as usize),
@@ -290,6 +293,10 @@ fn evaluate_u16_assertion(
         Assertion::BusU16 { .. } => {
             u16::from_le_bytes([core.peek(address), core.peek(address + 1)])
         }
+        Assertion::ApuRamU16 { .. } => u16::from_le_bytes([
+            core.peek_apu_ram(address as u16),
+            core.peek_apu_ram((address as u16) + 1),
+        ]),
         Assertion::WramU16 { .. } => u16::from_le_bytes([
             core.peek_wram(address as usize),
             core.peek_wram(address as usize + 1),
@@ -327,6 +334,8 @@ fn assertion_kind(assertion: &Assertion) -> &'static str {
     match assertion {
         Assertion::BusU8 { .. } => "bus_u8",
         Assertion::BusU16 { .. } => "bus_u16",
+        Assertion::ApuRamU8 { .. } => "apu_ram_u8",
+        Assertion::ApuRamU16 { .. } => "apu_ram_u16",
         Assertion::WramU8 { .. } => "wram_u8",
         Assertion::WramU16 { .. } => "wram_u16",
         Assertion::VramU8 { .. } => "vram_u8",

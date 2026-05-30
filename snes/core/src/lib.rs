@@ -203,6 +203,10 @@ impl Core {
         self.bus.memory.peek_wram(address)
     }
 
+    pub fn peek_apu_ram(&self, address: u16) -> u8 {
+        self.bus.peek_apu_ram(address)
+    }
+
     pub fn peek_vram(&self, address: usize) -> u8 {
         self.bus.ppu1.peek_vram(address)
     }
