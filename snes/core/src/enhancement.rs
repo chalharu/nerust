@@ -1394,9 +1394,7 @@ const SUPERFX_R15: u16 = 0x301E;
 const SUPERFX_R15_HIGH: u16 = 0x301F;
 const SUPERFX_PBR: u16 = 0x3034;
 const SUPERFX_ROMBR: u16 = 0x3036;
-const SUPERFX_CFGR: u16 = 0x3037;
 const SUPERFX_SCBR: u16 = 0x3038;
-const SUPERFX_CLSR: u16 = 0x3039;
 const SUPERFX_SCMR: u16 = 0x303A;
 const SUPERFX_RAMBR: u16 = 0x303C;
 const SUPERFX_CBR: u16 = 0x303E;
@@ -1446,14 +1444,11 @@ impl SuperFxState {
         }
 
         let address_offset = offset(address);
-        if matches!(
-            address_offset,
-            SUPERFX_VCR | SUPERFX_ROMBR | SUPERFX_RAMBR | SUPERFX_CBR | SUPERFX_CBR_HIGH
-        ) {
+        if address_offset == SUPERFX_VCR {
             return self.registers.contains(address_offset);
         }
 
-        let value = if address_offset == SUPERFX_PBR {
+        let value = if matches!(address_offset, SUPERFX_PBR | SUPERFX_ROMBR) {
             value & 0x7F
         } else {
             value
@@ -1473,17 +1468,7 @@ impl SuperFxState {
     }
 
     fn read_register(&self, address_offset: u16) -> u8 {
-        if matches!(
-            address_offset,
-            0x3032
-                | 0x3033
-                | 0x3035
-                | SUPERFX_CFGR
-                | SUPERFX_SCBR
-                | SUPERFX_CLSR
-                | SUPERFX_SCMR
-                | 0x303D
-        ) {
+        if matches!(address_offset, 0x3032 | 0x3035 | 0x303D) {
             0
         } else {
             self.registers.read(address_offset).unwrap_or(0)
