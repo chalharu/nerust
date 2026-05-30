@@ -147,15 +147,25 @@ impl DMC {
 
     pub(crate) fn step_timer(&mut self, interrupt: &mut Interrupt) {
         if self.timer.step_timer() {
-            if self.enabled {
-                self.step_shifter();
-            }
-            if self.bit_count > 0 {
-                self.bit_count -= 1;
-            }
-
-            self.step_reader(interrupt);
+            self.step_timer_clock(interrupt);
         }
+    }
+
+    pub(crate) fn step_timer_many(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        for _ in 0..self.timer.advance(cycles) {
+            self.step_timer_clock(interrupt);
+        }
+    }
+
+    fn step_timer_clock(&mut self, interrupt: &mut Interrupt) {
+        if self.enabled {
+            self.step_shifter();
+        }
+        if self.bit_count > 0 {
+            self.bit_count -= 1;
+        }
+
+        self.step_reader(interrupt);
     }
 
     pub(crate) fn cycles_until_next_dma_request(&self, max_cycles: u64) -> u64 {

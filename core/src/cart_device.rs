@@ -176,6 +176,10 @@ pub(crate) trait Cartridge: Mapper {
         false
     }
 
+    fn expansion_audio_cpu_step_synchronized(&self) -> bool {
+        false
+    }
+
     fn persistent_mapper_save_lengths(&self) -> (usize, usize) {
         let data = self.data_ref();
         let prg_ram_len = if data.save_pram_length() > 0 {

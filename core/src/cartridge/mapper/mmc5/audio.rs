@@ -108,6 +108,11 @@ impl Mmc5Pulse {
         }
     }
 
+    pub(super) fn step_timer_many(&mut self, cycles: u64) {
+        let clocks = self.timer.advance(cycles);
+        self.duty_value = self.duty_value.wrapping_sub((clocks & 0x07) as u8) & 0x07;
+    }
+
     pub(super) fn step_frame(&mut self) {
         self.step_envelope();
         self.step_length();
@@ -157,6 +162,27 @@ impl Mmc5 {
             self.pulse_1.step_frame();
             self.pulse_2.step_frame();
         }
+        self.update_external_irq(interrupt);
+    }
+
+    pub(super) fn clock_audio_many(&mut self, cycles: u64, interrupt: &mut Interrupt) {
+        if cycles == 0 {
+            return;
+        }
+
+        self.pulse_1.step_length_counter();
+        self.pulse_2.step_length_counter();
+        self.pulse_1.step_timer_many(cycles);
+        self.pulse_2.step_timer_many(cycles);
+
+        let total = self.audio_frame_accumulator + cycles * 240;
+        let frames = total / AUDIO_CLOCK_RATE;
+        self.audio_frame_accumulator = total % AUDIO_CLOCK_RATE;
+        for _ in 0..frames {
+            self.pulse_1.step_frame();
+            self.pulse_2.step_frame();
+        }
+
         self.update_external_irq(interrupt);
     }
 
