@@ -13,6 +13,7 @@ mod mapper;
 mod memory;
 mod ppu1;
 mod ppu2;
+mod scheduler;
 
 pub use cartridge::{Cartridge, CartridgeError, CartridgeHeader};
 pub use cpu::{CpuState, CpuStatus, Registers};
@@ -22,6 +23,7 @@ pub use ppu1::Mode7Registers;
 
 use bus::Bus;
 use cpu::{Cpu, CpuFault};
+use scheduler::Scheduler;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoreError {
@@ -75,6 +77,7 @@ pub struct PresentedColorWindowLine {
 pub struct Core {
     cpu: Cpu,
     bus: Bus,
+    scheduler: Scheduler,
 }
 
 impl Core {
@@ -82,6 +85,7 @@ impl Core {
         Self {
             cpu: Cpu::new(),
             bus: Bus::new(cartridge),
+            scheduler: Scheduler::new(),
         }
     }
 
@@ -115,17 +119,31 @@ impl Core {
         if self.cpu.current_state() == CpuState::Stopped {
             return Ok(());
         }
+        let start_cycles = self.cpu.cycles();
         self.bus.tick_cpu_cycle();
         self.cpu.step(&mut self.bus);
+        self.scheduler
+            .advance(self.cpu.cycles().wrapping_sub(start_cycles));
         if let Some(fault) = self.cpu.take_fault() {
             return Err(fault.into());
         }
         Ok(())
     }
 
+    /// Runs at least `cycles` CPU cycles, stopping early if the CPU stops.
+    ///
+    /// Execution is instruction-bounded and may overshoot the requested budget
+    /// by the remaining cycles in the current instruction.
+    pub fn run_for_cycles(&mut self, cycles: u64) -> Result<(), CoreError> {
+        self.scheduler
+            .run_for_cycles(&mut self.cpu, &mut self.bus, cycles)
+            .map_err(Into::into)
+    }
+
     pub fn reset_cpu(&mut self) {
         self.cpu.reset();
         self.bus.reset_ephemeral_state();
+        self.scheduler.reset();
     }
 
     pub fn registers(&self) -> &Registers {
@@ -134,6 +152,10 @@ impl Core {
 
     pub fn cycles(&self) -> u64 {
         self.cpu.cycles()
+    }
+
+    pub fn master_cycles(&self) -> u64 {
+        self.scheduler.master_cycles()
     }
 
     pub fn current_opcode(&self) -> u8 {
@@ -367,6 +389,25 @@ mod tests {
                 .status()
                 .contains(CpuStatus::ACCUMULATOR_8BIT | CpuStatus::INDEX_8BIT)
         );
+    }
+
+    #[test]
+    fn core_run_for_cycles_matches_step_loop_until_stopped() {
+        let program = [0xEA, 0xEA, 0xDB];
+        let mut rom = build_lorom(0x8000);
+        rom[..program.len()].copy_from_slice(&program);
+
+        let mut stepped = Core::from_rom_bytes(&rom).unwrap();
+        let mut scheduled = Core::from_rom_bytes(&rom).unwrap();
+
+        run_until_stopped(&mut stepped, 512);
+        scheduled.run_for_cycles(512).unwrap();
+
+        assert_eq!(scheduled.current_state(), CpuState::Stopped);
+        assert_eq!(scheduled.current_opcode(), stepped.current_opcode());
+        assert_eq!(scheduled.registers(), stepped.registers());
+        assert_eq!(scheduled.cycles(), stepped.cycles());
+        assert_eq!(scheduled.master_cycles(), scheduled.cycles());
     }
 
     #[test]

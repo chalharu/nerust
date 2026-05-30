@@ -47,19 +47,23 @@ impl SmpTimer {
         self.output = 0;
     }
 
-    fn tick_cpu_cycle(&mut self, source_period: u16, enabled: bool) {
-        self.source_accumulator += 1;
-        while self.source_accumulator >= source_period {
-            self.source_accumulator -= source_period;
-            if !enabled {
-                continue;
-            }
-            self.divider += 1;
-            if self.divider >= self.effective_target() {
-                self.divider = 0;
-                self.output = self.output.wrapping_add(1) & 0x0F;
-            }
+    fn tick_cpu_cycles(&mut self, cycles: u32, source_period: u16, enabled: bool) {
+        if cycles == 0 {
+            return;
         }
+
+        let source_ticks = (u32::from(self.source_accumulator) + cycles) / u32::from(source_period);
+        self.source_accumulator =
+            ((u32::from(self.source_accumulator) + cycles) % u32::from(source_period)) as u16;
+        if !enabled || source_ticks == 0 {
+            return;
+        }
+
+        let effective_target = u32::from(self.effective_target());
+        let divider_ticks = u32::from(self.divider) + source_ticks;
+        let output_ticks = divider_ticks / effective_target;
+        self.divider = (divider_ticks % effective_target) as u16;
+        self.output = self.output.wrapping_add((output_ticks & 0x0F) as u8) & 0x0F;
     }
 
     fn effective_target(&self) -> u16 {
@@ -183,16 +187,31 @@ impl Apu {
         }
     }
 
-    pub(crate) fn tick_cpu_cycle(&mut self) {
-        self.tick_timers();
+    pub(crate) fn step_cpu_cycles(&mut self, mut cycles: u32) {
+        if cycles == 0 {
+            return;
+        }
+
         if self.smp_entry_delay_cpu_cycles > 0 {
-            self.smp_entry_delay_cpu_cycles -= 1;
+            let delayed_cycles = cycles.min(u32::from(self.smp_entry_delay_cpu_cycles));
+            self.tick_timers(delayed_cycles);
+            self.smp_entry_delay_cpu_cycles -= delayed_cycles as u8;
+            cycles -= delayed_cycles;
             if self.smp_entry_delay_cpu_cycles == 0 {
                 self.smp_running = true;
             }
+            if cycles == 0 {
+                return;
+            }
+        }
+
+        if !self.smp_running {
+            self.tick_timers(cycles);
             return;
         }
-        if self.smp_running {
+
+        for _ in 0..cycles {
+            self.tick_timers(1);
             self.execute_smp_instruction();
         }
     }
@@ -270,14 +289,18 @@ impl Apu {
         }
     }
 
-    fn tick_timers(&mut self) {
+    fn tick_timers(&mut self, cycles: u32) {
         for index in 0..SMP_TIMER_COUNT {
             let source_period = if index == 2 {
                 SMP_TIMER2_SOURCE_CPU_CYCLES
             } else {
                 SMP_TIMER01_SOURCE_CPU_CYCLES
             };
-            self.timers[index].tick_cpu_cycle(source_period, self.control & (1 << index) != 0);
+            self.timers[index].tick_cpu_cycles(
+                cycles,
+                source_period,
+                self.control & (1 << index) != 0,
+            );
         }
     }
 
