@@ -1379,20 +1379,24 @@ mod tests {
         assert_eq!(cartridge.read(0x003000), Some(0x24));
         assert_eq!(cartridge.read(0x803000), Some(0x24));
         assert_eq!(cartridge.read(0x00303B), Some(0x04));
+        assert!(cartridge.write(0x00303B, 0xFF));
+        assert_eq!(cartridge.read(0x00303B), Some(0x04));
+        assert!(cartridge.write(0x003033, 0x01));
+        assert_eq!(cartridge.read(0x003033), Some(0x01));
         assert!(cartridge.write(0x003034, 0xFF));
         assert_eq!(cartridge.read(0x003034), Some(0x7F));
         assert!(cartridge.write(0x003036, 0x12));
-        assert_eq!(cartridge.read(0x003036), Some(0x00));
+        assert_eq!(cartridge.read(0x003036), Some(0x12));
         assert!(cartridge.write(0x003037, 0xAA));
         assert!(cartridge.write(0x003038, 0x03));
         assert!(cartridge.write(0x003039, 0x01));
         assert!(cartridge.write(0x00303A, 0x15));
-        assert_eq!(cartridge.read(0x003037), Some(0x00));
-        assert_eq!(cartridge.read(0x003038), Some(0x00));
-        assert_eq!(cartridge.read(0x003039), Some(0x00));
-        assert_eq!(cartridge.read(0x00303A), Some(0x00));
+        assert_eq!(cartridge.read(0x003037), Some(0xAA));
+        assert_eq!(cartridge.read(0x003038), Some(0x03));
+        assert_eq!(cartridge.read(0x003039), Some(0x01));
+        assert_eq!(cartridge.read(0x00303A), Some(0x15));
         assert!(cartridge.write(0x00303C, 0x01));
-        assert_eq!(cartridge.read(0x00303C), Some(0x00));
+        assert_eq!(cartridge.read(0x00303C), Some(0x01));
         assert_eq!(cartridge.read(0x008000), Some(0xEA));
     }
 
@@ -1500,6 +1504,10 @@ mod tests {
         [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x22, 0xB1, 0x32, 0x00];
     const GSU_GETB_PROGRAM: [u8; 9] = [0xFE, 0x23, 0x81, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00];
     const GSU_GETB_FLAGS_PROGRAM: [u8; 6] = [0xFE, 0x23, 0x01, 0xEF, 0x00, 0x01];
+    const GSU_CPU_ROMBR_GETB_PROGRAM: [u8; 10] =
+        [0xFE, 0x00, 0x80, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x01];
+    const GSU_CPU_RAMB_STORE_PROGRAM: [u8; 9] =
+        [0xF0, 0xEF, 0xBE, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x01];
     const GSU_ROMB_GETB_PROGRAM: [u8; 15] = [
         0xF0, 0x01, 0x00, 0x3F, 0xDF, 0xFE, 0x00, 0x80, 0xEF, 0xF1, 0x00, 0x01, 0x31, 0x00, 0x00,
     ];
@@ -1882,6 +1890,40 @@ mod tests {
     }
 
     #[test]
+    fn super_fx_cpu_bank_register_writes_seed_gsu_runtime_state() {
+        let mut rom = build_hirom_with_header("HIROM GSU CPU ROMB", 0x31, 0x15, None, 0x0C);
+        rom[0x0000] = 0x11;
+        rom[0x8000] = 0x5C;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        for (offset, value) in GSU_CPU_ROMBR_GETB_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x003036, 0x81));
+        assert_eq!(cartridge.read(0x003036), Some(0x01));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.read(0x700100), Some(0x5C));
+        assert_eq!(cartridge.read(0x700101), Some(0x00));
+
+        let mut rom = build_hirom_with_header("HIROM GSU CPU RAMB", 0x31, 0x15, None, 0x0C);
+        rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
+        let mut cartridge = Cartridge::from_bytes(&rom).unwrap();
+
+        for (offset, value) in GSU_CPU_RAMB_STORE_PROGRAM.iter().copied().enumerate() {
+            assert!(cartridge.write(0x700080 + offset as u32, value));
+        }
+        assert!(cartridge.write(0x00303C, 0x01));
+        start_super_fx_program(&mut cartridge, 0x70, 0x0080);
+
+        assert_eq!(cartridge.save_ram()[0x0100], 0x00);
+        assert_eq!(cartridge.save_ram()[0x0101], 0x00);
+        assert_eq!(cartridge.save_ram()[0x10100], 0xEF);
+        assert_eq!(cartridge.save_ram()[0x10101], 0xBE);
+        assert_eq!(cartridge.read(0x00303C), Some(0x01));
+    }
+
+    #[test]
     fn super_fx_plot_ignores_ramb_framebuffer_bank() {
         let mut rom = build_hirom_with_header("HIROM GSU RAMB PLOT", 0x31, 0x15, None, 0x0C);
         rom[HIROM_HEADER_OFFSET + 0x18] = 0x07;
@@ -2002,8 +2044,8 @@ mod tests {
 
         assert!(cartridge.write(0x00303E, 0xFF));
         assert!(cartridge.write(0x00303F, 0xFF));
-        assert_eq!(cartridge.read(0x00303E), Some(0x00));
-        assert_eq!(cartridge.read(0x00303F), Some(0x00));
+        assert_eq!(cartridge.read(0x00303E), Some(0xFF));
+        assert_eq!(cartridge.read(0x00303F), Some(0xFF));
 
         start_super_fx_program(&mut cartridge, 0x00, 0x8000);
 
