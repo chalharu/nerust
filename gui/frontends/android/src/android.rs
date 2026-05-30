@@ -131,7 +131,7 @@ struct AndroidFrontend {
 impl AndroidFrontend {
     fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
-        let mut frontend = Self {
+        let frontend = Self {
             app,
             session: SessionHandle::new_with_settings_manager(
                 HostBackendIdentity::android_wgpu(),
@@ -158,6 +158,7 @@ impl AndroidFrontend {
         frontend
     }
 
+    #[allow(dead_code)]
     fn restore_last_session(&mut self) -> Result<(), String> {
         log::info!("restore_last_session: checking previous ROM");
         let Some(id) = self.storage.load_last_rom_id()? else {
