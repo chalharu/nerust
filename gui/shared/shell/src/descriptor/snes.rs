@@ -3,9 +3,10 @@ use super::{
     SystemRuntimeSnapshot, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use crate::settings::nes::build_speaker_with_profile;
+use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
-use nerust_console::{ConsoleMetrics, ConsoleRuntimeWarnings};
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_schema::{
@@ -17,6 +18,8 @@ use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::Core;
 use nerust_snes_render::render_screen;
+use nerust_sound_openal::{AudioFilterProfile, OpenAl};
+use nerust_sound_traits::{MixerInput, Sound};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -34,6 +37,7 @@ const CPU_MASTER_CLOCKS_PER_CYCLE: u64 = 6;
 const SNES_NTSC_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const SNES_NTSC_TARGET_FPS: f32 = SNES_NTSC_MASTER_CLOCK_HZ
     / ((SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME) as f32);
+const SNES_DSP_SAMPLE_RATE: i32 = 32_000;
 const CPU_CYCLES_PER_FRAME: u64 = (SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME
     + CPU_MASTER_CLOCKS_PER_CYCLE / 2)
     / CPU_MASTER_CLOCKS_PER_CYCLE;
@@ -124,9 +128,13 @@ impl SystemDefinition for SnesSystemDefinition {
     fn create_runtime(
         &self,
         _host: &RuntimeHostServices,
-        _settings: &SettingsSnapshot,
+        settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
-        Ok(Box::new(SnesRuntime::new()))
+        Ok(Box::new(SnesRuntime::new(build_speaker_with_profile(
+            &settings.local,
+            SNES_DSP_SAMPLE_RATE,
+            AudioFilterProfile::Snes,
+        ))))
     }
 }
 
@@ -213,13 +221,14 @@ enum SnesCommand {
 }
 
 impl SnesRuntime {
-    fn new() -> Self {
+    fn new(speaker: OpenAl) -> Self {
         let (commands, command_receiver) = mpsc::channel();
         let (stop, stop_receiver) = mpsc::channel();
         let shared = Arc::new(SnesRuntimeShared::new());
         let worker_shared = shared.clone();
-        let thread =
-            thread::spawn(move || run_worker(command_receiver, stop_receiver, worker_shared));
+        let thread = thread::spawn(move || {
+            run_worker(command_receiver, stop_receiver, worker_shared, speaker);
+        });
         Self {
             commands,
             stop,
@@ -382,8 +391,13 @@ impl SnesRuntimeShared {
     }
 }
 
-fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<SnesRuntimeShared>) {
-    let mut state = SnesWorkerState::default();
+fn run_worker(
+    commands: Receiver<SnesCommand>,
+    stop: Receiver<()>,
+    shared: Arc<SnesRuntimeShared>,
+    speaker: OpenAl,
+) {
+    let mut state = SnesWorkerState::new(speaker);
     let mut timer = nerust_timer::Timer::new();
     publish_worker_metrics(&shared, &state, 0.0);
 
@@ -402,13 +416,9 @@ fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<S
         }
 
         if let Some(core) = state.core.as_mut() {
-            match step_snes_frame(core) {
+            match step_snes_frame(core, &mut state.speaker) {
                 Ok(()) => {
-                    shared.publish_frame(render_snes_frame(
-                        core,
-                        &mut state.render_warning_logged,
-                        &mut state.runtime_warnings,
-                    ));
+                    shared.publish_frame(render_snes_frame(core));
                     state.frame_counter = state.frame_counter.wrapping_add(1);
                     timer.wait();
                     publish_worker_metrics(&shared, &state, timer.as_fps());
@@ -423,17 +433,28 @@ fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<S
     }
 }
 
-#[derive(Default)]
 struct SnesWorkerState {
     core: Option<Core>,
+    speaker: OpenAl,
     loaded: bool,
     paused: bool,
     frame_counter: u64,
     input_buttons: [u16; 2],
-    render_warning_logged: bool,
-    audio_warning_logged: bool,
     reset_timer: bool,
-    runtime_warnings: ConsoleRuntimeWarnings,
+}
+
+impl SnesWorkerState {
+    fn new(speaker: OpenAl) -> Self {
+        Self {
+            core: None,
+            speaker,
+            loaded: false,
+            paused: true,
+            frame_counter: 0,
+            input_buttons: [0; 2],
+            reset_timer: false,
+        }
+    }
 }
 
 fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &SnesRuntimeShared) {
@@ -458,20 +479,10 @@ fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &Sn
                     state.loaded = true;
                     state.paused = true;
                     state.frame_counter = 0;
-                    state.render_warning_logged = false;
-                    state.audio_warning_logged = false;
                     state.reset_timer = true;
-                    state.runtime_warnings = ConsoleRuntimeWarnings::default();
-                    warn_snes_audio_unsupported(
-                        &mut state.audio_warning_logged,
-                        &mut state.runtime_warnings,
-                    );
+                    state.speaker.pause();
                     if let Some(core) = state.core.as_ref() {
-                        shared.publish_frame(render_snes_frame(
-                            core,
-                            &mut state.render_warning_logged,
-                            &mut state.runtime_warnings,
-                        ));
+                        shared.publish_frame(render_snes_frame(core));
                     }
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
@@ -486,7 +497,7 @@ fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &Sn
             state.paused = false;
             state.frame_counter = 0;
             state.reset_timer = true;
-            state.runtime_warnings = ConsoleRuntimeWarnings::default();
+            state.speaker.pause();
             shared.publish_frame(opaque_black_frame());
             publish_worker_metrics(shared, state, 0.0);
             send_reply(reply, Ok(was_loaded));
@@ -497,14 +508,8 @@ fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &Sn
                     core.reset_cpu();
                     apply_controller_buttons(core, state.input_buttons);
                     state.frame_counter = 0;
-                    state.render_warning_logged = false;
                     state.reset_timer = true;
-                    state.runtime_warnings.snes_renderer_fallback = false;
-                    shared.publish_frame(render_snes_frame(
-                        core,
-                        &mut state.render_warning_logged,
-                        &mut state.runtime_warnings,
-                    ));
+                    shared.publish_frame(render_snes_frame(core));
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
                 }
@@ -514,12 +519,14 @@ fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &Sn
         }
         SnesCommand::Pause => {
             state.paused = true;
+            state.speaker.pause();
             publish_worker_metrics(shared, state, 0.0);
         }
         SnesCommand::Resume => {
             if state.loaded {
                 state.paused = false;
                 state.reset_timer = true;
+                state.speaker.start();
                 publish_worker_metrics(shared, state, 0.0);
             }
         }
@@ -633,8 +640,8 @@ fn discover_msu1_audio_tracks(path: &Path) -> Result<Vec<u16>, String> {
     Ok(tracks)
 }
 
-fn step_snes_frame(core: &mut Core) -> Result<(), String> {
-    core.run_for_cycles(CPU_CYCLES_PER_FRAME)
+fn step_snes_frame<M: MixerInput>(core: &mut Core, mixer: &mut M) -> Result<(), String> {
+    core.run_for_cycles_with_audio(CPU_CYCLES_PER_FRAME, mixer)
         .map_err(|error| error.to_string())
 }
 
@@ -646,34 +653,13 @@ fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
     }
 }
 
-fn render_snes_frame(
-    core: &Core,
-    warning_logged: &mut bool,
-    runtime_warnings: &mut ConsoleRuntimeWarnings,
-) -> Vec<u8> {
+fn render_snes_frame(core: &Core) -> Vec<u8> {
     match render_screen(core) {
         Ok(rendered) => rendered.rgba,
         Err(error) => {
-            runtime_warnings.snes_renderer_fallback = true;
-            if !*warning_logged {
-                log::warn!("SNES software renderer fallback to backdrop: {error}");
-                *warning_logged = true;
-            }
-            render_backdrop_frame(core)
+            log::warn!("SNES software renderer failed: {error}");
+            opaque_black_frame()
         }
-    }
-}
-
-fn warn_snes_audio_unsupported(
-    warning_logged: &mut bool,
-    runtime_warnings: &mut ConsoleRuntimeWarnings,
-) {
-    runtime_warnings.snes_audio_unsupported = true;
-    if !*warning_logged {
-        log::warn!(
-            "SNES audio output is not available yet; the current SNES core does not synthesize DSP samples"
-        );
-        *warning_logged = true;
     }
 }
 
@@ -684,7 +670,6 @@ fn publish_worker_metrics(shared: &SnesRuntimeShared, state: &SnesWorkerState, e
         state.loaded,
         state.paused,
         emulation_fps,
-        state.runtime_warnings,
     );
 }
 
@@ -694,14 +679,12 @@ fn publish_metrics(
     loaded: bool,
     paused: bool,
     emulation_fps: f32,
-    runtime_warnings: ConsoleRuntimeWarnings,
 ) {
     shared.publish_metrics(ConsoleMetrics {
         frame_counter,
         loaded,
         paused,
         emulation_fps,
-        runtime_warnings,
         speed_multiplier: if emulation_fps > 0.0 {
             emulation_fps / SNES_NTSC_TARGET_FPS
         } else {
@@ -725,50 +708,12 @@ fn snes_video_profile() -> VideoRenderProfile {
     }
 }
 
-fn render_backdrop_frame(core: &Core) -> Vec<u8> {
-    let current_inidisp = core.peek(0x002100);
-    let current_color0 = u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF;
-    let mut frame = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
-    for y in 0..SCREEN_HEIGHT {
-        let line = core.presented_backdrop_line(y);
-        let color = line_color(
-            line.map_or(current_inidisp, |line| line.inidisp),
-            line.map_or(current_color0, |line| line.color0),
-        );
-        for _ in 0..SCREEN_WIDTH {
-            frame.extend_from_slice(&color);
-        }
-    }
-    frame
-}
-
 fn opaque_black_frame() -> Vec<u8> {
     let mut frame = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
     for pixel in frame.chunks_exact_mut(4) {
         pixel[3] = 0xFF;
     }
     frame
-}
-
-fn line_color(inidisp: u8, color: u16) -> [u8; 4] {
-    let brightness = inidisp & 0x0F;
-    if inidisp & 0x80 != 0 || brightness == 0 {
-        [0, 0, 0, 0xFF]
-    } else {
-        snes_color_to_rgba(color & 0x7FFF, brightness)
-    }
-}
-
-fn snes_color_to_rgba(color: u16, brightness: u8) -> [u8; 4] {
-    let red = scale_channel((color & 0x1F) as u8, brightness);
-    let green = scale_channel(((color >> 5) & 0x1F) as u8, brightness);
-    let blue = scale_channel(((color >> 10) & 0x1F) as u8, brightness);
-    [red, green, blue, 0xFF]
-}
-
-fn scale_channel(channel: u8, brightness: u8) -> u8 {
-    let expanded = (u16::from(channel) * 255 + 15) / 31;
-    ((expanded * u16::from(brightness) + 7) / 15) as u8
 }
 
 fn snes_input_topology_descriptor() -> InputTopologyDescriptor {

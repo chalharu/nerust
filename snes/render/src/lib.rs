@@ -154,7 +154,7 @@ fn dma_transfer_offsets(dmap: u8) -> &'static [u8] {
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error(
-        "unsupported BG mode {mode}; SNES renderer currently supports BG layers for modes 0, 1, 3, and 7"
+        "unsupported BG mode {mode}; SNES renderer expects a normal SNES BG mode in the range 0-7"
     )]
     UnsupportedBgMode { mode: u8 },
 }

@@ -9,7 +9,7 @@ mod resampler;
 use self::resampler::{Resampler, SimpleDownSampler};
 use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
-use nerust_soundfilter::{Filter, NesFilter};
+use nerust_soundfilter::{Filter, NesFilter, SnesFilter};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
@@ -117,6 +117,12 @@ fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! 
 }
 
 const CORE_AUDIO_OVERSAMPLE: u32 = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFilterProfile {
+    Nes,
+    Snes,
+}
 
 #[derive(Debug)]
 struct FadeBuffer {
@@ -387,11 +393,35 @@ impl OpenAlState {
 }
 
 #[derive(Debug)]
+enum OpenAlFilter {
+    Nes(NesFilter),
+    Snes(SnesFilter),
+}
+
+impl OpenAlFilter {
+    fn new(profile: AudioFilterProfile, sample_rate: f32) -> Self {
+        match profile {
+            AudioFilterProfile::Nes => Self::Nes(NesFilter::new(sample_rate)),
+            AudioFilterProfile::Snes => Self::Snes(SnesFilter::new(sample_rate)),
+        }
+    }
+}
+
+impl Filter for OpenAlFilter {
+    fn step(&mut self, data: f32) -> f32 {
+        match self {
+            Self::Nes(filter) => filter.step(data),
+            Self::Snes(filter) => filter.step(data),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct OpenAl {
     stop_sender: Sender<()>,
     playing_sender: Sender<bool>,
     data_sender: Sender<f32>,
-    filter: NesFilter,
+    filter: OpenAlFilter,
     gain: f32,
     thread: Option<JoinHandle<()>>,
     source_sample_rate: u32,
@@ -415,6 +445,24 @@ impl OpenAl {
         buffer_count: usize,
         gain: f32,
     ) -> Self {
+        Self::with_gain_and_filter(
+            sample_rate,
+            output_rate,
+            buffer_width,
+            buffer_count,
+            gain,
+            AudioFilterProfile::Nes,
+        )
+    }
+
+    pub fn with_gain_and_filter(
+        sample_rate: i32,
+        output_rate: i32,
+        buffer_width: usize,
+        buffer_count: usize,
+        gain: f32,
+        filter_profile: AudioFilterProfile,
+    ) -> Self {
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
             match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
@@ -431,7 +479,7 @@ impl OpenAl {
         let source_sample_rate = requested_source_rate
             .min(playback_sample_rate_u32.saturating_mul(CORE_AUDIO_OVERSAMPLE))
             .max(playback_sample_rate_u32);
-        let filter = NesFilter::new(playback_sample_rate as f32);
+        let filter = OpenAlFilter::new(filter_profile, playback_sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();

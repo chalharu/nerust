@@ -1,5 +1,6 @@
 use crate::bus::{Bus, CpuBus, ScheduledCpuBus};
 use crate::cpu::{Cpu, CpuFault, CpuState};
+use nerust_sound_traits::MixerInput;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
@@ -66,6 +67,50 @@ impl Scheduler {
 
             let start_cycles = cpu.cycles();
             let mut scheduled_bus = ScheduledCpuBus::new(bus);
+            let run = CpuLike::execute_until(cpu, &mut scheduled_bus, allowed_cycles.max(1));
+            scheduled_bus.flush();
+
+            let consumed_cycles = cpu.cycles().wrapping_sub(start_cycles);
+            debug_assert_eq!(consumed_cycles as u32, run.cycles);
+            self.advance(consumed_cycles);
+
+            if let Some(fault) = cpu.take_fault() {
+                return Err(fault);
+            }
+            if consumed_cycles == 0 {
+                break;
+            }
+
+            remaining_cycles = remaining_cycles.saturating_sub(consumed_cycles);
+
+            if run.crossed_event_boundary {
+                self.handle_event_boundary(SchedulerEventKind::InterruptChange);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn run_for_cycles_with_audio<M: MixerInput>(
+        &mut self,
+        cpu: &mut Cpu,
+        bus: &mut Bus,
+        cycles: u64,
+        mixer: &mut M,
+    ) -> Result<(), CpuFault> {
+        if cycles == 0 {
+            return Ok(());
+        }
+
+        let mut remaining_cycles = cycles;
+        while remaining_cycles > 0 && cpu.current_state() != CpuState::Stopped {
+            let external_event_cycles = Component::next_event_cycles(bus);
+            let allowed_cycles = remaining_cycles
+                .min(u64::from(external_event_cycles))
+                .min(u64::from(u32::MAX)) as u32;
+
+            let start_cycles = cpu.cycles();
+            let mut scheduled_bus = ScheduledCpuBus::new_with_audio(bus, mixer);
             let run = CpuLike::execute_until(cpu, &mut scheduled_bus, allowed_cycles.max(1));
             scheduled_bus.flush();
 

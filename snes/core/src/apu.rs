@@ -17,6 +17,17 @@ const SMP_TIMER_COUNT: usize = 3;
 const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
 pub(crate) const SMP_IPL_ENTRY_DELAY_CPU_CYCLES: u8 = 32;
+const SNES_NTSC_CPU_CLOCK_HZ: u64 = 3_579_545;
+const DSP_NATIVE_SAMPLE_RATE: u64 = 32_000;
+const DSP_VOICE_COUNT: usize = 8;
+const DSP_VOICE_REGISTER_STRIDE: usize = 0x10;
+const DSP_MASTER_VOLUME_LEFT: usize = 0x0C;
+const DSP_MASTER_VOLUME_RIGHT: usize = 0x1C;
+const DSP_KEY_ON: usize = 0x4C;
+const DSP_KEY_OFF: usize = 0x5C;
+const DSP_FLAGS: usize = 0x6C;
+const DSP_SOURCE_DIRECTORY: usize = 0x5D;
+const DSP_FLAG_MUTE: u8 = 0x40;
 const SMP_FLAG_C: u8 = 0x01;
 const SMP_FLAG_Z: u8 = 0x02;
 const SMP_FLAG_I: u8 = 0x04;
@@ -25,6 +36,8 @@ const SMP_FLAG_B: u8 = 0x10;
 const SMP_FLAG_P: u8 = 0x20;
 const SMP_FLAG_V: u8 = 0x40;
 const SMP_FLAG_N: u8 = 0x80;
+
+use nerust_sound_traits::MixerInput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IplState {
@@ -39,6 +52,39 @@ struct SmpTimer {
     divider: u16,
     source_accumulator: u16,
     output: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DspVoice {
+    active: bool,
+    current_addr: u16,
+    loop_addr: u16,
+    block_samples: [i16; 16],
+    block_index: u8,
+    prev1: i16,
+    prev2: i16,
+    pitch_phase: u64,
+    block_end: bool,
+    block_loop: bool,
+    envelope: u16,
+}
+
+impl Default for DspVoice {
+    fn default() -> Self {
+        Self {
+            active: false,
+            current_addr: 0,
+            loop_addr: 0,
+            block_samples: [0; 16],
+            block_index: 16,
+            prev1: 0,
+            prev2: 0,
+            pitch_phase: 0,
+            block_end: false,
+            block_loop: false,
+            envelope: 0x07FF,
+        }
+    }
 }
 
 impl SmpTimer {
@@ -100,6 +146,8 @@ pub(crate) struct Apu {
     smp_pc: u16,
     smp_running: bool,
     smp_entry_delay_cpu_cycles: u8,
+    audio_accumulator: u64,
+    dsp_voices: [DspVoice; DSP_VOICE_COUNT],
 }
 
 impl Apu {
@@ -123,6 +171,8 @@ impl Apu {
             smp_pc: 0,
             smp_running: false,
             smp_entry_delay_cpu_cycles: 0,
+            audio_accumulator: 0,
+            dsp_voices: [DspVoice::default(); DSP_VOICE_COUNT],
         }
     }
 
@@ -168,9 +218,7 @@ impl Apu {
         match address {
             0x00F1 => self.write_smp_control(value),
             0x00F2 => self.dsp_address = value,
-            0x00F3 if self.dsp_address < 0x80 => {
-                self.dsp_registers[usize::from(self.dsp_address)] = value;
-            }
+            0x00F3 if self.dsp_address < 0x80 => self.write_dsp_register(self.dsp_address, value),
             0x00F3 => {}
             0x00F4..=0x00F7 => {
                 self.ram[usize::from(address)] = value;
@@ -184,6 +232,96 @@ impl Apu {
             }
             0x00FD..=0x00FF => {}
             _ => self.ram[usize::from(address)] = value,
+        }
+    }
+
+    fn write_dsp_register(&mut self, address: u8, value: u8) {
+        let register = usize::from(address & 0x7F);
+        self.dsp_registers[register] = value;
+        match register {
+            DSP_KEY_ON => self.key_on_voices(value),
+            DSP_KEY_OFF => self.key_off_voices(value),
+            DSP_FLAGS if value & 0x80 != 0 => {
+                for voice in &mut self.dsp_voices {
+                    voice.active = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn mix_audio_for_cpu_cycles<M: MixerInput + ?Sized>(
+        &mut self,
+        cycles: u32,
+        mixer: &mut M,
+    ) {
+        let sample_rate = u64::from(mixer.sample_rate()).max(1);
+        self.audio_accumulator = self
+            .audio_accumulator
+            .saturating_add(u64::from(cycles) * sample_rate);
+        while self.audio_accumulator >= SNES_NTSC_CPU_CLOCK_HZ {
+            self.audio_accumulator -= SNES_NTSC_CPU_CLOCK_HZ;
+            mixer.push(self.next_audio_sample(mixer.sample_rate()));
+        }
+    }
+
+    fn next_audio_sample(&mut self, sample_rate: u32) -> f32 {
+        if self.dsp_registers[DSP_FLAGS] & DSP_FLAG_MUTE != 0 {
+            return 0.5;
+        }
+
+        let registers = self.dsp_registers;
+        let ram = self.ram.as_ref();
+        let master_left = signed_volume(registers[DSP_MASTER_VOLUME_LEFT]);
+        let master_right = signed_volume(registers[DSP_MASTER_VOLUME_RIGHT]);
+        let mut mixed = 0_i32;
+
+        for (index, voice) in self.dsp_voices.iter_mut().enumerate() {
+            mixed += mix_voice(
+                index,
+                voice,
+                &registers,
+                ram,
+                sample_rate,
+                master_left,
+                master_right,
+            );
+        }
+
+        let signed = (mixed as f32 / 32768.0).clamp(-1.0, 1.0);
+        signed.mul_add(0.5, 0.5)
+    }
+
+    fn key_on_voices(&mut self, mask: u8) {
+        for voice_index in 0..DSP_VOICE_COUNT {
+            if mask & (1 << voice_index) == 0 {
+                continue;
+            }
+
+            let base = voice_index * DSP_VOICE_REGISTER_STRIDE;
+            let directory = u16::from(self.dsp_registers[DSP_SOURCE_DIRECTORY]) << 8;
+            let source = u16::from(self.dsp_registers[base + 0x04]);
+            let entry = directory.wrapping_add(source.wrapping_mul(4));
+            let start_addr = read_word(self.ram.as_ref(), entry);
+            let loop_addr = read_word(self.ram.as_ref(), entry.wrapping_add(2));
+            let gain = self.dsp_registers[base + 0x07];
+            let voice = &mut self.dsp_voices[voice_index];
+            *voice = DspVoice {
+                active: true,
+                current_addr: start_addr,
+                loop_addr,
+                envelope: envelope_from_gain(gain),
+                ..DspVoice::default()
+            };
+            decode_next_brr_block(self.ram.as_ref(), voice);
+        }
+    }
+
+    fn key_off_voices(&mut self, mask: u8) {
+        for voice_index in 0..DSP_VOICE_COUNT {
+            if mask & (1 << voice_index) != 0 {
+                self.dsp_voices[voice_index].active = false;
+            }
         }
     }
 
@@ -1633,6 +1771,219 @@ impl Apu {
     }
 }
 
+fn mix_voice(
+    index: usize,
+    voice: &mut DspVoice,
+    registers: &[u8; DSP_REGISTER_COUNT],
+    ram: &[u8; APU_RAM_LEN],
+    sample_rate: u32,
+    master_left: i32,
+    master_right: i32,
+) -> i32 {
+    if !voice.active {
+        return 0;
+    }
+
+    if voice.block_index >= 16 {
+        decode_next_brr_block(ram, voice);
+        if !voice.active {
+            return 0;
+        }
+    }
+
+    let base = index * DSP_VOICE_REGISTER_STRIDE;
+    let raw = interpolated_voice_sample(voice, sample_rate.max(1));
+    advance_voice_pitch(voice, ram, voice_pitch(registers, base), sample_rate.max(1));
+
+    let voice_left = i64::from(signed_volume(registers[base]));
+    let voice_right = i64::from(signed_volume(registers[base + 0x01]));
+    let master_left = i64::from(master_left);
+    let master_right = i64::from(master_right);
+    let env = i64::from(voice.envelope);
+    let raw = i64::from(raw);
+    let left = raw * voice_left * master_left * env / (128 * 128 * 0x07FF);
+    let right = raw * voice_right * master_right * env / (128 * 128 * 0x07FF);
+    ((left + right) / 2).clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i32
+}
+
+fn interpolated_voice_sample(voice: &DspVoice, sample_rate: u32) -> i32 {
+    let index = usize::from(voice.block_index.min(15));
+    let current = i32::from(voice.block_samples[index]);
+    let next = i32::from(
+        voice
+            .block_samples
+            .get(index + 1)
+            .copied()
+            .unwrap_or(voice.block_samples[index]),
+    );
+    let threshold = u64::from(sample_rate) * 0x1000;
+    let fraction = if threshold == 0 {
+        0.0
+    } else {
+        voice.pitch_phase as f32 / threshold as f32
+    };
+    (current as f32 + (next - current) as f32 * fraction).round() as i32
+}
+
+fn advance_voice_pitch(
+    voice: &mut DspVoice,
+    ram: &[u8; APU_RAM_LEN],
+    pitch: u16,
+    sample_rate: u32,
+) {
+    let threshold = u64::from(sample_rate) * 0x1000;
+    voice.pitch_phase = voice
+        .pitch_phase
+        .saturating_add(u64::from(pitch.max(1)) * DSP_NATIVE_SAMPLE_RATE);
+    while voice.pitch_phase >= threshold {
+        voice.pitch_phase -= threshold;
+        advance_voice_sample(voice, ram);
+        if !voice.active {
+            break;
+        }
+    }
+}
+
+fn advance_voice_sample(voice: &mut DspVoice, ram: &[u8; APU_RAM_LEN]) {
+    if voice.block_index < 15 {
+        voice.block_index += 1;
+        return;
+    }
+
+    if voice.block_end && !voice.block_loop {
+        voice.active = false;
+        return;
+    }
+    if voice.block_end && voice.block_loop {
+        voice.current_addr = voice.loop_addr;
+    }
+    decode_next_brr_block(ram, voice);
+}
+
+fn decode_next_brr_block(ram: &[u8; APU_RAM_LEN], voice: &mut DspVoice) {
+    let base = voice.current_addr;
+    let header = read_byte(ram, base);
+    let shift = header >> 4;
+    let filter = (header >> 2) & 0x03;
+    voice.block_end = header & 0x01 != 0;
+    voice.block_loop = header & 0x02 != 0;
+    for sample_index in 0..16 {
+        let packed = read_byte(ram, base.wrapping_add(1 + (sample_index / 2) as u16));
+        let nibble = if sample_index & 1 == 0 {
+            packed >> 4
+        } else {
+            packed & 0x0F
+        };
+        let decoded = decode_brr_nibble(nibble, shift, filter, voice.prev1, voice.prev2);
+        voice.block_samples[sample_index] = decoded;
+        voice.prev2 = voice.prev1;
+        voice.prev1 = decoded;
+    }
+    voice.current_addr = base.wrapping_add(9);
+    voice.block_index = 0;
+}
+
+fn decode_brr_nibble(nibble: u8, shift: u8, filter: u8, prev1: i16, prev2: i16) -> i16 {
+    let signed = i32::from(((nibble << 4) as i8) >> 4);
+    let shifted = if shift <= 12 {
+        signed << shift
+    } else if signed < 0 {
+        -0x8000
+    } else {
+        0
+    };
+    let prediction = match filter {
+        0 => 0,
+        1 => i32::from(prev1) * 15 / 16,
+        2 => i32::from(prev1) * 61 / 32 - i32::from(prev2) * 15 / 16,
+        _ => i32::from(prev1) * 115 / 64 - i32::from(prev2) * 13 / 16,
+    };
+    (shifted + prediction).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+}
+
+fn voice_pitch(registers: &[u8; DSP_REGISTER_COUNT], base: usize) -> u16 {
+    u16::from(registers[base + 0x02]) | (u16::from(registers[base + 0x03] & 0x3F) << 8)
+}
+
+fn signed_volume(value: u8) -> i32 {
+    i32::from(i8::from_ne_bytes([value]))
+}
+
+fn envelope_from_gain(gain: u8) -> u16 {
+    if gain & 0x80 == 0 && gain != 0 {
+        (u16::from(gain & 0x7F) << 4).min(0x07FF)
+    } else {
+        0x07FF
+    }
+}
+
+fn read_word(ram: &[u8; APU_RAM_LEN], address: u16) -> u16 {
+    u16::from(read_byte(ram, address)) | (u16::from(read_byte(ram, address.wrapping_add(1))) << 8)
+}
+
+fn read_byte(ram: &[u8; APU_RAM_LEN], address: u16) -> u8 {
+    ram[usize::from(address)]
+}
+
 fn apu_port_index(offset: u16) -> usize {
     usize::from(offset & 0x0003)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Apu, DSP_KEY_ON, DSP_SOURCE_DIRECTORY};
+    use nerust_sound_traits::MixerInput;
+
+    #[derive(Default)]
+    struct CapturingMixer {
+        samples: Vec<f32>,
+    }
+
+    impl MixerInput for CapturingMixer {
+        fn push(&mut self, data: f32) {
+            self.samples.push(data);
+        }
+
+        fn sample_rate(&self) -> u32 {
+            32_000
+        }
+    }
+
+    fn write_dsp(apu: &mut Apu, register: usize, value: u8) {
+        apu.write_smp(0x00F2, register as u8);
+        apu.write_smp(0x00F3, value);
+    }
+
+    #[test]
+    fn keyed_brr_voice_produces_biased_audio_samples() {
+        let mut apu = Apu::new();
+        let directory = 0x0100;
+        let sample = 0x0200;
+        apu.ram[directory] = sample as u8;
+        apu.ram[directory + 1] = (sample >> 8) as u8;
+        apu.ram[directory + 2] = sample as u8;
+        apu.ram[directory + 3] = (sample >> 8) as u8;
+        apu.ram[sample] = 0xC1;
+        for byte in &mut apu.ram[sample + 1..sample + 9] {
+            *byte = 0x1F;
+        }
+
+        write_dsp(&mut apu, DSP_SOURCE_DIRECTORY, (directory >> 8) as u8);
+        write_dsp(&mut apu, 0x00, 0x7F);
+        write_dsp(&mut apu, 0x01, 0x7F);
+        write_dsp(&mut apu, 0x02, 0x00);
+        write_dsp(&mut apu, 0x03, 0x10);
+        write_dsp(&mut apu, 0x04, 0x00);
+        write_dsp(&mut apu, 0x07, 0x7F);
+        write_dsp(&mut apu, 0x0C, 0x7F);
+        write_dsp(&mut apu, 0x1C, 0x7F);
+        write_dsp(&mut apu, DSP_KEY_ON, 0x01);
+
+        let mut mixer = CapturingMixer::default();
+        apu.mix_audio_for_cpu_cycles(5_000, &mut mixer);
+
+        assert!(mixer.samples.len() > 16);
+        assert!(mixer.samples.iter().any(|sample| *sample > 0.55));
+        assert!(mixer.samples.iter().any(|sample| *sample < 0.45));
+    }
 }

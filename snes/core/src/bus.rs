@@ -3,6 +3,7 @@ use crate::{
     Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
     PresentedMainScreenLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2,
 };
+use nerust_sound_traits::MixerInput;
 
 const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
@@ -298,6 +299,14 @@ impl Bus {
         for _ in 0..video_subticks {
             self.advance_video_one_subtick();
         }
+    }
+
+    pub(crate) fn mix_audio_for_cpu_cycles<M: MixerInput + ?Sized>(
+        &mut self,
+        cycles: u32,
+        mixer: &mut M,
+    ) {
+        self.apu.mix_audio_for_cpu_cycles(cycles, mixer);
     }
 
     pub(crate) fn next_event_cycles(&self) -> u32 {
@@ -1503,6 +1512,7 @@ impl CpuBus for Bus {
 pub(crate) struct ScheduledCpuBus<'a> {
     bus: &'a mut Bus,
     pending_cycles: u32,
+    audio_mixer: Option<&'a mut dyn MixerInput>,
 }
 
 impl<'a> ScheduledCpuBus<'a> {
@@ -1510,6 +1520,15 @@ impl<'a> ScheduledCpuBus<'a> {
         Self {
             bus,
             pending_cycles: 0,
+            audio_mixer: None,
+        }
+    }
+
+    pub(crate) fn new_with_audio<M: MixerInput + 'a>(bus: &'a mut Bus, mixer: &'a mut M) -> Self {
+        Self {
+            bus,
+            pending_cycles: 0,
+            audio_mixer: Some(mixer),
         }
     }
 
@@ -1520,6 +1539,9 @@ impl<'a> ScheduledCpuBus<'a> {
         let cycles = self.pending_cycles;
         self.pending_cycles = 0;
         self.bus.step_cpu_cycles(cycles);
+        if let Some(mixer) = self.audio_mixer.as_deref_mut() {
+            self.bus.mix_audio_for_cpu_cycles(cycles, mixer);
+        }
     }
 }
 
