@@ -1116,6 +1116,39 @@ cases:
       - kind: bus_u8
         address: "0x002226"
         expected: "0x80"
+  - id: cx4-smoke-final-state
+    description: >
+      The self-authored CX4 smoke ROM declares a CX4 cartridge header and verifies host-visible CX4 multiply, identification, and busy-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/cx4-smoke/build/Cx4Smoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x8C"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x04"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x36"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x43"
+      - kind: wram_u8
+        address: "0x0005"
+        expected: "0x05"
+      - kind: wram_u8
+        address: "0x0006"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x007F5E"
+        expected: "0x00"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
