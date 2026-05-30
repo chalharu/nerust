@@ -1605,7 +1605,6 @@ impl Apu {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn peek_ram(&self, address: u16) -> u8 {
         self.ram[usize::from(address)]
     }

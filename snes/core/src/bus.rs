@@ -624,6 +624,10 @@ impl Bus {
         self.peek_resolved(address & ADDRESS_MASK)
     }
 
+    pub(crate) fn peek_apu_ram(&self, address: u16) -> u8 {
+        self.apu.peek_ram(address)
+    }
+
     pub(crate) fn read(&mut self, address: u32) -> u8 {
         self.read_resolved(address & ADDRESS_MASK)
     }

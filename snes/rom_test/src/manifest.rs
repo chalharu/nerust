@@ -9,6 +9,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const APU_RAM_SIZE: u32 = 0x1_0000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
     #[error("failed to read ROM manifest `{path}`: {source}")]
@@ -55,6 +57,8 @@ pub struct RomCase {
 pub enum Assertion {
     BusU8 { address: String, expected: String },
     BusU16 { address: String, expected: String },
+    ApuRamU8 { address: String, expected: String },
+    ApuRamU16 { address: String, expected: String },
     WramU8 { address: String, expected: String },
     WramU16 { address: String, expected: String },
     VramU8 { address: String, expected: String },
@@ -226,6 +230,8 @@ impl Assertion {
         match self {
             Self::BusU8 { address, .. }
             | Self::BusU16 { address, .. }
+            | Self::ApuRamU8 { address, .. }
+            | Self::ApuRamU16 { address, .. }
             | Self::WramU8 { address, .. }
             | Self::WramU16 { address, .. }
             | Self::VramU8 { address, .. }
@@ -244,6 +250,7 @@ impl Assertion {
     pub fn expected_u8(&self) -> Result<u8, ManifestError> {
         match self {
             Self::BusU8 { expected, .. }
+            | Self::ApuRamU8 { expected, .. }
             | Self::WramU8 { expected, .. }
             | Self::VramU8 { expected, .. }
             | Self::CgramU8 { expected, .. }
@@ -253,6 +260,7 @@ impl Assertion {
                 })
             }),
             Self::BusU16 { .. }
+            | Self::ApuRamU16 { .. }
             | Self::WramU16 { .. }
             | Self::VramU16 { .. }
             | Self::CgramU16 { .. }
@@ -265,6 +273,7 @@ impl Assertion {
     pub fn expected_u16(&self) -> Result<u16, ManifestError> {
         match self {
             Self::BusU16 { expected, .. }
+            | Self::ApuRamU16 { expected, .. }
             | Self::WramU16 { expected, .. }
             | Self::VramU16 { expected, .. }
             | Self::CgramU16 { expected, .. }
@@ -276,6 +285,7 @@ impl Assertion {
                 })
             }
             Self::BusU8 { .. }
+            | Self::ApuRamU8 { .. }
             | Self::WramU8 { .. }
             | Self::VramU8 { .. }
             | Self::CgramU8 { .. }
@@ -286,12 +296,31 @@ impl Assertion {
     }
 
     fn validate(&self, case_id: &str) -> Result<(), ManifestError> {
-        self.address().map_err(|error| ManifestError::Invalid {
+        let address = self.address().map_err(|error| ManifestError::Invalid {
             message: format!("ROM case `{case_id}` has invalid assertion address: {error}"),
         })?;
 
         match self {
+            Self::ApuRamU8 { .. } if address >= APU_RAM_SIZE => {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{case_id}` has APU RAM u8 assertion address 0x{address:04X} outside 64 KiB APU RAM"
+                    ),
+                });
+            }
+            Self::ApuRamU16 { .. } if address >= APU_RAM_SIZE - 1 => {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{case_id}` has APU RAM u16 assertion address 0x{address:04X} crossing 64 KiB APU RAM"
+                    ),
+                });
+            }
+            _ => {}
+        }
+
+        match self {
             Self::BusU8 { .. }
+            | Self::ApuRamU8 { .. }
             | Self::WramU8 { .. }
             | Self::VramU8 { .. }
             | Self::CgramU8 { .. }
@@ -301,6 +330,7 @@ impl Assertion {
                 })?;
             }
             Self::BusU16 { .. }
+            | Self::ApuRamU16 { .. }
             | Self::WramU16 { .. }
             | Self::VramU16 { .. }
             | Self::CgramU16 { .. }
@@ -403,6 +433,36 @@ mod tests {
         assert_eq!(
             case.expected_screen_hash().unwrap(),
             Some(0x2F60_5F79_6DA9_D7E0)
+        );
+    }
+
+    #[test]
+    fn validation_rejects_out_of_bounds_apu_ram_assertions() {
+        let assertion = Assertion::ApuRamU16 {
+            address: "0xFFFF".to_string(),
+            expected: "0x0000".to_string(),
+        };
+
+        let error = assertion.validate("apu-case").unwrap_err();
+
+        assert!(
+            error.to_string().contains("crossing 64 KiB APU RAM"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_large_apu_ram_addresses_without_overflowing() {
+        let assertion = Assertion::ApuRamU16 {
+            address: "0xFFFFFFFF".to_string(),
+            expected: "0x0000".to_string(),
+        };
+
+        let error = assertion.validate("apu-case").unwrap_err();
+
+        assert!(
+            error.to_string().contains("crossing 64 KiB APU RAM"),
+            "unexpected error: {error}"
         );
     }
 }
