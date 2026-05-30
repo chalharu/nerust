@@ -1802,6 +1802,29 @@ mod tests {
         assert_eq!(bus.apu.read_smp(0x00FD), 0x01);
     }
 
+    #[test]
+    fn apu_smp_timer_source_clock_free_runs_while_disabled() {
+        let mut bus = Bus::new(test_cartridge());
+
+        bus.apu.write_smp(0x00FA, 0x01);
+        bus.apu.write_smp(0x00F1, 0x01);
+        for _ in 0..100 {
+            bus.tick_cpu_cycle();
+        }
+        bus.apu.write_smp(0x00F1, 0x00);
+        for _ in 0..300 {
+            bus.tick_cpu_cycle();
+        }
+
+        bus.apu.write_smp(0x00F1, 0x01);
+        for _ in 0..47 {
+            bus.tick_cpu_cycle();
+        }
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
+        bus.tick_cpu_cycle();
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x01);
+    }
+
     fn upload_and_start_apu_program(bus: &mut Bus, entry: u16, program: &[u8]) {
         assert!(program.len() <= 0x100);
 
