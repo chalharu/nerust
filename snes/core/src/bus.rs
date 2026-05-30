@@ -1772,7 +1772,7 @@ mod tests {
     }
 
     #[test]
-    fn apu_smp_timer_disable_clears_output_and_divider() {
+    fn apu_smp_timer_disable_preserves_output_and_reenable_resets_divider() {
         let mut bus = Bus::new(test_cartridge());
 
         bus.apu.write_smp(0x00FA, 0x02);
@@ -1782,6 +1782,7 @@ mod tests {
         }
         bus.apu.write_smp(0x00F1, 0x00);
 
+        assert_eq!(bus.apu.read_smp(0x00FD), 0x01);
         assert_eq!(bus.apu.read_smp(0x00FD), 0x00);
 
         bus.apu.write_smp(0x00F1, 0x01);
