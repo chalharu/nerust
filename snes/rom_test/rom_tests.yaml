@@ -88,6 +88,42 @@ cases:
       - kind: apu_ram_u8
         address: "0x0015"
         expected: "0x48"
+  - id: apu-dsp-register-smoke-final-state
+    description: >
+      The self-authored APU DSP register smoke ROM uploads an SPC700 program through the IPL protocol and verifies DSP data register round-trips, DSP address reads, auxiliary APU IO bytes, and CPU-visible APU result ports.
+
+    rom: snes-apu-tests/dsp-register-smoke/build/ApuDspRegisterSmoke.sfc
+    max_steps: 2400
+    check_interval_steps: 2400
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0xA5"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x7F"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x40"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x2C"
+      - kind: apu_ram_u8
+        address: "0x0020"
+        expected: "0x7F"
+      - kind: apu_ram_u8
+        address: "0x0021"
+        expected: "0x40"
+      - kind: apu_ram_u8
+        address: "0x0022"
+        expected: "0x2C"
+      - kind: apu_ram_u8
+        address: "0x0023"
+        expected: "0x12"
+      - kind: apu_ram_u8
+        address: "0x0024"
+        expected: "0x34"
   - id: arguments-after-jsr-300k-screen-state
     description: >
       The undisbeliever 65816 arguments-after-JSR example renders a deterministic text screen at 300000 steps after repeatedly reading fixed 16-bit and 24-bit arguments following JSR/JSL calls.
