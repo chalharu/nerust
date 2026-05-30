@@ -24,6 +24,10 @@ pub(super) fn render_obj(
     use_presented_tm: bool,
     rgba: &mut [u8],
 ) {
+    if !screen_uses_obj(core, current_tm, use_presented_tm) {
+        return;
+    }
+
     let obsel = core.peek(0x002101);
     let (small_size, large_size) = obj_size_pair((obsel >> 5) & 0x07);
     let sprites = collect_obj_sprites(core, small_size, large_size);
@@ -37,6 +41,16 @@ pub(super) fn render_obj(
             render_obj_sliver(core, obsel, brightness, rgba, screen_y, *sliver);
         }
     }
+}
+
+fn screen_uses_obj(core: &Core, current_tm: u8, use_presented_tm: bool) -> bool {
+    if !use_presented_tm {
+        return current_tm & 0x10 != 0;
+    }
+
+    (0..SCREEN_HEIGHT).any(|screen_y| {
+        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 != 0
+    })
 }
 
 fn collect_obj_sprites(core: &Core, small_size: ObjSize, large_size: ObjSize) -> Vec<ObjSprite> {

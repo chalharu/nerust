@@ -25,6 +25,10 @@ pub(super) fn render_bg1(
     use_presented_tm: bool,
     rgba: &mut [u8],
 ) -> Result<(), RenderError> {
+    if !screen_uses_layer(core, layer, current_tm, use_presented_tm) {
+        return Ok(());
+    }
+
     let bgmode = core.peek(0x002105);
     let screen_mode = bgmode & 0x07;
     let Some(mode) = BgRenderMode::from_bgmode(layer, screen_mode)? else {
@@ -49,8 +53,8 @@ pub(super) fn render_bg1(
         },
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
-        brightness,
     };
+    let palette = cgram_palette_rgba(core, brightness);
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
     let tilemap_height_pixels = tilemap_height_tiles * context.tile_size;
@@ -73,7 +77,7 @@ pub(super) fn render_bg1(
         let bg_y = (screen_y + vofs) % tilemap_height_pixels;
         for screen_x in 0..SCREEN_WIDTH {
             let bg_x = (screen_x + hofs) % tilemap_width_pixels;
-            if let Some(color) = bg1_pixel(core, &context, bg_x, bg_y) {
+            if let Some(color) = bg1_pixel(core, &context, &palette, bg_x, bg_y) {
                 put_pixel(rgba, screen_x, screen_y, color);
             }
         }
@@ -82,7 +86,27 @@ pub(super) fn render_bg1(
     Ok(())
 }
 
-fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<[u8; 4]> {
+fn screen_uses_layer(core: &Core, layer: BgLayer, current_tm: u8, use_presented_tm: bool) -> bool {
+    if !use_presented_tm {
+        return current_tm & layer.tm_mask() != 0;
+    }
+
+    (0..SCREEN_HEIGHT).any(|screen_y| {
+        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0
+    })
+}
+
+fn cgram_palette_rgba(core: &Core, brightness: u8) -> [[u8; 4]; 256] {
+    std::array::from_fn(|index| cgram_color_rgba(core, index, brightness))
+}
+
+fn bg1_pixel(
+    core: &Core,
+    context: &Bg1RenderContext,
+    palette: &[[u8; 4]; 256],
+    bg_x: usize,
+    bg_y: usize,
+) -> Option<[u8; 4]> {
     let tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_size;
     let entry = read_tilemap_entry(
@@ -118,14 +142,14 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         return None;
     }
 
-    let palette = usize::from((entry >> 10) & 0x07);
+    let tile_palette = usize::from((entry >> 10) & 0x07);
     let color_index = match context.mode {
-        BgRenderMode::Bpp2 => context.bpp2_palette_base + palette * 4 + usize::from(color),
-        BgRenderMode::Bpp4 => palette * 16 + usize::from(color),
+        BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
+        BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
         BgRenderMode::Bpp8 => usize::from(color),
         BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
-    Some(cgram_color_rgba(core, color_index, context.brightness))
+    Some(palette[color_index])
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -136,7 +160,6 @@ struct Bg1RenderContext {
     tile_size: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
-    brightness: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

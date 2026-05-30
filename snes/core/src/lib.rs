@@ -430,6 +430,21 @@ mod tests {
     }
 
     #[test]
+    fn core_run_for_cycles_fast_forwards_absolute_jmp_idle_loop() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x0000..0x0003].copy_from_slice(&[0x4C, 0x00, 0x80]);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        core.run_for_cycles(10_000).unwrap();
+
+        assert_eq!(core.current_state(), CpuState::Running);
+        assert_eq!(core.current_opcode(), 0x4C);
+        assert_eq!(core.registers().pc(), 0x8000);
+        assert!(core.cycles() >= 10_000);
+        assert_eq!(core.master_cycles(), core.cycles());
+    }
+
+    #[test]
     fn core_run_for_cycles_fast_forwards_wai_until_interrupt_event() {
         let mut rom = build_lorom(0x8000);
         rom[0x0000..0x0006].copy_from_slice(&[0xA9, 0x80, 0x8D, 0x00, 0x42, 0xCB]);
