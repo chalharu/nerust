@@ -184,6 +184,7 @@ impl Cartridge {
             chipset,
             expansion_chip_subtype,
             rom[header_offset + 0x17],
+            rom[header_offset + 0x1A],
         );
 
         Some((
@@ -399,13 +400,14 @@ fn enhancement_chip_for_header(
     chipset: u8,
     expansion_chip_subtype: Option<u8>,
     rom_size_code: u8,
+    old_maker_code: u8,
 ) -> EnhancementChip {
     if !has_coprocessor(chipset) {
         return EnhancementChip::None;
     }
 
     match cartridge_coprocessor(chipset) {
-        0x0 => dsp1_enhancement_chip(map_mode, chipset),
+        0x0 => dsp1_enhancement_chip(map_mode, chipset, old_maker_code),
         0x1 => {
             if chipset == 0x1A || rom_size_code > 0x0A {
                 EnhancementChip::SuperFxGsu2
@@ -421,8 +423,15 @@ fn enhancement_chip_for_header(
     }
 }
 
-fn dsp1_enhancement_chip(map_mode: u8, chipset: u8) -> EnhancementChip {
-    // DSP-1 and DSP-1A share firmware. Common DSP-1B boards are HiROM with DSP+RAM+Battery.
+fn dsp1_enhancement_chip(map_mode: u8, chipset: u8, old_maker_code: u8) -> EnhancementChip {
+    // DSP-1 and DSP-1A share firmware. Keep known DSP-2/DSP-3/DSP-4 headers out of the
+    // DSP-1 path until those distinct coprocessors are implemented.
+    if matches!((map_mode, chipset), (0x20, 0x05) | (0x30, 0x03))
+        || (map_mode == 0x30 && chipset == 0x05 && old_maker_code == 0xB2)
+    {
+        return EnhancementChip::None;
+    }
+    // Common DSP-1B boards are HiROM with DSP+RAM+Battery.
     if map_mode & HIROM_MAP_MODE_MASK == HIROM_MAP_MODE_VALUE && chipset == 0x05 {
         EnhancementChip::Dsp1B
     } else {
@@ -801,6 +810,15 @@ mod tests {
                 EnhancementChip::Dsp1,
             ),
             (
+                "DSP1A FASTROM HDR",
+                MapperKind::LoRom,
+                0x30,
+                0x05,
+                None,
+                0x0A,
+                EnhancementChip::Dsp1,
+            ),
+            (
                 "DSP1B TEST HEADER",
                 MapperKind::HiRom,
                 0x21,
@@ -825,6 +843,25 @@ mod tests {
             assert_eq!(cartridge.header().expansion_chip_subtype(), subtype);
             assert_eq!(cartridge.header().enhancement_chip(), expected);
         }
+    }
+
+    #[test]
+    fn does_not_misdetect_other_dsp_headers_as_dsp1() {
+        for (title, map_mode, chipset) in [("DSP2 HEADER", 0x20, 0x05), ("DSP4 HEADER", 0x30, 0x03)]
+        {
+            let cartridge = Cartridge::from_bytes(&build_lorom_with_header(
+                title, map_mode, chipset, None, 0x0A,
+            ))
+            .unwrap();
+
+            assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
+        }
+
+        let mut dsp3_rom = build_lorom_with_header("DSP3 HEADER", 0x30, 0x05, None, 0x0A);
+        dsp3_rom[HEADER_OFFSET + 0x1A] = 0xB2;
+        let cartridge = Cartridge::from_bytes(&dsp3_rom).unwrap();
+
+        assert_eq!(cartridge.header().enhancement_chip(), EnhancementChip::None);
     }
 
     #[test]
