@@ -52,7 +52,7 @@ impl EnhancementState {
             Self::Sa1(state) => state.peek(address, rom, save_ram),
             Self::SuperFx(state) => state.peek(address),
             Self::Cx4(state) => state.read(address),
-            Self::Dsp1(state) => state.peek(mapper_kind, address),
+            Self::Dsp1(state) => state.peek(mapper_kind, address, rom.len()),
         }
     }
 
@@ -68,7 +68,7 @@ impl EnhancementState {
             Self::Sa1(state) => state.read(address, rom, save_ram),
             Self::SuperFx(state) => state.read(address),
             Self::Cx4(state) => state.read(address),
-            Self::Dsp1(state) => state.read(mapper_kind, address),
+            Self::Dsp1(state) => state.read(mapper_kind, address, rom.len()),
         }
     }
 
@@ -85,7 +85,7 @@ impl EnhancementState {
             Self::Sa1(state) => state.write(address, value, rom, save_ram),
             Self::SuperFx(state) => state.write(address, value, rom, save_ram),
             Self::Cx4(state) => state.write(address, value, rom),
-            Self::Dsp1(state) => state.write(mapper_kind, address, value),
+            Self::Dsp1(state) => state.write(mapper_kind, address, value, rom.len()),
         }
     }
 }
@@ -3667,8 +3667,8 @@ impl Dsp1State {
         }
     }
 
-    fn peek(&self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
-        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address)?;
+    fn peek(&self, mapper_kind: MapperKind, address: u32, rom_len: usize) -> Option<u8> {
+        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address, rom_len)?;
         Some(if register_offset & 1 == 0 {
             self.peek_data()
         } else {
@@ -3676,8 +3676,8 @@ impl Dsp1State {
         })
     }
 
-    fn read(&mut self, mapper_kind: MapperKind, address: u32) -> Option<u8> {
-        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address)?;
+    fn read(&mut self, mapper_kind: MapperKind, address: u32, rom_len: usize) -> Option<u8> {
+        let register_offset = dsp1_register_offset(self.variant, mapper_kind, address, rom_len)?;
         Some(if register_offset & 1 == 0 {
             self.read_data()
         } else {
@@ -3685,8 +3685,10 @@ impl Dsp1State {
         })
     }
 
-    fn write(&mut self, mapper_kind: MapperKind, address: u32, value: u8) -> bool {
-        if let Some(register_offset) = dsp1_register_offset(self.variant, mapper_kind, address) {
+    fn write(&mut self, mapper_kind: MapperKind, address: u32, value: u8, rom_len: usize) -> bool {
+        if let Some(register_offset) =
+            dsp1_register_offset(self.variant, mapper_kind, address, rom_len)
+        {
             if register_offset & 1 == 0 {
                 self.write_data(value);
             }
@@ -4318,14 +4320,20 @@ fn dsp1_register_offset(
     variant: Dsp1Variant,
     mapper_kind: MapperKind,
     address: u32,
+    rom_len: usize,
 ) -> Option<u16> {
     let bank = bank(address) & 0x7F;
     let offset = offset(address);
 
     match mapper_kind {
+        MapperKind::LoRom if rom_len > 0x100000 => match (bank, offset) {
+            (0x60..=0x6F, 0x0000..=0x3FFF) => Some(0),
+            (0x60..=0x6F, 0x4000..=0x7FFF) => Some(1),
+            _ => None,
+        },
         MapperKind::LoRom => match (bank, offset) {
-            (0x30..=0x3F, 0x8000..=0xBFFF) | (0x60..=0x6F, 0x0000..=0x3FFF) => Some(0),
-            (0x30..=0x3F, 0xC000..=0xFFFF) | (0x60..=0x6F, 0x4000..=0x7FFF) => Some(1),
+            (0x20..=0x3F, 0x8000..=0xBFFF) => Some(0),
+            (0x20..=0x3F, 0xC000..=0xFFFF) => Some(1),
             _ => None,
         },
         MapperKind::HiRom => match (bank, offset) {
