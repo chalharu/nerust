@@ -261,7 +261,7 @@ impl Apu {
     fn update_timer_enable(&mut self, previous: u8, value: u8) {
         for index in 0..SMP_TIMER_COUNT {
             let mask = 1 << index;
-            if value & mask == 0 || previous & mask == 0 {
+            if previous & mask == 0 && value & mask != 0 {
                 self.timers[index].reset();
             }
         }
