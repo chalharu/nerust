@@ -19,40 +19,9 @@ pub fn validate_case(case: &RomCase) -> CaseOutcome {
 
 pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
     let should_wait_for_final_screen = case.expected_screen_hash.is_some();
-    let rom = match fs::read(case.rom_path()) {
-        Ok(rom) => rom,
-        Err(error) => {
-            return internal_error(
-                case,
-                format!(
-                    "failed to read ROM `{}`: {error}",
-                    case.rom_path().display()
-                ),
-            );
-        }
-    };
-
-    let msu1_sidecars = match load_msu1_sidecars(case.rom_path()) {
-        Ok(msu1_sidecars) => msu1_sidecars,
-        Err(error) => return internal_error(case, error),
-    };
-
-    let core_result = Core::from_rom_bytes_with_msu1_sidecars(
-        &rom,
-        msu1_sidecars.data.as_deref(),
-        &msu1_sidecars.audio_tracks,
-    );
-    let mut core = match core_result {
+    let mut core = match load_core_for_case(case) {
         Ok(core) => core,
-        Err(error) => {
-            return internal_error(
-                case,
-                format!(
-                    "failed to construct SNES core from `{}`: {error}",
-                    case.rom_path().display()
-                ),
-            );
-        }
+        Err(error) => return internal_error(case, error),
     };
 
     let mut steps_executed = 0_u64;
@@ -96,6 +65,28 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
         }
         Err(error) => internal_error(case, error.to_string()),
     }
+}
+
+pub fn load_core_for_case(case: &RomCase) -> Result<Core, String> {
+    let rom = fs::read(case.rom_path()).map_err(|error| {
+        format!(
+            "failed to read ROM `{}`: {error}",
+            case.rom_path().display()
+        )
+    })?;
+    let msu1_sidecars = load_msu1_sidecars(case.rom_path())?;
+
+    Core::from_rom_bytes_with_msu1_sidecars(
+        &rom,
+        msu1_sidecars.data.as_deref(),
+        &msu1_sidecars.audio_tracks,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to construct SNES core from `{}`: {error}",
+            case.rom_path().display()
+        )
+    })
 }
 
 struct Msu1Sidecars {
