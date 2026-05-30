@@ -148,7 +148,7 @@ impl Apu {
 
         match address {
             0x00F0..=0x00F1 => 0,
-            0x00F2 => self.dsp_address & 0x7F,
+            0x00F2 => self.dsp_address,
             0x00F3 => self.dsp_registers[usize::from(self.dsp_address & 0x7F)],
             0x00F4..=0x00F7 => self.cpu_to_apu_ports[usize::from(address - 0x00F4)],
             0x00F8..=0x00F9 => self.aux_io[usize::from(address - 0x00F8)],
