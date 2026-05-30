@@ -1230,6 +1230,159 @@ cases:
       - kind: bus_u8
         address: "0x007000"
         expected: "0x84"
+  - id: dsp1-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1 geometry smoke ROM declares a DSP-1 LoROM cartridge header and verifies host-visible trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1GeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1a-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1A-compatible geometry smoke ROM declares a DSP-1A-style LoROM cartridge header and verifies the shared DSP-1 trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1aGeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1b-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1B geometry smoke ROM declares a DSP-1B HiROM cartridge header and verifies host-visible DSP-1B trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1bGeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x007000"
+        expected: "0x84"
   - id: inidisp-brightness-delay-100k-screen-state
     description: >
       The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
