@@ -152,9 +152,7 @@ impl AndroidFrontend {
             lifecycle_auto_paused: false,
             lifecycle_restore_pending: false,
         };
-        if let Err(error) = frontend.restore_last_session() {
-            log::warn!("{error}");
-        }
+        // Skip automatic last-ROM restore on cold start; restore will happen on warm resume.
         frontend.refresh_dialog_caches();
         log::info!("AndroidFrontend::new: ready");
         frontend
@@ -572,9 +570,46 @@ impl AndroidFrontend {
                 self.foreground_retry_attempts = 0;
                 self.foreground_retry_at = None;
                 if self.lifecycle_restore_pending {
-                    log::info!("try_resume_foreground: restoring hidden lifecycle state");
-                    self.session.load_hidden_lifecycle_state();
-                    self.lifecycle_restore_pending = false;
+                    log::info!(
+                        "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"
+                    );
+                    match self.storage.load_last_rom_id() {
+                        Ok(Some(id)) => {
+                            if self.storage.rom_library.rom_path(&id).is_none() {
+                                log::warn!("try_resume_foreground: stored ROM id={id} is missing");
+                                self.session.clear_hidden_lifecycle_state();
+                                self.lifecycle_restore_pending = false;
+                            } else {
+                                match self.load_from_library_with_autosave(&id, true) {
+                                    Ok(()) => {
+                                        log::info!(
+                                            "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
+                                        );
+                                        // finish_rom_load will handle resume and clearing pending flags.
+                                    }
+                                    Err(error) => {
+                                        log::warn!(
+                                            "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
+                                        );
+                                        self.lifecycle_restore_pending = false;
+                                        self.session.clear_hidden_lifecycle_state();
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            log::info!("try_resume_foreground: no last ROM recorded");
+                            self.session.clear_hidden_lifecycle_state();
+                            self.lifecycle_restore_pending = false;
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "try_resume_foreground: failed to read last ROM id: {error}"
+                            );
+                            self.session.clear_hidden_lifecycle_state();
+                            self.lifecycle_restore_pending = false;
+                        }
+                    }
                 }
                 if self.lifecycle_auto_paused {
                     let _ = self.session.run_command(SessionCommand::Resume);
@@ -751,7 +786,7 @@ impl ApplicationHandler for AndroidFrontend {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::Wait);
+        let now = Instant::now();
         self.try_resume_foreground(event_loop);
         if let Some(result) = library::take_result() {
             self.handle_library_result(result);
@@ -765,13 +800,22 @@ impl ApplicationHandler for AndroidFrontend {
         for action in menu::take_actions() {
             self.handle_menu_action(action);
         }
-        self.maybe_refresh_title(Instant::now());
-        if let Some(window) = self.window.as_ref()
-            && self
-                .shell
-                .wants_redraw(self.session.metrics().frame_counter)
-        {
-            window.request_redraw();
+        self.maybe_refresh_title(now);
+
+        if let Some(window) = self.window.as_ref() {
+            let metrics = self.session.metrics();
+            if self.shell.wants_redraw(metrics.frame_counter) {
+                window.request_redraw();
+            }
+            if self.shell.wants_poll(metrics.loaded, metrics.paused) {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    now + NativeShellState::FRAME_POLL_INTERVAL,
+                ));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }

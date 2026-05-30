@@ -1456,7 +1456,8 @@ private class DrawerEdgeSwipeHandleView(
 }
 
 internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
-    val controlTop = height * 0.54f
+    // Move controls slightly lower so the game viewport sits higher on-screen.
+    val controlTop = height * 0.60f
     val controlHeight = height - controlTop
     val dpadLeft = width * 0.08f
     val dpadSize = width * 0.28f
