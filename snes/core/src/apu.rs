@@ -210,6 +210,29 @@ impl Apu {
             return;
         }
 
+        if self.control & 0x07 == 0 {
+            let mut timer_disabled_cycles = 0;
+            while cycles > 0 && self.smp_running && self.control & 0x07 == 0 {
+                let previous_control = self.control;
+                self.execute_smp_instruction();
+                timer_disabled_cycles += 1;
+                cycles -= 1;
+
+                if self.control & 0x07 != 0 {
+                    let enabled_control = self.control;
+                    self.control = previous_control;
+                    self.tick_timers(timer_disabled_cycles);
+                    self.control = enabled_control;
+                    timer_disabled_cycles = 0;
+                    break;
+                }
+            }
+            self.tick_timers(timer_disabled_cycles);
+            if cycles == 0 || !self.smp_running {
+                return;
+            }
+        }
+
         for _ in 0..cycles {
             self.tick_timers(1);
             self.execute_smp_instruction();

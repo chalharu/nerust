@@ -4,6 +4,8 @@ pub(crate) const RESET_CYCLES: u8 = 7;
 const BRA_OPCODE: u8 = 0x80;
 const BRA_SELF_OFFSET: u8 = 0xFE;
 const BRA_SELF_LOOP_CYCLES: u32 = 2;
+const JMP_ABSOLUTE_OPCODE: u8 = 0x4C;
+const JMP_ABSOLUTE_SELF_LOOP_CYCLES: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CpuFault {
@@ -1418,18 +1420,31 @@ impl Cpu {
         }
 
         let opcode_address = self.full_pc();
-        let operand_address =
-            (u32::from(self.registers.pb) << 16) | u32::from(self.registers.pc.wrapping_add(1));
-        if bus.peek_side_effect_free(opcode_address) != Some(BRA_OPCODE)
-            || bus.peek_side_effect_free(operand_address) != Some(BRA_SELF_OFFSET)
-        {
-            return 0;
-        }
+        let operand_address = |offset: u16| {
+            (u32::from(self.registers.pb) << 16) | u32::from(self.registers.pc.wrapping_add(offset))
+        };
+        let (opcode, loop_cycles) = match bus.peek_side_effect_free(opcode_address) {
+            Some(BRA_OPCODE)
+                if bus.peek_side_effect_free(operand_address(1)) == Some(BRA_SELF_OFFSET) =>
+            {
+                (BRA_OPCODE, BRA_SELF_LOOP_CYCLES)
+            }
+            Some(JMP_ABSOLUTE_OPCODE)
+                if allowed_cycles >= JMP_ABSOLUTE_SELF_LOOP_CYCLES
+                    && bus.peek_side_effect_free(operand_address(1))
+                        == Some((self.registers.pc & 0x00FF) as u8)
+                    && bus.peek_side_effect_free(operand_address(2))
+                        == Some((self.registers.pc >> 8) as u8) =>
+            {
+                (JMP_ABSOLUTE_OPCODE, JMP_ABSOLUTE_SELF_LOOP_CYCLES)
+            }
+            _ => return 0,
+        };
 
-        let cycles = (allowed_cycles / BRA_SELF_LOOP_CYCLES) * BRA_SELF_LOOP_CYCLES;
+        let cycles = (allowed_cycles / loop_cycles) * loop_cycles;
         bus.tick_many(cycles);
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
-        self.current_opcode = BRA_OPCODE;
+        self.current_opcode = opcode;
         cycles
     }
 
