@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::{Core, PresentedBackdropLine, PresentedColorWindowLine};
 
 use super::color::{opaque_black_screen, put_pixel, snes_color_to_rgba};

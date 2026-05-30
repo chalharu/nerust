@@ -14,7 +14,8 @@ use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
 use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsFieldModel, SystemSettingsPageModel,
-    system_definition_for_id,
+    apply_system_settings_choice_for_system, input_topology_for_system, settings_system_ids,
+    system_settings_page_for_system,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -53,7 +54,7 @@ enum SettingsPage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputPageSection {
-    Attachment(usize),
+    System(SystemId),
     Shortcuts,
 }
 
@@ -72,7 +73,8 @@ enum Message {
     SetVolume(u8),
     SetSampleRate(Choice<u32>),
     SetLatency(u16),
-    SetSystemChoice(String, Choice<String>),
+    SelectSystemSection(SystemId),
+    SetSystemChoice(SystemId, String, Choice<String>),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
@@ -90,10 +92,10 @@ struct SettingsApp {
             >,
         >,
     >,
-    system_id: SystemId,
     draft: SettingsSnapshot,
     page: SettingsPage,
     input_section: InputPageSection,
+    system_section: SystemId,
     capture_target: Option<CaptureTarget>,
     storage_directory_input: String,
     error_message: Option<String>,
@@ -188,8 +190,9 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
         Message::SetVolume(value) => state.draft.local.audio.master_volume_percent = value,
         Message::SetSampleRate(choice) => state.draft.local.audio.sample_rate = choice.value,
         Message::SetLatency(value) => state.draft.local.audio.latency_ms = value,
-        Message::SetSystemChoice(field, choice) => {
-            state.apply_system_choice(&field, choice.value);
+        Message::SelectSystemSection(system_id) => state.system_section = system_id,
+        Message::SetSystemChoice(system_id, field, choice) => {
+            state.apply_system_choice(system_id, &field, choice.value);
         }
         Message::StartCapture(target) => state.capture_target = Some(target),
         Message::ClearCapture(target) => {
@@ -304,10 +307,10 @@ impl SettingsApp {
             .unwrap_or_default();
         Self {
             bridge,
-            system_id,
             draft: snapshot,
             page: SettingsPage::General,
-            input_section: InputPageSection::Attachment(0),
+            input_section: InputPageSection::System(system_id),
+            system_section: system_id,
             capture_target: None,
             storage_directory_input,
             error_message: None,
@@ -319,31 +322,27 @@ impl SettingsApp {
         self.draft.shared.general.language
     }
 
-    fn input_topology(&self) -> InputTopologyDescriptor {
-        system_definition_for_id(self.system_id)
-            .expect("active system definition should be available")
-            .descriptor()
-            .input_topology
+    fn input_topology(&self, system_id: SystemId) -> InputTopologyDescriptor {
+        input_topology_for_system(system_id)
+            .expect("supported system definition should be available")
     }
 
-    fn system_page_model(&self) -> SystemSettingsPageModel {
-        system_definition_for_id(self.system_id)
-            .expect("active system definition should be available")
-            .settings_page(&self.draft)
+    fn system_page_model(&self, system_id: SystemId) -> SystemSettingsPageModel {
+        system_settings_page_for_system(system_id, &self.draft)
+            .expect("supported system definition should be available")
     }
 
-    fn apply_system_choice(&mut self, field: &str, choice: String) {
-        let definition = system_definition_for_id(self.system_id)
-            .expect("active system definition should be available");
+    fn apply_system_choice(&mut self, system_id: SystemId, field: &str, choice: String) {
         if !self
-            .system_page_model()
+            .system_page_model(system_id)
             .fields
             .iter()
             .any(|candidate| candidate.id.as_str() == field)
         {
             return;
         }
-        if let Err(error) = definition.apply_settings_choice(
+        if let Err(error) = apply_system_settings_choice_for_system(
+            system_id,
             &mut self.draft,
             &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.to_string().into()),
             &SystemSettingsChoiceId(choice.into()),
@@ -357,12 +356,17 @@ impl SettingsApp {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        for (key, labels) in conflicting_keys(&self.draft.shared, &self.input_topology()) {
-            errors.push(format!(
-                "{}: {}",
-                keyboard_key_label(key),
-                labels.join(", ")
-            ));
+        for system_id in settings_system_ids() {
+            for (key, labels) in
+                conflicting_keys(&self.draft.shared, &self.input_topology(*system_id))
+            {
+                errors.push(format!(
+                    "{} {}: {}",
+                    system_label(*system_id),
+                    keyboard_key_label(key),
+                    labels.join(", ")
+                ));
+            }
         }
         errors
     }
@@ -373,12 +377,13 @@ impl SettingsApp {
             .map(|error| error.to_string())
     }
 
-    fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(&self.draft.shared, &self.input_topology())
+    fn input_conflict(&self, system_id: SystemId) -> Option<String> {
+        let (key, labels) = conflicting_keys(&self.draft.shared, &self.input_topology(system_id))
             .into_iter()
             .next()?;
         Some(format!(
-            "{}: {}",
+            "{} {}: {}",
+            system_label(system_id),
             keyboard_key_label(key),
             labels.join(", ")
         ))
@@ -443,17 +448,17 @@ impl SettingsApp {
     fn input_page(&self) -> Element<'_, Message> {
         let language = self.language();
         let mut content = column![];
-        if let Some(conflict) = self.input_conflict() {
+        if let InputPageSection::System(system_id) = self.input_section
+            && let Some(conflict) = self.input_conflict(system_id)
+        {
             content = content.push(text(conflict));
         }
 
-        let topology = self.input_topology();
-        let sections = keyboard_binding_sections(&topology);
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
-        for (index, section) in sections.iter().enumerate() {
+        for system_id in settings_system_ids() {
             navigation = navigation.push(input_section_radio_label(
-                section.attachment_label,
-                InputPageSection::Attachment(index),
+                system_label(*system_id),
+                InputPageSection::System(*system_id),
                 self.input_section,
             ));
         }
@@ -465,9 +470,10 @@ impl SettingsApp {
         ));
 
         let section = match self.input_section {
-            InputPageSection::Attachment(index) => sections
-                .get(index)
-                .map(|section| {
+            InputPageSection::System(system_id) => {
+                let topology = self.input_topology(system_id);
+                let mut page = column![].spacing(16);
+                for section in keyboard_binding_sections(&topology) {
                     let rows = section
                         .bindings
                         .clone()
@@ -483,9 +489,11 @@ impl SettingsApp {
                             )
                         })
                         .collect::<Vec<_>>();
-                    self.input_section(section.attachment_label, rows.into_iter())
-                })
-                .unwrap_or_else(|| self.input_section("", std::iter::empty())),
+                    page =
+                        page.push(self.input_section(section.attachment_label, rows.into_iter()));
+                }
+                page.into()
+            }
             InputPageSection::Shortcuts => self.input_section(
                 ui_text(language, UiText::Shortcuts),
                 shortcut_descriptors().iter().map(|descriptor| {
@@ -587,12 +595,16 @@ impl SettingsApp {
     }
 
     fn system_page(&self) -> Element<'_, Message> {
-        let model = self.system_page_model();
+        let root = column![system_tab_row(self.system_section)].spacing(16);
+        let model = self.system_page_model(self.system_section);
         let mut content = column![];
         for field in model.fields.iter() {
-            content = content.push(system_choice_row(field));
+            content = content.push(system_choice_row(self.system_section, field));
         }
-        content.spacing(16).into()
+        if model.fields.is_empty() {
+            content = content.push(text("No system-specific settings"));
+        }
+        root.push(content.spacing(16)).into()
     }
 }
 
@@ -667,7 +679,32 @@ fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) 
         .unwrap()
 }
 
-fn system_choice_row(field: &SystemSettingsFieldModel) -> Element<'static, Message> {
+fn system_tab_row(selected: SystemId) -> Element<'static, Message> {
+    let mut row = row![].spacing(16).align_y(Alignment::Center);
+    for system_id in settings_system_ids() {
+        row = row.push(radio(
+            system_label(*system_id),
+            *system_id,
+            Some(selected),
+            Message::SelectSystemSection,
+        ));
+    }
+    row.into()
+}
+
+fn system_label(system_id: SystemId) -> &'static str {
+    match system_id {
+        SystemId::Nes => "NES",
+        SystemId::Snes => "SNES",
+        SystemId::Ps1 => "PS1",
+        SystemId::MegaDrive => "Mega Drive",
+    }
+}
+
+fn system_choice_row(
+    system_id: SystemId,
+    field: &SystemSettingsFieldModel,
+) -> Element<'static, Message> {
     let nerust_gui_shell::descriptor::SystemSettingsFieldKind::Choice { selected, options } =
         &field.kind;
     let choices = options
@@ -690,7 +727,7 @@ fn system_choice_row(field: &SystemSettingsFieldModel) -> Element<'static, Messa
     row![
         text(field.label.clone()).width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
-            Message::SetSystemChoice(field_id.clone(), choice)
+            Message::SetSystemChoice(system_id, field_id.clone(), choice)
         })
         .width(Length::Shrink)
     ]

@@ -8,7 +8,8 @@ use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
 use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
-    SystemSettingsPageModel, system_definition_for_id,
+    SystemSettingsPageModel, apply_system_settings_choice_for_system, input_topology_for_system,
+    settings_system_ids, system_settings_page_for_system,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -30,6 +31,13 @@ struct InputRow {
     value_label: gtk::Label,
     change_button: gtk::Button,
     clear_button: gtk::Button,
+}
+
+#[derive(Clone)]
+struct SystemRow {
+    system_id: SystemId,
+    field_id: String,
+    combo: gtk::ComboBoxText,
 }
 
 pub(crate) fn present_preferences_dialog(
@@ -154,8 +162,8 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let topology = state.borrow().input_topology_descriptor();
-    let input_rows = build_input_rows(language, &input_page, &topology);
+    let input_topologies = input_topologies();
+    let input_rows = build_input_rows(language, &input_page, &input_topologies);
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -194,27 +202,7 @@ pub(crate) fn present_preferences_dialog(
         &latency_spin,
     ));
 
-    let system_page_model = state.borrow().system_settings_page_model();
-    let filter_field = system_field_by_id(&system_page_model, "video.filter");
-    let filter_combo = combo_from_optional_system_field(filter_field);
-    let filter_row = labeled_row(
-        filter_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Filter)),
-        &filter_combo,
-    );
-    filter_row.set_visible(filter_field.is_some());
-    system_page.append(&filter_row);
-    let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
-    let mmc3_combo = combo_from_optional_system_field(mmc3_field);
-    let mmc3_row = labeled_row(
-        mmc3_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Mmc3IrqVariant)),
-        &mmc3_combo,
-    );
-    mmc3_row.set_visible(mmc3_field.is_some());
-    system_page.append(&mmc3_row);
+    let system_rows = build_system_rows(language, &system_page, &draft.borrow());
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
@@ -229,11 +217,10 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
         &sample_rate_combo,
         &latency_spin,
-        &filter_combo,
-        &mmc3_combo,
+        &system_rows,
         &input_rows,
         &capture_target,
-        &topology,
+        &input_topologies,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
     );
@@ -244,7 +231,7 @@ pub(crate) fn present_preferences_dialog(
         &storage_dir_row,
         &storage_error_label,
         &input_conflict_label,
-        &topology,
+        &input_topologies,
     );
 
     {
@@ -264,11 +251,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         );
         let _ = language_combo.connect_changed(move |combo| {
@@ -300,11 +286,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         ),
     );
@@ -317,8 +302,7 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
         &sample_rate_combo,
         &latency_spin,
-        &filter_combo,
-        &mmc3_combo,
+        &system_rows,
         widget_bundle(
             &ok_button,
             &storage_dir_row,
@@ -334,11 +318,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         ),
     );
@@ -362,11 +345,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         );
         let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
@@ -402,11 +384,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         );
         let target = row.target.clone();
@@ -433,11 +414,10 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         );
         let target = row.target.clone();
@@ -470,17 +450,16 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            &filter_combo,
-            &mmc3_combo,
+            &system_rows,
             &input_rows,
             &capture_target,
-            &topology,
+            &input_topologies,
             language,
         );
         let _ = dialog.connect_response(move |dialog, response| match response {
             gtk::ResponseType::Ok => {
                 let snapshot = draft.borrow().clone();
-                if !validation_errors(&snapshot, &topology).is_empty() {
+                if !validation_errors(&snapshot, &input_topologies).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
@@ -523,11 +502,10 @@ struct WidgetBundle {
     volume_spin: gtk::SpinButton,
     sample_rate_combo: gtk::ComboBoxText,
     latency_spin: gtk::SpinButton,
-    filter_combo: gtk::ComboBoxText,
-    mmc3_combo: gtk::ComboBoxText,
+    system_rows: Vec<SystemRow>,
     input_rows: Vec<InputRow>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
-    input_topology: InputTopologyDescriptor,
+    input_topologies: Vec<InputTopologyDescriptor>,
     language: AppLanguage,
 }
 
@@ -572,11 +550,10 @@ fn widget_bundle(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
+    system_rows: &[SystemRow],
     input_rows: &[InputRow],
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
-    input_topology: &InputTopologyDescriptor,
+    input_topologies: &[InputTopologyDescriptor],
     language: AppLanguage,
 ) -> WidgetBundle {
     WidgetBundle {
@@ -594,11 +571,10 @@ fn widget_bundle(
         volume_spin: volume_spin.clone(),
         sample_rate_combo: sample_rate_combo.clone(),
         latency_spin: latency_spin.clone(),
-        filter_combo: filter_combo.clone(),
-        mmc3_combo: mmc3_combo.clone(),
+        system_rows: system_rows.to_vec(),
         input_rows: input_rows.to_vec(),
         capture_target: capture_target.clone(),
-        input_topology: input_topology.clone(),
+        input_topologies: input_topologies.to_vec(),
         language,
     }
 }
@@ -617,11 +593,10 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.volume_spin,
         &widgets.sample_rate_combo,
         &widgets.latency_spin,
-        &widgets.filter_combo,
-        &widgets.mmc3_combo,
+        &widgets.system_rows,
         &widgets.input_rows,
         &widgets.capture_target,
-        &widgets.input_topology,
+        &widgets.input_topologies,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
     );
@@ -632,7 +607,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.storage_dir_row,
         &widgets.storage_error_label,
         &widgets.input_conflict_label,
-        &widgets.input_topology,
+        &widgets.input_topologies,
     );
 }
 
@@ -678,8 +653,7 @@ fn connect_local_updates(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
+    system_rows: &[SystemRow],
     widgets: WidgetBundle,
 ) {
     {
@@ -748,39 +722,19 @@ fn connect_local_updates(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    {
+    for row in system_rows.iter().cloned() {
         let draft = draft.clone();
         let widgets = widgets.clone();
-        let _ = filter_combo.connect_changed(move |combo| {
-            let mut snapshot = draft.borrow_mut();
-            if !apply_system_settings_choice_for_topology(
-                &widgets.input_topology,
-                &mut snapshot,
-                "video.filter",
-                combo
-                    .active_id()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "ntsc_composite".to_string()),
-            ) {
+        let row_for_update = row.clone();
+        let _ = row.combo.clone().connect_changed(move |combo| {
+            let Some(choice_id) = combo.active_id().map(|value| value.to_string()) else {
                 return;
-            }
-            drop(snapshot);
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
-    }
-    {
-        let draft = draft.clone();
-        let widgets = widgets.clone();
-        let _ = mmc3_combo.connect_changed(move |combo| {
+            };
             let mut snapshot = draft.borrow_mut();
-            if !apply_system_settings_choice_for_topology(
-                &widgets.input_topology,
+            if !apply_system_settings_choice_for_system_row(
+                &row_for_update,
                 &mut snapshot,
-                "core.mmc3_irq_variant",
-                combo
-                    .active_id()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "auto".to_string()),
+                choice_id,
             ) {
                 return;
             }
@@ -797,28 +751,35 @@ fn refresh_validation(
     storage_dir_row: &gtk::Box,
     storage_error_label: &gtk::Label,
     input_conflict_label: &gtk::Label,
-    input_topology: &InputTopologyDescriptor,
+    input_topologies: &[InputTopologyDescriptor],
 ) {
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared, input_topology);
-    let has_errors = storage_error.is_some() || !conflicts.is_empty();
+    let first_conflict = input_topologies.iter().find_map(|topology| {
+        conflicting_keys(&snapshot.shared, topology)
+            .into_iter()
+            .next()
+            .map(|(key, labels)| (topology.system, key, labels))
+    });
+    let has_conflicts = first_conflict.is_some();
+    let has_errors = storage_error.is_some() || has_conflicts;
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
     ));
     storage_error_label.set_text(storage_error.as_deref().unwrap_or(""));
-    if let Some((key, labels)) = conflicts.iter().next() {
+    if let Some((system_id, key, labels)) = first_conflict {
         input_conflict_label.set_text(&format!(
-            "{}: {}",
-            keyboard_key_label(*key),
+            "{} {}: {}",
+            system_label(system_id),
+            keyboard_key_label(key),
             labels.join(", ")
         ));
     } else {
         input_conflict_label.set_text("");
     }
-    if !conflicts.is_empty() && input_conflict_label.text().is_empty() {
+    if has_conflicts && input_conflict_label.text().is_empty() {
         input_conflict_label.set_text(text(language, UiText::ConflictDetected));
     }
     ok_button.set_sensitive(!has_errors);
@@ -826,18 +787,21 @@ fn refresh_validation(
 
 fn validation_errors(
     snapshot: &SettingsSnapshot,
-    input_topology: &InputTopologyDescriptor,
+    input_topologies: &[InputTopologyDescriptor],
 ) -> Vec<String> {
     let mut errors = Vec::new();
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    for (key, labels) in conflicting_keys(&snapshot.shared, input_topology) {
-        errors.push(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ));
+    for topology in input_topologies {
+        for (key, labels) in conflicting_keys(&snapshot.shared, topology) {
+            errors.push(format!(
+                "{} {}: {}",
+                system_label(topology.system),
+                keyboard_key_label(key),
+                labels.join(", ")
+            ));
+        }
     }
     errors
 }
@@ -846,31 +810,28 @@ fn system_settings_page_model(
     system_id: SystemId,
     snapshot: &SettingsSnapshot,
 ) -> SystemSettingsPageModel {
-    system_definition_for_id(system_id)
-        .expect("active system definition should be available")
-        .settings_page(snapshot)
+    system_settings_page_for_system(system_id, snapshot)
+        .expect("supported system definition should be available")
 }
 
-fn apply_system_settings_choice_for_topology(
-    input_topology: &InputTopologyDescriptor,
+fn apply_system_settings_choice_for_system_row(
+    row: &SystemRow,
     settings: &mut SettingsSnapshot,
-    field_id: &str,
     choice_id: String,
 ) -> bool {
-    let page = system_settings_page_model(input_topology.system, settings);
+    let page = system_settings_page_model(row.system_id, settings);
     if !page
         .fields
         .iter()
-        .any(|field| field.id.as_str() == field_id)
+        .any(|field| field.id.as_str() == row.field_id)
     {
         return false;
     }
 
-    let field = SystemSettingsFieldId(Cow::Owned(field_id.to_string()));
+    let field = SystemSettingsFieldId(Cow::Owned(row.field_id.clone()));
     let choice = SystemSettingsChoiceId(Cow::Owned(choice_id));
-    if let Err(error) = system_definition_for_id(input_topology.system)
-        .expect("active system definition should be available")
-        .apply_settings_choice(settings, &field, &choice)
+    if let Err(error) =
+        apply_system_settings_choice_for_system(row.system_id, settings, &field, &choice)
     {
         log::warn!("failed to apply system settings choice: {error}");
         return false;
@@ -892,11 +853,10 @@ fn apply_snapshot_to_widgets(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
+    system_rows: &[SystemRow],
     input_rows: &[InputRow],
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
-    input_topology: &InputTopologyDescriptor,
+    _input_topologies: &[InputTopologyDescriptor],
     unbound_label: &str,
     capture_label: &str,
 ) {
@@ -940,9 +900,10 @@ fn apply_snapshot_to_widgets(
         _ => "48000",
     }));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = system_settings_page_model(input_topology.system, snapshot);
-    apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
-    apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
+    for row in system_rows {
+        let system_page = system_settings_page_model(row.system_id, snapshot);
+        apply_system_field_by_id_to_combo(&system_page, &row.field_id, &row.combo);
+    }
 
     for row in input_rows {
         row.value_label
@@ -954,10 +915,83 @@ fn apply_snapshot_to_widgets(
     }
 }
 
+fn input_topologies() -> Vec<InputTopologyDescriptor> {
+    settings_system_ids()
+        .iter()
+        .map(|system_id| {
+            input_topology_for_system(*system_id)
+                .expect("supported system definition should be available")
+        })
+        .collect()
+}
+
+fn build_system_rows(
+    _language: AppLanguage,
+    system_page: &gtk::Box,
+    snapshot: &SettingsSnapshot,
+) -> Vec<SystemRow> {
+    let system_stack = gtk::Stack::new();
+    system_stack.set_hexpand(true);
+    system_stack.set_vexpand(true);
+    let system_switcher = gtk::StackSwitcher::new();
+    system_switcher.set_stack(Some(&system_stack));
+    system_switcher.set_halign(gtk::Align::Start);
+    system_page.append(&system_switcher);
+    system_page.append(&system_stack);
+
+    let mut rows = Vec::new();
+    for system_id in settings_system_ids() {
+        let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        page.set_hexpand(true);
+        system_stack.add_titled(
+            &page,
+            Some(system_id_key(*system_id)),
+            system_label(*system_id),
+        );
+
+        let model = system_settings_page_model(*system_id, snapshot);
+        if model.fields.is_empty() {
+            let label = gtk::Label::new(Some("No system-specific settings"));
+            label.set_xalign(0.0);
+            page.append(&label);
+            continue;
+        }
+
+        for field in model.fields.iter() {
+            let combo = combo_from_system_field(field);
+            page.append(&labeled_row(&field.label, &combo));
+            rows.push(SystemRow {
+                system_id: *system_id,
+                field_id: field.id.as_str().to_string(),
+                combo,
+            });
+        }
+    }
+    rows
+}
+
+fn system_id_key(system_id: SystemId) -> &'static str {
+    match system_id {
+        SystemId::Nes => "nes",
+        SystemId::Snes => "snes",
+        SystemId::Ps1 => "ps1",
+        SystemId::MegaDrive => "mega_drive",
+    }
+}
+
+fn system_label(system_id: SystemId) -> &'static str {
+    match system_id {
+        SystemId::Nes => "NES",
+        SystemId::Snes => "SNES",
+        SystemId::Ps1 => "PS1",
+        SystemId::MegaDrive => "Mega Drive",
+    }
+}
+
 fn build_input_rows(
     language: AppLanguage,
     input_page: &gtk::Box,
-    topology: &InputTopologyDescriptor,
+    topologies: &[InputTopologyDescriptor],
 ) -> Vec<InputRow> {
     let input_stack = gtk::Stack::new();
     input_stack.set_hexpand(true);
@@ -969,32 +1003,39 @@ fn build_input_rows(
     input_page.append(&input_stack);
 
     let mut rows = Vec::new();
-    for section in keyboard_binding_sections(topology) {
-        let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        section_page.set_hexpand(true);
-        let grid = gtk::Grid::new();
-        grid.set_column_spacing(12);
-        grid.set_row_spacing(6);
-        grid.set_hexpand(true);
-        section_page.append(&grid);
+    for topology in topologies {
+        let system_page = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        system_page.set_hexpand(true);
         input_stack.add_titled(
-            &section_page,
-            Some(section.attachment.as_str()),
-            section.attachment_label,
+            &system_page,
+            Some(system_id_key(topology.system)),
+            system_label(topology.system),
         );
 
-        for (index, descriptor) in section.bindings.iter().enumerate() {
-            rows.push(add_input_row(
-                &grid,
-                index as i32,
-                descriptor.control_label,
-                CaptureTarget::Binding {
-                    system: descriptor.system,
-                    attachment: descriptor.attachment.as_str().to_string(),
-                    control: descriptor.control.as_str().to_string(),
-                },
-                language,
-            ));
+        for section in keyboard_binding_sections(topology) {
+            let section_label = gtk::Label::new(Some(section.attachment_label));
+            section_label.set_xalign(0.0);
+            system_page.append(&section_label);
+
+            let grid = gtk::Grid::new();
+            grid.set_column_spacing(12);
+            grid.set_row_spacing(6);
+            grid.set_hexpand(true);
+            system_page.append(&grid);
+
+            for (index, descriptor) in section.bindings.iter().enumerate() {
+                rows.push(add_input_row(
+                    &grid,
+                    index as i32,
+                    descriptor.control_label,
+                    CaptureTarget::Binding {
+                        system: descriptor.system,
+                        attachment: descriptor.attachment.as_str().to_string(),
+                        control: descriptor.control.as_str().to_string(),
+                    },
+                    language,
+                ));
+            }
         }
     }
 
@@ -1064,15 +1105,13 @@ fn system_field_by_id<'a>(
         .find(|field| field.id.as_str() == field_id)
 }
 
-fn combo_from_optional_system_field(
-    field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+fn combo_from_system_field(
+    field: &nerust_gui_shell::descriptor::SystemSettingsFieldModel,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
-    if let Some(field) = field {
-        let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
-        for option in options.iter() {
-            combo.append(Some(option.id.as_str()), &option.label);
-        }
+    let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
+    for option in options.iter() {
+        combo.append(Some(option.id.as_str()), &option.label);
     }
     combo
 }
@@ -1112,56 +1151,6 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     scroller.set_child(Some(&page));
 
     (scroller, page)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow};
-    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
-    use nerust_gui_shell::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use std::cell::RefCell;
-
-    #[derive(Default)]
-    struct FakeState {
-        apply_calls: usize,
-        finish_calls: usize,
-    }
-
-    impl SettingsApplier for FakeState {
-        fn apply_settings(
-            &mut self,
-            _settings: SettingsSnapshot,
-        ) -> Result<SettingsApplyPlan, String> {
-            self.apply_calls += 1;
-            Ok(SettingsApplyPlan::default())
-        }
-    }
-
-    fn snapshot() -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        }
-    }
-
-    #[test]
-    fn apply_helper_releases_mutable_borrow_before_follow_up_work() {
-        let state = RefCell::new(FakeState::default());
-
-        match apply_settings_without_reentrant_borrow(&state, snapshot()) {
-            Ok(_) => {
-                state.borrow_mut().finish_calls += 1;
-            }
-            Err(error) => panic!("unexpected error: {error}"),
-        }
-
-        let state = state.borrow();
-        assert_eq!(state.apply_calls, 1);
-        assert_eq!(state.finish_calls, 1);
-    }
 }
 
 fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
@@ -1229,5 +1218,55 @@ fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
 fn run_finish_callback(finish: &FinishCallback) {
     if let Some(callback) = finish.borrow_mut().take() {
         callback();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow};
+    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_shell::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeState {
+        apply_calls: usize,
+        finish_calls: usize,
+    }
+
+    impl SettingsApplier for FakeState {
+        fn apply_settings(
+            &mut self,
+            _settings: SettingsSnapshot,
+        ) -> Result<SettingsApplyPlan, String> {
+            self.apply_calls += 1;
+            Ok(SettingsApplyPlan::default())
+        }
+    }
+
+    fn snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        }
+    }
+
+    #[test]
+    fn apply_helper_releases_mutable_borrow_before_follow_up_work() {
+        let state = RefCell::new(FakeState::default());
+
+        match apply_settings_without_reentrant_borrow(&state, snapshot()) {
+            Ok(_) => {
+                state.borrow_mut().finish_calls += 1;
+            }
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+
+        let state = state.borrow();
+        assert_eq!(state.apply_calls, 1);
+        assert_eq!(state.finish_calls, 1);
     }
 }

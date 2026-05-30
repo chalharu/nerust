@@ -1,0 +1,11 @@
+[package]
+name = "nerust_snes_render"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_snes_core.workspace = true
+thiserror.workspace = true

@@ -17,10 +17,12 @@ use color::opaque_black_screen;
 use nerust_snes_core::Core;
 use obj::render_obj;
 
-pub(super) const VISIBLE_BG_Y_OFFSET: usize = 1;
+pub const SCREEN_WIDTH: usize = 256;
+pub const SCREEN_HEIGHT: usize = 224;
+pub(crate) const VISIBLE_BG_Y_OFFSET: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BgLayer {
+pub(crate) enum BgLayer {
     Bg1,
     Bg2,
     Bg3,
@@ -47,13 +49,13 @@ impl BgLayer {
     }
 }
 
-pub(super) fn use_presented_main_screen(core: &Core) -> bool {
+pub(crate) fn use_presented_main_screen(core: &Core) -> bool {
     if !hdma_targets_bbus(core, &[0x2C]) {
         return false;
     }
 
     let mut first = None;
-    for line in 0..crate::media::SCREEN_HEIGHT {
+    for line in 0..SCREEN_HEIGHT {
         let Some(screen) = core.presented_main_screen_line(line) else {
             continue;
         };
@@ -68,7 +70,7 @@ pub(super) fn use_presented_main_screen(core: &Core) -> bool {
     false
 }
 
-pub(super) fn main_screen_for_line(
+pub(crate) fn main_screen_for_line(
     core: &Core,
     screen_y: usize,
     current_tm: u8,
@@ -82,14 +84,14 @@ pub(super) fn main_screen_for_line(
     }
 }
 
-pub(super) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
+pub(crate) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
     let (hofs, vofs) = layer.scroll_targets();
     if !hdma_targets_bbus(core, &[hofs, vofs]) {
         return false;
     }
 
     let mut first = None;
-    for line in 0..crate::media::SCREEN_HEIGHT {
+    for line in 0..SCREEN_HEIGHT {
         let Some(scroll) = presented_bg_line(core, layer, line) else {
             continue;
         };
@@ -104,7 +106,7 @@ pub(super) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
     false
 }
 
-pub(super) fn presented_bg_line(
+pub(crate) fn presented_bg_line(
     core: &Core,
     layer: BgLayer,
     screen_y: usize,
@@ -152,7 +154,7 @@ fn dma_transfer_offsets(dmap: u8) -> &'static [u8] {
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error(
-        "unsupported BG mode {mode}; SNES rom_test currently supports BG layers for modes 0, 1, 3, and 7"
+        "unsupported BG mode {mode}; SNES renderer currently supports BG layers for modes 0, 1, 3, and 7"
     )]
     UnsupportedBgMode { mode: u8 },
 }
