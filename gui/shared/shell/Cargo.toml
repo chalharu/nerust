@@ -25,6 +25,7 @@ nerust_screen_physical.workspace = true
 nerust_sound_openal.workspace = true
 nerust_sound_traits.workspace = true
 nerust_snes_core.workspace = true
+nerust_snes_render.workspace = true
 nerust_timer.workspace = true
 
 [dev-dependencies]

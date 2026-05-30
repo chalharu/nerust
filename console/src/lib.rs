@@ -105,6 +105,23 @@ fn print_rom_metadata(data: &[u8], cartridge_data: &CartridgeData, options: Core
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConsoleRuntimeWarnings {
+    pub snes_audio_unsupported: bool,
+    pub snes_renderer_fallback: bool,
+}
+
+impl ConsoleRuntimeWarnings {
+    pub fn title_summary(self) -> Option<&'static str> {
+        match (self.snes_audio_unsupported, self.snes_renderer_fallback) {
+            (false, false) => None,
+            (true, false) => Some("SNES audio unavailable"),
+            (false, true) => Some("SNES renderer fallback"),
+            (true, true) => Some("SNES audio unavailable; renderer fallback"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConsoleMetrics {
     pub frame_counter: u64,
@@ -112,6 +129,7 @@ pub struct ConsoleMetrics {
     pub speed_multiplier: f32,
     pub loaded: bool,
     pub paused: bool,
+    pub runtime_warnings: ConsoleRuntimeWarnings,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

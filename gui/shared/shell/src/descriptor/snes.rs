@@ -3,9 +3,9 @@ use super::{
     SystemRuntimeSnapshot, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
+use nerust_console::{ConsoleMetrics, ConsoleRuntimeWarnings};
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_schema::{
@@ -16,23 +16,34 @@ use nerust_input_schema::{
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::Core;
+use nerust_snes_render::render_screen;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const SCREEN_WIDTH: usize = 256;
 const SCREEN_HEIGHT: usize = 224;
 const FRAME_STRIDE_BYTES: usize = SCREEN_WIDTH * 4;
-const CPU_CYCLES_PER_FRAME: u64 = 60_000;
-const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const SNES_MASTER_CLOCKS_PER_SCANLINE: u64 = 1364;
+const SNES_SCANLINES_PER_FRAME: u64 = 262;
+const CPU_MASTER_CLOCKS_PER_CYCLE: u64 = 6;
+const SNES_NTSC_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
+const SNES_NTSC_TARGET_FPS: f32 = SNES_NTSC_MASTER_CLOCK_HZ
+    / ((SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME) as f32);
+const CPU_CYCLES_PER_FRAME: u64 = (SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME
+    + CPU_MASTER_CLOCKS_PER_CYCLE / 2)
+    / CPU_MASTER_CLOCKS_PER_CYCLE;
 
 const SNES_PORT_ONE: PortId = PortId::new("snes.port.controller1");
+const SNES_PORT_TWO: PortId = PortId::new("snes.port.controller2");
 const SNES_ATTACHMENT_CONTROLLER_ONE: AttachmentId =
     AttachmentId::new("snes.attachment.controller1");
+const SNES_ATTACHMENT_CONTROLLER_TWO: AttachmentId =
+    AttachmentId::new("snes.attachment.controller2");
 const SNES_STANDARD_PAD: DeviceKindId = DeviceKindId::new("snes.device.standard_pad");
 const SNES_CONTROL_B: DigitalControlId = DigitalControlId::new("snes.control.b");
 const SNES_CONTROL_Y: DigitalControlId = DigitalControlId::new("snes.control.y");
@@ -52,7 +63,7 @@ pub(super) struct SnesSystemDefinition;
 
 #[derive(Debug, Default)]
 struct SnesInputAdapter {
-    buttons: u16,
+    buttons: [u16; 2],
 }
 
 pub(super) fn media_looks_like_snes(media: &MediaObject) -> bool {
@@ -126,41 +137,38 @@ impl SystemInputAdapter for SnesInputAdapter {
         control: &str,
         pressed: bool,
     ) -> Option<DigitalInputEvent> {
-        if attachment != SNES_ATTACHMENT_CONTROLLER_ONE.as_str() {
-            return None;
-        }
+        let attachment = snes_attachment_from_persisted(attachment)?;
         let control = snes_control_from_persisted(control)?;
         Some(if pressed {
-            DigitalInputEvent::pressed(SNES_ATTACHMENT_CONTROLLER_ONE, control)
+            DigitalInputEvent::pressed(attachment, control)
         } else {
-            DigitalInputEvent::released(SNES_ATTACHMENT_CONTROLLER_ONE, control)
+            DigitalInputEvent::released(attachment, control)
         })
     }
 
     fn apply_event(&mut self, event: DigitalInputEvent) {
-        if event.attachment != SNES_ATTACHMENT_CONTROLLER_ONE {
-            return;
-        }
-        if let Some(mask) = button_mask(event.control) {
+        if let Some(port) = snes_attachment_port(event.attachment)
+            && let Some(mask) = button_mask(event.control)
+        {
             if event.is_pressed() {
-                self.buttons |= mask;
+                self.buttons[port] |= mask;
             } else {
-                self.buttons &= !mask;
+                self.buttons[port] &= !mask;
             }
         }
     }
 
     fn clear(&mut self) {
-        self.buttons = 0;
+        self.buttons = [0; 2];
     }
 
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.buttons = decode_buttons(bytes)?;
+        self.buttons = decode_controller_buttons(bytes)?;
         Ok(())
     }
 
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Ok(self.buttons.to_le_bytes().to_vec())
+        Ok(encode_controller_buttons(self.buttons))
     }
 }
 
@@ -174,7 +182,7 @@ pub(super) struct SnesRuntime {
 struct SnesRuntimeShared {
     metrics: RwLock<ConsoleMetrics>,
     frame: RwLock<Arc<[u8]>>,
-    input_buttons: RwLock<u16>,
+    input_buttons: RwLock<[u16; 2]>,
 }
 
 enum SnesCommand {
@@ -193,7 +201,7 @@ enum SnesCommand {
     Pause,
     Resume,
     ApplyInput {
-        buttons: u16,
+        buttons: [u16; 2],
     },
     ExportMapperSave {
         reply: Sender<Result<Option<Vec<u8>>, String>>,
@@ -280,7 +288,7 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
-        let buttons = decode_buttons(&bytes)?;
+        let buttons = decode_controller_buttons(&bytes)?;
         self.shared.set_input_buttons(buttons);
         self.commands
             .send(SnesCommand::ApplyInput { buttons })
@@ -288,7 +296,7 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        Ok(self.shared.input_buttons().to_le_bytes().to_vec())
+        Ok(encode_controller_buttons(self.shared.input_buttons()))
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
@@ -333,7 +341,7 @@ impl SnesRuntimeShared {
                 ..ConsoleMetrics::default()
             }),
             frame: RwLock::new(Arc::from(opaque_black_frame())),
-            input_buttons: RwLock::new(0),
+            input_buttons: RwLock::new([0; 2]),
         }
     }
 
@@ -359,14 +367,14 @@ impl SnesRuntimeShared {
         )
     }
 
-    fn input_buttons(&self) -> u16 {
+    fn input_buttons(&self) -> [u16; 2] {
         *self
             .input_buttons
             .read()
             .unwrap_or_else(|err| err.into_inner())
     }
 
-    fn set_input_buttons(&self, buttons: u16) {
+    fn set_input_buttons(&self, buttons: [u16; 2]) {
         *self
             .input_buttons
             .write()
@@ -375,67 +383,60 @@ impl SnesRuntimeShared {
 }
 
 fn run_worker(commands: Receiver<SnesCommand>, stop: Receiver<()>, shared: Arc<SnesRuntimeShared>) {
-    let mut core: Option<Core> = None;
-    let mut loaded = false;
-    let mut paused = true;
-    let mut frame_counter = 0_u64;
-    let mut input_buttons = 0_u16;
-    let mut last_frame_at = Instant::now();
-    publish_metrics(&shared, frame_counter, loaded, paused, 0.0);
+    let mut state = SnesWorkerState::default();
+    let mut timer = nerust_timer::Timer::new();
+    publish_worker_metrics(&shared, &state, 0.0);
 
     while stop.try_recv().is_err() {
         while let Ok(command) = commands.try_recv() {
-            handle_command(
-                command,
-                &mut core,
-                &mut loaded,
-                &mut paused,
-                &mut frame_counter,
-                &mut input_buttons,
-                &shared,
-            );
+            handle_command(command, &mut state, &shared);
+        }
+        if state.reset_timer {
+            timer = nerust_timer::Timer::new();
+            state.reset_timer = false;
         }
 
-        if !loaded || paused {
+        if !state.loaded || state.paused {
             thread::sleep(Duration::from_millis(2));
             continue;
         }
 
-        let frame_started = Instant::now();
-        if let Some(core) = core.as_mut() {
+        if let Some(core) = state.core.as_mut() {
             match step_snes_frame(core) {
                 Ok(()) => {
-                    shared.publish_frame(render_backdrop_frame(core));
-                    frame_counter = frame_counter.wrapping_add(1);
-                    let elapsed = last_frame_at.elapsed().as_secs_f32();
-                    last_frame_at = Instant::now();
-                    let fps = if elapsed > 0.0 { 1.0 / elapsed } else { 0.0 };
-                    publish_metrics(&shared, frame_counter, loaded, paused, fps);
+                    shared.publish_frame(render_snes_frame(
+                        core,
+                        &mut state.render_warning_logged,
+                        &mut state.runtime_warnings,
+                    ));
+                    state.frame_counter = state.frame_counter.wrapping_add(1);
+                    timer.wait();
+                    publish_worker_metrics(&shared, &state, timer.as_fps());
                 }
                 Err(error) => {
                     log::warn!("SNES runtime paused after core error: {error}");
-                    paused = true;
-                    publish_metrics(&shared, frame_counter, loaded, paused, 0.0);
+                    state.paused = true;
+                    publish_worker_metrics(&shared, &state, 0.0);
                 }
             }
-        }
-
-        let elapsed = frame_started.elapsed();
-        if elapsed < FRAME_INTERVAL {
-            thread::sleep(FRAME_INTERVAL - elapsed);
         }
     }
 }
 
-fn handle_command(
-    command: SnesCommand,
-    core: &mut Option<Core>,
-    loaded: &mut bool,
-    paused: &mut bool,
-    frame_counter: &mut u64,
-    input_buttons: &mut u16,
-    shared: &SnesRuntimeShared,
-) {
+#[derive(Default)]
+struct SnesWorkerState {
+    core: Option<Core>,
+    loaded: bool,
+    paused: bool,
+    frame_counter: u64,
+    input_buttons: [u16; 2],
+    render_warning_logged: bool,
+    audio_warning_logged: bool,
+    reset_timer: bool,
+    runtime_warnings: ConsoleRuntimeWarnings,
+}
+
+fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &SnesRuntimeShared) {
     match command {
         SnesCommand::Load {
             bytes,
@@ -450,17 +451,29 @@ fn handle_command(
             );
             let result = match core_result {
                 Ok(new_core) => {
-                    *core = Some(new_core);
-                    if let Some(core) = core.as_mut() {
-                        core.set_standard_controller_buttons(0, *input_buttons);
+                    state.core = Some(new_core);
+                    if let Some(core) = state.core.as_mut() {
+                        apply_controller_buttons(core, state.input_buttons);
                     }
-                    *loaded = true;
-                    *paused = true;
-                    *frame_counter = 0;
-                    if let Some(core) = core.as_ref() {
-                        shared.publish_frame(render_backdrop_frame(core));
+                    state.loaded = true;
+                    state.paused = true;
+                    state.frame_counter = 0;
+                    state.render_warning_logged = false;
+                    state.audio_warning_logged = false;
+                    state.reset_timer = true;
+                    state.runtime_warnings = ConsoleRuntimeWarnings::default();
+                    warn_snes_audio_unsupported(
+                        &mut state.audio_warning_logged,
+                        &mut state.runtime_warnings,
+                    );
+                    if let Some(core) = state.core.as_ref() {
+                        shared.publish_frame(render_snes_frame(
+                            core,
+                            &mut state.render_warning_logged,
+                            &mut state.runtime_warnings,
+                        ));
                     }
-                    publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+                    publish_worker_metrics(shared, state, 0.0);
                     Ok(())
                 }
                 Err(error) => Err(error.to_string()),
@@ -468,22 +481,31 @@ fn handle_command(
             send_reply(reply, result);
         }
         SnesCommand::Unload { reply } => {
-            let was_loaded = core.take().is_some();
-            *loaded = false;
-            *paused = false;
-            *frame_counter = 0;
+            let was_loaded = state.core.take().is_some();
+            state.loaded = false;
+            state.paused = false;
+            state.frame_counter = 0;
+            state.reset_timer = true;
+            state.runtime_warnings = ConsoleRuntimeWarnings::default();
             shared.publish_frame(opaque_black_frame());
-            publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+            publish_worker_metrics(shared, state, 0.0);
             send_reply(reply, Ok(was_loaded));
         }
         SnesCommand::Reset { reply } => {
-            let result = match core.as_mut() {
+            let result = match state.core.as_mut() {
                 Some(core) => {
                     core.reset_cpu();
-                    core.set_standard_controller_buttons(0, *input_buttons);
-                    *frame_counter = 0;
-                    shared.publish_frame(render_backdrop_frame(core));
-                    publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+                    apply_controller_buttons(core, state.input_buttons);
+                    state.frame_counter = 0;
+                    state.render_warning_logged = false;
+                    state.reset_timer = true;
+                    state.runtime_warnings.snes_renderer_fallback = false;
+                    shared.publish_frame(render_snes_frame(
+                        core,
+                        &mut state.render_warning_logged,
+                        &mut state.runtime_warnings,
+                    ));
+                    publish_worker_metrics(shared, state, 0.0);
                     Ok(())
                 }
                 None => Err("no SNES ROM loaded".to_string()),
@@ -491,30 +513,33 @@ fn handle_command(
             send_reply(reply, result);
         }
         SnesCommand::Pause => {
-            *paused = true;
-            publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+            state.paused = true;
+            publish_worker_metrics(shared, state, 0.0);
         }
         SnesCommand::Resume => {
-            if *loaded {
-                *paused = false;
-                publish_metrics(shared, *frame_counter, *loaded, *paused, 0.0);
+            if state.loaded {
+                state.paused = false;
+                state.reset_timer = true;
+                publish_worker_metrics(shared, state, 0.0);
             }
         }
         SnesCommand::ApplyInput { buttons } => {
-            *input_buttons = buttons;
-            if let Some(core) = core.as_mut() {
-                core.set_standard_controller_buttons(0, buttons);
+            state.input_buttons = buttons;
+            if let Some(core) = state.core.as_mut() {
+                apply_controller_buttons(core, buttons);
             }
         }
         SnesCommand::ExportMapperSave { reply } => {
-            let result = core
+            let result = state
+                .core
                 .as_ref()
                 .map(|core| core.export_save_ram())
                 .ok_or_else(|| "no SNES ROM loaded".to_string());
             send_reply(reply, result);
         }
         SnesCommand::ImportMapperSave { bytes, reply } => {
-            let result = core
+            let result = state
+                .core
                 .as_mut()
                 .ok_or_else(|| "no SNES ROM loaded".to_string())
                 .and_then(|core| {
@@ -613,20 +638,72 @@ fn step_snes_frame(core: &mut Core) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
+    for (port, buttons) in buttons.into_iter().enumerate() {
+        if !core.set_standard_controller_buttons(port, buttons) {
+            log::warn!("SNES runtime ignored controller state for invalid port {port}");
+        }
+    }
+}
+
+fn render_snes_frame(
+    core: &Core,
+    warning_logged: &mut bool,
+    runtime_warnings: &mut ConsoleRuntimeWarnings,
+) -> Vec<u8> {
+    match render_screen(core) {
+        Ok(rendered) => rendered.rgba,
+        Err(error) => {
+            runtime_warnings.snes_renderer_fallback = true;
+            if !*warning_logged {
+                log::warn!("SNES software renderer fallback to backdrop: {error}");
+                *warning_logged = true;
+            }
+            render_backdrop_frame(core)
+        }
+    }
+}
+
+fn warn_snes_audio_unsupported(
+    warning_logged: &mut bool,
+    runtime_warnings: &mut ConsoleRuntimeWarnings,
+) {
+    runtime_warnings.snes_audio_unsupported = true;
+    if !*warning_logged {
+        log::warn!(
+            "SNES audio output is not available yet; the current SNES core does not synthesize DSP samples"
+        );
+        *warning_logged = true;
+    }
+}
+
+fn publish_worker_metrics(shared: &SnesRuntimeShared, state: &SnesWorkerState, emulation_fps: f32) {
+    publish_metrics(
+        shared,
+        state.frame_counter,
+        state.loaded,
+        state.paused,
+        emulation_fps,
+        state.runtime_warnings,
+    );
+}
+
 fn publish_metrics(
     shared: &SnesRuntimeShared,
     frame_counter: u64,
     loaded: bool,
     paused: bool,
     emulation_fps: f32,
+    runtime_warnings: ConsoleRuntimeWarnings,
 ) {
     shared.publish_metrics(ConsoleMetrics {
         frame_counter,
         loaded,
         paused,
         emulation_fps,
+        runtime_warnings,
         speed_multiplier: if emulation_fps > 0.0 {
-            emulation_fps / nerust_timer::TARGET_FPS
+            emulation_fps / SNES_NTSC_TARGET_FPS
         } else {
             0.0
         },
@@ -697,16 +774,28 @@ fn scale_channel(channel: u8, brightness: u8) -> u8 {
 fn snes_input_topology_descriptor() -> InputTopologyDescriptor {
     InputTopologyDescriptor {
         system: SystemId::Snes,
-        ports: vec![PortDescriptor {
-            id: SNES_PORT_ONE,
-            label: "Controller Port 1",
-            attachments: vec![AttachmentSlotDescriptor {
-                id: SNES_ATTACHMENT_CONTROLLER_ONE,
-                label: "Controller 1",
-                device: SNES_STANDARD_PAD,
-                supported_devices: vec![SNES_STANDARD_PAD],
-            }],
-        }],
+        ports: vec![
+            PortDescriptor {
+                id: SNES_PORT_ONE,
+                label: "Controller Port 1",
+                attachments: vec![AttachmentSlotDescriptor {
+                    id: SNES_ATTACHMENT_CONTROLLER_ONE,
+                    label: "1P",
+                    device: SNES_STANDARD_PAD,
+                    supported_devices: vec![SNES_STANDARD_PAD],
+                }],
+            },
+            PortDescriptor {
+                id: SNES_PORT_TWO,
+                label: "Controller Port 2",
+                attachments: vec![AttachmentSlotDescriptor {
+                    id: SNES_ATTACHMENT_CONTROLLER_TWO,
+                    label: "2P",
+                    device: SNES_STANDARD_PAD,
+                    supported_devices: vec![SNES_STANDARD_PAD],
+                }],
+            },
+        ],
         devices: vec![DeviceDescriptor {
             kind: SNES_STANDARD_PAD,
             label: "Standard Pad",
@@ -717,18 +806,18 @@ fn snes_input_topology_descriptor() -> InputTopologyDescriptor {
 
 fn standard_pad_controls() -> Vec<ControlDescriptor> {
     [
-        (SNES_CONTROL_B, "B"),
-        (SNES_CONTROL_Y, "Y"),
-        (SNES_CONTROL_SELECT, "Select"),
-        (SNES_CONTROL_START, "Start"),
         (SNES_CONTROL_UP, "Up"),
         (SNES_CONTROL_DOWN, "Down"),
         (SNES_CONTROL_LEFT, "Left"),
         (SNES_CONTROL_RIGHT, "Right"),
         (SNES_CONTROL_A, "A"),
+        (SNES_CONTROL_B, "B"),
         (SNES_CONTROL_X, "X"),
+        (SNES_CONTROL_Y, "Y"),
         (SNES_CONTROL_L, "L"),
         (SNES_CONTROL_R, "R"),
+        (SNES_CONTROL_START, "Start"),
+        (SNES_CONTROL_SELECT, "Select"),
     ]
     .into_iter()
     .map(|(id, label)| {
@@ -739,6 +828,26 @@ fn standard_pad_controls() -> Vec<ControlDescriptor> {
         })
     })
     .collect()
+}
+
+fn snes_attachment_from_persisted(attachment: &str) -> Option<AttachmentId> {
+    match attachment {
+        value if value == SNES_ATTACHMENT_CONTROLLER_ONE.as_str() => {
+            Some(SNES_ATTACHMENT_CONTROLLER_ONE)
+        }
+        value if value == SNES_ATTACHMENT_CONTROLLER_TWO.as_str() => {
+            Some(SNES_ATTACHMENT_CONTROLLER_TWO)
+        }
+        _ => None,
+    }
+}
+
+fn snes_attachment_port(attachment: AttachmentId) -> Option<usize> {
+    match attachment {
+        value if value == SNES_ATTACHMENT_CONTROLLER_ONE => Some(0),
+        value if value == SNES_ATTACHMENT_CONTROLLER_TWO => Some(1),
+        _ => None,
+    }
 }
 
 fn snes_control_from_persisted(control: &str) -> Option<DigitalControlId> {
@@ -777,9 +886,21 @@ fn button_mask(control: DigitalControlId) -> Option<u16> {
     }
 }
 
-fn decode_buttons(bytes: &[u8]) -> Result<u16, String> {
-    let bytes: [u8; 2] = bytes
-        .try_into()
-        .map_err(|_| format!("invalid SNES input state length: {}", bytes.len()))?;
-    Ok(u16::from_le_bytes(bytes))
+fn encode_controller_buttons(buttons: [u16; 2]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(4);
+    for buttons in buttons {
+        encoded.extend_from_slice(&buttons.to_le_bytes());
+    }
+    encoded
+}
+
+fn decode_controller_buttons(bytes: &[u8]) -> Result<[u16; 2], String> {
+    match bytes.len() {
+        2 => Ok([u16::from_le_bytes([bytes[0], bytes[1]]), 0]),
+        4 => Ok([
+            u16::from_le_bytes([bytes[0], bytes[1]]),
+            u16::from_le_bytes([bytes[2], bytes[3]]),
+        ]),
+        len => Err(format!("invalid SNES input state length: {len}")),
+    }
 }

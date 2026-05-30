@@ -37,6 +37,7 @@ members = [
   "sound/filter",
   "sound/traits",
   "snes/core",
+  "snes/render",
   "snes/rom_test",
   "timer",
 ]
@@ -105,6 +106,7 @@ nerust_screen_rgb = { version = "=0.1.0", path = "screen/rgb" }
 nerust_screen_wgpu = { version = "=0.1.0", path = "screen/wgpu" }
 nerust_screen_video = { version = "=0.1.0", path = "screen/video" }
 nerust_snes_core = { version = "=0.1.0", path = "snes/core" }
+nerust_snes_render = { version = "=0.1.0", path = "snes/render" }
 nerust_snes_rom_test = { version = "=0.1.0", path = "snes/rom_test" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }

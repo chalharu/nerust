@@ -588,7 +588,7 @@ fn snes_session_flushes_keyboard_input_into_standard_pad_state() {
             .runtime
             .current_input_state()
             .expect("SNES input state should export"),
-        vec![0x00, 0x80]
+        vec![0x00, 0x80, 0x00, 0x00]
     );
 
     assert_eq!(
@@ -602,7 +602,7 @@ fn snes_session_flushes_keyboard_input_into_standard_pad_state() {
             .runtime
             .current_input_state()
             .expect("SNES input state should export"),
-        vec![0x00, 0x00]
+        vec![0x00, 0x00, 0x00, 0x00]
     );
 }
 

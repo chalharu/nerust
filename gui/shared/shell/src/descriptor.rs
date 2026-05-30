@@ -150,6 +150,7 @@ struct NesRuntime {
 
 const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
+pub const SETTINGS_SYSTEM_IDS: [SystemId; 2] = [SystemId::Nes, SystemId::Snes];
 
 pub fn default_system_definition() -> Box<dyn SystemDefinition> {
     system_definition_for_id(SystemId::Nes).expect("NES system definition should be available")
@@ -161,6 +162,32 @@ pub fn system_definition_for_id(system_id: SystemId) -> Result<Box<dyn SystemDef
         SystemId::Snes => Ok(Box::new(snes::SnesSystemDefinition)),
         other => Err(format!("unsupported system id: {other:?}")),
     }
+}
+
+pub fn settings_system_ids() -> &'static [SystemId] {
+    &SETTINGS_SYSTEM_IDS
+}
+
+pub fn input_topology_for_system(system_id: SystemId) -> Result<InputTopologyDescriptor, String> {
+    Ok(system_definition_for_id(system_id)?
+        .descriptor()
+        .input_topology)
+}
+
+pub fn system_settings_page_for_system(
+    system_id: SystemId,
+    settings: &SettingsSnapshot,
+) -> Result<SystemSettingsPageModel, String> {
+    Ok(system_definition_for_id(system_id)?.settings_page(settings))
+}
+
+pub fn apply_system_settings_choice_for_system(
+    system_id: SystemId,
+    settings: &mut SettingsSnapshot,
+    field: &SystemSettingsFieldId,
+    choice: &SystemSettingsChoiceId,
+) -> Result<(), String> {
+    system_definition_for_id(system_id)?.apply_settings_choice(settings, field, choice)
 }
 
 pub fn system_id_for_media(media: &MediaObject) -> SystemId {
@@ -490,7 +517,7 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
 mod tests {
     use super::{
         SystemSettingsChoiceId, SystemSettingsFieldId, default_input_topology_descriptor,
-        default_system_definition,
+        default_system_definition, system_definition_for_id,
     };
     use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{
@@ -503,7 +530,7 @@ mod tests {
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
-    use nerust_input_schema::ControlDescriptor;
+    use nerust_input_schema::{ControlDescriptor, SystemId};
     use std::borrow::Cow;
 
     fn snapshot() -> SettingsSnapshot {
@@ -599,5 +626,51 @@ mod tests {
 
         let page = definition.settings_page(&settings);
         assert_eq!(page.fields.len(), 2);
+    }
+
+    #[test]
+    fn snes_descriptor_exposes_two_standard_controller_ports_in_ui_order() {
+        let descriptor = system_definition_for_id(SystemId::Snes)
+            .unwrap()
+            .descriptor()
+            .input_topology;
+
+        assert_eq!(descriptor.ports.len(), 2);
+        assert_eq!(descriptor.ports[0].attachments[0].label, "1P");
+        assert_eq!(descriptor.ports[1].attachments[0].label, "2P");
+
+        let controls = descriptor
+            .device(descriptor.ports[0].attachments[0].device)
+            .unwrap();
+        let labels = controls
+            .controls
+            .iter()
+            .filter_map(|control| match control {
+                ControlDescriptor::Digital(digital) => Some(digital.label),
+                ControlDescriptor::Analog(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            [
+                "Up", "Down", "Left", "Right", "A", "B", "X", "Y", "L", "R", "Start", "Select"
+            ]
+        );
+    }
+
+    #[test]
+    fn snes_input_adapter_serializes_both_controller_ports() {
+        let definition = system_definition_for_id(SystemId::Snes).unwrap();
+        let mut adapter = definition.create_input_adapter(&snapshot());
+
+        let event = adapter
+            .digital_event_from_persisted("snes.attachment.controller2", "snes.control.a", true)
+            .unwrap();
+        adapter.apply_event(event);
+
+        assert_eq!(
+            adapter.runtime_state_bytes().unwrap(),
+            vec![0x00, 0x00, 0x80, 0x00]
+        );
     }
 }

@@ -3193,6 +3193,7 @@ dependencies = [
  "nerust_screen_logical",
  "nerust_screen_physical",
  "nerust_snes_core",
+ "nerust_snes_render",
  "nerust_sound_openal",
  "nerust_sound_traits",
  "nerust_timer",
@@ -3371,12 +3372,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_snes_render"
+version = "0.1.0"
+dependencies = [
+ "nerust_snes_core",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nerust_snes_rom_test"
 version = "0.1.0"
 dependencies = [
  "clap",
  "crc",
  "nerust_snes_core",
+ "nerust_snes_render",
  "png",
  "serde",
  "serde_derive",

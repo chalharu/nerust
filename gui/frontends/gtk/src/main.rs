@@ -13,7 +13,6 @@ use nerust_contract_settings::language::AppLanguage;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
-use nerust_gui_shell::descriptor::SystemSettingsPageModel;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot};
 use nerust_gui_shell::settings::i18n::{UiText, text};
@@ -41,14 +40,6 @@ impl State {
 
     pub(crate) fn snapshot(&self) -> SessionSnapshot {
         self.session.snapshot()
-    }
-
-    pub(crate) fn system_settings_page_model(&self) -> SystemSettingsPageModel {
-        self.session.system_settings_page_model()
-    }
-
-    pub(crate) fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
-        self.session.input_topology_descriptor()
     }
 
     pub(crate) fn window_size(&self) -> WindowSize {
