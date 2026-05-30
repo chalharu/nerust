@@ -1,3 +1,5 @@
+mod import_metadata;
+
 #[cfg(target_os = "android")]
 mod android;
 

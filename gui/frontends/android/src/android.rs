@@ -24,7 +24,6 @@ use nerust_gui_shell::touch::{
 };
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -98,7 +97,6 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     let storage = AndroidStorage::open(storage_root.join("nerust"))?;
     let mut builder = EventLoop::<()>::with_user_event();
     builder.with_android_app(app);
-    builder.handle_volume_keys();
     let event_loop = builder
         .build()
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
@@ -214,24 +212,8 @@ impl AndroidFrontend {
         {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
-        if let Err(error) = self.storage.save_last_rom_id(id) {
-            log::warn!("{error}");
-        }
-        if restore_hidden_state {
-            log::info!(
-                "load_from_library_with_autosave: restoring hidden lifecycle state for id={id}"
-            );
-            self.session.load_hidden_lifecycle_state();
-        } else {
-            log::info!(
-                "load_from_library_with_autosave: clearing hidden lifecycle state for cold start id={id}"
-            );
-            self.session.clear_hidden_lifecycle_state();
-        }
-        self.lifecycle_auto_paused = false;
-        self.lifecycle_restore_pending = false;
+        self.finish_rom_load(id, restore_hidden_state);
         log::info!("load_from_library_with_autosave: session ready for id={id}");
-        self.request_redraw();
         Ok(())
     }
 
@@ -260,7 +242,7 @@ impl AndroidFrontend {
     fn import_rom_from_uri(&mut self, uri: &str) -> Result<(), String> {
         log::info!("import_rom_from_uri: importing URI {uri}");
         let bytes = picker::read_uri_bytes(&self.app, uri)?;
-        let (display_name, extension) = infer_import_metadata(uri);
+        let (display_name, extension) = picker::infer_import_metadata(&self.app, uri);
         log::info!(
             "import_rom_from_uri: read '{}' ({} bytes)",
             display_name,
@@ -296,16 +278,12 @@ impl AndroidFrontend {
                 entry.display_name
             ));
         }
-        if let Err(error) = self.storage.save_last_rom_id(&entry.id) {
-            log::warn!("{error}");
-        }
-        self.session.clear_hidden_lifecycle_state();
+        self.finish_rom_load(&entry.id, false);
         log::info!(
             "import_rom_from_uri: imported '{}' as id={}",
             entry.display_name,
             entry.id
         );
-        self.request_redraw();
         Ok(())
     }
 
@@ -318,8 +296,6 @@ impl AndroidFrontend {
         if let Err(error) = self.import_rom_from_uri(&uri) {
             log::error!("{error}");
         }
-        // Library entries changed after import – refresh caches for sync dialogs.
-        library::update_cached_entries(self.storage.rom_library.entries());
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
@@ -495,6 +471,7 @@ impl AndroidFrontend {
             size.width,
             size.height
         );
+        drop(self.renderer.take());
         self.renderer = match WgpuRenderer::new(window, &self.session) {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
@@ -512,6 +489,26 @@ impl AndroidFrontend {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
+    }
+
+    fn finish_rom_load(&mut self, id: &str, restore_hidden_state: bool) {
+        if let Err(error) = self.storage.save_last_rom_id(id) {
+            log::warn!("{error}");
+        }
+        if restore_hidden_state {
+            log::info!("finish_rom_load: restoring hidden lifecycle state for id={id}");
+            self.session.load_hidden_lifecycle_state();
+        } else {
+            log::info!("finish_rom_load: clearing hidden lifecycle state for id={id}");
+            self.session.clear_hidden_lifecycle_state();
+        }
+        self.lifecycle_auto_paused = false;
+        self.lifecycle_restore_pending = false;
+        if let Err(error) = self.session.run_command(SessionCommand::Resume) {
+            log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
+        }
+        self.refresh_dialog_caches();
+        self.request_redraw();
     }
 
     fn begin_foreground_resume(&mut self) {
@@ -777,27 +774,4 @@ impl ApplicationHandler for AndroidFrontend {
             window.request_redraw();
         }
     }
-}
-
-fn infer_import_metadata(uri: &str) -> (String, String) {
-    let candidate = uri
-        .rsplit('/')
-        .next()
-        .and_then(|segment| segment.split('?').next())
-        .filter(|segment| !segment.is_empty())
-        .unwrap_or("Imported ROM")
-        .replace("%20", " ");
-    let path = Path::new(&candidate);
-    let display_name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or("Imported ROM")
-        .to_string();
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-        .to_string();
-    (display_name, extension)
 }

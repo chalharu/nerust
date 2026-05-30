@@ -4,6 +4,7 @@ import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -97,6 +98,8 @@ private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
+private const val DIALOG_PRESENTATION_CARD = "card"
+private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 private data class DrawerAction(val label: String, val action: String)
 
@@ -165,6 +168,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         Log.i(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
+        volumeControlStream = AudioManager.STREAM_MUSIC
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         scheduleChromeAttach()
     }
@@ -377,6 +381,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         showComposeDialog(
             dialogTag = ROM_LIBRARY_DIALOG_TAG,
             contentDescription = romLibraryContentDescription(entryNames.asList()),
+            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
@@ -384,7 +389,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 }
             },
         ) { dismiss ->
-            NerustRomLibraryDialogCard(
+            NerustRomLibraryScreen(
                 entryNames = entryNames.asList(),
                 onDismissRequest = dismiss,
                 onImport = {
@@ -459,6 +464,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         showComposeDialog(
             dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
+            presentation = DIALOG_PRESENTATION_CARD,
             ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
@@ -737,6 +743,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun showComposeDialog(
         dialogTag: String,
         contentDescription: String,
+        presentation: String,
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
@@ -748,6 +755,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             ComposeOwnerFrameLayout(this).apply {
                 tag = dialogTag
                 setTag(R.id.nerust_dialog_content_probe, contentDescription)
+                setTag(R.id.nerust_dialog_presentation_probe, presentation)
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1074,6 +1082,20 @@ private fun NerustDialogHost(content: @Composable () -> Unit) {
 }
 
 @Composable
+private fun NerustFullScreenDialogHost(content: @Composable ColumnScope.() -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(WindowInsets.safeDrawing.asPaddingValues())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
 private fun NerustDialogCard(
     title: String,
     buttons: @Composable RowScope.() -> Unit,
@@ -1099,38 +1121,47 @@ private fun NerustDialogCard(
 }
 
 @Composable
-private fun NerustRomLibraryDialogCard(
+private fun NerustRomLibraryScreen(
     entryNames: List<String>,
     onDismissRequest: () -> Unit,
     onImport: () -> Unit,
     onSelectEntry: (Int) -> Unit,
 ) {
-    NerustDialogHost {
-        NerustDialogCard(
-            title = "ROM Library",
-            buttons = {
-                TextButton(onClick = onDismissRequest) {
-                    Text("Cancel")
-                }
-            },
+    NerustFullScreenDialogHost {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            LazyColumn(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp),
-            ) {
-                item {
-                    DialogListButton(label = "Import new ROM…", onClick = onImport)
-                    if (entryNames.isNotEmpty()) {
-                        HorizontalDivider()
-                    }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "ROM Library", style = MaterialTheme.typography.headlineSmall)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Import a new ROM or reopen one from your library.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            TextButton(onClick = onDismissRequest) {
+                Text("Close")
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+        ) {
+            item {
+                DialogListButton(label = "Import new ROM…", onClick = onImport)
+                if (entryNames.isNotEmpty()) {
+                    HorizontalDivider()
                 }
-                itemsIndexed(entryNames) { index, entryName ->
-                    DialogListButton(label = entryName) { onSelectEntry(index) }
-                    if (index < entryNames.lastIndex) {
-                        HorizontalDivider()
-                    }
+            }
+            itemsIndexed(entryNames) { index, entryName ->
+                DialogListButton(label = entryName) { onSelectEntry(index) }
+                if (index < entryNames.lastIndex) {
+                    HorizontalDivider()
                 }
             }
         }
