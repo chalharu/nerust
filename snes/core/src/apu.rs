@@ -167,6 +167,7 @@ impl Apu {
             }
             0x00F3 => {}
             0x00F4..=0x00F7 => {
+                self.ram[usize::from(address)] = value;
                 self.apu_to_cpu_ports[usize::from(address - 0x00F4)] = value;
             }
             0x00F8..=0x00F9 => {
