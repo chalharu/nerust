@@ -1729,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn apu_smp_dsp_registers_use_read_only_upper_mirrors() {
+    fn apu_smp_dspaddr_reads_full_address_and_data_uses_lower_window() {
         let mut bus = Bus::new(test_cartridge());
 
         bus.apu.write_smp(0x00F2, 0x12);
@@ -1738,7 +1738,7 @@ mod tests {
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
 
         bus.apu.write_smp(0x00F2, 0x92);
-        assert_eq!(bus.apu.read_smp(0x00F2), 0x12);
+        assert_eq!(bus.apu.read_smp(0x00F2), 0x92);
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
         bus.apu.write_smp(0x00F3, 0xCD);
         assert_eq!(bus.apu.read_smp(0x00F3), 0xAB);
