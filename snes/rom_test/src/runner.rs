@@ -113,7 +113,7 @@ fn load_msu1_data_sidecar(rom_path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
+pub fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
     let Some(stem) = rom_path.file_stem().and_then(|stem| stem.to_str()) else {
         return Ok(Vec::new());
     };
@@ -144,6 +144,7 @@ fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
         {
             continue;
         }
+
         let Some(file_stem) = path.file_stem().and_then(|file_stem| file_stem.to_str()) else {
             continue;
         };
@@ -157,6 +158,18 @@ fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
     tracks.sort_unstable();
     tracks.dedup();
     Ok(tracks)
+}
+
+pub fn has_msu1_data_sidecar(rom_path: &Path) -> Result<bool, String> {
+    let data_path = rom_path.with_extension("msu");
+    match fs::metadata(&data_path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "failed to stat MSU-1 data sidecar `{}`: {error}",
+            data_path.display()
+        )),
+    }
 }
 
 fn finalize_validation(
