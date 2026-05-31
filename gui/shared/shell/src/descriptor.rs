@@ -131,6 +131,18 @@ pub trait SystemRuntime: Send {
     fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String>;
     fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String>;
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity>;
+
+    /// Provide access to the current frame buffer without allocating a per-frame copy.
+    /// The closure is invoked while holding a read lock on the shared frame buffer.
+    /// Implementations should call the closure synchronously and not retain the byte slice.
+    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+        // Default implementation: take a snapshot and, if available, invoke the closure
+        // with the frame bytes while the VideoFrameHandle is still in scope.
+        let snapshot = self.snapshot();
+        if let Some(frame) = snapshot.video_frame {
+            f(frame.bytes());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -439,6 +451,12 @@ impl SystemRuntime for NesRuntime {
 
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
         self.core.canonical_media_identity().ok()
+    }
+
+    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+        self.core.with_frame_buffer(|bytes| {
+            f(bytes);
+        });
     }
 }
 
