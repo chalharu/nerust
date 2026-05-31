@@ -149,7 +149,7 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Set up Android SDK
-        uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3.2.0
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -227,7 +227,7 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Set up Android SDK
-        uses: android-actions/setup-android@07976c6290703d34c16d382cb36445f98bb43b1f # v3.2.0
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
