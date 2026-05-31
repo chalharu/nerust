@@ -376,13 +376,19 @@ impl OpenAlState {
 
         // If there's no streaming source, try to create one
         if self.src.is_none() {
-            match Self::create_streaming_source(self.sample_rate, self.buffer.len(), self.buffer_count) {
+            match Self::create_streaming_source(
+                self.sample_rate,
+                self.buffer.len(),
+                self.buffer_count,
+            ) {
                 Ok((new_src, playback_rate)) => {
                     let old_rate = self.sample_rate;
                     self.src = Some(new_src);
                     if playback_rate != old_rate {
                         self.sample_rate = playback_rate;
-                        log::info!("OpenAL playback rate resolved to {playback_rate} Hz (was {old_rate})");
+                        log::info!(
+                            "OpenAL playback rate resolved to {playback_rate} Hz (was {old_rate})"
+                        );
                     }
                 }
                 Err(err) => {
@@ -404,7 +410,9 @@ impl OpenAlState {
                         &mut self.fade_buffer,
                         &mut self.buffer,
                     ) {
-                        log::warn!("OpenAL audio worker encountered error while filling buffer: {err}; dropping streaming source and will attempt reinitialize");
+                        log::warn!(
+                            "OpenAL audio worker encountered error while filling buffer: {err}; dropping streaming source and will attempt reinitialize"
+                        );
                         drop_src = true;
                         break;
                     }
@@ -413,8 +421,12 @@ impl OpenAlState {
                     match src.state() {
                         SourceState::Playing => (),
                         _ => {
-                            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.play())).is_err() {
-                                log::warn!("OpenAL source play panicked; dropping streaming source");
+                            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.play()))
+                                .is_err()
+                            {
+                                log::warn!(
+                                    "OpenAL source play panicked; dropping streaming source"
+                                );
                                 drop_src = true;
                             }
                         }
