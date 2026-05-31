@@ -823,7 +823,13 @@ impl ApplicationHandler for AndroidFrontend {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
         } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+            if self.is_resumed || self.foreground_resume_pending {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    now + NativeShellState::FRAME_POLL_INTERVAL,
+                ));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
         }
     }
 }
