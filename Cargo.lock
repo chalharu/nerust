@@ -3481,6 +3481,7 @@ dependencies = [
 name = "nerust_screen_wgpu"
 version = "0.1.0"
 dependencies = [
+ "log",
  "nerust_screen_filter",
  "nerust_screen_logical",
  "nerust_screen_physical",

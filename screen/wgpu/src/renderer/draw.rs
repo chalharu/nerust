@@ -10,11 +10,14 @@ use crate::{
     upload::pack_frame_rows,
 };
 use nerust_screen_physical::PhysicalSize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,
     TexelCopyBufferLayout, TexelCopyTextureInfo, TextureViewDescriptor,
 };
+
+static SUBMIT_SEQ: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(super) struct Viewport {
@@ -185,8 +188,14 @@ impl Renderer {
             render_pass.draw(0..3, 0..1);
         }
 
-        self.queue.submit(Some(encoder.finish()));
-        surface_texture.present();
+        {
+            let seq = SUBMIT_SEQ.fetch_add(1, Ordering::SeqCst);
+            log::info!("perf: submit seq={} - before submit", seq);
+            self.queue.submit(Some(encoder.finish()));
+            log::info!("perf: submit seq={} - after submit, presenting", seq);
+            surface_texture.present();
+            log::info!("perf: submit seq={} - presented", seq);
+        }
         if suboptimal {
             self.reconfigure_surface(render_surface, surface_size);
         }
