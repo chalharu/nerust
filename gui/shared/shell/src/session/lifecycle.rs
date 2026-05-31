@@ -434,14 +434,33 @@ impl SessionHandle {
     }
 
     fn configure_persistence_for_loaded_media(&mut self, load_mapper_save: bool) {
-        let Some(loaded_media) = self.loaded_media.clone() else {
+        if let Some(loaded_media) = self.loaded_media.clone() {
+            let identity_opt = self.persistence_identity();
+            log::info!(
+                "configure_persistence_for_loaded_media: loaded_media path={:?} persistence_identity={:?}",
+                loaded_media.media.path.as_deref(),
+                identity_opt
+            );
+            let persistence_paths = identity_opt.and_then(|identity| {
+                let resolved = self.resolve_persistence_paths(loaded_media.media.path.as_deref(), identity);
+                if resolved.is_none() {
+                    log::info!(
+                        "configure_persistence_for_loaded_media: failed to resolve persistence paths for identity {:?} and path {:?}",
+                        identity,
+                        loaded_media.media.path.as_deref()
+                    );
+                } else {
+                    log::info!(
+                        "configure_persistence_for_loaded_media: resolved persistence paths: {:?}",
+                        resolved
+                    );
+                }
+                resolved
+            });
+            self.configure_persistence_paths(persistence_paths, load_mapper_save);
+        } else {
             self.persistence = Default::default();
-            return;
-        };
-        let persistence_paths = self.persistence_identity().and_then(|identity| {
-            self.resolve_persistence_paths(loaded_media.media.path.as_deref(), identity)
-        });
-        self.configure_persistence_paths(persistence_paths, load_mapper_save);
+        }
     }
 
     fn resolve_persistence_paths(
@@ -554,9 +573,13 @@ impl SessionHandle {
     }
 
     fn save_active_slot_or_new(&mut self) {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+        if self.persistence.sidecars.is_none() {
+            log::info!(
+                "save_active_slot_or_new: no persistence sidecars configured; cannot save state"
+            );
             return;
-        };
+        }
+        let sidecars = self.persistence.sidecars.as_ref().unwrap();
         let slot_id = self.persistence.active_slot_id.or_else(|| {
             allocate_next_slot_id(&sidecars.states_dir)
                 .map_err(|error| {
@@ -565,8 +588,14 @@ impl SessionHandle {
                 })
                 .ok()
         });
-        if let Some(slot_id) = slot_id {
-            self.save_slot(slot_id, true);
+        match slot_id {
+            Some(slot_id) => {
+                log::info!("save_active_slot_or_new: saving to slot {}", slot_id);
+                self.save_slot(slot_id, true);
+            }
+            None => {
+                log::warn!("save_active_slot_or_new: failed to allocate slot id");
+            }
         }
     }
 
@@ -581,12 +610,29 @@ impl SessionHandle {
     }
 
     fn save_slot(&mut self, slot_id: u64, make_active: bool) {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
+        if self.persistence.sidecars.is_none() {
+            log::info!(
+                "save_slot: no persistence.sidecars configured; cannot save slot {}",
+                slot_id
+            );
             return;
-        };
-        let Some(identity) = self.persistence_identity() else {
+        }
+        let sidecars = self.persistence.sidecars.as_ref().unwrap();
+        let identity_opt = self.persistence_identity();
+        if identity_opt.is_none() {
+            log::info!(
+                "save_slot: no persistence identity available; cannot save slot {}",
+                slot_id
+            );
             return;
-        };
+        }
+        let identity = identity_opt.unwrap();
+        log::info!(
+            "save_slot: writing slot {} (make_active={}) to {}",
+            slot_id,
+            make_active,
+            sidecars.states_dir.display()
+        );
         match self.runtime.export_state() {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(|preview| ThumbnailSource {
@@ -606,6 +652,7 @@ impl SessionHandle {
                             self.persistence.active_slot_id = Some(slot_id);
                         }
                         self.refresh_slots();
+                        log::info!("save_slot: saved slot {}", slot_id);
                     }
                     Err(error) => log::warn!("saving state slot failed: {error}"),
                 }
