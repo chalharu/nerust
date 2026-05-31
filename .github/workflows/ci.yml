@@ -257,7 +257,7 @@ jobs:
           key: ${{ runner.os }}-gradle-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-android-e2e-
       - name: Run emulator e2e tests
-        uses: ReactiveCircus/android-emulator-runner@324029e2f414c084d8b15ba075288885e74aef9c # v2.34.0
+        uses: ReactiveCircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         env:
           ANDROID_ABI_FILTERS: x86_64
         with:
