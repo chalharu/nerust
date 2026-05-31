@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{PresentationOptions, Renderer};
+use super::{DeviceLimitProfile, PresentationOptions, Renderer, fit_surface_size_to_limit};
 use crate::{
     srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
@@ -50,6 +50,25 @@ impl Renderer {
         assets: Option<&ConsoleVideoAssets>,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
+        Self::new_with_device_limit_profile(
+            render_surface,
+            surface_size,
+            presentation,
+            assets,
+            DeviceLimitProfile::Default,
+            presentation_options,
+        )
+        .await
+    }
+
+    pub async fn new_with_device_limit_profile<T: SurfaceTargetSource>(
+        render_surface: &RenderSurface<T>,
+        surface_size: SurfaceSize,
+        presentation: &VideoPresentation,
+        assets: Option<&ConsoleVideoAssets>,
+        device_limit_profile: DeviceLimitProfile,
+        presentation_options: PresentationOptions,
+    ) -> Result<Self, String> {
         let pipeline_kind = frame_pipeline_kind(presentation, assets)?;
 
         let instance = render_surface.instance();
@@ -62,17 +81,24 @@ impl Renderer {
             })
             .await
             .map_err(|err| format!("failed to request wgpu adapter: {err:?}"))?;
+        let adapter_limits = adapter.limits();
+        let mut required_limits = device_limit_profile.required_limits();
+        let requested_surface_dimension = surface_size.width.max(surface_size.height).max(1);
+        required_limits.max_texture_dimension_2d = required_limits
+            .max_texture_dimension_2d
+            .max(requested_surface_dimension)
+            .min(adapter_limits.max_texture_dimension_2d);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("nerust_wgpu_device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits,
                 ..Default::default()
             })
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
-        let mut config = Self::surface_config(surface, &adapter, surface_size)?;
+        let mut config = Self::surface_config(surface, &adapter, surface_size, &device)?;
         let caps = surface.get_capabilities(&adapter);
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
@@ -141,7 +167,7 @@ impl Renderer {
             ntsc_size,
             &ntsc_data,
         );
-        let srgb_lut_texture = create_texture_1d_from_bytes(
+        let srgb_lut_texture = create_srgb_lut_texture(
             &device,
             &queue,
             "nerust_srgb_lut_texture",
@@ -223,7 +249,7 @@ impl Renderer {
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
                         sample_type: TextureSampleType::Float { filterable: false },
-                        view_dimension: TextureViewDimension::D1,
+                        view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
@@ -318,12 +344,15 @@ impl Renderer {
         surface: &Surface<'_>,
         adapter: &wgpu::Adapter,
         surface_size: SurfaceSize,
+        device: &Device,
     ) -> Result<SurfaceConfiguration, String> {
+        let normalized_size =
+            fit_surface_size_to_limit(surface_size, device.limits().max_texture_dimension_2d);
         surface
             .get_default_config(
                 adapter,
-                surface_size.width.max(1),
-                surface_size.height.max(1),
+                normalized_size.width.max(1),
+                normalized_size.height.max(1),
             )
             .ok_or_else(|| "failed to derive a default surface configuration".to_string())
     }
@@ -381,7 +410,7 @@ fn create_texture_from_bytes(
     texture
 }
 
-fn create_texture_1d_from_bytes(
+fn create_srgb_lut_texture(
     device: &Device,
     queue: &Queue,
     label: &str,
@@ -399,7 +428,7 @@ fn create_texture_1d_from_bytes(
         },
         mip_level_count: 1,
         sample_count: 1,
-        dimension: TextureDimension::D1,
+        dimension: TextureDimension::D2,
         format,
         usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         view_formats: &[],
@@ -414,8 +443,8 @@ fn create_texture_1d_from_bytes(
         bytes,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: None,
-            rows_per_image: None,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(1),
         },
         Extent3d {
             width,

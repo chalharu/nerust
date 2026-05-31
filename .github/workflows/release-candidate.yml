@@ -21,7 +21,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ inputs.base_ref }}
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
@@ -29,8 +28,8 @@ jobs:
       - name: Authenticate git pushes
         env:
           GH_REPO: ${{ github.repository }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-        run: git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GH_REPO}.git"
+          GH_TOKEN: ${{ github.token }}
+        run: git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
       - name: Validate release branch
         run: |
           if ! git ls-remote --exit-code --heads origin release > /dev/null 2>&1; then
@@ -58,7 +57,7 @@ jobs:
           BASE_REF: ${{ inputs.base_ref }}
           BASE_TAG: ${{ steps.release_meta.outputs.base_tag }}
           BUMP_KIND: ${{ steps.release_meta.outputs.bump_kind }}
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
           VERSION: ${{ steps.release_meta.outputs.version }}
         run: |

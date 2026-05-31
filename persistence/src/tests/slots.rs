@@ -4,8 +4,9 @@ use super::{
     test_rom_identity_with_prg_rom_crc64, test_rom_identity_with_save_prg_ram_len,
 };
 use crate::slots::{
-    allocate_next_slot_id, delete_state_slot, load_state_slot, scan_state_slots,
-    scan_state_slots_for_identity, state_slot_path, write_state_slot,
+    allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
+    scan_state_slots, scan_state_slots_for_identity, state_slot_path, write_autosave_state_slot,
+    write_state_slot,
 };
 use crate::thumbnail::ThumbnailSource;
 use std::fs;
@@ -28,6 +29,20 @@ fn slot_id_allocation_persists_without_writing_slot_files() {
 
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 2);
+}
+
+#[test]
+fn autosave_slot_round_trips_without_listing_or_allocation() {
+    let dir = prepare_test_dir("autosave-slot");
+
+    let written = write_autosave_state_slot(&dir, b"autosave", test_identity(), None).unwrap();
+    let loaded = load_state_slot(&autosave_state_slot_path(&dir)).unwrap();
+
+    assert_eq!(written.slot_id, 0);
+    assert_eq!(loaded.summary, written);
+    assert_eq!(loaded.machine_state, b"autosave");
+    assert!(scan_state_slots(&dir).unwrap().is_empty());
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
 }
 
 #[test]

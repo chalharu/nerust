@@ -1,0 +1,27 @@
+[package]
+name = "nerust_android"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "main"
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+log.workspace = true
+nerust_backend_wgpu.workspace = true
+nerust_contract_settings.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
+nerust_gui_session.workspace = true
+nerust_input_schema.workspace = true
+nerust_screen_wgpu.workspace = true
+android_logger.workspace = true
+winit = { workspace = true, features = ["android-native-activity"] }

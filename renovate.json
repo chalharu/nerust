@@ -72,6 +72,17 @@
 			"datasourceTemplate": "docker",
 			"depNameTemplate": "ghcr.io/renovatebot/renovate",
 			"versioningTemplate": "docker"
+		},
+		{
+			"customType": "regex",
+			"description": "Update cargo-ndk version in the Android install helper",
+			"managerFilePatterns": [
+				"/(^|/)packaging/android/install-cargo-ndk\\.sh$/"
+			],
+			"matchStrings": [
+				"# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+readonly DEFAULT_CARGO_NDK_VERSION=\"(?<currentValue>[^\"]+)\""
+			],
+			"versioningTemplate": "semver"
 		}
 	]
 }

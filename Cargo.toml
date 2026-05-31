@@ -17,6 +17,7 @@ members = [
   "input/nes_runtime",
   "persistence",
   "rom_test",
+  "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/tao",
   "gui/shared/runtime",
@@ -36,6 +37,7 @@ members = [
   "sound/openal",
   "sound/filter",
   "sound/traits",
+  "sound/android",
   "timer",
 ]
 default-members = ["core", "persistence", "console"]
@@ -58,8 +60,10 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 alto = { version = "=3.0.4" }
+android_logger = { version = "=0.15.1" }
 bitflags = { version = "=2.11.1", features = ["serde"] }
 clap = { version = "=4.6.1" }
+cpal = { version = "=0.17.3" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
 epoxy = { version = "=0.1.0" }
@@ -70,6 +74,7 @@ gl = { version = "=0.14.0" }
 gtk = { version = "=0.11.3", package = "gtk4" }
 hound = { version = "=3.5.1" }
 iced = { version = "=0.14.0" }
+jni = { version = "=0.22.4" }
 lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.30", default-features = false }
@@ -104,6 +109,7 @@ nerust_screen_wgpu = { version = "=0.1.0", path = "screen/wgpu" }
 nerust_screen_video = { version = "=0.1.0", path = "screen/video" }
 nerust_serialize = { version = "=0.1.0", path = "serialize" }
 nerust_sound_openal = { version = "=0.1.0", path = "sound/openal" }
+nerust_sound_android = { version = "=0.1.0", path = "sound/android" }
 nerust_sound_traits = { version = "=0.1.0", path = "sound/traits" }
 nerust_soundfilter = { version = "=0.1.0", path = "sound/filter" }
 nerust_timer = { version = "=0.1.0", path = "timer" }

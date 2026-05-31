@@ -4,21 +4,14 @@ use nerust_contract_settings::shared::DesktopSharedSettings;
 use std::fmt;
 use std::path::PathBuf;
 
-mod apply;
-mod manager;
-mod persistence;
+pub mod apply;
+pub mod manager;
+pub mod persistence;
 mod store;
-
-pub use self::apply::{derive_apply_plan, validate_local_settings, validate_shared_settings};
-pub use self::manager::SettingsManager;
-pub use self::persistence::{
-    resolve_central_storage_paths, resolve_persistence_paths,
-    resolve_persistence_paths_with_import, system_storage_key,
-};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
-    #[error("desktop settings directories are unavailable")]
+    #[error("default settings directories are unavailable for this host")]
     DirectoriesUnavailable,
     #[error("settings schema version {found} is newer than supported version {expected}")]
     UnsupportedSchemaVersion { found: u32, expected: u32 },
@@ -37,6 +30,7 @@ pub enum SettingsError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostKind {
+    Android,
     Gtk,
     Glutin,
     Tao,
@@ -45,11 +39,18 @@ pub enum HostKind {
 impl HostKind {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Android => "android",
             Self::Gtk => "gtk",
             Self::Glutin => "glutin",
             Self::Tao => "tao",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioBackendKind {
+    OpenAl,
+    Android,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
@@ -109,6 +110,16 @@ impl HostBackendProfile {
 
     pub fn capabilities(&self) -> HostBackendCapabilities {
         match (self.host, self.backend) {
+            (HostKind::Android, RenderBackendKind::Wgpu) => HostBackendCapabilities {
+                window: HostWindowCapabilities {
+                    remembers_window_size: false,
+                    supports_fullscreen_default: false,
+                    supports_scaling: false,
+                },
+                presentation: Some(BackendPresentationCapabilities {
+                    supports_vsync: true,
+                }),
+            },
             (HostKind::Gtk, RenderBackendKind::OpenGl) => HostBackendCapabilities {
                 window: HostWindowCapabilities {
                     remembers_window_size: false,
@@ -144,6 +155,17 @@ impl HostBackendProfile {
                 presentation: None,
             },
         }
+    }
+
+    pub fn audio_backend(self) -> AudioBackendKind {
+        match (self.host, self.backend) {
+            (HostKind::Android, RenderBackendKind::Wgpu) => AudioBackendKind::Android,
+            _ => AudioBackendKind::OpenAl,
+        }
+    }
+
+    pub fn android_wgpu() -> Self {
+        Self::new(HostKind::Android, RenderBackendKind::Wgpu)
     }
 
     pub fn gtk_opengl() -> Self {
@@ -219,11 +241,13 @@ fn sanitize_path_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::store::merge_with_defaults;
-    use super::{
-        HostBackendIdentity, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
+    use super::apply::{derive_apply_plan, validate_shared_settings};
+    use super::manager::SettingsManager;
+    use super::persistence::{
         resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
     };
+    use super::store::merge_with_defaults;
+    use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
     use nerust_contract_mirror::MirrorMode;
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_rom::{RomFormat, RomIdentity};
@@ -598,7 +622,7 @@ video:
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert_eq!(
             plan,
@@ -628,7 +652,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.session_rebuild_required);
     }
@@ -644,7 +668,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(!plan.session_rebuild_required);
     }
@@ -659,7 +683,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -676,7 +700,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -693,7 +717,7 @@ video:
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = super::derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -735,6 +759,44 @@ video:
         manager.save_snapshot(snapshot.clone()).unwrap();
 
         assert_eq!(manager.snapshot().unwrap(), snapshot);
+    }
+
+    #[test]
+    fn file_backed_manager_round_trips_snapshot_across_reloads() {
+        let root = test_root("file-backed-roundtrip");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let paths =
+            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::gtk_opengl());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        snapshot.local.audio.muted = true;
+        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snapshot.clone()).unwrap();
+
+        let reloaded = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap()
+        .snapshot()
+        .unwrap();
+
+        assert_eq!(reloaded, snapshot);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -781,18 +843,70 @@ video:
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
         shared.persistence.storage_directory = Some(custom_directory.clone());
 
-        super::validate_shared_settings(&shared).unwrap();
+        validate_shared_settings(&shared).unwrap();
 
         assert!(!custom_directory.exists());
     }
 
     #[test]
     fn host_backend_identity_formats_stably() {
+        assert_eq!(
+            HostBackendIdentity::android_wgpu().to_string(),
+            "android+wgpu"
+        );
         assert_eq!(HostBackendIdentity::gtk_opengl().to_string(), "gtk+opengl");
         assert_eq!(
             HostBackendIdentity::glutin_opengl().to_string(),
             "glutin+opengl"
         );
         assert_eq!(HostBackendIdentity::tao_wgpu().to_string(), "tao+wgpu");
+    }
+
+    #[test]
+    fn android_wgpu_profile_exposes_mobile_capabilities() {
+        let profile = HostBackendIdentity::android_wgpu();
+
+        assert_eq!(profile.audio_backend(), super::AudioBackendKind::Android);
+        assert_eq!(
+            profile.capabilities(),
+            super::HostBackendCapabilities {
+                window: super::HostWindowCapabilities {
+                    remembers_window_size: false,
+                    supports_fullscreen_default: false,
+                    supports_scaling: false,
+                },
+                presentation: Some(super::BackendPresentationCapabilities {
+                    supports_vsync: true,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn settings_paths_can_be_built_from_an_explicit_root() {
+        let root = PathBuf::from("/tmp/nerust-android");
+        let paths =
+            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
+
+        assert_eq!(paths.config_dir, root.join("config"));
+        assert_eq!(paths.data_dir, root.join("data"));
+        assert_eq!(
+            paths.shared_settings_file,
+            root.join("config").join("shared-settings.yaml")
+        );
+        assert_eq!(
+            paths.local_settings_file,
+            root.join("config")
+                .join("local-settings")
+                .join("android+wgpu.yaml")
+        );
+        assert_eq!(
+            paths.app_state_file,
+            root.join("data").join("app-state.yaml")
+        );
+        assert_eq!(
+            paths.central_storage_root,
+            root.join("data").join("persistence")
+        );
     }
 }
