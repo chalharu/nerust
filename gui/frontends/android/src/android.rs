@@ -166,12 +166,13 @@ impl AndroidFrontend {
         settings::update_cached_settings(&current);
     }
 
-    fn load_from_library(&mut self, id: &str) -> Result<(), String> {
-        self.load_from_library_with_autosave(id, false)
+    fn load_from_library(&mut self, event_loop: &ActiveEventLoop, id: &str) -> Result<(), String> {
+        self.load_from_library_with_autosave(event_loop, id, false)
     }
 
     fn load_from_library_with_autosave(
         &mut self,
+        event_loop: &ActiveEventLoop,
         id: &str,
         restore_hidden_state: bool,
     ) -> Result<(), String> {
@@ -191,16 +192,16 @@ impl AndroidFrontend {
         {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
-        self.finish_rom_load(id, restore_hidden_state);
+        self.finish_rom_load(event_loop, id, restore_hidden_state);
         log::info!("load_from_library_with_autosave: session ready for id={id}");
         Ok(())
     }
 
-    fn handle_library_result(&mut self, result: LibraryDialogResult) {
+    fn handle_library_result(&mut self, event_loop: &ActiveEventLoop, result: LibraryDialogResult) {
         match result {
             LibraryDialogResult::Dismissed => {}
             LibraryDialogResult::Selected(id) => {
-                if let Err(error) = self.load_from_library(&id) {
+                if let Err(error) = self.load_from_library(event_loop, &id) {
                     log::error!("{error}");
                 }
             }
@@ -218,7 +219,11 @@ impl AndroidFrontend {
         }
     }
 
-    fn import_rom_from_uri(&mut self, uri: &str) -> Result<(), String> {
+    fn import_rom_from_uri(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        uri: &str,
+    ) -> Result<(), String> {
         log::info!("import_rom_from_uri: importing URI {uri}");
         let bytes = picker::read_uri_bytes(&self.app, uri)?;
         let (display_name, extension) = picker::infer_import_metadata(&self.app, uri);
@@ -257,7 +262,7 @@ impl AndroidFrontend {
                 entry.display_name
             ));
         }
-        self.finish_rom_load(&entry.id, false);
+        self.finish_rom_load(event_loop, &entry.id, false);
         log::info!(
             "import_rom_from_uri: imported '{}' as id={}",
             entry.display_name,
@@ -266,13 +271,13 @@ impl AndroidFrontend {
         Ok(())
     }
 
-    fn handle_picker_result(&mut self, result: RomPickerResult) {
+    fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
         let RomPickerResult::Selected(uri) = result else {
             log::info!("handle_picker_result: ROM picker dismissed");
             return;
         };
         log::info!("handle_picker_result: picker returned URI {uri}");
-        if let Err(error) = self.import_rom_from_uri(&uri) {
+        if let Err(error) = self.import_rom_from_uri(event_loop, &uri) {
             log::error!("{error}");
         }
     }
@@ -470,7 +475,12 @@ impl AndroidFrontend {
         }
     }
 
-    fn finish_rom_load(&mut self, id: &str, restore_hidden_state: bool) {
+    fn finish_rom_load(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: &str,
+        restore_hidden_state: bool,
+    ) {
         if let Err(error) = self.storage.save_last_rom_id(id) {
             log::warn!("{error}");
         }
@@ -486,6 +496,23 @@ impl AndroidFrontend {
         if let Err(error) = self.session.run_command(SessionCommand::Resume) {
             log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
         }
+
+        // Ensure a window and renderer exist immediately when resuming so that
+        // request_redraw() takes effect without requiring a user tap.
+        if self.window.is_none() && self.is_resumed {
+            match self.ensure_window(event_loop) {
+                Ok(()) => {
+                    log::info!("finish_rom_load: ensured window/renderer after ROM load");
+                }
+                Err(error) => {
+                    log::warn!(
+                        "finish_rom_load: ensure_window failed: {error}; scheduling foreground resume"
+                    );
+                    self.begin_foreground_resume();
+                }
+            }
+        }
+
         self.refresh_dialog_caches();
         self.request_redraw();
     }
@@ -561,7 +588,7 @@ impl AndroidFrontend {
                                 self.session.clear_hidden_lifecycle_state();
                                 self.lifecycle_restore_pending = false;
                             } else {
-                                match self.load_from_library_with_autosave(&id, true) {
+                                match self.load_from_library_with_autosave(event_loop, &id, true) {
                                     Ok(()) => {
                                         log::info!(
                                             "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
@@ -770,10 +797,10 @@ impl ApplicationHandler for AndroidFrontend {
         let now = Instant::now();
         self.try_resume_foreground(event_loop);
         if let Some(result) = library::take_result() {
-            self.handle_library_result(result);
+            self.handle_library_result(event_loop, result);
         }
         if let Some(result) = picker::take_result() {
-            self.handle_picker_result(result);
+            self.handle_picker_result(event_loop, result);
         }
         if let Some(result) = settings::take_result() {
             self.handle_settings_result(result);
