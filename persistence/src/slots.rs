@@ -32,19 +32,70 @@ pub fn scan_state_slots_for_identity(
 pub fn allocate_next_slot_id(states_dir: &Path) -> Result<u64, PersistenceError> {
     fs::create_dir_all(states_dir)?;
     let counter_path = states_dir.join(NEXT_SLOT_ID_ENTRY);
-    let mut counter = OpenOptions::new()
+
+    // Try to use the counter file with advisory locking if supported.
+    match OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(counter_path)?;
-    counter.lock_exclusive()?;
-    let next_slot_id = (read_next_slot_id(&mut counter)?.unwrap_or(1))
-        .max(existing_slot_id_max(states_dir)?.saturating_add(1))
-        .max(1);
-    write_next_slot_id(&mut counter, next_slot_id.saturating_add(1))?;
-    counter.unlock()?;
-    Ok(next_slot_id)
+        .open(&counter_path)
+    {
+        Ok(mut counter) => {
+            match counter.lock_exclusive() {
+                Ok(()) => {
+                    let next_slot_id = (read_next_slot_id(&mut counter)?.unwrap_or(1))
+                        .max(existing_slot_id_max(states_dir)?.saturating_add(1))
+                        .max(1);
+                    write_next_slot_id(&mut counter, next_slot_id.saturating_add(1))?;
+                    if let Err(e) = counter.unlock() {
+                        log::warn!("allocate_next_slot_id: unlock() failed: {e}");
+                    }
+                    return Ok(next_slot_id);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "allocate_next_slot_id: exclusive lock unavailable: {}; falling back to reservation",
+                        err
+                    );
+                    // fall through to fallback reservation path
+                }
+            }
+        }
+        Err(err) => {
+            log::warn!(
+                "allocate_next_slot_id: failed to open counter file {}: {}; falling back to reservation",
+                counter_path.display(),
+                err
+            );
+        }
+    }
+
+    // Fallback: reserve an id by creating a per-id reservation file with O_EXCL.
+    let start = existing_slot_id_max(states_dir)?.saturating_add(1).max(1);
+    for id in start..start + 10000 {
+        let reserve_path = states_dir.join(format!(".slot_reserve.{id}"));
+        match OpenOptions::new().write(true).create_new(true).open(&reserve_path) {
+            Ok(mut f) => {
+                // record reservation info (pid, timestamp)
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let ts = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let _ = write!(f, "{} {}", std::process::id(), ts);
+                let _ = f.sync_all();
+                log::info!("allocate_next_slot_id: reserved slot {}", id);
+                return Ok(id);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Err(PersistenceError::Validation(
+        "failed to allocate slot id via fallback reservation".into(),
+    ))
 }
 
 pub fn state_slot_path(states_dir: &Path, slot_id: u64) -> PathBuf {
@@ -113,6 +164,15 @@ fn write_state_slot_to_path(
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let archive_bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
     write_atomic(&path, &archive_bytes)?;
+
+    // If we created a reservation file earlier, attempt to remove it now that the
+    // real state file has been written. This keeps the storage directory tidy when
+    // using the fallback reservation strategy on platforms that lack file locks.
+    if let Some(parent) = path.parent() {
+        let reserve_path = parent.join(format!(".slot_reserve.{}", slot_id));
+        let _ = fs::remove_file(reserve_path);
+    }
+
     Ok(summary_from_metadata(
         path,
         saved_at,

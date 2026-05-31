@@ -3370,6 +3370,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "libc",
+ "log",
  "nerust_contract_mirror",
  "nerust_contract_options",
  "nerust_contract_persistence",
