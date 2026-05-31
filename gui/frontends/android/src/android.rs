@@ -511,6 +511,12 @@ impl AndroidFrontend {
                     self.begin_foreground_resume();
                 }
             }
+        } else if let Some(window) = self.window.as_ref().cloned() {
+            // Rebuild renderer to ensure the underlying surface is fresh; dialogs or
+            // system UI may have invalidated the previous surface.
+            log::info!("finish_rom_load: rebuilding renderer to ensure visible surface");
+            self.rebuild_renderer(window);
+            self.rebuild_overlay();
         }
 
         self.refresh_dialog_caches();
