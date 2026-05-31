@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use alto::*;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
 use nerust_soundfilter::{Filter, NesFilter, SnesFilter};
 #[cfg(target_os = "macos")]
@@ -115,12 +115,6 @@ fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! 
 }
 
 const CORE_AUDIO_OVERSAMPLE: u32 = 4;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AudioFilterProfile {
-    Nes,
-    Snes,
-}
 
 #[derive(Debug)]
 struct FadeBuffer {

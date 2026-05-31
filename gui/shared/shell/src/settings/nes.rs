@@ -8,10 +8,9 @@ use nerust_contract_settings::{
 use nerust_gui_runtime::settings::{AudioBackendKind, HostBackendIdentity};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
-use nerust_sound_openal::AudioFilterProfile;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use nerust_timer::CLOCK_RATE;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

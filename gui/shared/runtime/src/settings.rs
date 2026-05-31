@@ -791,7 +791,9 @@ video:
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.general.language = AppLanguage::Japanese;
         snapshot.local.audio.muted = true;
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap() else {
+            panic!("expected NES settings");
+        };
         nes.video.filter = NesVideoFilter::NtscRgb;
         manager.save_snapshot(snapshot.clone()).unwrap();
 

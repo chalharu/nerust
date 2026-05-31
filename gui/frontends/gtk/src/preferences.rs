@@ -729,50 +729,6 @@ fn connect_local_updates(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    {
-        let draft = draft.clone();
-        let widgets = widgets.clone();
-        let _ = filter_combo.connect_changed(move |combo| {
-            {
-                let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
-                    &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
-                        combo
-                            .active_id()
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "ntsc_composite".to_string())
-                            .into(),
-                    ),
-                );
-            }
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
-    }
-    {
-        let draft = draft.clone();
-        let widgets = widgets.clone();
-        let _ = mmc3_combo.connect_changed(move |combo| {
-            {
-                let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
-                    &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(
-                        "core.mmc3_irq_variant".into(),
-                    ),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
-                        combo
-                            .active_id()
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "auto".to_string())
-                            .into(),
-                    ),
-                );
-            }
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
-    }
     for row in system_rows.iter().cloned() {
         let draft = draft.clone();
         let widgets = widgets.clone();
