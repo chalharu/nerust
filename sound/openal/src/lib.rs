@@ -4,11 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-mod resampler;
-
-use self::resampler::{Resampler, SimpleDownSampler};
 use alto::*;
 use nerust_sound_traits::{MixerInput, Sound};
+use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
 use nerust_soundfilter::{Filter, NesFilter};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
@@ -204,6 +202,7 @@ struct OpenAlState {
     playing: bool,
     fade_buffer: FadeBuffer,
     buffer: Vec<Mono<i16>>,
+    buffer_count: usize,
 }
 
 impl OpenAlState {
@@ -315,6 +314,7 @@ impl OpenAlState {
     pub(crate) fn new(
         sample_rate: i32,
         buffer_width: usize,
+        buffer_count: usize,
         playing_receiver: Receiver<bool>,
         data_receiver: Receiver<f32>,
         fade_width: usize,
@@ -327,6 +327,7 @@ impl OpenAlState {
             playing_receiver,
             fade_buffer: FadeBuffer::new(data_receiver, fade_width),
             buffer: vec![Mono { center: 0 }; buffer_width],
+            buffer_count,
         }
     }
 
@@ -347,8 +348,11 @@ impl OpenAlState {
         sample_rate: i32,
         fade_buffer: &mut FadeBuffer,
         buffer: &mut Vec<Mono<i16>>,
-    ) {
-        let mut buf = src.unqueue_buffer().unwrap();
+    ) -> Result<(), String> {
+        let mut buf = match src.unqueue_buffer() {
+            Ok(b) => b,
+            Err(err) => return Err(format!("OpenAL unqueue_buffer failed: {err:?}")),
+        };
         let len = buffer.len();
         buffer.clear();
         for d in fade_buffer.take(len) {
@@ -356,32 +360,88 @@ impl OpenAlState {
                 center: (d * f32::from(i16::MAX)) as i16,
             });
         }
-        buf.set_data(buffer, sample_rate).unwrap();
-        src.queue_buffer(buf).unwrap();
+        if let Err(err) = buf.set_data(buffer, sample_rate) {
+            return Err(format!("OpenAL buffer set_data failed: {err:?}"));
+        }
+        if let Err(err) = src.queue_buffer(buf) {
+            return Err(format!("OpenAL queue_buffer failed: {err:?}"));
+        }
+        Ok(())
     }
 
     fn step(&mut self) {
         if let Ok(new_playing) = self.playing_receiver.try_recv() {
             self.playing = new_playing;
         }
+
+        // If there's no streaming source, try to create one
+        if self.src.is_none() {
+            match Self::create_streaming_source(
+                self.sample_rate,
+                self.buffer.len(),
+                self.buffer_count,
+            ) {
+                Ok((new_src, playback_rate)) => {
+                    let old_rate = self.sample_rate;
+                    self.src = Some(new_src);
+                    if playback_rate != old_rate {
+                        self.sample_rate = playback_rate;
+                        log::info!(
+                            "OpenAL playback rate resolved to {playback_rate} Hz (was {old_rate})"
+                        );
+                    }
+                }
+                Err(err) => {
+                    // Reinitialization failed; try again later
+                    log::debug!("OpenAL reinitialization attempt failed: {err}");
+                }
+            }
+        }
+
+        let mut drop_src = false;
+
         if let Some(ref mut src) = self.src.as_mut() {
             if self.playing {
                 let buffers_processed = src.buffers_processed();
                 for _ in 0..buffers_processed {
-                    Self::fill_buffer(
+                    if let Err(err) = Self::fill_buffer(
                         src,
                         self.sample_rate,
                         &mut self.fade_buffer,
                         &mut self.buffer,
-                    );
+                    ) {
+                        log::warn!(
+                            "OpenAL audio worker encountered error while filling buffer: {err}; dropping streaming source and will attempt reinitialize"
+                        );
+                        drop_src = true;
+                        break;
+                    }
                 }
-                match src.state() {
-                    SourceState::Playing => (),
-                    _ => src.play(),
+                if !drop_src {
+                    match src.state() {
+                        SourceState::Playing => (),
+                        _ => {
+                            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.play()))
+                                .is_err()
+                            {
+                                log::warn!(
+                                    "OpenAL source play panicked; dropping streaming source"
+                                );
+                                drop_src = true;
+                            }
+                        }
+                    }
                 }
-            } else if let SourceState::Playing = src.state() {
-                src.pause();
+            } else if matches!(src.state(), SourceState::Playing)
+                && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.pause())).is_err()
+            {
+                log::warn!("OpenAL source pause panicked; dropping streaming source");
+                drop_src = true;
             }
+        }
+
+        if drop_src {
+            self.src = None;
         }
     }
 }
@@ -442,6 +502,7 @@ impl OpenAl {
             let mut state = OpenAlState::new(
                 playback_sample_rate,
                 buffer_width,
+                buffer_count,
                 playing_recv,
                 data_recv,
                 buffer_width,
