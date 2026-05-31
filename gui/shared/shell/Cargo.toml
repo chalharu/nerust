@@ -28,6 +28,12 @@ nerust_snes_core.workspace = true
 nerust_snes_render.workspace = true
 nerust_timer.workspace = true
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+nerust_sound_openal.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+nerust_sound_android.workspace = true
+
 [dev-dependencies]
 nerust_contract_mirror.workspace = true
 nerust_contract_rom.workspace = true

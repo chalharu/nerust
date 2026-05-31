@@ -4,8 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::CartridgeRamAssertion;
 use super::artifacts::ValidationArtifacts;
+use super::assertions::CartridgeRamAssertion;
 use super::runtime::ValidationRuntime;
 use crate::error::RomTestError;
 use crate::events::{ButtonCode, ControllerPad, PadState};

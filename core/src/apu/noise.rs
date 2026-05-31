@@ -100,11 +100,21 @@ impl Noise {
 
     pub(crate) fn step_timer(&mut self) {
         if self.timer.step_timer() {
-            self.shift_register = (self.shift_register >> 1)
-                | (((self.shift_register & 1)
-                    ^ ((self.shift_register >> (if self.mode { 6 } else { 1 })) & 1))
-                    << 14);
+            self.shift_register = self.next_shift_register();
         }
+    }
+
+    pub(crate) fn step_timer_many(&mut self, cycles: u64) {
+        for _ in 0..self.timer.advance(cycles) {
+            self.shift_register = self.next_shift_register();
+        }
+    }
+
+    fn next_shift_register(&self) -> u16 {
+        (self.shift_register >> 1)
+            | (((self.shift_register & 1)
+                ^ ((self.shift_register >> (if self.mode { 6 } else { 1 })) & 1))
+                << 14)
     }
 
     pub(crate) fn output(&self) -> u8 {

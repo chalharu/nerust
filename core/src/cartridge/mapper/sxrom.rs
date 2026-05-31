@@ -304,6 +304,18 @@ impl Mapper for SxRom {
         self.cycle += 1;
     }
 
+    fn step_cpu_cycles(&mut self, cycles: u64, _interrupt: &mut Interrupt) {
+        self.cycle = self.cycle.wrapping_add(cycles);
+    }
+
+    fn cpu_read_has_side_effect(&self, _address: usize) -> bool {
+        false
+    }
+
+    fn allow_instruction_fast_path(&self) -> bool {
+        true
+    }
+
     fn read_ram(&self, index: usize) -> Option<u8> {
         if self.program_ram_enabled() {
             self.ram_address(index)

@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use super::{RenderOutcome, Renderer};
+use super::{RenderOutcome, Renderer, fit_surface_size_to_limit};
 use crate::{
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::pack_frame_rows,
@@ -44,9 +44,18 @@ pub(super) fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalS
     let width = content_size.width * rate;
     let height = content_size.height * rate;
 
+    // On Android prefer slightly top-aligned viewport so on-screen controls
+    // (drawn as overlays) do not overlap the game's important content. Non-Android
+    // builds keep centered behavior.
+    let y_bias = if cfg!(target_os = "android") {
+        0.25_f32
+    } else {
+        0.5_f32
+    };
+
     Viewport {
         x: (window_size.width as f32 - width) * 0.5,
-        y: (window_size.height as f32 - height) * 0.5,
+        y: (window_size.height as f32 - height) * y_bias,
         width,
         height,
     }
@@ -61,6 +70,8 @@ impl Renderer {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
+        let surface_size =
+            fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
         let surface = render_surface.surface();
         self.config.width = surface_size.width;
         self.config.height = surface_size.height;
@@ -112,6 +123,8 @@ impl Renderer {
         surface_size: SurfaceSize,
         frame_buffer: &[u8],
     ) -> Result<RenderOutcome, String> {
+        let surface_size =
+            fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
         let surface = render_surface.surface();
         let (surface_texture, suboptimal) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),

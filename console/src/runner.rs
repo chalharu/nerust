@@ -4,8 +4,8 @@ mod persistence;
 mod runtime;
 
 use self::metrics::SharedConsoleMetrics;
-use crate::controller::ControllerRuntime;
 use data::ConsoleData;
+use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;

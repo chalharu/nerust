@@ -20,13 +20,16 @@ Official release artifacts are attached to each
 | `nerust-vX.Y.Z-linux-x86_64.tar.gz` | Linux x86\_64 |
 | `nerust-vX.Y.Z-linux-aarch64.tar.gz` | Linux aarch64 |
 | `nerust-vX.Y.Z-macos-aarch64.app.zip` | macOS aarch64 |
+| `nerust-vX.Y.Z-android-arm64-v8a.apk` | Android arm64-v8a |
 
 Each tarball contains `nerust_tao` (the Tao frontend binary), `README.md`,
-and `LICENSE`. Each artifact has a matching `.sha256` sidecar. The macOS
-bundle is ad-hoc signed and not notarized.
+and `LICENSE`. The Android artifact is a signed APK. Each artifact has a
+matching `.sha256` sidecar. The macOS bundle is ad-hoc signed and not
+notarized.
 
-The official frontend is **Tao** (`nerust_tao`). The GTK4 frontend
-(`nerust_gtk`) is maintained for build-health but is not a release artifact.
+The official desktop frontend is **Tao** (`nerust_tao`). The Android frontend
+ships as an `arm64-v8a` APK. The GTK4 frontend (`nerust_gtk`) is maintained for
+build-health but is not a release artifact.
 
 ## Release workflow
 
@@ -59,7 +62,12 @@ The automation reads the major version from `[workspace.package].version` in
 
 If there is no existing tag for the current major, the declared
 `[workspace.package].version` becomes the release version. The workflows use
-the `RELEASE_PLZ_TOKEN` repository secret as a PAT for branch and PR updates.
+the built-in `GITHUB_TOKEN` for branch, release, and PR updates. Because GitHub
+marks automation-created pull request workflows as approval-required when they
+come from `GITHUB_TOKEN`, release-candidate PR checks may need an explicit
+**Approve workflows to run** action in the PR UI.
+Android signing uses `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY`. If the
+private key is encrypted, also set `ANDROID_PRIVATE_KEY_PASSWORD`.
 
 ## Developer build/test paths
 
@@ -105,9 +113,42 @@ Run frontend and backend validation explicitly when touching OpenGL or UI code:
 ```sh
 cargo test -p nerust_screen_opengl --lib
 cargo test -p nerust_gui_runtime --lib
+cargo build -p nerust_android
 cargo build -p nerust_gtk --release
 cargo build -p nerust_tao --release
 ```
+
+### Android packaging
+
+Build the Android APK with the Gradle packaging project:
+
+```sh
+packaging/android/package.sh
+```
+
+This requires Java 17, the Android SDK/NDK, and `cargo-ndk` on the host.
+If `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY` are exported, the packaging
+script generates a temporary JKS keystore automatically before Gradle signs the
+release APK.
+
+ROM import on Android uses the system document picker (`ACTION_OPEN_DOCUMENT`)
+and persists the user-selected URI grant, so no broad storage permission is
+declared in the manifest.
+
+#### Android logcat capture
+
+Rust and Kotlin Android logs share the `Nerust` tag. When the app closes
+immediately on a device, clear logcat, start a filtered capture, then launch the
+app:
+
+```sh
+adb logcat -c
+adb logcat -v threadtime -s Nerust
+```
+
+Keep the capture running until the app closes so `JNI_OnLoad`, `android_main`,
+lifecycle, popup attach, renderer resume, and panic breadcrumbs are included in
+the output.
 
 ## Usage
 

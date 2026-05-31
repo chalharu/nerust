@@ -94,6 +94,19 @@ impl Triangle {
             }
         }
     }
+
+    pub(crate) fn step_timer_many(&mut self, cycles: u64) {
+        let clocks = self.timer.advance(cycles);
+        if clocks == 0 || !self.length_counter.get_status() || self.counter_value == 0 {
+            return;
+        }
+
+        self.duty_value = ((u64::from(self.duty_value) + clocks) & 0x1F) as u8;
+        if self.timer.get_period() > 1 {
+            self.output_value = TRIANGLE_TABLE[usize::from(self.duty_value)];
+        }
+    }
+
     pub(crate) fn step_counter(&mut self) {
         if self.counter_reload {
             self.counter_value = self.counter_period;
