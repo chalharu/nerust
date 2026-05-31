@@ -57,6 +57,7 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
 }
 
 fn publish_action(action: MenuAction) {
+    log::info!("Android menu: published action: {:?}", action);
     MENU_ACTIONS
         .lock()
         .expect("menu actions mutex poisoned")

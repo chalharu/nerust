@@ -399,6 +399,7 @@ impl AndroidFrontend {
     }
 
     fn handle_menu_action(&mut self, action: MenuAction) {
+        log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
             MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
             MenuAction::OpenLibrary => self.request_library_dialog(),
