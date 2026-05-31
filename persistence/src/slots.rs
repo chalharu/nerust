@@ -75,7 +75,11 @@ pub fn allocate_next_slot_id(states_dir: &Path) -> Result<u64, PersistenceError>
     let start = existing_slot_id_max(states_dir)?.saturating_add(1).max(1);
     for id in start..start + 10000 {
         let reserve_path = states_dir.join(format!(".slot_reserve.{id}"));
-        match OpenOptions::new().write(true).create_new(true).open(&reserve_path) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&reserve_path)
+        {
             Ok(mut f) => {
                 // record reservation info (pid, timestamp)
                 use std::time::{SystemTime, UNIX_EPOCH};
