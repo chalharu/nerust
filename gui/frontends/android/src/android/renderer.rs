@@ -40,10 +40,10 @@ impl WgpuRenderer {
         session: &SessionHandle,
         window_size: SurfaceSize,
     ) -> RenderResult {
-        let snapshot = session.snapshot();
-        let frame = snapshot
-            .video_frame
-            .expect("session should publish a video frame");
-        self.backend.render(frame.bytes(), window_size)
+        let mut result: Option<RenderResult> = None;
+        session.with_frame_buffer(&mut |bytes| {
+            result = Some(self.backend.render(bytes, window_size));
+        });
+        result.unwrap_or(RenderResult::Skipped)
     }
 }

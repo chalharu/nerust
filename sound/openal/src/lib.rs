@@ -432,11 +432,11 @@ impl OpenAlState {
                         }
                     }
                 }
-            } else if let SourceState::Playing = src.state() {
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.pause())).is_err() {
-                    log::warn!("OpenAL source pause panicked; dropping streaming source");
-                    drop_src = true;
-                }
+            } else if matches!(src.state(), SourceState::Playing)
+                && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| src.pause())).is_err()
+            {
+                log::warn!("OpenAL source pause panicked; dropping streaming source");
+                drop_src = true;
             }
         }
 

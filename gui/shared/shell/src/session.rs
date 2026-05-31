@@ -157,4 +157,8 @@ impl SessionHandle {
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings
     }
+
+    pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+        self.runtime.with_frame_buffer(f);
+    }
 }
