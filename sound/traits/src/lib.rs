@@ -21,3 +21,9 @@ pub trait MixerInput {
         48_000
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFilterProfile {
+    Nes,
+    Snes,
+}

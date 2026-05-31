@@ -18,8 +18,7 @@ use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::Core;
 use nerust_snes_render::render_screen;
-use nerust_sound_openal::{AudioFilterProfile, OpenAl};
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -127,14 +126,15 @@ impl SystemDefinition for SnesSystemDefinition {
 
     fn create_runtime(
         &self,
-        _host: &RuntimeHostServices,
+        host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
         Ok(Box::new(SnesRuntime::new(build_speaker_with_profile(
+            host.host_backend,
             &settings.local,
             SNES_DSP_SAMPLE_RATE,
             AudioFilterProfile::Snes,
-        ))))
+        )?)))
     }
 }
 
@@ -221,7 +221,7 @@ enum SnesCommand {
 }
 
 impl SnesRuntime {
-    fn new(speaker: OpenAl) -> Self {
+    fn new<S: 'static + Sound + MixerInput + Send>(speaker: S) -> Self {
         let (commands, command_receiver) = mpsc::channel();
         let (stop, stop_receiver) = mpsc::channel();
         let shared = Arc::new(SnesRuntimeShared::new());
@@ -391,11 +391,11 @@ impl SnesRuntimeShared {
     }
 }
 
-fn run_worker(
+fn run_worker<S: 'static + Sound + MixerInput + Send>(
     commands: Receiver<SnesCommand>,
     stop: Receiver<()>,
     shared: Arc<SnesRuntimeShared>,
-    speaker: OpenAl,
+    speaker: S,
 ) {
     let mut state = SnesWorkerState::new(speaker);
     let mut timer = nerust_timer::Timer::new();
@@ -433,9 +433,9 @@ fn run_worker(
     }
 }
 
-struct SnesWorkerState {
+struct SnesWorkerState<S: 'static + Sound + MixerInput + Send> {
     core: Option<Core>,
-    speaker: OpenAl,
+    speaker: S,
     loaded: bool,
     paused: bool,
     frame_counter: u64,
@@ -443,8 +443,8 @@ struct SnesWorkerState {
     reset_timer: bool,
 }
 
-impl SnesWorkerState {
-    fn new(speaker: OpenAl) -> Self {
+impl<S: 'static + Sound + MixerInput + Send> SnesWorkerState<S> {
+    fn new(speaker: S) -> Self {
         Self {
             core: None,
             speaker,
@@ -457,7 +457,11 @@ impl SnesWorkerState {
     }
 }
 
-fn handle_command(command: SnesCommand, state: &mut SnesWorkerState, shared: &SnesRuntimeShared) {
+fn handle_command<S: 'static + Sound + MixerInput + Send>(
+    command: SnesCommand,
+    state: &mut SnesWorkerState<S>,
+    shared: &SnesRuntimeShared,
+) {
     match command {
         SnesCommand::Load {
             bytes,
@@ -663,7 +667,11 @@ fn render_snes_frame(core: &Core) -> Vec<u8> {
     }
 }
 
-fn publish_worker_metrics(shared: &SnesRuntimeShared, state: &SnesWorkerState, emulation_fps: f32) {
+fn publish_worker_metrics<S: 'static + Sound + MixerInput + Send>(
+    shared: &SnesRuntimeShared,
+    state: &SnesWorkerState<S>,
+    emulation_fps: f32,
+) {
     publish_metrics(
         shared,
         state.frame_counter,
