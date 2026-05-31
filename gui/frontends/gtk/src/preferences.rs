@@ -5,7 +5,8 @@ use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::shared::StoragePolicy;
-use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_runtime::settings::apply::validate_shared_settings;
 use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
     SystemSettingsPageModel, apply_system_settings_choice_for_system, input_topology_for_system,
@@ -456,8 +457,8 @@ pub(crate) fn present_preferences_dialog(
             &input_topologies,
             language,
         );
-        let _ = dialog.connect_response(move |dialog, response| match response {
-            gtk::ResponseType::Ok => {
+        let _ = dialog.connect_response(move |dialog, response| {
+            if should_apply_response(response) {
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, &input_topologies).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
@@ -475,8 +476,7 @@ pub(crate) fn present_preferences_dialog(
                         error_label.set_text(&error);
                     }
                 }
-            }
-            _ => {
+            } else {
                 dialog.close();
                 run_finish_callback(&finish_for_response);
             }
@@ -532,6 +532,13 @@ fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     snapshot: SettingsSnapshot,
 ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
     state.borrow_mut().apply_settings(snapshot)
+}
+
+fn should_apply_response(response: gtk::ResponseType) -> bool {
+    matches!(
+        response,
+        gtk::ResponseType::Ok | gtk::ResponseType::DeleteEvent
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -719,6 +726,50 @@ fn connect_local_updates(
         let widgets = widgets.clone();
         let _ = latency_spin.connect_value_changed(move |spin| {
             draft.borrow_mut().local.audio.latency_ms = spin.value() as u16;
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = filter_combo.connect_changed(move |combo| {
+            {
+                let mut snapshot = draft.borrow_mut();
+                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                    &mut snapshot,
+                    &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
+                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                        combo
+                            .active_id()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "ntsc_composite".to_string())
+                            .into(),
+                    ),
+                );
+            }
+            refresh_all_from_draft(&draft.borrow(), &widgets);
+        });
+    }
+    {
+        let draft = draft.clone();
+        let widgets = widgets.clone();
+        let _ = mmc3_combo.connect_changed(move |combo| {
+            {
+                let mut snapshot = draft.borrow_mut();
+                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                    &mut snapshot,
+                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(
+                        "core.mmc3_irq_variant".into(),
+                    ),
+                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                        combo
+                            .active_id()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "auto".to_string())
+                            .into(),
+                    ),
+                );
+            }
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -1223,7 +1274,7 @@ fn run_finish_callback(finish: &FinishCallback) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow};
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
     use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
@@ -1268,5 +1319,12 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.apply_calls, 1);
         assert_eq!(state.finish_calls, 1);
+    }
+
+    #[test]
+    fn close_button_uses_apply_path() {
+        assert!(should_apply_response(gtk::ResponseType::Ok));
+        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
+        assert!(!should_apply_response(gtk::ResponseType::Cancel));
     }
 }

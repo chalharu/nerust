@@ -1,4 +1,4 @@
-use super::validation::ValidationRunner;
+use super::validation::runner::ValidationRunner;
 use crate::manifest::{RomCase, read_rom};
 use crate::results::{CaseOutcome, ValidationOptions};
 

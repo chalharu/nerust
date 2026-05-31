@@ -148,6 +148,11 @@ impl Pulse {
         }
     }
 
+    pub(crate) fn step_timer_many(&mut self, cycles: u64) {
+        let clocks = self.timer.advance(cycles);
+        self.duty_value = self.duty_value.wrapping_sub((clocks & 7) as u8) & 7;
+    }
+
     pub(crate) fn step_sweep(&mut self) {
         let divider_expired = self.sweep_value == 0;
         if divider_expired

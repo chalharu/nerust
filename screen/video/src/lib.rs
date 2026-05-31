@@ -86,5 +86,13 @@ impl VideoPresentation {
 
 pub trait Screen {
     fn push(&mut self, palette: u8);
+
+    #[inline]
+    fn push_many(&mut self, palette: u8, count: u16) {
+        for _ in 0..count {
+            self.push(palette);
+        }
+    }
+
     fn render(&mut self);
 }

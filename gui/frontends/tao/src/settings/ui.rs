@@ -11,7 +11,8 @@ use nerust_contract_settings::input::KeyboardKey;
 use nerust_contract_settings::language::AppLanguage;
 use nerust_contract_settings::local::ScalingMode;
 use nerust_contract_settings::shared::StoragePolicy;
-use nerust_gui_runtime::settings::{SettingsSnapshot, validate_shared_settings};
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_runtime::settings::apply::validate_shared_settings;
 use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsFieldModel, SystemSettingsPageModel,
     apply_system_settings_choice_for_system, input_topology_for_system, settings_system_ids,
@@ -78,6 +79,7 @@ enum Message {
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
+    CloseRequested,
     Submit,
     ApplyFinished(Result<(), String>),
     Cancel,
@@ -138,10 +140,11 @@ fn theme(_state: &SettingsApp) -> Theme {
 }
 
 fn subscription(state: &SettingsApp) -> Subscription<Message> {
+    let close_events = event::listen_with(close_requested_event);
     if state.capture_target.is_some() {
-        event::listen_with(capture_key_event)
+        Subscription::batch([close_events, event::listen_with(capture_key_event)])
     } else {
-        Subscription::none()
+        close_events
     }
 }
 
@@ -154,6 +157,39 @@ fn capture_key_event(event: Event, _status: Status, _window: iced::window::Id) -
         }) if !repeat => keyboard_key_from_physical(physical_key).map(Message::CaptureKey),
         _ => None,
     }
+}
+
+fn close_requested_event(
+    event: Event,
+    _status: Status,
+    _window: iced::window::Id,
+) -> Option<Message> {
+    match event {
+        Event::Window(iced::window::Event::CloseRequested) => Some(Message::CloseRequested),
+        _ => None,
+    }
+}
+
+fn can_submit_settings(state: &SettingsApp) -> bool {
+    !state.submitting && state.validation_errors().is_empty()
+}
+
+fn submit_draft(state: &mut SettingsApp) -> Task<Message> {
+    if !can_submit_settings(state) {
+        return Task::none();
+    }
+    state.submitting = true;
+    let bridge = state.bridge.clone();
+    let draft = state.draft.clone();
+    Task::perform(
+        async move {
+            bridge
+                .lock()
+                .map_err(|_| "settings helper bridge lock was poisoned".to_string())
+                .and_then(|mut bridge| bridge.apply_settings(&draft))
+        },
+        Message::ApplyFinished,
+    )
 }
 
 fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
@@ -204,23 +240,7 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
                 apply_capture_target(&mut state.draft, &target, Some(key));
             }
         }
-        Message::Submit => {
-            if state.submitting || !state.validation_errors().is_empty() {
-                return Task::none();
-            }
-            state.submitting = true;
-            let bridge = state.bridge.clone();
-            let draft = state.draft.clone();
-            return Task::perform(
-                async move {
-                    bridge
-                        .lock()
-                        .map_err(|_| "settings helper bridge lock was poisoned".to_string())
-                        .and_then(|mut bridge| bridge.apply_settings(&draft))
-                },
-                Message::ApplyFinished,
-            );
-        }
+        Message::CloseRequested | Message::Submit => return submit_draft(state),
         Message::ApplyFinished(result) => {
             state.submitting = false;
             match result {
@@ -236,7 +256,7 @@ fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
 fn view(state: &SettingsApp) -> Element<'_, Message> {
     let language = state.language();
     let validation_errors = state.validation_errors();
-    let can_submit = !state.submitting && validation_errors.is_empty();
+    let can_submit = can_submit_settings(state);
 
     let sidebar = column![
         page_radio(language, UiText::General, SettingsPage::General, state.page),
@@ -893,8 +913,11 @@ fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {
 
 #[cfg(test)]
 mod tests {
-    use super::keyboard_key_from_physical;
+    use super::{Message, close_requested_event, keyboard_key_from_physical};
+    use iced::Event;
+    use iced::event::Status;
     use iced::keyboard::key::{Code, Physical};
+    use iced::window;
     use nerust_contract_settings::input::KeyboardKey;
 
     #[test]
@@ -915,5 +938,17 @@ mod tests {
             keyboard_key_from_physical(Physical::Code(Code::Delete)),
             None
         );
+    }
+
+    #[test]
+    fn close_requested_event_maps_to_save_message() {
+        assert!(matches!(
+            close_requested_event(
+                Event::Window(window::Event::CloseRequested),
+                Status::Ignored,
+                window::Id::unique(),
+            ),
+            Some(Message::CloseRequested)
+        ));
     }
 }

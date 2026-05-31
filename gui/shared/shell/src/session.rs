@@ -14,7 +14,8 @@ use crate::settings::defaults::seed::{
 use nerust_console::ConsoleMetrics;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsManager, SettingsSnapshot};
+use nerust_gui_runtime::settings::manager::SettingsManager;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
 use std::collections::BTreeSet;
@@ -74,6 +75,13 @@ impl Default for SessionHandle {
 impl SessionHandle {
     pub fn new_for_host(identity: HostBackendIdentity) -> Self {
         let settings = crate::settings::defaults::manager::load_settings_manager(identity);
+        Self::new_with_settings_manager(identity, settings)
+    }
+
+    pub fn new_with_settings_manager(
+        identity: HostBackendIdentity,
+        settings: SettingsManager,
+    ) -> Self {
         let settings_snapshot = crate::settings::defaults::manager::current_or_default(&settings);
         let definition = default_system_definition();
         let descriptor = definition.descriptor();
@@ -148,5 +156,9 @@ impl SessionHandle {
 
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings
+    }
+
+    pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+        self.runtime.with_frame_buffer(f);
     }
 }

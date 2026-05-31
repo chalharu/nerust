@@ -208,6 +208,18 @@ impl Screen for ScreenBuffer {
         self.src_pos += 1;
     }
 
+    #[inline]
+    fn push_many(&mut self, value: u8, count: u16) {
+        let count = usize::from(count);
+        if let (Some(filter), Some(dest)) = (self.filter.as_mut(), self.dest.as_mut()) {
+            for _ in 0..count {
+                filter.push(value, dest);
+            }
+        }
+        self.src_buffer_next[self.src_pos..self.src_pos + count].fill(value);
+        self.src_pos += count;
+    }
+
     fn render(&mut self) {
         assert_eq!(
             self.src_pos,

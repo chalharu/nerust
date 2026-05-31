@@ -1,7 +1,6 @@
 use crate::ConsoleError;
-use crate::controller::{
-    ControllerRuntime, StandardControllerState, encode_standard_controller_state,
-};
+use crate::controller::{StandardControllerState, encode_standard_controller_state};
+use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_contract_options::CoreOptions;
 use nerust_contract_rom::RomIdentity;
 use nerust_core::Core;

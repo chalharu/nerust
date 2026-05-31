@@ -9,7 +9,6 @@ mod runner;
 pub mod state;
 pub mod video;
 
-use self::controller::ControllerRuntime;
 use self::runner::ConsoleRunner;
 use self::runner::data::ConsoleData;
 use self::runner::metrics::SharedConsoleMetrics;
@@ -17,6 +16,7 @@ use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_core::Core;

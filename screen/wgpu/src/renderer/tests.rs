@@ -1,5 +1,6 @@
 use super::{
     draw::compute_viewport,
+    fit_surface_size_to_limit,
     setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
 };
 use crate::surface::SurfaceSize;
@@ -22,6 +23,26 @@ fn viewport_preserves_aspect_ratio() {
     assert_eq!(viewport.height, 900.0);
     assert_eq!(viewport.x, 320.0);
     assert_eq!(viewport.y, 0.0);
+}
+
+#[test]
+fn surface_size_is_scaled_down_without_distorting_aspect_ratio() {
+    let fitted = fit_surface_size_to_limit(SurfaceSize::new(1080, 2356), 2048);
+
+    assert_eq!(fitted, SurfaceSize::new(938, 2048));
+    assert!(fitted.width <= 2048);
+    assert!(fitted.height <= 2048);
+    let source_ratio_scaled = u64::from(fitted.height) * 1080;
+    let fitted_ratio_scaled = u64::from(fitted.width) * 2356;
+    assert!(source_ratio_scaled >= fitted_ratio_scaled);
+    assert!(source_ratio_scaled - fitted_ratio_scaled < 2356);
+}
+
+#[test]
+fn surface_size_within_limit_is_unchanged() {
+    let fitted = fit_surface_size_to_limit(SurfaceSize::new(1600, 900), 2048);
+
+    assert_eq!(fitted, SurfaceSize::new(1600, 900));
 }
 
 #[test]
@@ -62,6 +83,13 @@ fn composed_shader_source_contains_split_stage_modules_once() {
     assert_eq!(source.matches("fn palette_rgb_for_output").count(), 1);
     assert_eq!(source.matches("fn ntsc_rgb_for_output").count(), 1);
     assert_eq!(source.matches("fn fs_palette_linear").count(), 1);
+}
+
+#[test]
+fn composed_shader_source_avoids_gles_array_translation_gaps() {
+    let source = composed_shader_source();
+    assert!(!source.contains("array<array"));
+    assert!(!source.contains("array<vec"));
 }
 
 #[test]

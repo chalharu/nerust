@@ -10,12 +10,38 @@ use nerust_contract_settings::shared::{
 };
 use serde_yaml::Value;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SHARED_SETTINGS_FILE_NAME: &str = "shared-settings.yaml";
 const APP_STATE_FILE_NAME: &str = "app-state.yaml";
 const LOCAL_SETTINGS_DIR_NAME: &str = "local-settings";
 const CENTRAL_STORAGE_DIR_NAME: &str = "persistence";
+
+impl SettingsPaths {
+    pub fn new(
+        config_dir: impl Into<PathBuf>,
+        data_dir: impl Into<PathBuf>,
+        identity: &HostBackendIdentity,
+    ) -> Self {
+        let config_dir = config_dir.into();
+        let data_dir = data_dir.into();
+        Self {
+            shared_settings_file: config_dir.join(SHARED_SETTINGS_FILE_NAME),
+            local_settings_file: config_dir
+                .join(LOCAL_SETTINGS_DIR_NAME)
+                .join(format!("{}.yaml", identity.file_stem())),
+            app_state_file: data_dir.join(APP_STATE_FILE_NAME),
+            central_storage_root: data_dir.join(CENTRAL_STORAGE_DIR_NAME),
+            config_dir,
+            data_dir,
+        }
+    }
+
+    pub fn from_root(root: impl Into<PathBuf>, identity: &HostBackendIdentity) -> Self {
+        let root = root.into();
+        Self::new(root.join("config"), root.join("data"), identity)
+    }
+}
 
 pub(super) fn settings_paths(
     identity: &HostBackendIdentity,
@@ -25,16 +51,7 @@ pub(super) fn settings_paths(
     };
     let config_dir = project_dirs.config_dir().to_path_buf();
     let data_dir = project_dirs.data_local_dir().to_path_buf();
-    Ok(SettingsPaths {
-        shared_settings_file: config_dir.join(SHARED_SETTINGS_FILE_NAME),
-        local_settings_file: config_dir
-            .join(LOCAL_SETTINGS_DIR_NAME)
-            .join(format!("{}.yaml", identity.file_stem())),
-        app_state_file: data_dir.join(APP_STATE_FILE_NAME),
-        central_storage_root: data_dir.join(CENTRAL_STORAGE_DIR_NAME),
-        config_dir,
-        data_dir,
-    })
+    Ok(SettingsPaths::new(config_dir, data_dir, identity))
 }
 
 pub(super) fn load_settings_document<T: Clone + serde::de::DeserializeOwned + serde::Serialize>(
