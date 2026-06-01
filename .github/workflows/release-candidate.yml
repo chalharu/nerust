@@ -1,3 +1,4 @@
+# yamllint disable rule:line-length
 name: Prepare release candidate
 on:
   workflow_dispatch:
@@ -28,14 +29,8 @@ jobs:
       - name: Authenticate git pushes
         env:
           GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
-      - name: Validate release branch
-        run: |
-          if ! git ls-remote --exit-code --heads origin release > /dev/null 2>&1; then
-            echo "release branch does not exist on origin" >&2
-            exit 1
-          fi
+          RELEASE_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GH_REPO}.git"
       - name: Prepare release candidate
         id: release_meta
         run: bash packaging/release/release_flow.sh prepare-candidate >> "$GITHUB_OUTPUT"
@@ -66,7 +61,7 @@ jobs:
           cat > "${body_file}" <<EOF
           ## Summary
           - prepare \`${TAG_NAME}\` from \`${BASE_REF}\`
-          - open the release review path against \`release\`
+          - open the release review path against \`master\`
           - publish versioned review artifacts from this PR for binary verification
 
           ## Versioning
@@ -75,13 +70,12 @@ jobs:
           - comparison base: \`${comparison_base}\`
 
           ## Notes
-          - merge this PR into \`release\` to create the tag and GitHub Release
-          - after publishing, the automation opens a sync PR from \`release\` back to \`master\`
+          - merge this PR into \`master\` to create the tag and GitHub Release
           EOF
-          pr_number="$(gh pr list --head release-candidate --base release --state open --json number --jq '.[0].number')"
+          pr_number="$(gh pr list --head release-candidate --base master --state open --json number --jq '.[0].number')"
           if [ -n "${pr_number}" ]; then
             gh pr edit "${pr_number}" --title "chore(release): prepare ${TAG_NAME}" --body-file "${body_file}"
           else
-            gh pr create --base release --head release-candidate --title "chore(release): prepare ${TAG_NAME}" --body-file "${body_file}"
+            gh pr create --base master --head release-candidate --title "chore(release): prepare ${TAG_NAME}" --body-file "${body_file}"
           fi
           rm -f "${body_file}"
