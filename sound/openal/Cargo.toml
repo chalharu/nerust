@@ -1,0 +1,14 @@
+[package]
+name = "nerust_sound_openal"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+alto.workspace = true
+libc.workspace = true
+log.workspace = true
+nerust_sound_traits.workspace = true
+nerust_soundfilter.workspace = true

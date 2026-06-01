@@ -1,0 +1,27 @@
+[package]
+name = "nerust_persistence"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fs2.workspace = true
+libc.workspace = true
+nerust_contract_mirror.workspace = true
+nerust_contract_options.workspace = true
+nerust_contract_persistence.workspace = true
+nerust_contract_rom.workspace = true
+nerust_input_schema.workspace = true
+png.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_bytes.workspace = true
+serde_derive.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }

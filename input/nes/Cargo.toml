@@ -1,0 +1,15 @@
+[package]
+name = "nerust_input_nes"
+version = "0.2.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+nerust_contract_settings.workspace = true
+nerust_input_schema.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_derive.workspace = true

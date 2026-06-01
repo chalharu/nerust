@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkApplicationWindow" id="window">
+    <property name="title" translatable="yes">Nerust</property>
+    <property name="default-width">500</property>
+    <property name="default-height">400</property>
+    <child>
+      <object class="GtkGLArea" id="glarea">
+        <property name="visible">True</property>
+        <property name="focusable">False</property>
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+      </object>
+    </child>
+  </object>
+</interface>

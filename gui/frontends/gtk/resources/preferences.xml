@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkDialog" id="preferences">
+    <property name="title" translatable="yes">Preferences</property>
+    <property name="default-width">400</property>
+    <property name="default-height">300</property>
+    <child internal-child="content_area">
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkNotebook">
+            <property name="tab-pos">left</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="margin-start">5</property>
+                    <property name="margin-end">5</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">5</property>
+                    <property name="label" translatable="yes">Standard pad 1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkGrid">
+                    <property name="column-spacing">6</property>
+                    <property name="row-spacing">6</property>
+                    <property name="margin-start">5</property>
+                    <property name="margin-end">5</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">5</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="margin-start">5</property>
+                        <property name="margin-end">5</property>
+                        <property name="margin-top">3</property>
+                        <property name="margin-bottom">3</property>
+                        <property name="label" translatable="yes">Up</property>
+                      </object>
+                      <layout>
+                        <property name="column">0</property>
+                        <property name="row">0</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">0</property>
+                        <property name="row">1</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">0</property>
+                        <property name="row">2</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">0</property>
+                        <property name="row">3</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="margin-start">5</property>
+                        <property name="margin-end">5</property>
+                        <property name="margin-top">3</property>
+                        <property name="margin-bottom">3</property>
+                        <property name="label" translatable="yes">shortcut</property>
+                      </object>
+                      <layout>
+                        <property name="column">1</property>
+                        <property name="row">0</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">1</property>
+                        <property name="row">1</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">1</property>
+                        <property name="row">2</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">label</property>
+                      </object>
+                      <layout>
+                        <property name="column">1</property>
+                        <property name="row">3</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">Change</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="margin-start">5</property>
+                        <property name="margin-end">5</property>
+                        <property name="margin-top">3</property>
+                        <property name="margin-bottom">3</property>
+                      </object>
+                      <layout>
+                        <property name="column">2</property>
+                        <property name="row">0</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">2</property>
+                        <property name="row">1</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">2</property>
+                        <property name="row">2</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">2</property>
+                        <property name="row">3</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">Clear</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="margin-start">5</property>
+                        <property name="margin-end">5</property>
+                        <property name="margin-top">3</property>
+                        <property name="margin-bottom">3</property>
+                      </object>
+                      <layout>
+                        <property name="column">3</property>
+                        <property name="row">0</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">3</property>
+                        <property name="row">1</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">3</property>
+                        <property name="row">2</property>
+                      </layout>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">button</property>
+                      </object>
+                      <layout>
+                        <property name="column">3</property>
+                        <property name="row">3</property>
+                      </layout>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="margin-start">5</property>
+                    <property name="margin-end">5</property>
+                    <property name="margin-top">5</property>
+                    <property name="margin-bottom">5</property>
+                    <property name="label" translatable="yes">Standard pad 2</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkGrid">
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                    <child>
+                      <placeholder/>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="tab">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Controllers</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

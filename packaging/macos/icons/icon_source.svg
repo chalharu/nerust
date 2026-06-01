@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+
+  <!-- Controller body -->
+  <rect x="72" y="292" width="880" height="440" rx="180" fill="#1f2937"/>
+
+  <!-- D-Pad (45° rotated square, left側黄金比ライン上) -->
+  <rect x="242" y="462" width="100" height="100" rx="20"
+        transform="rotate(45 292 512)" fill="#e5e7eb"/>
+
+  <!-- A button (circle, 右側黄金比ライン上) -->
+  <circle cx="700" cy="512" r="50" fill="#e5e7eb"/>
+
+  <!-- B button (rounded square, A に近接・黄金比間隔) -->
+  <rect x="770" y="462" width="100" height="100" rx="28" fill="#94a3b8"/>
+</svg>

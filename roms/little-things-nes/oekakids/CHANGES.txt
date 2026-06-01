@@ -1,0 +1,12 @@
+0.03 (2026-05-05)
+* add glyphs for acknowledgment time $10 through $16 iterations
+* send clock edges earlier to reduce overhead
+* add ruler at top to measure overall reading time from a video
+
+0.02 (2026-05-03)
+* wait for tablet to acknowledge each edge on $4016 (reported by
+  Zorchenhimer)
+* display time to acknowledge each edge in 11-cycle units
+
+0.01 (2026-04-30)
+* initial release

@@ -1,0 +1,1726 @@
+# yamllint disable rule:line-length
+rom_root: ../roms
+cases:
+  - id: apu.len_ctr
+    category: apu
+    description: "Tests APU length counter behavior from blargg's APU validation ROMs."
+    rom: nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 95586
+      hash: "0x27C6A0AD8041E1F7"
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.02.len_table
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Table."
+    rom: nes-test-roms/blargg_apu_2005.07.30/02.len_table.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.03.irq_flag
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Flag."
+    rom: nes-test-roms/blargg_apu_2005.07.30/03.irq_flag.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.04.clock_jitter
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Clock Jitter."
+    rom: nes-test-roms/blargg_apu_2005.07.30/04.clock_jitter.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.05.len_timing_mode0
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Timing Mode0."
+    rom: nes-test-roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.06.len_timing_mode1
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Timing Mode1."
+    rom: nes-test-roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.07.irq_flag_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Flag Timing."
+    rom: nes-test-roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.08.irq_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: IRQ Timing."
+    rom: nes-test-roms/blargg_apu_2005.07.30/08.irq_timing.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.09.reset_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Reset Timing."
+    rom: nes-test-roms/blargg_apu_2005.07.30/09.reset_timing.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.10.len_halt_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Halt Timing."
+    rom: nes-test-roms/blargg_apu_2005.07.30/10.len_halt_timing.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.blargg_apu_2005.07.30.11.len_reload_timing
+    category: apu
+    description: "Tests APU length counters, frame counter, IRQ handling, and related timing behavior. Case: Length Reload Timing."
+    rom: nes-test-roms/blargg_apu_2005.07.30/11.len_reload_timing.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: apu.test_apu_2.test_1
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 1."
+    rom: apu/test_apu_2/test_1.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_2
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 2."
+    rom: apu/test_apu_2/test_2.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_3
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 3."
+    rom: apu/test_apu_2/test_3.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_4
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 4."
+    rom: apu/test_apu_2/test_4.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_5
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 5."
+    rom: apu/test_apu_2/test_5.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_6
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 6."
+    rom: apu/test_apu_2/test_6.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_7
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 7."
+    rom: apu/test_apu_2/test_7.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_8
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 8."
+    rom: apu/test_apu_2/test_8.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_9
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 9."
+    rom: apu/test_apu_2/test_9.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_2.test_10
+    category: apu
+    description: "Verifies APU behaviors that are visible through the frame counter and CPU-facing registers. Case: Test 10."
+    rom: apu/test_apu_2/test_10.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_m.test_9
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 9."
+    rom: apu/test_apu_m/test_9.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_m.test_10
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 10."
+    rom: apu/test_apu_m/test_10.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.test_apu_m.test_11
+    category: apu
+    description: "Runs legacy APU regression ROMs from the test_apu_m pack. Case: Test 11."
+    rom: apu/test_apu_m/test_11.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x5A5308AE5AE10624"}
+  - id: apu.nes_audio_tests.db_apu
+    category: apu
+    description: "Compares full-volume APU square and triangle output using bbbradsmith's nes-audio-tests db_apu ROM."
+    rom: nes-audio-tests/build/db_apu.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 1389462
+      hash: "0x61A285CE2E9FDCD8"
+    events:
+      - {frame: 435, action: check_screen, hash: "0x043E5A1ABD2618A6"}
+  - id: apu.nes_audio_tests.db_mmc5
+    category: apu
+    description: "Compares full-volume APU square and MMC5 square output using bbbradsmith's nes-audio-tests db_mmc5 ROM."
+    rom: nes-audio-tests/build/db_mmc5.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 2303163
+      hash: "0x0CD63C15C92485E1"
+    events:
+      - {frame: 721, action: check_screen, hash: "0x043E5A1ABD2618A6"}
+  - id: apu.nes_audio_tests.db_mmc5_nrom
+    category: apu
+    description: "Captures the NROM staging build of the MMC5 relative-volume test from bbbradsmith's nes-audio-tests."
+    rom: nes-audio-tests/build/db_mmc5_nrom.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 2303163
+      hash: "0xEB24873C853F8E58"
+    events:
+      - {frame: 721, action: check_screen, hash: "0x043E5A1ABD2618A6"}
+  - id: apu.nes_audio_tests.tri_silence
+    category: apu
+    description: "Exercises triangle silencing and linear-counter reload behavior using bbbradsmith's nes-audio-tests tri_silence ROM."
+    rom: nes-audio-tests/build/tri_silence.nes
+    expected_audio:
+      sample_rate: 192000
+      samples: 7935517
+      hash: "0x93977D99F3723CA9"
+    events:
+      - {frame: 2484, action: check_screen, hash: "0x043E5A1ABD2618A6"}
+  - id: cpu.branch_timing_tests.1.Branch_Basics
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Branch Basics."
+    rom: nes-test-roms/branch_timing_tests/1.Branch_Basics.nes
+    events:
+      - {frame: 25, action: check_screen, hash: "0x93D488FABC5E367D"}
+  - id: cpu.branch_timing_tests.2.Backward_Branch
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Backward Branch."
+    rom: nes-test-roms/branch_timing_tests/2.Backward_Branch.nes
+    events:
+      - {frame: 25, action: check_screen, hash: "0x3C977E767E7BF4AD"}
+  - id: cpu.branch_timing_tests.3.Forward_Branch
+    category: cpu
+    description: "Tests timing of the branch instruction, including edge cases. Case: Forward Branch."
+    rom: nes-test-roms/branch_timing_tests/3.Forward_Branch.nes
+    events:
+      - {frame: 25, action: check_screen, hash: "0x4F3A6AA2964D33B7"}
+  - id: cpu.cpu_dummy_reads
+    category: cpu
+    description: "Tests the CPU's dummy reads."
+    rom: nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x13841FEDB44DC75D"}
+  - id: cpu.cpu_dummy_writes.cpu_dummy_writes_oam
+    category: cpu
+    description: "Tests the CPU's dummy writes. Case: OAM writes."
+    rom: nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes
+    events:
+      - {frame: 330, action: check_screen, hash: "0xF25FB885BF1F8DE2"}
+  - id: cpu.cpu_dummy_writes.cpu_dummy_writes_ppumem
+    category: cpu
+    description: "Tests the CPU's dummy writes. Case: PPU memory writes."
+    rom: nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes
+    events:
+      - {frame: 240, action: check_screen, hash: "0x68404497D176CD2A"}
+  - id: cpu.cpu_exec_space.test_cpu_exec_space_ppuio
+    category: cpu
+    description: "Verifies that the CPU can execute code from any possible memory location, including I/O-mapped regions. Case: PPU I/O execution space."
+    rom: cpu/cpu_exec_space/test_cpu_exec_space_ppuio.nes
+    events:
+      - {frame: 45, action: check_screen, hash: "0xFA8F4E7F0ECDD92F"}
+  - id: cpu.cpu_exec_space.test_cpu_exec_space_apu
+    category: cpu
+    description: "Verifies that the CPU can execute code from any possible memory location, including I/O-mapped regions. Case: APU and I/O execution space."
+    rom: cpu/cpu_exec_space/test_cpu_exec_space_apu.nes
+    events:
+      - {frame: 295, action: check_screen, hash: "0x3A0C2ED9AA73D9F4"}
+  - id: cpu.cpu_flag_concurrency.test_cpu_flag_concurrency
+    category: cpu
+    description: "Exercises CPU flag concurrency edge cases."
+    rom: cpu/cpu_flag_concurrency/test_cpu_flag_concurrency.nes
+    events:
+      - {frame: 850, action: check_screen, hash: "0x238D985A6183B697"}
+  - id: cpu.cpu_interrupts_v2.cpu_interrupts
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: Combined interrupt suite."
+    rom: nes-test-roms/cpu_interrupts_v2/cpu_interrupts.nes
+    events:
+      - {frame: 760, action: check_screen, hash: "0x9026DAD65555ECA0"}
+  - id: cpu.cpu_interrupts_v2.rom_singles.1-cli_latency
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: CLI Latency."
+    rom: nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
+    events:
+      - {frame: 35, action: check_screen, hash: "0x06A2E9A5AD65ED0E"}
+  - id: cpu.cpu_interrupts_v2.rom_singles.2-nmi_and_brk
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: NMI And BRK."
+    rom: nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes
+    events:
+      - {frame: 115, action: check_screen, hash: "0x2FB0BFAC269FD16A"}
+  - id: cpu.cpu_interrupts_v2.rom_singles.3-nmi_and_irq
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: NMI And IRQ."
+    rom: nes-test-roms/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes
+    events:
+      - {frame: 150, action: check_screen, hash: "0x9A8775FF7A9697DF"}
+  - id: cpu.cpu_interrupts_v2.rom_singles.4-irq_and_dma
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: IRQ And DMA."
+    rom: nes-test-roms/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes
+    events:
+      - {frame: 75, action: check_screen, hash: "0x70E9CDAE61FC6CE6"}
+  - id: cpu.cpu_interrupts_v2.rom_singles.5-branch_delays_irq
+    category: cpu
+    description: "Tests CPU interrupt behavior and timing for IRQ and NMI handling. Case: Branch Delays IRQ."
+    rom: nes-test-roms/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes
+    events:
+      - {frame: 400, action: check_screen, hash: "0xDCF04EA09FBB490C"}
+  - id: cpu.cpu_reset.ram_after_reset
+    category: cpu
+    description: "Tests CPU register state across power and reset while ensuring RAM is preserved. Case: RAM after reset."
+    rom: nes-test-roms/cpu_reset/ram_after_reset.nes
+    events:
+      - {frame: 155, action: check_screen, hash: "0x440354DCC93B0821"}
+      - {frame: 156, action: reset}
+      - {frame: 255, action: check_screen, hash: "0xD3422C94B83715E9"}
+  - id: cpu.cpu_reset.registers
+    category: cpu
+    description: "Tests CPU register state across power and reset while ensuring RAM is preserved. Case: Registers."
+    rom: nes-test-roms/cpu_reset/registers.nes
+    events:
+      - {frame: 155, action: check_screen, hash: "0x440354DCC93B0821"}
+      - {frame: 156, action: reset}
+      - {frame: 255, action: check_screen, hash: "0x71F4ECB5DA8686D2"}
+  - id: cpu.cpu_timing_test6.cpu_timing_test
+    category: cpu
+    description: "Tests instruction timing for official and unofficial NES 6502 instructions except branches and halts."
+    rom: nes-test-roms/cpu_timing_test6/cpu_timing_test.nes
+    events:
+      - {frame: 639, action: check_screen, hash: "0x172C687E69C06327"}
+  - id: cpu.instr_misc.instr_misc
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Combined miscellaneous instruction suite."
+    rom: nes-test-roms/instr_misc/instr_misc.nes
+    events:
+      - {frame: 580, action: check_screen, hash: "0x20E234D5DB551AA9"}
+  - id: cpu.instr_misc.rom_singles.01-abs_x_wrap
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Absolute X Wrap."
+    rom: nes-test-roms/instr_misc/rom_singles/01-abs_x_wrap.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0xE2900046F45BB66A"}
+  - id: cpu.instr_misc.rom_singles.02-branch_wrap
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Branch Wrap."
+    rom: nes-test-roms/instr_misc/rom_singles/02-branch_wrap.nes
+    events:
+      - {frame: 20, action: check_screen, hash: "0x0341BD5B2530B417"}
+  - id: cpu.instr_misc.rom_singles.03-dummy_reads
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Dummy Reads."
+    rom: nes-test-roms/instr_misc/rom_singles/03-dummy_reads.nes
+    events:
+      - {frame: 70, action: check_screen, hash: "0x0584AAAEB26972DC"}
+  - id: cpu.instr_misc.rom_singles.04-dummy_reads_apu
+    category: cpu
+    description: "Tests miscellaneous instruction edge cases such as wrapping behavior and dummy reads. Case: Dummy Reads APU."
+    rom: nes-test-roms/instr_misc/rom_singles/04-dummy_reads_apu.nes
+    events:
+      - {frame: 165, action: check_screen, hash: "0xAE30A6A220EF1A20"}
+  - id: cpu.instr_test-v5.all_instrs
+    category: cpu
+    description: "Thoroughly tests official and unofficial CPU instructions."
+    rom: nes-test-roms/instr_test-v5/all_instrs.nes
+    events:
+      - {frame: 2450, action: check_screen, hash: "0x4E0209B232069DEA"}
+  - id: cpu.instr_timing.instr_timing
+    category: cpu
+    description: "Tests instruction timing, including unofficial opcodes and page crossings."
+    rom: nes-test-roms/instr_timing/instr_timing.nes
+    events:
+      - {frame: 1330, action: check_screen, hash: "0x911C1A51A508AB74"}
+  - id: cpu.nestest
+    category: cpu
+    description: "Provides a broad first-pass CPU validation against the classic nestest program flow."
+    rom: nes-test-roms/other/nestest.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 287270
+      hash: "0xD5BFE5997FBAFC8B"
+    events:
+      - {frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E"}
+      - {frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 16, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 70, action: check_screen, hash: "0xBE54DF8CF9FBE026"}
+      - {frame: 70, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 71, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 75, action: check_screen, hash: "0x9D082986B6F8DF51"}
+      - {frame: 75, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 76, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 90, action: check_screen, hash: "0xBACF3F4FCBF5718C"}
+  - id: mapper.2_test_src.2_test_0
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 0."
+    rom: mapper/2_test_src/2_test_0.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0xB0B205826092E5AB"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x10"}
+      - {frame: 50, action: check_work_ram, address: "0x0306", value: "0x02"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x03"}
+  - id: mapper.2_test_src.2_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 1."
+    rom: mapper/2_test_src/2_test_1.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x01C3BF218899DD55"}
+  - id: mapper.2_test_src.2_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 2. Case: Submapper case 2."
+    rom: mapper/2_test_src/2_test_2.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x7D4967ED8CD264A0"}
+  - id: mapper.3_test_src.3_test_0
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 3. Case: Submapper case 0."
+    rom: mapper/3_test_src/3_test_0.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x39BD82A28F85B8CB"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x00"}
+      - {frame: 50, action: check_work_ram, address: "0x0302", value: "0x04"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x02"}
+      - {frame: 50, action: check_work_ram, address: "0x0308", value: "0x03"}
+  - id: mapper.3_test_src.3_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 3. Case: Submapper case 1."
+    rom: mapper/3_test_src/3_test_1.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0xE3E5E7C7A502A3DD"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x00"}
+      - {frame: 50, action: check_work_ram, address: "0x0302", value: "0x04"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x00"}
+      - {frame: 50, action: check_work_ram, address: "0x0308", value: "0x01"}
+  - id: mapper.3_test_src.3_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 3. Case: Submapper case 2."
+    rom: mapper/3_test_src/3_test_2.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x14F4F5CCEB46665A"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x00"}
+      - {frame: 50, action: check_work_ram, address: "0x0302", value: "0x04"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x01"}
+      - {frame: 50, action: check_work_ram, address: "0x0308", value: "0x02"}
+  - id: mapper.34_test_src.34_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 34. Case: Submapper case 1."
+    rom: mapper/34_test_src/34_test_1.nes
+    events:
+      - {frame: 70, action: check_screen, hash: "0x4656955C241976B9"}
+      - {frame: 70, action: check_work_ram, address: "0x0301", value: "0x00"}
+  - id: mapper.34_test_src.34_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 34. Case: Submapper case 2."
+    rom: mapper/34_test_src/34_test_2.nes
+    events:
+      - {frame: 70, action: check_screen, hash: "0x00C9497C3EC444FF"}
+      - {frame: 70, action: check_work_ram, address: "0x0301", value: "0x01"}
+  - id: mapper.7_test_src.7_test_0
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 0."
+    rom: mapper/7_test_src/7_test_0.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0xD4168E6E76653795"}
+      - {frame: 50, action: check_work_ram, address: "0x0301", value: "0x08"}
+      - {frame: 50, action: check_work_ram, address: "0x0306", value: "0x02"}
+      - {frame: 50, action: check_work_ram, address: "0x0307", value: "0x03"}
+  - id: mapper.7_test_src.7_test_1
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 1."
+    rom: mapper/7_test_src/7_test_1.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x29DF181B7DD6EEA1"}
+  - id: mapper.7_test_src.7_test_2
+    category: mapper
+    description: "Tests NES 2.0 submapper behavior for mapper 7. Case: Submapper case 2."
+    rom: mapper/7_test_src/7_test_2.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0x19EDEC019A25B69E"}
+  - id: mapper.bntest.bntest_aorom
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: AOROM bank reachability."
+    rom: mapper/bntest/bntest_aorom.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0xAD9D23DD8E573B19"}
+  - id: mapper.bntest.bntest_h
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: Horizontal mirroring reachability."
+    rom: mapper/bntest/bntest_h.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0x8108A6D2A9D9C28A"}
+  - id: mapper.bntest.bntest_v
+    category: mapper
+    description: "Tests reachable PRG banks for BxROM and AxROM boards. Case: Vertical mirroring reachability."
+    rom: mapper/bntest/bntest_v.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0x4E34969EC01EA621"}
+  - id: mapper.bxrom_512k_test
+    category: mapper
+    description: "Checks PRG bank reachability in 512 KiB BxROM configurations."
+    rom: mapper/bxrom_512k_test.nes
+    events:
+      - {frame: 15, action: check_screen, hash: "0x56C4FA7DD5BFD57B"}
+      - {frame: 45, action: check_screen, hash: "0x187F98462E737C08"}
+      - {frame: 75, action: check_screen, hash: "0x4C8D8ADDB93D2691"}
+      - {frame: 105, action: check_screen, hash: "0xEAECD98D0A6296B1"}
+      - {frame: 135, action: check_screen, hash: "0x9383A55C004D8DEF"}
+      - {frame: 165, action: check_screen, hash: "0x7D1CE0BBBEBC8565"}
+      - {frame: 195, action: check_screen, hash: "0x14B67E413E85D3E7"}
+      - {frame: 225, action: check_screen, hash: "0x7C0932B422A463CD"}
+      - {frame: 255, action: check_screen, hash: "0x3B341C14BBCB4637"}
+      - {frame: 285, action: check_screen, hash: "0x98157B6513DB1D92"}
+      - {frame: 315, action: check_screen, hash: "0xD4A135BEEFDE569A"}
+      - {frame: 345, action: check_screen, hash: "0x7615A5B091DB6D45"}
+      - {frame: 375, action: check_screen, hash: "0xB362A38A4EF25CD1"}
+      - {frame: 405, action: check_screen, hash: "0xE9C93AA3BC269AA4"}
+      - {frame: 435, action: check_screen, hash: "0xA4E46F5691457ADE"}
+      - {frame: 465, action: check_screen, hash: "0x3B05850458FBA8FF"}
+      - {frame: 495, action: check_screen, hash: "0x56C4FA7DD5BFD57B"}
+  - id: mapper.serom.serom
+    category: mapper
+    description: "Tests SEROM, SHROM, and SH1ROM constraints for MMC1 variants."
+    rom: mapper/serom/serom.nes
+    events:
+      - {frame: 20, action: check_screen, hash: "0x66F3C603B1119162"}
+  - id: mapper.mmc3_irq_tests.1_clocking
+    category: mapper
+    description: "Verifies baseline MMC3 IRQ counter clocking behavior from blargg's mmc3_irq_tests suite."
+    rom: nes-test-roms/mmc3_irq_tests/1.Clocking.nes
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0xA6307C08E5259359"}
+  - id: mapper.mmc3_irq_tests.2_details
+    category: mapper
+    description: "Verifies MMC3 IRQ counter edge-case details from blargg's mmc3_irq_tests suite."
+    rom: nes-test-roms/mmc3_irq_tests/2.Details.nes
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0x3563727EECC9E3FC"}
+  - id: mapper.mmc3_irq_tests.3_a12_clocking
+    category: mapper
+    description: "Verifies MMC3 A12 edge detection behavior from blargg's mmc3_irq_tests suite."
+    rom: nes-test-roms/mmc3_irq_tests/3.A12_clocking.nes
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0x3769591A0D35DC7B"}
+  - id: mapper.mmc3_irq_tests.4_scanline_timing
+    category: mapper
+    description: "Verifies MMC3 scanline IRQ timing from blargg's mmc3_irq_tests suite."
+    rom: nes-test-roms/mmc3_irq_tests/4.Scanline_timing.nes
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0x3DA330996390F8F6"}
+  - id: mapper.mmc3_irq_tests.5_mmc3_rev_a
+    category: mapper
+    description: "Verifies revision-A MMC3 zero-latch IRQ behavior via the NEC MMC3 IRQ option."
+    rom: nes-test-roms/mmc3_irq_tests/5.MMC3_rev_A.nes
+    mmc3_irq_variant: nec
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0x35EAB54AC9D70187"}
+  - id: mapper.mmc3_irq_tests.6_mmc3_rev_b
+    category: mapper
+    description: "Verifies revision-B MMC3 zero-latch IRQ behavior from blargg's mmc3_irq_tests suite."
+    rom: nes-test-roms/mmc3_irq_tests/6.MMC3_rev_B.nes
+    events:
+      - {frame: 420, action: check_work_ram, address: "0x00F8", value: "0x01"}
+      - {frame: 420, action: check_screen, hash: "0x25AC2EFDD3AB7C43"}
+  - id: mapper.mmc3_test.1_clocking
+    category: mapper
+    description: "Runs blargg's mmc3_test baseline clocking case against mapper 4."
+    rom: nes-test-roms/mmc3_test/1-clocking.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x312B1061B67A967A"}
+  - id: mapper.mmc3_test.2_details
+    category: mapper
+    description: "Runs blargg's mmc3_test detailed IRQ counter case against mapper 4."
+    rom: nes-test-roms/mmc3_test/2-details.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x5D64A7E9C200EC9C"}
+  - id: mapper.mmc3_test.3_a12_clocking
+    category: mapper
+    description: "Runs blargg's mmc3_test A12 clocking case against mapper 4."
+    rom: nes-test-roms/mmc3_test/3-A12_clocking.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x714782FFB12314C2"}
+  - id: mapper.mmc3_test.4_scanline_timing
+    category: mapper
+    description: "Runs blargg's mmc3_test scanline timing case against mapper 4."
+    rom: nes-test-roms/mmc3_test/4-scanline_timing.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x87288EF8D9D158C2"}
+  - id: mapper.mmc3_test.5_mmc3
+    category: mapper
+    description: "Runs blargg's mmc3_test MMC3-specific behavior case against mapper 4."
+    rom: nes-test-roms/mmc3_test/5-MMC3.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
+  - id: mapper.mmc3_test.6_mmc6
+    category: mapper
+    description: "Verifies MMC6 submapper 1 behavior via a test-harness NES 2.0 override on the original iNES ROM. On real MMC6 hardware the ROM's legacy $6000 result byte is open bus, so this case checks for an open-bus zero there and validates the final MMC6 pass screen."
+    rom: nes-test-roms/mmc3_test/6-MMC6.nes
+    sub_mapper_type: 1
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00", open_bus: true}
+      - {frame: 420, action: check_screen, hash: "0x5BEF4682CA6BF8FB"}
+  # The single-ROM mmc3_test_2 variants intentionally end on the same pass screen as mmc3_test.
+  - id: mapper.mmc3_test_2.1_clocking
+    category: mapper
+    description: "Runs blargg's mmc3_test_2 single clocking case against mapper 4."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/1-clocking.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x312B1061B67A967A"}
+  - id: mapper.mmc3_test_2.2_details
+    category: mapper
+    description: "Runs blargg's mmc3_test_2 single detailed IRQ counter case against mapper 4."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/2-details.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x5D64A7E9C200EC9C"}
+  - id: mapper.mmc3_test_2.3_a12_clocking
+    category: mapper
+    description: "Runs blargg's mmc3_test_2 single A12 clocking case against mapper 4."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/3-A12_clocking.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x714782FFB12314C2"}
+  - id: mapper.mmc3_test_2.4_scanline_timing
+    category: mapper
+    description: "Runs blargg's mmc3_test_2 single scanline timing case against mapper 4."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0x87288EF8D9D158C2"}
+  - id: mapper.mmc3_test_2.5_mmc3
+    category: mapper
+    description: "Runs blargg's mmc3_test_2 single MMC3-specific behavior case against mapper 4."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/5-MMC3.nes
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xC37EDC744DB5A4BC"}
+  - id: mapper.mmc3_test_2.6_mmc3_alt
+    category: mapper
+    description: "Verifies alternate old-style NEC MMC3 zero-latch IRQ behavior via the MMC3 IRQ option."
+    rom: nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes
+    mmc3_irq_variant: nec
+    events:
+      - {frame: 420, action: check_cartridge_ram, address: "0x6000", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xA6F9AD85D279CE5F"}
+  # Selected Holy Mapperel cases settle on a stable final result screen by frame 120.
+  - id: mapper.holy_mapperel.m0_nrom
+    category: mapper
+    description: "Verifies mapper 0 NROM board detection, PRG banking assumptions, and CHR ROM access using Holy Mapperel."
+    rom: holy-mapperel/testroms/M0_P32K_C8K_V.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0xF4E380CDA04C1BC7"}
+  - id: mapper.holy_mapperel.m1_sxrom
+    category: mapper
+    description: "Verifies mapper 1 MMC1 bank switching and WRAM protection using Holy Mapperel."
+    rom: holy-mapperel/testroms/M1_P128K_C32K_W8K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x2DE2FC3DAAEB4C03"}
+  - id: mapper.holy_mapperel.m2_uxrom
+    category: mapper
+    description: "Verifies mapper 2 UxROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M2_P128K_CR8K_V.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x0A523DDBAC532F5E"}
+  - id: mapper.holy_mapperel.m3_cnrom
+    category: mapper
+    description: "Verifies mapper 3 CNROM CHR bank switching using Holy Mapperel."
+    rom: holy-mapperel/testroms/M3_P32K_C32K_H.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x1EBBC563125EC623"}
+  - id: mapper.holy_mapperel.m4_txrom
+    category: mapper
+    description: "Verifies mapper 4 TxROM PRG/CHR banking and IRQ behavior using Holy Mapperel."
+    rom: holy-mapperel/testroms/M4_P256K_C256K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x42AF4D67533098A5"}
+  - id: mapper.holy_mapperel.m7_axrom
+    category: mapper
+    description: "Verifies mapper 7 AxROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M7_P128K_CR8K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x5CA6F6F925EC6560"}
+  - id: mapper.holy_mapperel.m34_bnrom
+    category: mapper
+    description: "Verifies mapper 34 BNROM bank switching and CHR RAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M34_P128K_CR8K_H.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0xAF70FBE0E3D1E1FC"}
+  - id: mapper.holy_mapperel.m118_txsrom
+    category: mapper
+    description: "Verifies Mapper 118 TxSROM nametable banking and MMC3-family PRG/CHR/IRQ behavior using Holy Mapperel."
+    rom: holy-mapperel/testroms/M118_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_screen, hash: "0x33516EB854B1A7E4"}
+  - id: mapper.holy_mapperel.m9_mmc2
+    category: mapper
+    description: "Verifies mapper 9 MMC2 PRG banking, latch-driven CHR banks, and mirroring using Holy Mapperel."
+    rom: holy-mapperel/testroms/M9_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x09"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0xB86196F069052C21"}
+  - id: mapper.holy_mapperel.m10_mmc4
+    category: mapper
+    description: "Verifies mapper 10 MMC4 PRG banking, latch-driven CHR banks, mirroring, and WRAM handling using Holy Mapperel."
+    rom: holy-mapperel/testroms/M10_P128K_C64K_W8K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x0A"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0x13539AD8941CCE53"}
+  - id: mapper.holy_mapperel.m11_color_dreams
+    category: mapper
+    description: "Verifies mapper 11 Color Dreams PRG banking, CHR RAM banking, and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M11_P64K_CR32K_V.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x0B"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x0F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x03"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 300, action: check_screen, hash: "0x25BF562C75FD4B2A"}
+  - id: mapper.holy_mapperel.m28_action53
+    category: mapper
+    description: "Verifies mapper 28 Action 53 PRG/CHR RAM banking and mirroring control using Holy Mapperel."
+    rom: holy-mapperel/testroms/M28_P512K_CR32K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x1C"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x7F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x03"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 420, action: check_screen, hash: "0xAD000BA46DCB0383"}
+  - id: mapper.holy_mapperel.m66_gnrom
+    category: mapper
+    description: "Verifies mapper 66 GNROM PRG/CHR banking and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M66_P64K_C16K_V.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x42"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x0F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0x336A68B1175981E3"}
+  - id: mapper.holy_mapperel.m69_fme7
+    category: mapper
+    description: "Verifies mapper 69 FME-7 PRG/CHR banking, WRAM control, and IRQ wiring using Holy Mapperel."
+    rom: holy-mapperel/testroms/M69_P128K_C64K_W8K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x45"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0x7893026ADB818143"}
+  - id: mapper.holy_mapperel.m78_3_holy_diver
+    category: mapper
+    description: "Verifies mapper 78 submapper 3 Holy Diver PRG/CHR banking and mirroring polarity using Holy Mapperel."
+    rom: holy-mapperel/testroms/M78.3_P128K_C64K.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0x4E"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xFF"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x07"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0x14A8B70E20773721"}
+  - id: mapper.holy_mapperel.m180_crazy_climber
+    category: mapper
+    description: "Verifies mapper 180 Crazy Climber PRG banking, CHR RAM banking, and bus-conflict-safe writes using Holy Mapperel."
+    rom: holy-mapperel/testroms/M180_P128K_CR8K_H.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0xB4"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0x1F"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x00"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0x15A2907983B90051"}
+  - id: mapper.test28.action53
+    category: mapper
+    description: "Runs the Action 53 comprehensive mapper 28 test ROM through its automated PRG and CHR test flow."
+    rom: little-things-nes/test28/test28.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1800, action: check_work_ram, address: "0x00FC", value: "0x1E"}
+      - {frame: 1800, action: check_work_ram, address: "0x00FD", value: "0xF0"}
+      - {frame: 1800, action: check_work_ram, address: "0x00FE", value: "0x00"}
+      - {frame: 1800, action: check_screen, hash: "0xF710EFAF2E7C97BF"}
+  - id: mapper.test78.submapper3
+    category: mapper
+    description: "Verifies mapper 78 submapper 3 mirroring polarity using the dedicated Holy Diver test ROM."
+    rom: little-things-nes/test78/test78-submapper3.nes
+    events:
+      - {frame: 10, action: check_work_ram, address: "0x0011", value: "0x35"}
+      - {frame: 10, action: check_screen, hash: "0xF1D7131A41C64A65"}
+  - id: mapper.fme7ramtest
+    category: mapper
+    description: "Verifies 32 KiB mapper 69 WRAM banking at $6000 using the dedicated FME-7 RAM test ROM."
+    rom: little-things-nes/fme7ramtest/fme7ramtest.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x0015", value: "0xC0"}
+      - {frame: 120, action: check_work_ram, address: "0x0016", value: "0xC1"}
+      - {frame: 120, action: check_work_ram, address: "0x0017", value: "0xC2"}
+      - {frame: 120, action: check_work_ram, address: "0x0018", value: "0xC3"}
+      - {frame: 120, action: check_work_ram, address: "0x0019", value: "0xC0"}
+      - {frame: 120, action: check_work_ram, address: "0x001A", value: "0xC1"}
+      - {frame: 120, action: check_work_ram, address: "0x001B", value: "0xC2"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0xC3"}
+      - {frame: 120, action: check_work_ram, address: "0x0025", value: "0x00"}
+      - {frame: 120, action: check_screen, hash: "0xD59145F456C98D92"}
+  - id: mapper.fme7acktest
+    category: mapper
+    description: "Verifies mapper 69 IRQ acknowledgment behavior using the dedicated FME-7 ACK test ROM."
+    rom: little-things-nes/fme7acktest/fme7acktest.nes
+    events:
+      - {frame: 120, action: check_work_ram, address: "0x001B", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001C", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001D", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001E", value: "0x01"}
+      - {frame: 120, action: check_work_ram, address: "0x001F", value: "0x02"}
+      - {frame: 120, action: check_work_ram, address: "0x0020", value: "0x02"}
+      - {frame: 120, action: check_screen, hash: "0x9E02E50F6BD13C04"}
+  - id: mapper.mmc3bigchrram
+    category: mapper
+    description: "Verifies 32 KiB MMC3 CHR RAM support using the mmc3bigchrram little-things ROM."
+    rom: little-things-nes/mmc3bigchrram/mmc3bigchrram.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 150, action: check_screen, hash: "0x5912D7E306DCB3AF"}
+  - id: mapper.mmc3o
+    category: mapper
+    description: "Verifies oversize MMC3 PRG/CHR bank decoding using the mmc3o little-things ROM built as a 1 MiB PRG / 32 KiB CHR RAM image."
+    rom: little-things-nes/mmc3o/mmc3o_1M_CR32.nes
+    events:
+      - {frame: 30, action: check_ppu_vram, address: "0x21A2", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x21A3", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x21A5", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x21A6", value: "0x02"}
+      - {frame: 30, action: check_ppu_vram, address: "0x21A8", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x21A9", value: "0x04"}
+      - {frame: 30, action: check_ppu_vram, address: "0x2222", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x2223", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x2225", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x2226", value: "0x01"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A2", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A3", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A5", value: "0x00"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A6", value: "0x01"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A8", value: "0x07"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22A9", value: "0x0E"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22AB", value: "0x07"}
+      - {frame: 30, action: check_ppu_vram, address: "0x22AC", value: "0x0F"}
+      - {frame: 30, action: check_screen, hash: "0xCFCA443A1F1BCC97"}
+  - id: mapper.mmc3spaminc
+    category: mapper
+    description: "Verifies MMC3 read-modify-write register behavior using the mmc3spaminc little-things ROM."
+    rom: little-things-nes/mmc3spaminc/mmc3spaminc.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 300, action: check_screen, hash: "0x2EC225477A16E22F"}
+  - id: mapper.mmc3spaminc_tg
+    category: mapper
+    # The threaded-generate variant converges on the same final success screen as the base ROM.
+    description: "Verifies MMC3 read-modify-write register behavior using the mmc3spaminc threaded-generate variant ROM."
+    rom: little-things-nes/mmc3spaminc/mmc3spaminc-tg.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 300, action: check_screen, hash: "0x2EC225477A16E22F"}
+  - id: mapper.mmc5test_v2.default_chr_banks
+    category: mapper
+    description: "Verifies default MMC5 8x16 split CHR banking and PPUDATA bank-set selection using the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 60, action: check_ppu_vram, address: "0x2118", value: "0x00"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2138", value: "0x01"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2192", value: "0x00"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2199", value: "0x07"}
+      - {frame: 60, action: check_ppu_vram, address: "0x219A", value: "0x08"}
+      - {frame: 60, action: check_ppu_vram, address: "0x219D", value: "0x0B"}
+      - {frame: 60, action: check_ppu_vram, address: "0x224F", value: "0x08"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2250", value: "0x09"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2251", value: "0x0A"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2252", value: "0x0B"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2253", value: "0x08"}
+      - {frame: 60, action: check_ppu_vram, address: "0x2256", value: "0x0B"}
+      - {frame: 60, action: check_screen, hash: "0x91D8545AA3E8E574"}
+  - id: mapper.mmc5test_v2.start_toggles_8x8
+    category: mapper
+    description: "Verifies that toggling MMC5 sprite size back to 8x8 collapses PPUDATA CHR reads onto the shared $5120-$5127 bank set."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 120, action: check_ppu_vram, address: "0x224F", value: "0x00"}
+      - {frame: 120, action: check_ppu_vram, address: "0x2250", value: "0x01"}
+      - {frame: 120, action: check_ppu_vram, address: "0x2251", value: "0x02"}
+      - {frame: 120, action: check_ppu_vram, address: "0x2252", value: "0x03"}
+      - {frame: 120, action: check_ppu_vram, address: "0x2253", value: "0x04"}
+      - {frame: 120, action: check_ppu_vram, address: "0x2256", value: "0x07"}
+      - {frame: 120, action: check_screen, hash: "0x67DA23E87CACF921"}
+  # Hardware-backed expectations from the NESdev MMC5 thread:
+  # https://forums.nesdev.org/viewtopic.php?t=15788
+  - id: mapper.mmc5test_v2.start_right_matches_hardware_report
+    category: mapper
+    description: "Verifies the MMC5 8x8 plus alternate bank-order state reported from hardware on NESdev: BANK SET ORDER 89AB01234567 and DATA 456789AB."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 90, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 91, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 180, action: check_ppu_vram, address: "0x2192", value: "0x08"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2193", value: "0x09"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2194", value: "0x0A"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2195", value: "0x0B"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2196", value: "0x00"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2197", value: "0x01"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2198", value: "0x02"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2199", value: "0x03"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219A", value: "0x04"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219B", value: "0x05"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219C", value: "0x06"}
+      - {frame: 180, action: check_ppu_vram, address: "0x219D", value: "0x07"}
+      - {frame: 180, action: check_ppu_vram, address: "0x224F", value: "0x04"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2250", value: "0x05"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2251", value: "0x06"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2252", value: "0x07"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2253", value: "0x08"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2254", value: "0x09"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2255", value: "0x0A"}
+      - {frame: 180, action: check_ppu_vram, address: "0x2256", value: "0x0B"}
+      - {frame: 180, action: check_screen, hash: "0x3D61BDAC506FC863"}
+  - id: mapper.mmc5test_v2.start_right_select_matches_hardware_report
+    category: mapper
+    description: "Verifies the paired MMC5 ExRAM hardware report: enabling ExRAM after the same Start+Right state preserves BANK SET ORDER and DATA while changing the rendered result."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 90, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 91, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 150, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 151, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 240, action: check_ppu_vram, address: "0x2192", value: "0x08"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2193", value: "0x09"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2194", value: "0x0A"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2195", value: "0x0B"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2196", value: "0x00"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2197", value: "0x01"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2198", value: "0x02"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2199", value: "0x03"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219A", value: "0x04"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219B", value: "0x05"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219C", value: "0x06"}
+      - {frame: 240, action: check_ppu_vram, address: "0x219D", value: "0x07"}
+      - {frame: 240, action: check_ppu_vram, address: "0x224F", value: "0x04"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2250", value: "0x05"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2251", value: "0x06"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2252", value: "0x07"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2253", value: "0x08"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2254", value: "0x09"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2255", value: "0x0A"}
+      - {frame: 240, action: check_ppu_vram, address: "0x2256", value: "0x0B"}
+      - {frame: 240, action: check_screen, hash: "0xFB89F4AE5942F390"}
+  - id: mapper.mmc5test_v2.a_toggles_obj_pattern
+    category: mapper
+    description: "Verifies the interactive MMC5 OBJ pattern-table toggle by pressing A in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 120, action: check_screen, hash: "0x53A59874D0D87DAD"}
+  - id: mapper.mmc5test_v2.b_toggles_bg_pattern
+    category: mapper
+    description: "Verifies the interactive MMC5 BG pattern-table toggle by pressing B in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 120, action: check_screen, hash: "0xEBBB6ABE1F2C89C0"}
+  - id: mapper.mmc5test_v2.select_toggles_exram
+    category: mapper
+    description: "Verifies the interactive MMC5 ExRAM toggle by pressing Select in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 120, action: check_screen, hash: "0xA0888990F605C6E0"}
+  - id: mapper.mmc5test_v2.up_toggles_fill_mode
+    category: mapper
+    description: "Verifies the interactive MMC5 fill-mode toggle by pressing Up in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 120, action: check_screen, hash: "0x7341B2D6266C0E60"}
+  - id: mapper.mmc5test_v2.left_changes_bank_order
+    category: mapper
+    description: "Verifies one alternate MMC5 CHR bank write order by pressing Left in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 120, action: check_screen, hash: "0x600034F3BBB91DEE"}
+  - id: mapper.mmc5test_v2.right_changes_bank_order
+    category: mapper
+    description: "Verifies another MMC5 CHR bank write order by pressing Right in the mmc5test_v2 ROM."
+    rom: nes-test-roms/mmc5test_v2/mmc5test.nes
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 31, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 120, action: check_screen, hash: "0x9DF1DCA0201397CA"}
+  - id: mapper.mmc5exram.executes_exram
+    category: mapper
+    description: "Verifies that the dedicated MMC5 ExRAM test can execute code from $5C00-$5FFF by checking raster-bar state that is updated from executable ExRAM."
+    rom: nes-test-roms/exram/mmc5exram.nes
+    events:
+      - {frame: 30, action: check_work_ram, address: "0x0004", value: "0x19"}
+      - {frame: 30, action: check_work_ram, address: "0x0005", value: "0x29"}
+      - {frame: 30, action: check_work_ram, address: "0x0006", value: "0x39"}
+      - {frame: 30, action: check_work_ram, address: "0x0007", value: "0x49"}
+      - {frame: 30, action: check_work_ram, address: "0x0008", value: "0x59"}
+      - {frame: 30, action: check_work_ram, address: "0x0009", value: "0x69"}
+      - {frame: 30, action: check_screen, hash: "0x5ED324908D3A418B"}
+  - id: input.allpads
+    category: input
+    description: "Detects connected controllers and exercises every single-button input on the allpads 1P NES controller screen."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 740, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xAE40EF92D46F8D2C"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 820, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0x89B23BB7D8147473"}
+      - {frame: 850, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 900, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x9F74892CD7043B34"}
+      - {frame: 930, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 980, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x248999E28E1A7F55"}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0x6689D7A2756A358D"}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0xBC1152DCBA196BA4"}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x5AACCD226A7BCE4F"}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0x2399A5BC3B8F0782"}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xEED8CABAF0708F84"}
+  - id: input.allpads.pad1_pairwise
+    category: input
+    description: "Exercises every pairwise simultaneous button combination on the allpads 1P NES controller screen."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 740, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 740, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xC92A1E9FFC0B76DB"}
+      - {frame: 770, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 770, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 820, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 820, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0xDFECAC04F31B399C"}
+      - {frame: 850, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 850, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 900, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 900, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x6411BCCAAA057DFD"}
+      - {frame: 930, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 930, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 980, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 980, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x2611F28A51753725"}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1010, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1060, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0xFC8977F49E06690C"}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1090, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1140, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x1A34E80A4E64CCE7"}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1170, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: A, state: pressed}
+      - {frame: 1220, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x630180941F90052A"}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: A, state: released}
+      - {frame: 1250, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1300, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0xF81E7821FF60C0C3"}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1330, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1380, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1380, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1400, action: check_screen, hash: "0x43E368EFA67E84A2"}
+      - {frame: 1410, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1410, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1430, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1460, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1460, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1480, action: check_screen, hash: "0x01E326AF5D0ECE7A"}
+      - {frame: 1490, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1490, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1510, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1540, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1540, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1560, action: check_screen, hash: "0xDB7BA3D1927D9053"}
+      - {frame: 1570, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1570, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1590, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1620, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1620, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 1640, action: check_screen, hash: "0x3DC63C2F421F35B8"}
+      - {frame: 1650, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1650, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 1670, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1700, action: standard_controller, pad: pad1, button: B, state: pressed}
+      - {frame: 1700, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 1720, action: check_screen, hash: "0x44F354B113EBFC75"}
+      - {frame: 1730, action: standard_controller, pad: pad1, button: B, state: released}
+      - {frame: 1730, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 1750, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1780, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1780, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 1800, action: check_screen, hash: "0x5525DA74A96ECBE5"}
+      - {frame: 1810, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1810, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 1830, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1860, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1860, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 1880, action: check_screen, hash: "0x17259434521E813D"}
+      - {frame: 1890, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1890, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 1910, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 1940, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 1940, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 1960, action: check_screen, hash: "0xCDBD114A9D6DDF14"}
+      - {frame: 1970, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 1970, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 1990, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2020, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 2020, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2040, action: check_screen, hash: "0x2B008EB44D0F7AFF"}
+      - {frame: 2050, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 2050, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2070, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2100, action: standard_controller, pad: pad1, button: SELECT, state: pressed}
+      - {frame: 2100, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2120, action: check_screen, hash: "0x5235E62A1CFBB332"}
+      - {frame: 2130, action: standard_controller, pad: pad1, button: SELECT, state: released}
+      - {frame: 2130, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2150, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2180, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2180, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2200, action: check_screen, hash: "0xACD884FA0B00C55C"}
+      - {frame: 2210, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2210, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2230, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2260, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2260, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2280, action: check_screen, hash: "0x76400184C4739B75"}
+      - {frame: 2290, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2290, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2310, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2340, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2340, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2360, action: check_screen, hash: "0x90FD9E7A14113E9E"}
+      - {frame: 2370, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2370, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2390, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2420, action: standard_controller, pad: pad1, button: START, state: pressed}
+      - {frame: 2420, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2440, action: check_screen, hash: "0xE9C8F6E445E5F753"}
+      - {frame: 2450, action: standard_controller, pad: pad1, button: START, state: released}
+      - {frame: 2450, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2470, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2500, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2500, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2520, action: check_screen, hash: "0x34404FC43F03D1AD"}
+      - {frame: 2530, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2530, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2550, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2580, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2580, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2600, action: check_screen, hash: "0xD2FDD03AEF617446"}
+      - {frame: 2610, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2610, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2630, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2660, action: standard_controller, pad: pad1, button: UP, state: pressed}
+      - {frame: 2660, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2680, action: check_screen, hash: "0xABC8B8A4BE95BD8B"}
+      - {frame: 2690, action: standard_controller, pad: pad1, button: UP, state: released}
+      - {frame: 2690, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2710, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2740, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2740, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2760, action: check_screen, hash: "0x0865554420122A6F"}
+      - {frame: 2770, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2770, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2790, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2820, action: standard_controller, pad: pad1, button: DOWN, state: pressed}
+      - {frame: 2820, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2840, action: check_screen, hash: "0x71503DDA71E6E3A2"}
+      - {frame: 2850, action: standard_controller, pad: pad1, button: DOWN, state: released}
+      - {frame: 2850, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2870, action: check_screen, hash: "0xEED8CABAF0708F84"}
+      - {frame: 2900, action: standard_controller, pad: pad1, button: LEFT, state: pressed}
+      - {frame: 2900, action: standard_controller, pad: pad1, button: RIGHT, state: pressed}
+      - {frame: 2920, action: check_screen, hash: "0x97EDA224A1844649"}
+      - {frame: 2930, action: standard_controller, pad: pad1, button: LEFT, state: released}
+      - {frame: 2930, action: standard_controller, pad: pad1, button: RIGHT, state: released}
+      - {frame: 2950, action: check_screen, hash: "0xEED8CABAF0708F84"}
+  - id: input.allpads.pad2
+    category: input
+    description: "Exercises every visible input on the allpads 2P Famicom Mic Controller screen, including the microphone."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 740, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0xEB0A0C1FF4CB5D3B"}
+      - {frame: 770, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 790, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 820, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0xCCF8D83AF8B0A464"}
+      - {frame: 850, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 870, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 900, action: microphone, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0xDA3E6AA1F7A0EB23"}
+      - {frame: 930, action: microphone, state: released}
+      - {frame: 950, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 980, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0x23C3342F55CEE59A"}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0xF95BB1519ABDBBB3"}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x1FE62EAF4ADF1E58"}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1220, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0x66D346311B2BD795"}
+      - {frame: 1250, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xAB922937D0D45F93"}
+  - id: input.allpads.pad2_pairwise
+    category: input
+    description: "Exercises every pairwise simultaneous input combination on the allpads 2P Famicom Mic Controller screen, including microphone combinations."
+    rom: tests/allpads.nes
+    events:
+      - {frame: 300, action: check_screen, hash: "0x75F04AED2B03ED88"}
+      - {frame: 620, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 621, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 700, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 740, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 740, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 760, action: check_screen, hash: "0x8C60FD12DCAFA6CC"}
+      - {frame: 770, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 770, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 790, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 820, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 820, action: microphone, state: pressed}
+      - {frame: 840, action: check_screen, hash: "0x9AA64F89D3BFE98B"}
+      - {frame: 850, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 850, action: microphone, state: released}
+      - {frame: 870, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 900, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 900, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 920, action: check_screen, hash: "0x635B110771D1E732"}
+      - {frame: 930, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 930, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 950, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 980, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 980, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1000, action: check_screen, hash: "0xB9C39479BEA2B91B"}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1010, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1030, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 1060, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1080, action: check_screen, hash: "0x5F7E0B876EC01CF0"}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1090, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1110, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: A, state: pressed}
+      - {frame: 1140, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1160, action: check_screen, hash: "0x264B63193F34D53D"}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: A, state: released}
+      - {frame: 1170, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1190, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1220, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1220, action: microphone, state: pressed}
+      - {frame: 1240, action: check_screen, hash: "0xBD549BACDFC410D4"}
+      - {frame: 1250, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1250, action: microphone, state: released}
+      - {frame: 1270, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1300, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1300, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1320, action: check_screen, hash: "0x44A9C5227DAA1E6D"}
+      - {frame: 1330, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1330, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1350, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1380, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1380, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1400, action: check_screen, hash: "0x9E31405CB2D94044"}
+      - {frame: 1410, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1410, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1430, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1460, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1460, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1480, action: check_screen, hash: "0x788CDFA262BBE5AF"}
+      - {frame: 1490, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1490, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1510, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1540, action: standard_controller, pad: pad2, button: B, state: pressed}
+      - {frame: 1540, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1560, action: check_screen, hash: "0x01B9B73C334F2C62"}
+      - {frame: 1570, action: standard_controller, pad: pad2, button: B, state: released}
+      - {frame: 1570, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1590, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1620, action: microphone, state: pressed}
+      - {frame: 1620, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1640, action: check_screen, hash: "0x526F77B972BA512A"}
+      - {frame: 1650, action: microphone, state: released}
+      - {frame: 1650, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1670, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1700, action: microphone, state: pressed}
+      - {frame: 1700, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1720, action: check_screen, hash: "0x88F7F2C7BDC90F03"}
+      - {frame: 1730, action: microphone, state: released}
+      - {frame: 1730, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1750, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1780, action: microphone, state: pressed}
+      - {frame: 1780, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 1800, action: check_screen, hash: "0x6E4A6D396DABAAE8"}
+      - {frame: 1810, action: microphone, state: released}
+      - {frame: 1810, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 1830, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1860, action: microphone, state: pressed}
+      - {frame: 1860, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 1880, action: check_screen, hash: "0x177F05A73C5F6325"}
+      - {frame: 1890, action: microphone, state: released}
+      - {frame: 1890, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 1910, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 1940, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 1940, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 1960, action: check_screen, hash: "0x710AAC491FA701BA"}
+      - {frame: 1970, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 1970, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 1990, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2020, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 2020, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2040, action: check_screen, hash: "0x97B733B7CFC5A451"}
+      - {frame: 2050, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 2050, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2070, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2100, action: standard_controller, pad: pad2, button: UP, state: pressed}
+      - {frame: 2100, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2120, action: check_screen, hash: "0xEE825B299E316D9C"}
+      - {frame: 2130, action: standard_controller, pad: pad2, button: UP, state: released}
+      - {frame: 2130, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2150, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2180, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 2180, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2200, action: check_screen, hash: "0x4D2FB6C900B6FA78"}
+      - {frame: 2210, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 2210, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2230, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2260, action: standard_controller, pad: pad2, button: DOWN, state: pressed}
+      - {frame: 2260, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2280, action: check_screen, hash: "0x341ADE57514233B5"}
+      - {frame: 2290, action: standard_controller, pad: pad2, button: DOWN, state: released}
+      - {frame: 2290, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2310, action: check_screen, hash: "0xAB922937D0D45F93"}
+      - {frame: 2340, action: standard_controller, pad: pad2, button: LEFT, state: pressed}
+      - {frame: 2340, action: standard_controller, pad: pad2, button: RIGHT, state: pressed}
+      - {frame: 2360, action: check_screen, hash: "0xD2A741A98120965E"}
+      - {frame: 2370, action: standard_controller, pad: pad2, button: LEFT, state: released}
+      - {frame: 2370, action: standard_controller, pad: pad2, button: RIGHT, state: released}
+      - {frame: 2390, action: check_screen, hash: "0xAB922937D0D45F93"}
+  - id: ppu.blargg_ppu_tests_2005.09.15b.palette_ram
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Palette RAM."
+    rom: nes-test-roms/blargg_ppu_tests_2005.09.15b/palette_ram.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: ppu.blargg_ppu_tests_2005.09.15b.power_up_palette
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Power Up Palette."
+    rom: nes-test-roms/blargg_ppu_tests_2005.09.15b/power_up_palette.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: ppu.blargg_ppu_tests_2005.09.15b.sprite_ram
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Sprite RAM."
+    rom: nes-test-roms/blargg_ppu_tests_2005.09.15b/sprite_ram.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: ppu.blargg_ppu_tests_2005.09.15b.vbl_clear_time
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: VBL Clear Time."
+    rom: nes-test-roms/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: ppu.blargg_ppu_tests_2005.09.15b.vram_access
+    category: ppu
+    description: "Covers miscellaneous PPU behaviors such as palette RAM, sprite RAM, VBL clear timing, and VRAM access. Case: Vram Access."
+    rom: nes-test-roms/blargg_ppu_tests_2005.09.15b/vram_access.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
+  - id: ppu.oam_read.oam_read
+    category: ppu
+    description: "Tests OAMDATA ($2004) reads at the current OAMADDR ($2003)."
+    rom: nes-test-roms/oam_read/oam_read.nes
+    events:
+      - {frame: 30, action: check_screen, hash: "0x09D034960D5BF704"}
+  - id: ppu.oam_stress.oam_stress
+    category: ppu
+    description: "Thoroughly tests OAMADDR and OAMDATA read/write behavior."
+    rom: nes-test-roms/oam_stress/oam_stress.nes
+    events:
+      - {frame: 1740, action: check_screen, hash: "0x865796B297C30C6B"}
+  - id: ppu.scanline
+    category: ppu
+    description: "Tests proper mid-scanline PPU write emulation."
+    rom: nes-test-roms/scanline/scanline.nes
+    events:
+      - {frame: 10, action: check_screen, hash: "0x95F204538D9E5A2C"}
+  - id: ppu.sprdma_and_dmc_dma
+    category: ppu
+    description: "Tests overlap timing between OAM DMA and DMC DMA, including the shorter 3-cycle overlap when the DMC fetch lands on a CPU write."
+    rom: nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes
+    events:
+      - {frame: 240, action: check_screen, hash: "0x33CE257CFBDBF85B"}
+  - id: ppu.sprdma_and_dmc_dma_512
+    category: ppu
+    description: "Tests the same OAM DMA and DMC DMA overlap cases with the DMC fetch delayed by 512 clocks."
+    rom: nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes
+    events:
+      - {frame: 240, action: check_screen, hash: "0x80A6C930703C69F5"}
+  - id: ppu.ppu_open_bus.ppu_open_bus
+    category: ppu
+    description: "Tests open-bus behavior on PPU registers."
+    rom: nes-test-roms/ppu_open_bus/ppu_open_bus.nes
+    events:
+      - {frame: 267, action: check_screen, hash: "0x0EB5F7F2316C5604"}
+  - id: ppu.ppu_read_buffer.test_ppu_read_buffer
+    category: ppu
+    description: "Tests the PPU $2007 read buffer."
+    rom: nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes
+    events:
+      - {frame: 1300, action: check_screen, hash: "0x3F039C4760B0C27D"}
+  - id: ppu.ppu_sprite_hit.ppu_sprite_hit
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Combined sprite 0 hit suite."
+    rom: ppu/ppu_sprite_hit/ppu_sprite_hit.nes
+    events:
+      - {frame: 800, action: check_screen, hash: "0xEB57E16978E45540"}
+  - id: ppu.ppu_sprite_hit.rom_singles.01-basics
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Basics."
+    rom: ppu/ppu_sprite_hit/rom_singles/01-basics.nes
+    events:
+      - {frame: 60, action: check_screen, hash: "0x10C127D09E7F0585"}
+  - id: ppu.ppu_sprite_hit.rom_singles.02-alignment
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Alignment."
+    rom: ppu/ppu_sprite_hit/rom_singles/02-alignment.nes
+    events:
+      - {frame: 85, action: check_screen, hash: "0xB28839BADFF75598"}
+  - id: ppu.ppu_sprite_hit.rom_singles.03-corners
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Corners."
+    rom: ppu/ppu_sprite_hit/rom_singles/03-corners.nes
+    events:
+      - {frame: 55, action: check_screen, hash: "0xA01EC12CBB5BAA86"}
+  - id: ppu.ppu_sprite_hit.rom_singles.04-flip
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Flip."
+    rom: ppu/ppu_sprite_hit/rom_singles/04-flip.nes
+    events:
+      - {frame: 40, action: check_screen, hash: "0x27480614E2616F04"}
+  - id: ppu.ppu_sprite_hit.rom_singles.05-left_clip
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Left Clip."
+    rom: ppu/ppu_sprite_hit/rom_singles/05-left_clip.nes
+    events:
+      - {frame: 52, action: check_screen, hash: "0xDAF2913B574DEFED"}
+  - id: ppu.ppu_sprite_hit.rom_singles.06-right_edge
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Right Edge."
+    rom: ppu/ppu_sprite_hit/rom_singles/06-right_edge.nes
+    events:
+      - {frame: 45, action: check_screen, hash: "0xB453214D284BA5DE"}
+  - id: ppu.ppu_sprite_hit.rom_singles.07-screen_bottom
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Screen Bottom."
+    rom: ppu/ppu_sprite_hit/rom_singles/07-screen_bottom.nes
+    events:
+      - {frame: 50, action: check_screen, hash: "0xC6F894DB61A5E7C4"}
+  - id: ppu.ppu_sprite_hit.rom_singles.08-double_height
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Double Height."
+    rom: ppu/ppu_sprite_hit/rom_singles/08-double_height.nes
+    events:
+      - {frame: 40, action: check_screen, hash: "0x7336D45B93EF0C23"}
+  - id: ppu.ppu_sprite_hit.rom_singles.09-timing
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Timing."
+    rom: ppu/ppu_sprite_hit/rom_singles/09-timing.nes
+    events:
+      - {frame: 200, action: check_screen, hash: "0xC3F209137CAA75E2"}
+  - id: ppu.ppu_sprite_hit.rom_singles.10-timing_order
+    category: ppu
+    description: "Tests sprite 0 hit behavior and timing. Case: Timing Order."
+    rom: ppu/ppu_sprite_hit/rom_singles/10-timing_order.nes
+    events:
+      - {frame: 90, action: check_screen, hash: "0x7B948A10ACE70AD0"}
+  - id: ppu.ppu_sprite_overflow.ppu_sprite_overflow
+    category: ppu
+    description: "Tests sprite overflow behavior and timing."
+    rom: ppu/ppu_sprite_overflow/ppu_sprite_overflow.nes
+    events:
+      - {frame: 480, action: check_screen, hash: "0x9026DAD65555ECA0"}
+  - id: ppu.vbl_nmi
+    category: ppu
+    description: "Tests the NTSC PPU VBL flag, NMI enable, and NMI timing to PPU-clock accuracy."
+    rom: nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
+    perf: true
+    expected_audio:
+      sample_rate: 192000
+      samples: 5239142
+      hash: "0x2E612CB2A8E580BD"
+    events:
+      - {frame: 1640, action: check_screen, hash: "0xEB57E16978E45540"}
+  - id: ppu.sprite_hit_tests_2005.10.05.01.basics
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Basics."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes
+    events:
+      - {frame: 36, action: check_screen, hash: "0xB6B8D4F4C83C2F3A"}
+  - id: ppu.sprite_hit_tests_2005.10.05.02.alignment
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Alignment."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/02.alignment.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0xDED8BAE9675ECFFC"}
+  - id: ppu.sprite_hit_tests_2005.10.05.03.corners
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Corners."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/03.corners.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0x299F099E767A7FBC"}
+  - id: ppu.sprite_hit_tests_2005.10.05.04.flip
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Flip."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/04.flip.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0xEA13722405663737"}
+  - id: ppu.sprite_hit_tests_2005.10.05.05.left_clip
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Left Clip."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/05.left_clip.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0xCA3F0DFC6A85445F"}
+  - id: ppu.sprite_hit_tests_2005.10.05.06.right_edge
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Right Edge."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/06.right_edge.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0x36BE2A768F7651FB"}
+  - id: ppu.sprite_hit_tests_2005.10.05.07.screen_bottom
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Screen Bottom."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0xF5612439038423A9"}
+  - id: ppu.sprite_hit_tests_2005.10.05.08.double_height
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Double Height."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/08.double_height.nes
+    events:
+      - {frame: 34, action: check_screen, hash: "0xD124539B482668D5"}
+  - id: ppu.sprite_hit_tests_2005.10.05.09.timing_basics
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Timing Basics."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes
+    events:
+      - {frame: 80, action: check_screen, hash: "0xB71D1F7A8C2BED67"}
+  - id: ppu.sprite_hit_tests_2005.10.05.10.timing_order
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Timing Order."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/10.timing_order.nes
+    events:
+      - {frame: 60, action: check_screen, hash: "0x35700A9026341B07"}
+  - id: ppu.sprite_hit_tests_2005.10.05.11.edge_timing
+    category: ppu
+    description: "Runs the older sprite 0 hit behavior and timing suite. Case: Edge Timing."
+    rom: nes-test-roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes
+    events:
+      - {frame: 80, action: check_screen, hash: "0x5ECA913BB9982F14"}
+  - id: ppu.sprite_overflow_tests.1.Basics
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Basics."
+    rom: nes-test-roms/sprite_overflow_tests/1.Basics.nes
+    events:
+      - {frame: 36, action: check_screen, hash: "0x50A5A002EEA2256E"}
+  - id: ppu.sprite_overflow_tests.2.Details
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Details."
+    rom: nes-test-roms/sprite_overflow_tests/2.Details.nes
+    events:
+      - {frame: 36, action: check_screen, hash: "0xFAFB3F12716BD507"}
+  - id: ppu.sprite_overflow_tests.3.Timing
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Timing."
+    rom: nes-test-roms/sprite_overflow_tests/3.Timing.nes
+    events:
+      - {frame: 130, action: check_screen, hash: "0xF324957B1A6A158E"}
+  - id: ppu.sprite_overflow_tests.4.Obscure
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Obscure."
+    rom: nes-test-roms/sprite_overflow_tests/4.Obscure.nes
+    events:
+      - {frame: 36, action: check_screen, hash: "0xDF355FCAEA6D930E"}
+  - id: ppu.sprite_overflow_tests.5.Emulator
+    category: ppu
+    description: "Runs the older sprite overflow behavior and timing suite. Case: Emulator."
+    rom: nes-test-roms/sprite_overflow_tests/5.Emulator.nes
+    events:
+      - {frame: 36, action: check_screen, hash: "0x3FC68EEE283CE2C3"}
+  - id: ppu.vbl_nmi_timing.1.frame_basics
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: Frame Basics."
+    rom: nes-test-roms/vbl_nmi_timing/1.frame_basics.nes
+    events:
+      - {frame: 198, action: check_screen, hash: "0x1731EB1B8C091E47"}
+  - id: ppu.vbl_nmi_timing.2.vbl_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: VBL Timing."
+    rom: nes-test-roms/vbl_nmi_timing/2.vbl_timing.nes
+    events:
+      - {frame: 179, action: check_screen, hash: "0xE51D5454497CBFDB"}
+  - id: ppu.vbl_nmi_timing.3.even_odd_frames
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: Even Odd Frames."
+    rom: nes-test-roms/vbl_nmi_timing/3.even_odd_frames.nes
+    events:
+      - {frame: 124, action: check_screen, hash: "0x537008D7E0C3FF45"}
+  - id: ppu.vbl_nmi_timing.4.vbl_clear_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: VBL Clear Timing."
+    rom: nes-test-roms/vbl_nmi_timing/4.vbl_clear_timing.nes
+    events:
+      - {frame: 140, action: check_screen, hash: "0x7E5D5B53E1C2703F"}
+  - id: ppu.vbl_nmi_timing.5.nmi_suppression
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Suppression."
+    rom: nes-test-roms/vbl_nmi_timing/5.nmi_suppression.nes
+    events:
+      - {frame: 187, action: check_screen, hash: "0xAC7573AA9EE324C0"}
+  - id: ppu.vbl_nmi_timing.6.nmi_disable
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Disable."
+    rom: nes-test-roms/vbl_nmi_timing/6.nmi_disable.nes
+    events:
+      - {frame: 133, action: check_screen, hash: "0xC5509E44ABF95C7D"}
+  - id: ppu.vbl_nmi_timing.7.nmi_timing
+    category: ppu
+    description: "Runs the older VBL and NMI timing suite related to ppu_vbl_nmi. Case: NMI Timing."
+    rom: nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
+    events:
+      - {frame: 140, action: check_screen, hash: "0x47D4DAE682D8F8D0"}

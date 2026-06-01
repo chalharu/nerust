@@ -1,0 +1,26 @@
+[package]
+name = "nerust_rom_test"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+crc.workspace = true
+nerust_cartridge_data.workspace = true
+nerust_contract_options.workspace = true
+nerust_core.workspace = true
+nerust_input_nes.workspace = true
+nerust_input_nes_runtime.workspace = true
+nerust_screen_buffer.workspace = true
+nerust_screen_filter.workspace = true
+nerust_screen_logical.workspace = true
+nerust_screen_video.workspace = true
+nerust_sound_traits.workspace = true
+png.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
