@@ -90,6 +90,12 @@ jobs:
             release)
               tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
               ;;
+            workflow_call)
+              tag_name="${INPUT_TAG_NAME:-${GITHUB_REF_NAME}}"
+              ;;
+            push)
+              tag_name="${INPUT_TAG_NAME:-${GITHUB_REF_NAME}}"
+              ;;
             workflow_dispatch)
               tag_name="${INPUT_TAG_NAME:-}"
               ;;
