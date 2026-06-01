@@ -61,3 +61,12 @@ jobs:
             exit 0
           fi
           gh release create "${TAG_NAME}" --target "${GITHUB_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md --draft
+  release-artifacts:
+    name: Release artifacts
+    needs: [publish]
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      publish_release: true
+      ref: ${{ github.sha }}
+      tag_name: ${{ github.ref_name }}
+    secrets: inherit
