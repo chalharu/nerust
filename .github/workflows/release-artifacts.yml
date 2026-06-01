@@ -129,6 +129,10 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Update Cargo.toml version
+        run: |
+          cp Cargo.toml Cargo.toml.bak
+          sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -159,6 +163,8 @@ jobs:
         run: |
           chmod +x packaging/linux/package.sh
           packaging/linux/package.sh x86_64
+      - name: Restore Cargo.toml
+        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -187,6 +193,10 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Update Cargo.toml version
+        run: |
+          cp Cargo.toml Cargo.toml.bak
+          sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -217,6 +227,8 @@ jobs:
         run: |
           chmod +x packaging/linux/package.sh
           packaging/linux/package.sh aarch64
+      - name: Restore Cargo.toml
+        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -245,6 +257,10 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Update Cargo.toml version
+        run: |
+          cp Cargo.toml Cargo.toml.bak
+          sed -i '' 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -270,6 +286,8 @@ jobs:
         run: |
           chmod +x packaging/macos/build-app.sh
           packaging/macos/build-app.sh
+      - name: Restore Cargo.toml
+        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -298,6 +316,10 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Update Cargo.toml version
+        run: |
+          cp Cargo.toml Cargo.toml.bak
+          sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
@@ -344,6 +366,8 @@ jobs:
         run: |
           chmod +x packaging/android/package.sh packaging/android/gradlew
           packaging/android/package.sh
+      - name: Restore Cargo.toml
+        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
