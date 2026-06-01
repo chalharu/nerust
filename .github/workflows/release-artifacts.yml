@@ -81,14 +81,17 @@ jobs:
             done < <(git diff --name-only "${PR_BASE_SHA}...${PR_HEAD_SHA}")
           fi
 
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
           if [[ "${should_run}" != "true" ]]; then
+            {
+              printf 'should_run=%s\n' "${should_run}"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           version=""
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
+          output_lines=("should_run=${should_run}")
 
           if [[ -n "${INPUT_VERSION}" ]]; then
             version="${INPUT_VERSION}"
@@ -123,12 +126,12 @@ jobs:
           if [[ -z "${version}" ]]; then
             mapfile -t release_meta < <(bash packaging/release/release_flow.sh workspace-metadata)
             for line in "${release_meta[@]}"; do
-              echo "${line}" >> "$GITHUB_OUTPUT"
               case "${line}" in
                 version=*)
                   version="${line#version=}"
                   ;;
               esac
+              output_lines+=("${line}")
             done
           fi
 
@@ -147,8 +150,15 @@ jobs:
             esac
           fi
 
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
-          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+          output_lines+=(
+            "checkout_ref=${checkout_ref}"
+            "version=${version}"
+            "tag_name=${tag_name}"
+          )
+
+          {
+            printf '%s\n' "${output_lines[@]}"
+          } >> "$GITHUB_OUTPUT"
   linux-x86_64:
     name: Linux x86_64
     needs: [prepare-context]
