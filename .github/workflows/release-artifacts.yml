@@ -69,7 +69,7 @@ jobs:
             should_run=false
             while IFS= read -r path; do
               case "${path}" in
-                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|CHANGELOG.md|README.md|LICENSE|renovate.json)
+                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|README.md|LICENSE|renovate.json)
                   should_run=true
                   break
                   ;;

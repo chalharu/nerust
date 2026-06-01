@@ -5,8 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CARGO_TOML="${WORKSPACE_ROOT}/Cargo.toml"
-CHANGELOG="${WORKSPACE_ROOT}/CHANGELOG.md"
-REPOSITORY_URL="https://github.com/chalharu/nerust"
 
 git_root() {
     git -C "${WORKSPACE_ROOT}" "$@"
@@ -294,7 +292,7 @@ patch_only_since() {
     while IFS= read -r path; do
         [[ -z "${path}" ]] && continue
         case "${path}" in
-            CHANGELOG.md|Cargo.lock|README.md|deny.toml|renovate.json)
+            Cargo.lock|README.md|deny.toml|renovate.json)
                 continue
                 ;;
             .github/*|packaging/*)
@@ -385,108 +383,6 @@ replace_workspace_version() {
     mv "${temp_file}" "${CARGO_TOML}"
 }
 
-ensure_changelog() {
-    local version="$1"
-    local base_tag="$2"
-    local today version_tag release_link
-    local before_links_temp rewritten_temp
-    local -a ordered_links=()
-    local -A seen_links=()
-    local line name url
-
-    if ! grep -Eq "^## \\[${version//./\\.}\\] - " "${CHANGELOG}"; then
-        if ! grep -Fxq "## [Unreleased]" "${CHANGELOG}"; then
-            echo "CHANGELOG.md is missing the Unreleased section" >&2
-            exit 1
-        fi
-
-        today="$(date +%F)"
-        rewritten_temp="$(mktemp)"
-        awk -v version="${version}" -v today="${today}" '
-            {
-                print
-                if (!inserted && $0 == "## [Unreleased]") {
-                    print ""
-                    print "## [" version "] - " today
-                    print ""
-                    print "### Changed"
-                    print ""
-                    # generate changes from git log between base_tag and version_tag
-                    cmd = ""
-                    if (ENVIRON["BASE_TAG"] != "") {
-                        cmd = "git -C \"${WORKSPACE_ROOT}\" log --pretty=format:'- %s' \"" ENVIRON["BASE_TAG"] ".." ENVIRON["VERSION_TAG"] "\""
-                    } else {
-                        cmd = "git -C \"${WORKSPACE_ROOT}\" log --pretty=format:'- %s' \"" ENVIRON["VERSION_TAG"] "\""
-                    }
-                    changes = ""
-                    n = 0
-                    while ((cmd | getline line) > 0) {
-                        print line
-                        n++
-                    }
-                    close(cmd)
-                    if (n == 0) {
-                        print "- TODO: summarize the release changes."
-                    }
-                    print ""
-                    inserted = 1
-                }
-            }
-        ' "${CHANGELOG}" > "${rewritten_temp}"
-        mv "${rewritten_temp}" "${CHANGELOG}"
-    fi
-
-    if ! grep -Fxq "<!-- next-url -->" "${CHANGELOG}"; then
-        echo "CHANGELOG.md is missing the next-url marker" >&2
-        exit 1
-    fi
-
-    version_tag="v${version}"
-    if [[ -n "${base_tag}" ]]; then
-        release_link="${REPOSITORY_URL}/compare/${base_tag}...${version_tag}"
-    else
-        release_link="${REPOSITORY_URL}/releases/tag/${version_tag}"
-    fi
-
-    ordered_links+=("Unreleased|${REPOSITORY_URL}/compare/${version_tag}...HEAD")
-    ordered_links+=("${version}|${release_link}")
-    seen_links["Unreleased"]=1
-    seen_links["${version}"]=1
-
-    while IFS= read -r line; do
-        if [[ "${line}" =~ ^\[([^]]+)\]:[[:space:]]*(.+)$ ]]; then
-            name="${BASH_REMATCH[1]}"
-            url="${BASH_REMATCH[2]}"
-            if [[ -z "${seen_links[${name}]+x}" ]]; then
-                ordered_links+=("${name}|${url}")
-                seen_links["${name}"]=1
-            fi
-        fi
-    done < <(awk 'found { print } $0 == "<!-- next-url -->" { found = 1 }' "${CHANGELOG}" | tail -n +2)
-
-    before_links_temp="$(mktemp)"
-    awk '
-        {
-            print
-            if ($0 == "<!-- next-url -->") {
-                exit
-            }
-        }
-    ' "${CHANGELOG}" > "${before_links_temp}"
-
-    rewritten_temp="$(mktemp)"
-    {
-        cat "${before_links_temp}"
-        for line in "${ordered_links[@]}"; do
-            IFS='|' read -r name url <<< "${line}"
-            printf '[%s]: %s\n' "${name}" "${url}"
-        done
-    } > "${rewritten_temp}"
-
-    mv "${rewritten_temp}" "${CHANGELOG}"
-    rm -f "${before_links_temp}"
-}
-
 compute_next_version() {
     local declared major base_version base_major base_minor base_patch
 
@@ -539,7 +435,6 @@ command_next_version() {
 command_prepare_candidate() {
     compute_next_version
     replace_workspace_version "${NEXT_VERSION}"
-    ensure_changelog "${NEXT_VERSION}" "${BASE_TAG}"
     print_metadata \
         version "${NEXT_VERSION}" \
         tag_name "v${NEXT_VERSION}" \
@@ -579,21 +474,16 @@ command_release_notes() {
     local notes
     notes=$(git -C "${WORKSPACE_ROOT}" log --pretty=format:'- %s (%h)' "${range}" 2>/dev/null || true)
 
-    if [[ -z "${notes//[$'	
- ']}" ]]; then
+    if [[ -z "${notes//[$'\t\r\n ']}" ]]; then
         notes="- No changes recorded."
     fi
 
+    local rendered
+    rendered="$(printf '## %s changes\n\n%s\n' "${version_tag}" "${notes}")"
     if [[ -n "${output}" ]]; then
-        printf "## %s changes
-
-%s
-" "${version_tag}" "${notes}" > "${output}"
+        printf '%s' "${rendered}" > "${output}"
     else
-        printf "## %s changes
-
-%s
-" "${version_tag}" "${notes}"
+        printf '%s' "${rendered}"
     fi
 }
 

@@ -38,10 +38,10 @@ jobs:
         env:
           VERSION: ${{ steps.release_meta.outputs.version }}
         run: |
-          if git diff --quiet -- Cargo.toml CHANGELOG.md; then
+          if git diff --quiet -- Cargo.toml; then
             exit 0
           fi
-          git add Cargo.toml CHANGELOG.md
+          git add Cargo.toml
           git commit -m "chore(release): prepare v${VERSION}"
       - name: Push release candidate branch
         run: |
