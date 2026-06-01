@@ -35,12 +35,8 @@ build-health but is not a release artifact.
 
 Releases are prepared from `master`.
 
-1. Run the **Prepare release candidate** workflow from `master`.
-2. The workflow refreshes the `release-candidate` branch, updates the release
-   version in `Cargo.toml`, and opens or updates a PR into `master`.
-3. Merging that PR into `master` creates the `vX.Y.Z` tag and draft GitHub
-   Release.
-4. The **Release artifacts** workflow uploads the release assets and then
+1. Tag the release commit as `vX.Y.Z`.
+2. The **Release artifacts** workflow uploads the release assets and then
    publishes the release.
 
 The **Release artifacts** workflow also validates artifact creation for PRs into
@@ -57,10 +53,7 @@ The automation reads the major version from `[workspace.package].version` in
 
 If there is no existing tag for the current major, the declared
 `[workspace.package].version` becomes the release version. The workflows use
-the built-in `GITHUB_TOKEN` for branch, release, and PR updates. Because GitHub
-marks automation-created pull request workflows as approval-required when they
-come from `GITHUB_TOKEN`, release-candidate PR checks may need an explicit
-**Approve workflows to run** action in the PR UI.
+the built-in `GITHUB_TOKEN` for release and PR updates.
 Android signing uses `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY`. If the
 private key is encrypted, also set `ANDROID_PRIVATE_KEY_PASSWORD`.
 
