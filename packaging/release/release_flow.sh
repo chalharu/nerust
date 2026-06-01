@@ -487,56 +487,6 @@ ensure_changelog() {
     rm -f "${before_links_temp}"
 }
 
-extract_release_notes() {
-    local version="$1"
-    local notes
-
-    notes="$(awk -v version="${version}" '
-        $0 ~ "^## \\[" version "\\] - " {
-            capture = 1
-            found = 1
-            next
-        }
-        capture && ($0 ~ "^## \\[" || $0 == "<!-- next-url -->") {
-            capture = 0
-            exit
-        }
-        capture {
-            print
-        }
-        END {
-            if (!found) {
-                exit 2
-            }
-        }
-    ' "${CHANGELOG}")" || {
-        echo "CHANGELOG.md is missing the ${version} section" >&2
-        exit 1
-    }
-
-    if [[ -z "${notes//[$'\t\r\n ']}" ]]; then
-        echo "CHANGELOG.md has no notes for ${version}" >&2
-        exit 1
-    fi
-
-    printf '%s\n' "${notes}" | awk '
-        {
-            lines[++line_count] = $0
-            if ($0 ~ /[^[:space:]]/) {
-                if (!first_nonblank) {
-                    first_nonblank = line_count
-                }
-                last_nonblank = line_count
-            }
-        }
-        END {
-            for (line_number = first_nonblank; line_number <= last_nonblank; line_number++) {
-                print lines[line_number]
-            }
-        }
-    '
-}
-
 compute_next_version() {
     local declared major base_version base_major base_minor base_patch
 
