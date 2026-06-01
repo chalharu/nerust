@@ -615,10 +615,33 @@ command_release_notes() {
         esac
     done
 
-    if [[ -n "${output}" ]]; then
-        extract_release_notes "${version}" > "${output}"
+    local version_tag
+    local prev_tag
+    version_tag="v${version}"
+
+    # find the most recent previous semantic tag (vMAJOR.MINOR.PATCH) excluding the current tag
+    prev_tag="$(git -C "${WORKSPACE_ROOT}" for-each-ref --sort=-creatordate --format='%(refname:strip=2)' refs/tags | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${version_tag}$" | head -n 1 || true)"
+
+    local range
+    if [[ -n "${prev_tag}" ]]; then
+        range="${prev_tag}..${version_tag}"
     else
-        extract_release_notes "${version}"
+        # If there's no previous tag, limit to the tag itself (commits reachable from the tag)
+        range="${version_tag}"
+    fi
+
+    local notes
+    # produce bullet list from git log subjects; include short sha
+    notes="$(git -C "${WORKSPACE_ROOT}" log --pretty=format:'- %s (%h)' ${range} 2>/dev/null || true)"
+
+    if [[ -z "${notes//[$'\t\r\n ']}" ]]; then
+        notes="- No changes recorded."
+    fi
+
+    if [[ -n "${output}" ]]; then
+        printf "## %s changes\n\n%s\n" "${version_tag}" "${notes}" > "${output}"
+    else
+        printf "## %s changes\n\n%s\n" "${version_tag}" "${notes}"
     fi
 }
 
