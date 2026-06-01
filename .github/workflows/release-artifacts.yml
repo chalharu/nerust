@@ -69,7 +69,7 @@ jobs:
             should_run=false
             while IFS= read -r path; do
               case "${path}" in
-                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|CHANGELOG.md|README.md|LICENSE|renovate.json)
+                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|README.md|LICENSE|renovate.json)
                   should_run=true
                   break
                   ;;
@@ -83,19 +83,29 @@ jobs:
           fi
 
           version=""
-          tag_name=""
-
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
 
-          # Try to extract version from a release tag like vMAJOR.MINOR.PATCH
-          if [[ -n "${tag_name}" ]]; then
-            if [[ "${tag_name}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-              version="${BASH_REMATCH[1]}"
-            fi
+          case "${EVENT_NAME}" in
+            release)
+              tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
+              ;;
+            workflow_dispatch)
+              tag_name="${INPUT_TAG_NAME:-}"
+              ;;
+            pull_request)
+              tag_name=""
+              ;;
+            *)
+              echo "unexpected event type: ${EVENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -n "${tag_name}" && "${tag_name}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
           fi
 
-          # If version couldn't be determined from tag, fallback to metadata generation
           if [[ -z "${version}" ]]; then
             mapfile -t release_meta < <(bash packaging/release/release_flow.sh workspace-metadata)
             for line in "${release_meta[@]}"; do
@@ -108,17 +118,20 @@ jobs:
             done
           fi
 
-          case "${EVENT_NAME}" in
-            workflow_dispatch)
-              tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
-              ;;
-            pull_request)
-              tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
-              ;;
-            release)
-              tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
-              ;;
-          esac
+          if [[ -z "${tag_name}" ]]; then
+            case "${EVENT_NAME}" in
+              workflow_dispatch)
+                tag_name="v${version}-validate-manual-${short_sha}"
+                ;;
+              pull_request)
+                tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
+                ;;
+              *)
+                echo "unexpected event type: ${EVENT_NAME}" >&2
+                exit 1
+                ;;
+            esac
+          fi
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
@@ -444,7 +457,7 @@ jobs:
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
           if-no-files-found: error
   publish-assets:
-    if: ${{ github.event_name == 'release' }}
+    if: ${{ github.event_name == 'release' || inputs.publish_release }}
     name: Publish release assets
     needs: [assemble-assets, prepare-context]
     runs-on: ubuntu-latest
@@ -500,7 +513,7 @@ jobs:
           fi
           gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
   publish-release:
-    if: ${{ github.event_name == 'release' }}
+    if: ${{ github.event_name == 'release' || inputs.publish_release }}
     name: Publish GitHub release
     needs: [publish-assets, prepare-context]
     runs-on: ubuntu-latest
