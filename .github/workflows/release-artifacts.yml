@@ -88,23 +88,6 @@ jobs:
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
 
-          # Determine tag_name from event or input when available
-          case "${EVENT_NAME}" in
-            release)
-              tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
-              ;;
-            workflow_dispatch)
-              tag_name="${INPUT_TAG_NAME:-}"
-              ;;
-            pull_request)
-              tag_name=""
-              ;;
-            *)
-              echo "unexpected event type: ${EVENT_NAME}" >&2
-              exit 1
-              ;;
-          esac
-
           # Try to extract version from a release tag like vMAJOR.MINOR.PATCH
           if [[ -n "${tag_name}" ]]; then
             if [[ "${tag_name}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
@@ -123,19 +106,19 @@ jobs:
                   ;;
               esac
             done
-
-            case "${EVENT_NAME}" in
-              workflow_dispatch)
-                tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
-                ;;
-              pull_request)
-                tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
-                ;;
-              release)
-                tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
-                ;;
-            esac
           fi
+
+          case "${EVENT_NAME}" in
+            workflow_dispatch)
+              tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
+              ;;
+            pull_request)
+              tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
+              ;;
+            release)
+              tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
+              ;;
+          esac
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
