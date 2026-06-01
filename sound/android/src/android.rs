@@ -7,9 +7,9 @@
 //! CPAL-based `AndroidSound` implementation, compiled only on Android.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
-use nerust_soundfilter::{Filter, NesFilter};
+use nerust_soundfilter::{Filter, NesFilter, SnesFilter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -32,13 +32,13 @@ pub struct AndroidSound {
     playing: Arc<AtomicBool>,
     /// Request that the callback discard any queued samples before resuming.
     needs_clear: Arc<AtomicBool>,
-    /// NES-specific audio filter chain (low-pass + two high-pass stages).
-    filter: NesFilter,
+    /// Audio filter chain (Nes/Snes).
+    filter: AndroidFilter,
     /// Master volume/mute gain in `[0.0, 1.0]`.
     gain: f32,
-    /// Resampler from the NES source rate to the device playback rate.
+    /// Resampler from the source rate to the device playback rate.
     resampler: SimpleDownSampler,
-    /// Effective source sample rate returned to the NES core.
+    /// Effective source sample rate returned to the core.
     source_sample_rate: u32,
 }
 
@@ -50,6 +50,29 @@ pub struct AndroidSound {
 // touches the callback-owned receiver and atomics captured by the closure, not
 // the Rust `cpal::Stream` wrapper after the transfer.
 unsafe impl Send for AndroidSound {}
+
+enum AndroidFilter {
+    Nes(NesFilter),
+    Snes(SnesFilter),
+}
+
+impl AndroidFilter {
+    fn new(profile: AudioFilterProfile, sample_rate: f32) -> Self {
+        match profile {
+            AudioFilterProfile::Nes => Self::Nes(NesFilter::new(sample_rate)),
+            AudioFilterProfile::Snes => Self::Snes(SnesFilter::new(sample_rate)),
+        }
+    }
+}
+
+impl Filter for AndroidFilter {
+    fn step(&mut self, data: f32) -> f32 {
+        match self {
+            Self::Nes(filter) => filter.step(data),
+            Self::Snes(filter) => filter.step(data),
+        }
+    }
+}
 
 impl AndroidSound {
     /// Create an `AndroidSound` backend.
@@ -63,11 +86,12 @@ impl AndroidSound {
     /// Returns `Err` (with a descriptive message) if the audio device or stream
     /// cannot be opened.  Callers must surface this error rather than falling
     /// back silently.
-    pub fn with_gain(
+    pub fn with_gain_and_filter(
         requested_playback_sample_rate: i32,
         latency_ms: u16,
-        output_rate: i32,
+        source_sample_rate: i32,
         gain: f32,
+        filter_profile: AudioFilterProfile,
     ) -> Result<Self, String> {
         let host = cpal::default_host();
 
@@ -90,16 +114,17 @@ impl AndroidSound {
         let playing = Arc::new(AtomicBool::new(false));
         let needs_clear = Arc::new(AtomicBool::new(true));
 
-        let output_rate_u32 = u32::try_from(output_rate)
-            .map_err(|_| format!("output_rate must be non-negative, got {output_rate}"))?;
+        let requested_source_rate_u32 = u32::try_from(source_sample_rate).map_err(|_| {
+            format!("source_sample_rate must be non-negative, got {source_sample_rate}")
+        })?;
 
         // Cap the source rate to at most OVERSAMPLE_FACTOR × the playback rate
         // to bound the amount of work done by the resampler.
-        let source_sample_rate = output_rate_u32
+        let effective_source_sample_rate = requested_source_rate_u32
             .min(playback_sample_rate.saturating_mul(OVERSAMPLE_FACTOR))
             .max(playback_sample_rate);
 
-        let filter = NesFilter::new(playback_sample_rate as f32);
+        let filter = AndroidFilter::new(filter_profile, playback_sample_rate as f32);
         let mut stream_config = supported_config.config();
         stream_config.sample_rate = playback_sample_rate;
         let configured_buffer_size =
@@ -139,7 +164,7 @@ impl AndroidSound {
                         while data_receiver.try_recv().is_ok() {}
                     }
                     let playing = callback_playing.load(Ordering::Acquire);
-                    // Interleave the mono NES audio across all device channels.
+                    // Interleave the mono audio across all device channels.
                     for frame in output.chunks_mut(channels as usize) {
                         let sample = if playing {
                             data_receiver.try_recv().unwrap_or(0.0)
@@ -164,11 +189,27 @@ impl AndroidSound {
             filter,
             gain,
             resampler: SimpleDownSampler::new(
-                f64::from(source_sample_rate),
+                f64::from(effective_source_sample_rate),
                 f64::from(playback_sample_rate),
             ),
-            source_sample_rate,
+            source_sample_rate: effective_source_sample_rate,
         })
+    }
+
+    pub fn with_gain(
+        requested_playback_sample_rate: i32,
+        latency_ms: u16,
+        output_rate: i32,
+        gain: f32,
+    ) -> Result<Self, String> {
+        // Backwards-compatible wrapper: default to NES profile
+        Self::with_gain_and_filter(
+            requested_playback_sample_rate,
+            latency_ms,
+            output_rate,
+            gain,
+            AudioFilterProfile::Nes,
+        )
     }
 }
 
