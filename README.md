@@ -33,25 +33,21 @@ build-health but is not a release artifact.
 
 ## Release workflow
 
-Releases are prepared through the long-lived `release` branch.
+Releases are prepared from `master`.
 
-1. Create the `release` branch once before the first release candidate.
-2. Run the **Prepare release candidate** workflow from `master`.
-3. The workflow refreshes the `release-candidate` branch, updates the release
+1. Run the **Prepare release candidate** workflow from `master`.
+2. The workflow refreshes the `release-candidate` branch, updates the release
    version in `Cargo.toml`, ensures the matching `CHANGELOG.md` section exists,
-   and opens or updates a PR into `release`.
-4. The PR to `release` publishes versioned workflow artifacts so the exact
-   binaries can be reviewed before release.
-   The release metadata logic lives in `packaging/release/release_flow.sh`.
-5. Merging that PR into `release` creates the `vX.Y.Z` tag and GitHub Release.
-6. The automation then opens a follow-up PR from `release` back to `master` so
-   the released version and changelog stay in sync.
-7. Merge that sync PR before preparing the next release candidate.
+   and opens or updates a PR into `master`.
+3. Merging that PR into `master` creates the `vX.Y.Z` tag and draft GitHub
+   Release.
+4. The **Release artifacts** workflow uploads the release assets and then
+   publishes the release.
 
 The **Release artifacts** workflow also validates artifact creation for PRs into
 `master` when release automation, workflow, packaging, or artifact-input files
 change. Those runs build the same artifacts with a validation-only tag suffix
-and never publish assets or open sync PRs.
+and never publish assets.
 
 The automation reads the major version from `[workspace.package].version` in
 `Cargo.toml`. If there is already a `v<major>.*` tag, it bumps:
