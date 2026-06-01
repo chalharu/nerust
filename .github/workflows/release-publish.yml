@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - v*.*.*
+permissions:
+  contents: read
 jobs:
   publish:
     name: Publish release
@@ -64,9 +66,14 @@ jobs:
   release-artifacts:
     name: Release artifacts
     needs: [publish]
+    permissions:
+      contents: write
     uses: ./.github/workflows/release-artifacts.yml
     with:
       publish_release: true
       ref: ${{ github.sha }}
       tag_name: ${{ github.ref_name }}
-    secrets: inherit
+    secrets:
+      ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
+      ANDROID_PRIVATE_KEY: ${{ secrets.ANDROID_PRIVATE_KEY }}
+      ANDROID_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_PRIVATE_KEY_PASSWORD }}
