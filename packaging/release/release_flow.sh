@@ -487,56 +487,6 @@ ensure_changelog() {
     rm -f "${before_links_temp}"
 }
 
-extract_release_notes() {
-    local version="$1"
-    local notes
-
-    notes="$(awk -v version="${version}" '
-        $0 ~ "^## \\[" version "\\] - " {
-            capture = 1
-            found = 1
-            next
-        }
-        capture && ($0 ~ "^## \\[" || $0 == "<!-- next-url -->") {
-            capture = 0
-            exit
-        }
-        capture {
-            print
-        }
-        END {
-            if (!found) {
-                exit 2
-            }
-        }
-    ' "${CHANGELOG}")" || {
-        echo "CHANGELOG.md is missing the ${version} section" >&2
-        exit 1
-    }
-
-    if [[ -z "${notes//[$'\t\r\n ']}" ]]; then
-        echo "CHANGELOG.md has no notes for ${version}" >&2
-        exit 1
-    fi
-
-    printf '%s\n' "${notes}" | awk '
-        {
-            lines[++line_count] = $0
-            if ($0 ~ /[^[:space:]]/) {
-                if (!first_nonblank) {
-                    first_nonblank = line_count
-                }
-                last_nonblank = line_count
-            }
-        }
-        END {
-            for (line_number = first_nonblank; line_number <= last_nonblank; line_number++) {
-                print lines[line_number]
-            }
-        }
-    '
-}
-
 compute_next_version() {
     local declared major base_version base_major base_minor base_patch
 
@@ -615,10 +565,35 @@ command_release_notes() {
         esac
     done
 
-    if [[ -n "${output}" ]]; then
-        extract_release_notes "${version}" > "${output}"
+    local version_tag="v${version}"
+    local prev_tag
+    prev_tag=$(git -C "${WORKSPACE_ROOT}" for-each-ref --sort=-creatordate --format='%(refname:strip=2)' refs/tags | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${version_tag}$" | head -n 1 || true)
+
+    local range
+    if [[ -n "${prev_tag}" ]]; then
+        range="${prev_tag}..${version_tag}"
     else
-        extract_release_notes "${version}"
+        range="${version_tag}"
+    fi
+
+    local notes
+    notes=$(git -C "${WORKSPACE_ROOT}" log --pretty=format:'- %s (%h)' "${range}" 2>/dev/null || true)
+
+    if [[ -z "${notes//[$'	
+ ']}" ]]; then
+        notes="- No changes recorded."
+    fi
+
+    if [[ -n "${output}" ]]; then
+        printf "## %s changes
+
+%s
+" "${version_tag}" "${notes}" > "${output}"
+    else
+        printf "## %s changes
+
+%s
+" "${version_tag}" "${notes}"
     fi
 }
 
