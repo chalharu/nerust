@@ -148,6 +148,7 @@ jobs:
           fi
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
   linux-x86_64:
     name: Linux x86_64
