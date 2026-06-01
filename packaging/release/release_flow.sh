@@ -411,7 +411,23 @@ ensure_changelog() {
                     print ""
                     print "### Changed"
                     print ""
-                    print "- TODO: summarize the release changes."
+                    # generate changes from git log between base_tag and version_tag
+                    cmd = ""
+                    if (ENVIRON["BASE_TAG"] != "") {
+                        cmd = "git -C \"${WORKSPACE_ROOT}\" log --pretty=format:'- %s' \"" ENVIRON["BASE_TAG"] ".." ENVIRON["VERSION_TAG"] "\""
+                    } else {
+                        cmd = "git -C \"${WORKSPACE_ROOT}\" log --pretty=format:'- %s' \"" ENVIRON["VERSION_TAG"] "\""
+                    }
+                    changes = ""
+                    n = 0
+                    while ((cmd | getline line) > 0) {
+                        print line
+                        n++
+                    }
+                    close(cmd)
+                    if (n == 0) {
+                        print "- TODO: summarize the release changes."
+                    }
                     print ""
                     inserted = 1
                 }
