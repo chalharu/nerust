@@ -49,10 +49,6 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           METADATA_TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
         run: |
-          if [[ "${TAG_NAME}" != "${METADATA_TAG_NAME}" ]]; then
-            echo "release metadata tag ${METADATA_TAG_NAME} does not match pushed tag ${TAG_NAME}" >&2
-            exit 1
-          fi
           if gh release view "${TAG_NAME}" > /dev/null 2>&1; then
             exit 0
           fi

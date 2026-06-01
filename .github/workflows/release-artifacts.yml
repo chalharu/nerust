@@ -163,8 +163,6 @@ jobs:
         run: |
           chmod +x packaging/linux/package.sh
           packaging/linux/package.sh x86_64
-      - name: Restore Cargo.toml
-        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -227,8 +225,6 @@ jobs:
         run: |
           chmod +x packaging/linux/package.sh
           packaging/linux/package.sh aarch64
-      - name: Restore Cargo.toml
-        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -286,8 +282,6 @@ jobs:
         run: |
           chmod +x packaging/macos/build-app.sh
           packaging/macos/build-app.sh
-      - name: Restore Cargo.toml
-        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -366,8 +360,6 @@ jobs:
         run: |
           chmod +x packaging/android/package.sh packaging/android/gradlew
           packaging/android/package.sh
-      - name: Restore Cargo.toml
-        run: mv Cargo.toml.bak Cargo.toml
       - name: Save Cargo registry and build cache
         if: github.event_name != 'pull_request'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
