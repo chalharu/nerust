@@ -432,16 +432,6 @@ command_next_version() {
         bump_kind "${BUMP_KIND}"
 }
 
-command_prepare_candidate() {
-    compute_next_version
-    replace_workspace_version "${NEXT_VERSION}"
-    print_metadata \
-        version "${NEXT_VERSION}" \
-        tag_name "v${NEXT_VERSION}" \
-        base_tag "${BASE_TAG}" \
-        bump_kind "${BUMP_KIND}"
-}
-
 command_release_notes() {
     local version="$1"
     shift
@@ -492,7 +482,6 @@ usage() {
 Usage:
   packaging/release/release_flow.sh workspace-metadata
   packaging/release/release_flow.sh next-version
-  packaging/release/release_flow.sh prepare-candidate
   packaging/release/release_flow.sh release-notes <version> [--output <path>]
 EOF
 }
@@ -522,13 +511,6 @@ main() {
                 exit 1
             fi
             command_next_version
-            ;;
-        prepare-candidate)
-            if (($# != 0)); then
-                usage >&2
-                exit 1
-            fi
-            command_prepare_candidate
             ;;
         release-notes)
             if (($# < 1)); then
