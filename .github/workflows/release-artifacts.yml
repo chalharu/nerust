@@ -1,7 +1,10 @@
+# yamllint disable rule:line-length
 name: Release artifacts
 on:
   pull_request:
-    branches: [master, release]
+    branches: [master]
+  release:
+    types: [created]
   workflow_dispatch:
     inputs:
       ref:
@@ -55,7 +58,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG_NAME: ${{ inputs.tag_name || '' }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release && 'true' || 'false' }}
+          RELEASE_TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
           PR_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
           PR_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
@@ -80,7 +83,6 @@ jobs:
           fi
 
           version=""
-          workspace_tag_name=""
           tag_name=""
 
           mapfile -t release_meta < <(bash packaging/release/release_flow.sh workspace-metadata)
@@ -90,33 +92,25 @@ jobs:
               version=*)
                 version="${line#version=}"
                 ;;
-              tag_name=*)
-                workspace_tag_name="${line#tag_name=}"
-                ;;
             esac
           done
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
-          if [[ "${PUBLISH_RELEASE}" == "true" ]]; then
-            tag_name="${INPUT_TAG_NAME:-${workspace_tag_name}}"
-          else
-            case "${EVENT_NAME}" in
-              workflow_dispatch)
-                tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
-                ;;
-              pull_request)
-                if [[ "${PR_BASE_REF}" == "release" ]]; then
-                  tag_name="${workspace_tag_name}"
-                else
-                  tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
-                fi
-                ;;
-              *)
-                echo "unexpected event type: ${EVENT_NAME}" >&2
-                exit 1
-                ;;
-            esac
-          fi
+          case "${EVENT_NAME}" in
+            release)
+              tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
+              ;;
+            workflow_dispatch)
+              tag_name="${INPUT_TAG_NAME:-v${version}-validate-manual-${short_sha}}"
+              ;;
+            pull_request)
+              tag_name="v${version}-validate-pr${PR_NUMBER}-${short_sha}"
+              ;;
+            *)
+              echo "unexpected event type: ${EVENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
 
           echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
@@ -422,7 +416,7 @@ jobs:
             release-assets/nerust-${{ needs.prepare-context.outputs.tag_name }}-android-arm64-v8a.apk.sha256
           if-no-files-found: error
   publish-assets:
-    if: ${{ inputs.publish_release }}
+    if: ${{ github.event_name == 'release' }}
     name: Publish release assets
     needs: [assemble-assets, prepare-context]
     runs-on: ubuntu-latest
@@ -477,50 +471,19 @@ jobs:
             exit 0
           fi
           gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
-  sync-release:
-    if: ${{ inputs.publish_release }}
-    name: Sync release back to master
+  publish-release:
+    if: ${{ github.event_name == 'release' }}
+    name: Publish GitHub release
     needs: [publish-assets, prepare-context]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: write
-      pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ needs.prepare-context.outputs.checkout_ref }}
-      - name: Verify release branch tip matches published commit
-        run: |
-          git fetch origin release
-          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/release)" ]; then
-            echo "release branch advanced past the published commit" >&2
-            exit 1
-          fi
-      - name: Create or update sync PR
+      - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
-          git fetch origin master
-          if [ "$(git rev-list --count origin/master..HEAD)" -eq 0 ]; then
-            exit 0
-          fi
-          body_file="$(mktemp)"
-          cat > "${body_file}" <<EOF
-          ## Summary
-          - sync \`${TAG_NAME}\` metadata back to \`master\`
-          - keep \`master\` aligned with the published \`release\` branch contents
-
-          ## Notes
-          - this PR carries the version and changelog state from \`release\`
-          EOF
-          pr_number="$(gh pr list --head release --base master --state open --json number --jq '.[0].number')"
-          if [ -n "${pr_number}" ]; then
-            gh pr edit "${pr_number}" --title "chore(release): sync ${TAG_NAME} to master" --body-file "${body_file}"
-          else
-            gh pr create --base master --head release --title "chore(release): sync ${TAG_NAME} to master" --body-file "${body_file}"
-          fi
-          rm -f "${body_file}"
+          gh release edit "${TAG_NAME}" --repo "${GH_REPO}" --draft=false
