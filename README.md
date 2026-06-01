@@ -37,8 +37,7 @@ Releases are prepared from `master`.
 
 1. Run the **Prepare release candidate** workflow from `master`.
 2. The workflow refreshes the `release-candidate` branch, updates the release
-   version in `Cargo.toml`, ensures the matching `CHANGELOG.md` section exists,
-   and opens or updates a PR into `master`.
+   version in `Cargo.toml`, and opens or updates a PR into `master`.
 3. Merging that PR into `master` creates the `vX.Y.Z` tag and draft GitHub
    Release.
 4. The **Release artifacts** workflow uploads the release assets and then
