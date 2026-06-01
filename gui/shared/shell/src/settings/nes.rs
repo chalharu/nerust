@@ -98,11 +98,12 @@ pub fn build_speaker_with_profile(
         }
         #[cfg(target_os = "android")]
         AudioBackendKind::Android => {
-            let speaker = match nerust_sound_android::android::AndroidSound::with_gain(
+            let speaker = match nerust_sound_android::android::AndroidSound::with_gain_and_filter(
                 spec.requested_sample_rate,
                 settings.audio.latency_ms,
-                CLOCK_RATE as i32,
+                source_sample_rate,
                 spec.gain,
+                filter_profile,
             ) {
                 Ok(speaker) => HostedSpeakerInner::Android(speaker),
                 Err(error) => {
