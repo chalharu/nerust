@@ -1,10 +1,11 @@
+# yamllint disable rule:line-length
 name: Publish release
 on:
   push:
-    branches: [release]
+    tags:
+      - v*.*.*
 jobs:
   publish:
-    if: ${{ github.event.created == false }}
     name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -17,6 +18,24 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Authenticate git fetches
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+      - name: Validate release tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "non-release tag ${TAG_NAME}" >&2
+            exit 1
+          fi
+          git fetch origin master
+          if ! git merge-base --is-ancestor HEAD origin/master; then
+            echo "tag ${TAG_NAME} is not on master" >&2
+            exit 1
+          fi
       - name: Read release metadata
         id: release_meta
         run: bash packaging/release/release_flow.sh workspace-metadata >> "$GITHUB_OUTPUT"
@@ -27,25 +46,14 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
-          TARGET_SHA: ${{ github.sha }}
+          TAG_NAME: ${{ github.ref_name }}
+          METADATA_TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
         run: |
+          if [[ "${TAG_NAME}" != "${METADATA_TAG_NAME}" ]]; then
+            echo "release metadata tag ${METADATA_TAG_NAME} does not match pushed tag ${TAG_NAME}" >&2
+            exit 1
+          fi
           if gh release view "${TAG_NAME}" > /dev/null 2>&1; then
             exit 0
           fi
-          gh release create "${TAG_NAME}" --target "${TARGET_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md
-  publish-assets:
-    name: Publish release assets
-    needs: [publish]
-    permissions:
-      contents: write
-      pull-requests: write
-    uses: ./.github/workflows/release-artifacts.yml
-    secrets:
-      ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
-      ANDROID_PRIVATE_KEY: ${{ secrets.ANDROID_PRIVATE_KEY }}
-      ANDROID_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_PRIVATE_KEY_PASSWORD }}
-    with:
-      publish_release: true
-      ref: ${{ github.sha }}
-      tag_name: ${{ needs.publish.outputs.tag_name }}
+          gh release create "${TAG_NAME}" --target "${GITHUB_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md --draft
