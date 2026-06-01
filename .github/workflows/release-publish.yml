@@ -72,6 +72,7 @@ jobs:
     with:
       publish_release: true
       ref: ${{ github.sha }}
+      version: ${{ steps.tag_meta.outputs.version }}
       tag_name: ${{ github.ref_name }}
     secrets:
       ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
