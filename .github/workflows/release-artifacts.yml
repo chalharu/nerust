@@ -23,6 +23,9 @@ on:
       ref:
         required: false
         type: string
+      version:
+        required: false
+        type: string
       tag_name:
         required: false
         type: string
@@ -57,6 +60,7 @@ jobs:
         id: context
         env:
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
           INPUT_TAG_NAME: ${{ inputs.tag_name || '' }}
           RELEASE_TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
           PR_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
@@ -85,6 +89,10 @@ jobs:
           version=""
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
+
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            version="${INPUT_VERSION}"
+          fi
 
           case "${EVENT_NAME}" in
             release)
