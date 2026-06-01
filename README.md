@@ -33,27 +33,20 @@ build-health but is not a release artifact.
 
 ## Release workflow
 
-Releases are prepared from `master`.
+Releases are tag-driven.
 
 1. Tag the release commit as `vX.Y.Z`.
-2. The **Release artifacts** workflow uploads the release assets and then
-   publishes the release.
+2. The **Publish release** workflow creates the GitHub release draft.
+3. The reusable **Release artifacts** workflow builds the assets from that tag
+   and publishes them.
 
 The **Release artifacts** workflow also validates artifact creation for PRs into
 `master` when release automation, workflow, packaging, or artifact-input files
 change. Those runs build the same artifacts with a validation-only tag suffix
 and never publish assets.
 
-The automation reads the major version from `[workspace.package].version` in
-`Cargo.toml`. If there is already a `v<major>.*` tag, it bumps:
-
-- **patch** for workflow, packaging, docs, lockfile, and dependency-only
-  `Cargo.toml` updates
-- **minor** for everything else
-
-If there is no existing tag for the current major, the declared
-`[workspace.package].version` becomes the release version. The workflows use
-the built-in `GITHUB_TOKEN` for release and PR updates.
+The workflows derive the release version from the tag name, and the built-in
+`GITHUB_TOKEN` is used for release and PR updates.
 Android signing uses `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY`. If the
 private key is encrypted, also set `ANDROID_PRIVATE_KEY_PASSWORD`.
 
