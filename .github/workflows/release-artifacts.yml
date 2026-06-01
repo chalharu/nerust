@@ -94,7 +94,7 @@ jobs:
               tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
               ;;
             workflow_dispatch)
-              tag_name="${INPUT_TAG_NAME:-""}"
+              tag_name="${INPUT_TAG_NAME:-}"
               ;;
             pull_request)
               tag_name=""
