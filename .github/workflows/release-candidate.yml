@@ -29,8 +29,8 @@ jobs:
       - name: Authenticate git pushes
         env:
           GH_REPO: ${{ github.repository }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-        run: git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GH_REPO}.git"
+          GH_TOKEN: ${{ github.token }}
+        run: git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
       - name: Prepare release candidate
         id: release_meta
         run: bash packaging/release/release_flow.sh prepare-candidate >> "$GITHUB_OUTPUT"
