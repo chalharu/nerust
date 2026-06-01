@@ -131,7 +131,6 @@ jobs:
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
       - name: Update Cargo.toml version
         run: |
-          cp Cargo.toml Cargo.toml.bak
           sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install system dependencies
         run: |
@@ -193,7 +192,6 @@ jobs:
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
       - name: Update Cargo.toml version
         run: |
-          cp Cargo.toml Cargo.toml.bak
           sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install system dependencies
         run: |
@@ -255,7 +253,6 @@ jobs:
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
       - name: Update Cargo.toml version
         run: |
-          cp Cargo.toml Cargo.toml.bak
           sed -i '' 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -312,7 +309,6 @@ jobs:
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
       - name: Update Cargo.toml version
         run: |
-          cp Cargo.toml Cargo.toml.bak
           sed -i 's/^version = ".*"/version = "${{ needs.prepare-context.outputs.version }}"/' Cargo.toml
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
