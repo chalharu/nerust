@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - v*.*.*
+permissions:
+  contents: read
 jobs:
   publish:
     name: Publish release
@@ -61,3 +63,17 @@ jobs:
             exit 0
           fi
           gh release create "${TAG_NAME}" --target "${GITHUB_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md --draft
+  release-artifacts:
+    name: Release artifacts
+    needs: [publish]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      publish_release: true
+      ref: ${{ github.sha }}
+      tag_name: ${{ github.ref_name }}
+    secrets:
+      ANDROID_CERTIFICATE: ${{ secrets.ANDROID_CERTIFICATE }}
+      ANDROID_PRIVATE_KEY: ${{ secrets.ANDROID_PRIVATE_KEY }}
+      ANDROID_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_PRIVATE_KEY_PASSWORD }}
