@@ -61,6 +61,7 @@ impl State {
             .is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
+            self.renderer_reload_pending = true;
         }
     }
 
@@ -77,7 +78,11 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().unwrap_or(false)
+        let unloaded = self.session.unload().unwrap_or(false);
+        if unloaded {
+            self.renderer_reload_pending = true;
+        }
+        unloaded
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -310,4 +315,32 @@ fn main() {
     }
 
     let _ = app.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::State;
+    use std::path::PathBuf;
+
+    fn build_ines_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x8000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2;
+        rom[5] = 1;
+        rom[6] = 0;
+        rom[7] = 0;
+        rom[16..16 + 0x8000].fill(0xEA);
+        rom[16 + 0x8000 - 4..16 + 0x8000 - 2].copy_from_slice(&0x8000u16.to_le_bytes());
+        rom[16 + 0x8000 - 2..16 + 0x8000].copy_from_slice(&0x8000u16.to_le_bytes());
+        rom
+    }
+
+    #[test]
+    fn successful_rom_load_requests_renderer_reload() {
+        let mut state = State::new();
+
+        state.load_from_path(Some(PathBuf::from("test.nes")), build_ines_rom());
+
+        assert!(state.take_renderer_reload_pending());
+    }
 }

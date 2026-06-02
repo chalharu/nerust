@@ -42,6 +42,7 @@ impl WindowRuntime {
     pub(crate) fn load(&mut self, data: Vec<u8>) {
         if self.host.load(data) {
             self.recreate_renderer();
+            self.host.request_redraw();
         }
     }
 
@@ -53,6 +54,7 @@ impl WindowRuntime {
     ) {
         if self.host.load_with_options(rom_path, data, request) {
             self.recreate_renderer();
+            self.host.request_redraw();
         }
     }
 
@@ -60,6 +62,7 @@ impl WindowRuntime {
         let loaded = self.host.load_path(path);
         if loaded {
             self.recreate_renderer();
+            self.host.request_redraw();
         }
         loaded
     }
@@ -72,6 +75,7 @@ impl WindowRuntime {
             Event::NewEvents(StartCause::Init) => {
                 self.host.ensure_window(event_loop);
                 self.recreate_renderer();
+                self.host.request_redraw();
                 *control_flow = ControlFlow::Wait;
             }
             Event::WindowEvent {
@@ -98,7 +102,10 @@ impl WindowRuntime {
             Event::UserEvent(command) => match command {
                 UserEvent::Menu(command) => match self.host.on_menu_command(command) {
                     HostAction::None => (),
-                    HostAction::RomLoaded => self.recreate_renderer(),
+                    HostAction::RomLoaded => {
+                        self.recreate_renderer();
+                        self.host.request_redraw();
+                    }
                     HostAction::Exit => *control_flow = ControlFlow::Exit,
                 },
                 UserEvent::ApplySettings { snapshot, reply } => {

@@ -58,7 +58,10 @@ fn main() {
 
     let mut window = Window::with_load_options(window_options);
     if let Some(filename) = matches.get_one::<String>("filename").map(PathBuf::from) {
-        let _ = window.load_path(&filename);
+        if !window.load_path(&filename) {
+            eprintln!("failed to load ROM: {}", filename.display());
+            std::process::exit(1);
+        }
     }
     window.run();
 }
