@@ -541,11 +541,16 @@ jobs:
           fi
           for file in "${upload_args[@]}"; do
             asset_name="$(basename "${file}")"
-            gh api \
-              --method POST \
-              -H "Content-Type: application/octet-stream" \
+            curl \
+              --fail \
+              --location \
+              --request POST \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              --header "Content-Type: application/octet-stream" \
+              --data-binary @"${file}" \
               "${upload_url}?name=${asset_name}" \
-              --input "${file}" \
               >/dev/null
           done
   publish-release:
