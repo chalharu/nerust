@@ -61,6 +61,7 @@ impl State {
             .is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
+            self.renderer_reload_pending = true;
         }
     }
 
@@ -77,7 +78,11 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().unwrap_or(false)
+        let unloaded = self.session.unload().unwrap_or(false);
+        if unloaded {
+            self.renderer_reload_pending = true;
+        }
+        unloaded
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
