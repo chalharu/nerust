@@ -501,12 +501,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
+          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.id')"
           release_target="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.target_commitish')"
           if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
             echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
             exit 1
           fi
-          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --repo "${GH_REPO}" --json assets --jq '.assets[].name')
+          mapfile -t existing_assets < <(gh api "repos/${GH_REPO}/releases/${release_id}/assets" --jq '.[].name')
           release_files=(
             "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz"
             "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256"
@@ -535,7 +536,15 @@ jobs:
           if [[ "${#upload_args[@]}" -eq 0 ]]; then
             exit 0
           fi
-          gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
+          for file in "${upload_args[@]}"; do
+            asset_name="$(basename "${file}")"
+            gh api \
+              --method POST \
+              -H "Content-Type: application/octet-stream" \
+              "repos/${GH_REPO}/releases/${release_id}/assets?name=${asset_name}" \
+              --input "${file}" \
+              >/dev/null
+          done
   publish-release:
     if: ${{ github.event_name == 'release' || inputs.publish_release }}
     name: Publish GitHub release
