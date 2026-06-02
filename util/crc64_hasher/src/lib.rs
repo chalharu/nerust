@@ -27,3 +27,9 @@ impl Hasher for Crc64Hasher {
         self.0.clone().finalize()
     }
 }
+
+impl Default for Crc64Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
