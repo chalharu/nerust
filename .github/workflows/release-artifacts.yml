@@ -23,6 +23,12 @@ on:
       ref:
         required: false
         type: string
+      release_id:
+        required: false
+        type: string
+      upload_url:
+        required: false
+        type: string
       version:
         required: false
         type: string
@@ -499,13 +505,18 @@ jobs:
           CHECKOUT_REF: ${{ needs.prepare-context.outputs.checkout_ref }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id || '' }}
+          INPUT_UPLOAD_URL: ${{ inputs.upload_url || '' }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
           release_api_url="repos/${GH_REPO}/releases/tags/${TAG_NAME}"
-          release_id="$(gh api "${release_api_url}" --jq '.id')"
+          release_id="${INPUT_RELEASE_ID}"
+          upload_url="${INPUT_UPLOAD_URL}"
+          if [[ -z "${release_id}" || -z "${upload_url}" ]]; then
+            release_id="$(gh api "${release_api_url}" --jq '.id')"
+            upload_url="$(gh api "${release_api_url}" --jq '.upload_url' | sed 's/{.*//')"
+          fi
           release_target="$(gh api "${release_api_url}" --jq '.target_commitish')"
-          upload_url="$(gh api "${release_api_url}" --jq '.upload_url')"
-          upload_url="${upload_url%\{*}"
           if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
             echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
             exit 1
