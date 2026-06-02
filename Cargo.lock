@@ -3133,7 +3133,6 @@ dependencies = [
 name = "nerust_console"
 version = "0.1.0-dev"
 dependencies = [
- "crc",
  "log",
  "nerust_cartridge_data",
  "nerust_contract_controller_runtime",
@@ -3141,6 +3140,7 @@ dependencies = [
  "nerust_contract_persistence",
  "nerust_contract_rom",
  "nerust_core",
+ "nerust_crc64_hasher",
  "nerust_input_nes",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -3213,12 +3213,12 @@ name = "nerust_core"
 version = "0.1.0-dev"
 dependencies = [
  "bitflags 2.11.1",
- "crc",
  "hound",
  "log",
  "nerust_contract_mirror",
  "nerust_contract_options",
  "nerust_contract_rom",
+ "nerust_crc64_hasher",
  "nerust_screen_video",
  "nerust_serialize",
  "nerust_sound_traits",
@@ -3230,6 +3230,13 @@ dependencies = [
  "strum_macros",
  "thiserror 2.0.18",
  "typetag",
+]
+
+[[package]]
+name = "nerust_crc64_hasher"
+version = "0.1.0-dev"
+dependencies = [
+ "crc",
 ]
 
 [[package]]
@@ -3394,10 +3401,10 @@ name = "nerust_rom_test"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
- "crc",
  "nerust_cartridge_data",
  "nerust_contract_options",
  "nerust_core",
+ "nerust_crc64_hasher",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_screen_buffer",
@@ -3521,7 +3528,7 @@ name = "nerust_snes_rom_test"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
- "crc",
+ "nerust_crc64_hasher",
  "nerust_snes_core",
  "nerust_snes_render",
  "png",

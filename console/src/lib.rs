@@ -14,51 +14,23 @@ use self::runner::data::ConsoleData;
 use self::runner::metrics::SharedConsoleMetrics;
 use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
-use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_core::Core;
 use nerust_core::cartridge_rom::CartridgeData;
+use nerust_crc64_hasher::crc64;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
-use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
 use thiserror::Error;
-
-// The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
-const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
-
-struct Crc64Hasher(Digest<'static, u64>);
-
-impl Crc64Hasher {
-    fn new() -> Self {
-        Self(CRC64_LEGACY_ECMA.digest())
-    }
-}
-
-impl Hasher for Crc64Hasher {
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0.clone().finalize()
-    }
-}
-
-fn crc64(bytes: &[u8]) -> u64 {
-    let mut hasher = Crc64Hasher::new();
-    hasher.write(bytes);
-    hasher.finish()
-}
 
 fn mmc3_irq_variant_label(value: Option<Mmc3IrqVariant>) -> &'static str {
     match value {

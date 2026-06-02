@@ -9,7 +9,7 @@ build = "build.rs"
 
 [dependencies]
 clap.workspace = true
-crc.workspace = true
+nerust_crc64_hasher.workspace = true
 nerust_snes_core.workspace = true
 nerust_snes_render.workspace = true
 png.workspace = true

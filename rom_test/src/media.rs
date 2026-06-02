@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use super::error::RomTestError;
-use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_crc64_hasher::Crc64Hasher;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
@@ -13,8 +13,6 @@ use nerust_sound_traits::MixerInput;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
-
-const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
 pub(crate) fn validation_screen_buffer() -> ScreenBuffer {
     ScreenBuffer::new(
@@ -59,24 +57,6 @@ pub(crate) fn encode_screenshot_png(screen_buffer: &ScreenBuffer) -> Result<Vec<
     drop(writer);
 
     Ok(encoded.into_inner())
-}
-
-struct Crc64Hasher(Digest<'static, u64>);
-
-impl Crc64Hasher {
-    fn new() -> Self {
-        Self(CRC64_LEGACY_ECMA.digest())
-    }
-}
-
-impl Hasher for Crc64Hasher {
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0.clone().finalize()
-    }
 }
 
 #[derive(Debug, Clone)]

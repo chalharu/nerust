@@ -4,15 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_crc64_hasher::Crc64Hasher;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::Hasher;
 use std::io::Cursor;
 
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 224;
-
-const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
 pub fn screen_hash_rgba(rgba: &[u8]) -> u64 {
     let mut hasher = Crc64Hasher::new();
@@ -33,24 +31,6 @@ pub fn encode_screenshot_png(
     writer.write_image_data(rgba)?;
     drop(writer);
     Ok(encoded.into_inner())
-}
-
-struct Crc64Hasher(Digest<'static, u64>);
-
-impl Crc64Hasher {
-    fn new() -> Self {
-        Self(CRC64_LEGACY_ECMA.digest())
-    }
-}
-
-impl Hasher for Crc64Hasher {
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0.clone().finalize()
-    }
 }
 
 #[cfg(test)]
