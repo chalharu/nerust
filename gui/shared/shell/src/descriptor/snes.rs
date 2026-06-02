@@ -737,6 +737,15 @@ fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
 }
 
 fn render_snes_frame(core: &Core) -> Vec<u8> {
+    let tm = core.peek(0x00212C);
+    let inidisp = core.peek(0x002100);
+    let brightness = inidisp & 0x0F;
+    log::info!(
+        "SNES render source: tm=0x{tm:02X} inidisp=0x{inidisp:02X} brightness={} state={:?} cycles={}",
+        brightness,
+        core.current_state(),
+        core.cycles()
+    );
     match render_screen(core) {
         Ok(rendered) => {
             log::info!(
