@@ -122,6 +122,7 @@ impl HostState {
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
+        log::info!("tao load requested: bytes={}", data.len());
         self.load_with_options(None, data, self.default_load_request.clone())
     }
 
@@ -131,6 +132,12 @@ impl HostState {
         data: Vec<u8>,
         request: LoadRequest,
     ) -> bool {
+        log::info!(
+            "tao load requested with options: path={:?} bytes={} request={:?}",
+            rom_path.as_ref().map(|path| path.display().to_string()),
+            data.len(),
+            request
+        );
         if self
             .session
             .load(MediaObject::new(rom_path, data), request)
@@ -138,13 +145,16 @@ impl HostState {
         {
             let _ = self.session.run_command(SessionCommand::Resume);
             self.after_rom_load();
+            log::info!("tao load succeeded; redraw requested");
             true
         } else {
+            log::warn!("tao load failed");
             false
         }
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
+        log::info!("tao load_path requested: {}", path.display());
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();

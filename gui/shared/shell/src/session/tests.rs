@@ -15,6 +15,7 @@ use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_persistence::CanonicalMediaIdentity;
 use nerust_contract_rom::{RomFormat, RomIdentity};
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+use nerust_gui_session::commands::SessionCommand;
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
@@ -25,7 +26,7 @@ use nerust_sound_traits::{MixerInput, Sound};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 struct TestSpeaker;
@@ -541,6 +542,11 @@ fn build_snes_lorom() -> Vec<u8> {
     rom
 }
 
+fn snes_test_rom_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../roms/snes-test-roms/bin/examples/textbuffer-hello-world.sfc")
+}
+
 #[test]
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
@@ -578,6 +584,62 @@ fn auto_load_switches_to_snes_runtime_for_sfc_media() {
     assert!(snapshot.metrics.paused);
     assert_eq!(snapshot.video_frame.unwrap().bytes().len(), 256 * 224 * 4);
     assert_eq!(session.input_topology_descriptor().system, SystemId::Snes);
+}
+
+#[test]
+fn snes_runtime_publishes_frames_after_resume() {
+    let mut session = test_session();
+    let rom_path = snes_test_rom_path();
+    let rom_bytes = fs::read(&rom_path).expect("SNES test ROM should be readable");
+
+    session
+        .load(
+            MediaObject::new(Some(rom_path.clone()), rom_bytes),
+            LoadRequest::Auto,
+        )
+        .expect("SNES test ROM should load");
+    session
+        .run_command(SessionCommand::Resume)
+        .expect("SNES test ROM should resume");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_frame_counter = 0;
+    let mut observed = Vec::new();
+    while Instant::now() < deadline && observed.len() < 60 {
+        let snapshot = session.snapshot();
+        if snapshot.metrics.frame_counter > last_frame_counter {
+            last_frame_counter = snapshot.metrics.frame_counter;
+            let frame = snapshot
+                .video_frame
+                .expect("SNES test ROM should publish a video frame");
+            let non_black_pixels = frame
+                .bytes()
+                .chunks_exact(4)
+                .filter(|pixel| {
+                    let pixel = *pixel;
+                    pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 || pixel[3] != 255
+                })
+                .count();
+            println!(
+                "SNES diagnostic: frame_counter={} loaded={} paused={} frame_len={} non_black_pixels={}",
+                snapshot.metrics.frame_counter,
+                snapshot.metrics.loaded,
+                snapshot.metrics.paused,
+                frame.bytes().len(),
+                non_black_pixels
+            );
+            observed.push(non_black_pixels);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !observed.is_empty(),
+        "expected at least one SNES frame to be published"
+    );
+    assert!(
+        observed.iter().any(|count| *count > 0),
+        "expected at least one non-black SNES frame"
+    );
 }
 
 #[test]

@@ -55,6 +55,11 @@ impl State {
     }
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
+        log::info!(
+            "GTK load requested: path={:?} bytes={}",
+            rom_path.as_ref().map(|path| path.display().to_string()),
+            data.len()
+        );
         if self
             .session
             .load(MediaObject::new(rom_path, data), LoadRequest::Auto)
@@ -62,6 +67,9 @@ impl State {
         {
             let _ = self.session.run_command(SessionCommand::Resume);
             self.renderer_reload_pending = true;
+            log::info!("GTK load succeeded; renderer reload pending");
+        } else {
+            log::warn!("GTK load failed");
         }
     }
 
@@ -79,6 +87,7 @@ impl State {
 
     pub(crate) fn unload(&mut self) -> bool {
         let unloaded = self.session.unload().unwrap_or(false);
+        log::info!("GTK unload result: unloaded={unloaded}");
         if unloaded {
             self.renderer_reload_pending = true;
         }

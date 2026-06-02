@@ -63,6 +63,7 @@ impl WindowRuntime {
         if loaded {
             self.recreate_renderer();
             self.host.request_redraw();
+            log::info!("tao renderer recreated after load_path");
         }
         loaded
     }
@@ -76,6 +77,7 @@ impl WindowRuntime {
                 self.host.ensure_window(event_loop);
                 self.recreate_renderer();
                 self.host.request_redraw();
+                log::info!("tao window initialized and renderer recreated");
                 *control_flow = ControlFlow::Wait;
             }
             Event::WindowEvent {
@@ -105,6 +107,7 @@ impl WindowRuntime {
                     HostAction::RomLoaded => {
                         self.recreate_renderer();
                         self.host.request_redraw();
+                        log::info!("tao renderer recreated after ROM-loaded menu action");
                     }
                     HostAction::Exit => *control_flow = ControlFlow::Exit,
                 },

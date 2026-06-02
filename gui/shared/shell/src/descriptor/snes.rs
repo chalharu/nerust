@@ -249,14 +249,29 @@ impl SnesRuntime {
 
 impl SystemRuntime for SnesRuntime {
     fn snapshot(&self) -> SystemRuntimeSnapshot {
+        let metrics = self.shared.metrics();
+        log::info!(
+            "SNES snapshot: loaded={} paused={} frame_counter={} profile={:?} frame_len={}",
+            metrics.loaded,
+            metrics.paused,
+            metrics.frame_counter,
+            snes_video_profile(),
+            self.shared.frame_len(),
+        );
         SystemRuntimeSnapshot {
-            metrics: self.shared.metrics(),
+            metrics,
             video_frame: Some(self.shared.video_frame()),
             video_profile: Some(snes_video_profile()),
         }
     }
 
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
+        log::info!(
+            "SNES load requested: path={:?} ext={:?} bytes={}",
+            media.path.as_deref().map(|path| path.display().to_string()),
+            media.extension.as_deref(),
+            media.bytes.len(),
+        );
         let msu1_sidecars = load_msu1_sidecars(media.path.as_deref())?;
         self.request_unit(|reply| SnesCommand::Load {
             bytes: media.bytes.as_ref().to_vec(),
@@ -267,6 +282,7 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn unload(&mut self) -> Result<bool, String> {
+        log::info!("SNES unload requested");
         let (reply, receiver) = mpsc::channel();
         self.commands
             .send(SnesCommand::Unload { reply })
@@ -277,6 +293,7 @@ impl SystemRuntime for SnesRuntime {
     }
 
     fn reset(&self) -> Result<(), String> {
+        log::info!("SNES reset requested");
         self.request_unit(|reply| SnesCommand::Reset { reply })
     }
 
@@ -350,6 +367,13 @@ impl SnesRuntimeShared {
         }
     }
 
+    fn frame_len(&self) -> usize {
+        self.frame
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .len()
+    }
+
     fn metrics(&self) -> ConsoleMetrics {
         *self.metrics.read().unwrap_or_else(|err| err.into_inner())
     }
@@ -359,6 +383,13 @@ impl SnesRuntimeShared {
     }
 
     fn publish_frame(&self, frame: Vec<u8>) {
+        let frame_len = frame.len();
+        let first_rgba = frame.get(..4).unwrap_or(&[]);
+        log::info!(
+            "SNES publish frame: len={} first_rgba={:?}",
+            frame_len,
+            first_rgba
+        );
         *self.frame.write().unwrap_or_else(|err| err.into_inner()) = Arc::from(frame);
     }
 
@@ -395,6 +426,7 @@ fn run_worker<S: 'static + Sound + MixerInput + Send>(
 ) {
     let mut state = SnesWorkerState::new(speaker);
     let mut timer = nerust_timer::Timer::new();
+    log::info!("SNES worker started");
     publish_worker_metrics(&shared, &state, 0.0);
 
     while stop.try_recv().is_err() {
@@ -414,12 +446,24 @@ fn run_worker<S: 'static + Sound + MixerInput + Send>(
         if let Some(core) = state.core.as_mut() {
             match step_snes_frame(core, &mut state.speaker) {
                 Ok(true) => {
+                    log::info!(
+                        "SNES frame completed: generation={} cycles={} state={:?}",
+                        core.frame_generation(),
+                        core.cycles(),
+                        core.current_state()
+                    );
                     shared.publish_frame(render_snes_frame(core));
                     state.frame_counter = state.frame_counter.wrapping_add(1);
                     timer.wait();
                     publish_worker_metrics(&shared, &state, timer.as_fps());
                 }
                 Ok(false) => {
+                    log::warn!(
+                        "SNES worker stopped before frame completion: generation={} cycles={} state={:?}",
+                        core.frame_generation(),
+                        core.cycles(),
+                        core.current_state()
+                    );
                     state.paused = true;
                     state.speaker.pause();
                     publish_worker_metrics(&shared, &state, 0.0);
@@ -477,6 +521,12 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
             );
             let result = match core_result {
                 Ok(new_core) => {
+                    log::info!(
+                        "SNES ROM loaded: frame_generation={} cycles={} profile={:?}",
+                        new_core.frame_generation(),
+                        new_core.cycles(),
+                        snes_video_profile()
+                    );
                     state.core = Some(new_core);
                     if let Some(core) = state.core.as_mut() {
                         apply_controller_buttons(core, state.input_buttons);
@@ -487,7 +537,13 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
                     state.reset_timer = true;
                     state.speaker.pause();
                     if let Some(core) = state.core.as_ref() {
-                        shared.publish_frame(render_snes_frame(core));
+                        let frame = render_snes_frame(core);
+                        log::info!(
+                            "SNES initial frame after load: len={} first_rgba={:?}",
+                            frame.len(),
+                            frame.get(..4).unwrap_or(&[])
+                        );
+                        shared.publish_frame(frame);
                     }
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
@@ -498,6 +554,7 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
         }
         SnesCommand::Unload { reply } => {
             let was_loaded = state.core.take().is_some();
+            log::info!("SNES ROM unloaded: was_loaded={was_loaded}");
             state.loaded = false;
             state.paused = false;
             state.frame_counter = 0;
@@ -510,11 +567,22 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
         SnesCommand::Reset { reply } => {
             let result = match state.core.as_mut() {
                 Some(core) => {
+                    log::info!(
+                        "SNES core reset: frame_generation={} cycles={}",
+                        core.frame_generation(),
+                        core.cycles()
+                    );
                     core.reset_cpu();
                     apply_controller_buttons(core, state.input_buttons);
                     state.frame_counter = 0;
                     state.reset_timer = true;
-                    shared.publish_frame(render_snes_frame(core));
+                    let frame = render_snes_frame(core);
+                    log::info!(
+                        "SNES frame after reset: len={} first_rgba={:?}",
+                        frame.len(),
+                        frame.get(..4).unwrap_or(&[])
+                    );
+                    shared.publish_frame(frame);
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
                 }
@@ -670,7 +738,14 @@ fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
 
 fn render_snes_frame(core: &Core) -> Vec<u8> {
     match render_screen(core) {
-        Ok(rendered) => rendered.rgba,
+        Ok(rendered) => {
+            log::info!(
+                "SNES software render: len={} first_rgba={:?}",
+                rendered.rgba.len(),
+                rendered.rgba.get(..4).unwrap_or(&[])
+            );
+            rendered.rgba
+        }
         Err(error) => {
             log::warn!("SNES software renderer failed: {error}");
             opaque_black_frame()

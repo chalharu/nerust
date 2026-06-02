@@ -47,14 +47,36 @@ impl GlBackend {
 
     /// Allocate GPU resources for the given RGBA render profile.
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
+        log::info!(
+            "OpenGL backend load: logical={:?} physical={:?}",
+            render_profile.logical_size,
+            render_profile.physical_size
+        );
         self.view.on_load(render_profile)?;
         let logical_size = render_profile.logical_size;
         self.expected_frame_len = logical_size.width * logical_size.height * 4;
+        log::info!(
+            "OpenGL backend expected frame length set to {} bytes",
+            self.expected_frame_len
+        );
         Ok(())
     }
 
     /// Upload `frame_buffer` to the GPU and draw a frame.
     pub fn on_update(&self, frame_buffer: &[u8]) {
+        let non_black_pixels = frame_buffer
+            .chunks_exact(4)
+            .filter(|pixel| {
+                let pixel = *pixel;
+                pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 || pixel[3] != 255
+            })
+            .count();
+        log::info!(
+            "OpenGL backend update: actual_frame_len={} expected_frame_len={} non_black_pixels={}",
+            frame_buffer.len(),
+            self.expected_frame_len,
+            non_black_pixels
+        );
         let frame_buffer = frame_buffer
             .get(..self.expected_frame_len)
             .expect("OpenGL backend expected a loaded frame buffer of the configured size");

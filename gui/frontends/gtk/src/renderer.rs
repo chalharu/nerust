@@ -40,6 +40,12 @@ impl GtkGlRenderer {
         let profile = snapshot
             .video_profile
             .expect("session should publish a render profile");
+        log::info!(
+            "GTK OpenGL renderer realize: profile logical={:?} physical={:?} window_size={:?}",
+            profile.logical_size,
+            profile.physical_size,
+            state.window_size()
+        );
         view.on_load(&profile).unwrap();
         self.view = Some(view);
         self.resize(
@@ -82,11 +88,24 @@ impl GtkGlRenderer {
 
     pub(crate) fn render(&self, frame_buffer: &[u8]) {
         if let Some(view) = self.view.as_ref() {
+            let non_black_pixels = frame_buffer
+                .chunks_exact(4)
+                .filter(|pixel| {
+                    let pixel = *pixel;
+                    pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 || pixel[3] != 255
+                })
+                .count();
+            log::info!(
+                "GTK OpenGL renderer update: frame_len={} non_black_pixels={}",
+                frame_buffer.len(),
+                non_black_pixels
+            );
             view.on_update(frame_buffer);
         }
     }
 
     pub(crate) fn unrealize(&mut self) {
+        log::info!("GTK OpenGL renderer unrealize");
         if let Some(view) = self.view.as_mut() {
             view.on_close();
         }
