@@ -135,6 +135,7 @@ pub(crate) struct Bus {
     auto_joy_active: bool,
     auto_joy_subticks_remaining: u8,
     joyout_latch_high: bool,
+    frame_generation: u64,
     standard_controller_buttons: [u16; STANDARD_CONTROLLER_PORT_COUNT],
     controller_ports: [StandardControllerPort; STANDARD_CONTROLLER_PORT_COUNT],
     hdma_active_mask: u8,
@@ -193,6 +194,7 @@ impl Bus {
             auto_joy_active: false,
             auto_joy_subticks_remaining: 0,
             joyout_latch_high: false,
+            frame_generation: 0,
             standard_controller_buttons: [0; STANDARD_CONTROLLER_PORT_COUNT],
             controller_ports: [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT],
             hdma_active_mask: 0,
@@ -248,6 +250,7 @@ impl Bus {
         self.auto_joy_active = false;
         self.auto_joy_subticks_remaining = 0;
         self.joyout_latch_high = false;
+        self.frame_generation = 0;
         self.controller_ports = [StandardControllerPort::default(); STANDARD_CONTROLLER_PORT_COUNT];
         self.hdma_active_mask = 0;
         self.hdma_ended_mask = 0;
@@ -316,6 +319,20 @@ impl Bus {
         let math_cycles = self.math_pending_cycles().unwrap_or(u32::MAX);
 
         video_cycles.min(math_cycles).max(1)
+    }
+
+    pub(crate) fn cycles_until_next_frame_boundary(&self) -> u32 {
+        let frame_start_phase = VBLANK_STUB_ACTIVE_START_LINE * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
+        let target_phase = if self.video_phase < frame_start_phase {
+            frame_start_phase
+        } else {
+            frame_start_phase + VBLANK_STUB_PERIOD
+        };
+        let subticks_remaining = u32::from(target_phase - self.video_phase);
+        let master_clocks_remaining = u64::from(subticks_remaining)
+            * u64::from(VIDEO_MASTER_CLOCKS_PER_SUBTICK)
+            - u64::from(self.video_master_clock_accumulator);
+        master_clocks_remaining.div_ceil(u64::from(CPU_MASTER_CLOCKS_PER_CYCLE)) as u32
     }
 
     fn math_pending_cycles(&self) -> Option<u32> {
@@ -388,6 +405,7 @@ impl Bus {
         // Rising edge of vblank: latch the NMI flag and optionally queue a
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
         if !was_in_vblank && in_vblank {
+            self.frame_generation = self.frame_generation.wrapping_add(1);
             self.presented_backdrop_completed_lines = self.presented_backdrop_current_lines;
             self.presented_bg1_completed_lines = self.presented_bg1_current_lines;
             self.presented_bg2_completed_lines = self.presented_bg2_current_lines;
@@ -461,6 +479,10 @@ impl Bus {
 
     fn current_subtick(&self) -> u16 {
         self.video_phase % VBLANK_STUB_SUBTICKS_PER_SCANLINE
+    }
+
+    pub(crate) fn frame_generation(&self) -> u64 {
+        self.frame_generation
     }
 
     pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {

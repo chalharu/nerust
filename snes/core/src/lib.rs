@@ -131,6 +131,22 @@ impl Core {
         Ok(())
     }
 
+    pub fn step_with_audio<M: MixerInput>(&mut self, mixer: &mut M) -> Result<(), CoreError> {
+        if self.cpu.current_state() == CpuState::Stopped {
+            return Ok(());
+        }
+        let start_cycles = self.cpu.cycles();
+        self.bus.tick_cpu_cycle();
+        self.cpu.step(&mut self.bus);
+        self.scheduler
+            .advance(self.cpu.cycles().wrapping_sub(start_cycles));
+        self.bus.mix_audio_for_cpu_cycles(1, mixer);
+        if let Some(fault) = self.cpu.take_fault() {
+            return Err(fault.into());
+        }
+        Ok(())
+    }
+
     /// Runs at least `cycles` CPU cycles, stopping early if the CPU stops.
     ///
     /// Execution is instruction-bounded and may overshoot the requested budget
@@ -163,6 +179,14 @@ impl Core {
 
     pub fn cycles(&self) -> u64 {
         self.cpu.cycles()
+    }
+
+    pub fn frame_generation(&self) -> u64 {
+        self.bus.frame_generation()
+    }
+
+    pub fn cycles_until_next_frame_boundary(&self) -> u32 {
+        self.bus.cycles_until_next_frame_boundary()
     }
 
     pub fn master_cycles(&self) -> u64 {
@@ -453,6 +477,18 @@ mod tests {
         assert_eq!(core.registers().pc(), 0x8000);
         assert!(core.cycles() >= 10_000);
         assert_eq!(core.master_cycles(), core.cycles());
+    }
+
+    #[test]
+    fn core_tracks_completed_frame_generation() {
+        let mut rom = build_lorom(0x8000);
+        rom[0x0000..0x0002].copy_from_slice(&[0x80, 0xFE]);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        let start_generation = core.frame_generation();
+        core.run_for_cycles(1_000_000).unwrap();
+
+        assert!(core.frame_generation() > start_generation);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use nerust_input_schema::{
 };
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_snes_core::Core;
+use nerust_snes_core::{Core, CpuState};
 use nerust_snes_render::render_screen;
 use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use std::fs;
@@ -32,14 +32,11 @@ const SCREEN_HEIGHT: usize = 224;
 const FRAME_STRIDE_BYTES: usize = SCREEN_WIDTH * 4;
 const SNES_MASTER_CLOCKS_PER_SCANLINE: u64 = 1364;
 const SNES_SCANLINES_PER_FRAME: u64 = 262;
-const CPU_MASTER_CLOCKS_PER_CYCLE: u64 = 6;
 const SNES_NTSC_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const SNES_NTSC_TARGET_FPS: f32 = SNES_NTSC_MASTER_CLOCK_HZ
     / ((SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME) as f32);
 const SNES_DSP_SAMPLE_RATE: i32 = 32_000;
-const CPU_CYCLES_PER_FRAME: u64 = (SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME
-    + CPU_MASTER_CLOCKS_PER_CYCLE / 2)
-    / CPU_MASTER_CLOCKS_PER_CYCLE;
+const SNES_FRAME_SYNC_FINE_CYCLES: u32 = 64;
 
 const SNES_PORT_ONE: PortId = PortId::new("snes.port.controller1");
 const SNES_PORT_TWO: PortId = PortId::new("snes.port.controller2");
@@ -417,11 +414,16 @@ fn run_worker<S: 'static + Sound + MixerInput + Send>(
 
         if let Some(core) = state.core.as_mut() {
             match step_snes_frame(core, &mut state.speaker) {
-                Ok(()) => {
+                Ok(true) => {
                     shared.publish_frame(render_snes_frame(core));
                     state.frame_counter = state.frame_counter.wrapping_add(1);
                     timer.wait();
                     publish_worker_metrics(&shared, &state, timer.as_fps());
+                }
+                Ok(false) => {
+                    state.paused = true;
+                    state.speaker.pause();
+                    publish_worker_metrics(&shared, &state, 0.0);
                 }
                 Err(error) => {
                     log::warn!("SNES runtime paused after core error: {error}");
@@ -644,9 +646,29 @@ fn discover_msu1_audio_tracks(path: &Path) -> Result<Vec<u16>, String> {
     Ok(tracks)
 }
 
-fn step_snes_frame<M: MixerInput>(core: &mut Core, mixer: &mut M) -> Result<(), String> {
-    core.run_for_cycles_with_audio(CPU_CYCLES_PER_FRAME, mixer)
-        .map_err(|error| error.to_string())
+fn step_snes_frame<M: MixerInput>(core: &mut Core, mixer: &mut M) -> Result<bool, String> {
+    let start_generation = core.frame_generation();
+
+    // Advance until the next completed frame so the GUI never samples mid-frame output.
+    while core.frame_generation() == start_generation {
+        let remaining_cycles = core.cycles_until_next_frame_boundary();
+        if remaining_cycles > SNES_FRAME_SYNC_FINE_CYCLES {
+            let coarse_cycles = remaining_cycles - SNES_FRAME_SYNC_FINE_CYCLES;
+            core.run_for_cycles_with_audio(u64::from(coarse_cycles), mixer)
+                .map_err(|error| error.to_string())?;
+        } else {
+            for _ in 0..remaining_cycles {
+                core.step_with_audio(mixer)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+
+        if core.current_state() == CpuState::Stopped {
+            break;
+        }
+    }
+
+    Ok(core.frame_generation() != start_generation)
 }
 
 fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
