@@ -23,6 +23,18 @@ on:
       ref:
         required: false
         type: string
+      release_id:
+        required: false
+        type: string
+      upload_url:
+        required: false
+        type: string
+      target_commitish:
+        required: false
+        type: string
+      version:
+        required: false
+        type: string
       tag_name:
         required: false
         type: string
@@ -57,6 +69,7 @@ jobs:
         id: context
         env:
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
           INPUT_TAG_NAME: ${{ inputs.tag_name || '' }}
           RELEASE_TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
           PR_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
@@ -77,18 +90,31 @@ jobs:
             done < <(git diff --name-only "${PR_BASE_SHA}...${PR_HEAD_SHA}")
           fi
 
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
           if [[ "${should_run}" != "true" ]]; then
+            {
+              printf 'should_run=%s\n' "${should_run}"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           version=""
           checkout_ref="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
+          output_lines=("should_run=${should_run}")
+
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            version="${INPUT_VERSION}"
+          fi
 
           case "${EVENT_NAME}" in
             release)
               tag_name="${INPUT_TAG_NAME:-${RELEASE_TAG_NAME}}"
+              ;;
+            workflow_call)
+              tag_name="${INPUT_TAG_NAME:-${GITHUB_REF_NAME}}"
+              ;;
+            push)
+              tag_name="${INPUT_TAG_NAME:-${GITHUB_REF_NAME}}"
               ;;
             workflow_dispatch)
               tag_name="${INPUT_TAG_NAME:-}"
@@ -109,12 +135,12 @@ jobs:
           if [[ -z "${version}" ]]; then
             mapfile -t release_meta < <(bash packaging/release/release_flow.sh workspace-metadata)
             for line in "${release_meta[@]}"; do
-              echo "${line}" >> "$GITHUB_OUTPUT"
               case "${line}" in
                 version=*)
                   version="${line#version=}"
                   ;;
               esac
+              output_lines+=("${line}")
             done
           fi
 
@@ -133,8 +159,15 @@ jobs:
             esac
           fi
 
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
-          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+          output_lines+=(
+            "checkout_ref=${checkout_ref}"
+            "version=${version}"
+            "tag_name=${tag_name}"
+          )
+
+          {
+            printf '%s\n' "${output_lines[@]}"
+          } >> "$GITHUB_OUTPUT"
   linux-x86_64:
     name: Linux x86_64
     needs: [prepare-context]
@@ -475,14 +508,22 @@ jobs:
           CHECKOUT_REF: ${{ needs.prepare-context.outputs.checkout_ref }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id || '' }}
+          INPUT_UPLOAD_URL: ${{ inputs.upload_url || '' }}
+          INPUT_TARGET_COMMITISH: ${{ inputs.target_commitish || github.event.release.target_commitish || '' }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
-          release_target="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.target_commitish')"
-          if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
-            echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
+          release_id="${INPUT_RELEASE_ID}"
+          upload_url="${INPUT_UPLOAD_URL}"
+          if [[ -z "${release_id}" || -z "${upload_url}" ]]; then
+            echo "release metadata is missing" >&2
             exit 1
           fi
-          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --repo "${GH_REPO}" --json assets --jq '.assets[].name')
+          if [[ -n "${INPUT_TARGET_COMMITISH}" && "${INPUT_TARGET_COMMITISH}" != "${CHECKOUT_REF}" ]]; then
+            echo "release tag target ${INPUT_TARGET_COMMITISH} does not match build commit ${CHECKOUT_REF}" >&2
+            exit 1
+          fi
+          mapfile -t existing_assets < <(gh api "repos/${GH_REPO}/releases/${release_id}/assets" --jq '.[].name')
           release_files=(
             "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz"
             "release-assets/nerust-${TAG_NAME}-linux-x86_64.tar.gz.sha256"
@@ -511,7 +552,20 @@ jobs:
           if [[ "${#upload_args[@]}" -eq 0 ]]; then
             exit 0
           fi
-          gh release upload "${TAG_NAME}" "${upload_args[@]}" --repo "${GH_REPO}"
+          for file in "${upload_args[@]}"; do
+            asset_name="$(basename "${file}")"
+            curl \
+              --fail \
+              --location \
+              --request POST \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              --header "Content-Type: application/octet-stream" \
+              --data-binary @"${file}" \
+              "${upload_url}?name=${asset_name}" \
+              >/dev/null
+          done
   publish-release:
     if: ${{ github.event_name == 'release' || inputs.publish_release }}
     name: Publish GitHub release
