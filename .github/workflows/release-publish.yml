@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: write
     outputs:
+      release_id: ${{ steps.release_meta.outputs.release_id }}
+      upload_url: ${{ steps.release_meta.outputs.upload_url }}
       version: ${{ steps.tag_meta.outputs.version }}
       tag_name: ${{ steps.tag_meta.outputs.tag_name }}
     steps:
@@ -56,6 +58,7 @@ jobs:
           VERSION: ${{ steps.tag_meta.outputs.version }}
         run: bash packaging/release/release_flow.sh release-notes "${VERSION}" --output release-notes.md
       - name: Create GitHub release
+        id: create_release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -64,6 +67,18 @@ jobs:
             exit 0
           fi
           gh release create "${TAG_NAME}" --target "${GITHUB_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md --draft
+      - name: Capture release metadata
+        id: release_meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          release_api_url="repos/${GH_REPO}/releases/tags/${TAG_NAME}"
+          {
+            printf 'release_id=%s\n' "$(gh api "${release_api_url}" --jq '.id')"
+            printf 'upload_url=%s\n' "$(gh api "${release_api_url}" --jq '.upload_url' | sed 's/{.*//')"
+          } >> "$GITHUB_OUTPUT"
   release-artifacts:
     name: Release artifacts
     needs: [publish]
@@ -73,6 +88,8 @@ jobs:
     with:
       publish_release: true
       ref: ${{ github.sha }}
+      release_id: ${{ needs.publish.outputs.release_id }}
+      upload_url: ${{ needs.publish.outputs.upload_url }}
       version: ${{ needs.publish.outputs.version }}
       tag_name: ${{ github.ref_name }}
     secrets:
