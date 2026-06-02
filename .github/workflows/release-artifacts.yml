@@ -29,6 +29,9 @@ on:
       upload_url:
         required: false
         type: string
+      target_commitish:
+        required: false
+        type: string
       version:
         required: false
         type: string
@@ -507,18 +510,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           INPUT_RELEASE_ID: ${{ inputs.release_id || '' }}
           INPUT_UPLOAD_URL: ${{ inputs.upload_url || '' }}
+          INPUT_TARGET_COMMITISH: ${{ inputs.target_commitish || github.event.release.target_commitish || '' }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
-          release_api_url="repos/${GH_REPO}/releases/tags/${TAG_NAME}"
           release_id="${INPUT_RELEASE_ID}"
           upload_url="${INPUT_UPLOAD_URL}"
           if [[ -z "${release_id}" || -z "${upload_url}" ]]; then
-            release_id="$(gh api "${release_api_url}" --jq '.id')"
-            upload_url="$(gh api "${release_api_url}" --jq '.upload_url' | sed 's/{.*//')"
+            echo "release metadata is missing" >&2
+            exit 1
           fi
-          release_target="$(gh api "${release_api_url}" --jq '.target_commitish')"
-          if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
-            echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
+          if [[ -n "${INPUT_TARGET_COMMITISH}" && "${INPUT_TARGET_COMMITISH}" != "${CHECKOUT_REF}" ]]; then
+            echo "release tag target ${INPUT_TARGET_COMMITISH} does not match build commit ${CHECKOUT_REF}" >&2
             exit 1
           fi
           mapfile -t existing_assets < <(gh api "repos/${GH_REPO}/releases/${release_id}/assets" --jq '.[].name')
