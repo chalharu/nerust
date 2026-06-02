@@ -40,30 +40,14 @@ use self::persistence_codec::{
 };
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
-use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_contract_mirror::MirrorMode;
 use nerust_contract_options::CoreOptions;
 #[cfg(test)]
 use nerust_contract_options::Mmc3IrqVariant;
 use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_crc64_hasher::crc64;
 use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
-
-const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
-
-struct Crc64Hasher(Digest<'static, u64>);
-
-impl Crc64Hasher {
-    fn new() -> Self {
-        Self(CRC64_LEGACY_ECMA.digest())
-    }
-}
-
-fn crc64(bytes: &[u8]) -> u64 {
-    let mut hasher = Crc64Hasher::new();
-    hasher.0.update(bytes);
-    hasher.0.finalize()
-}
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 

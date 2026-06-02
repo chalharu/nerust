@@ -42,6 +42,7 @@ members = [
   "snes/rom_test",
   "sound/android",
   "timer",
+  "util/crc64_hasher",
 ]
 default-members = ["core", "persistence", "console"]
 
@@ -91,6 +92,7 @@ nerust_contract_persistence = { path = "contract/persistence" }
 nerust_contract_rom = { path = "contract/rom" }
 nerust_contract_settings = { path = "contract/settings" }
 nerust_core = { path = "core" }
+nerust_crc64_hasher = { path = "util/crc64_hasher" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
 nerust_gui_session = { path = "gui/shared/session" }

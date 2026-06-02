@@ -1,6 +1,7 @@
 use super::{ConsoleData, ConsoleRunner};
-use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher};
+use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult};
 use nerust_core::Core;
+use nerust_crc64_hasher::Crc64Hasher;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
