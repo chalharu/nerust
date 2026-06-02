@@ -36,7 +36,6 @@ const SNES_NTSC_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const SNES_NTSC_TARGET_FPS: f32 = SNES_NTSC_MASTER_CLOCK_HZ
     / ((SNES_MASTER_CLOCKS_PER_SCANLINE * SNES_SCANLINES_PER_FRAME) as f32);
 const SNES_DSP_SAMPLE_RATE: i32 = 32_000;
-const SNES_FRAME_SYNC_FINE_CYCLES: u32 = 64;
 
 const SNES_PORT_ONE: PortId = PortId::new("snes.port.controller1");
 const SNES_PORT_TWO: PortId = PortId::new("snes.port.controller2");
@@ -649,20 +648,10 @@ fn discover_msu1_audio_tracks(path: &Path) -> Result<Vec<u16>, String> {
 fn step_snes_frame<M: MixerInput>(core: &mut Core, mixer: &mut M) -> Result<bool, String> {
     let start_generation = core.frame_generation();
 
-    // Advance until the next completed frame so the GUI never samples mid-frame output.
+    // Advance cycle-by-cycle until the next completed frame so the GUI never samples mid-frame output.
     while core.frame_generation() == start_generation {
-        let remaining_cycles = core.cycles_until_next_frame_boundary();
-        if remaining_cycles > SNES_FRAME_SYNC_FINE_CYCLES {
-            let coarse_cycles = remaining_cycles - SNES_FRAME_SYNC_FINE_CYCLES;
-            core.run_for_cycles_with_audio(u64::from(coarse_cycles), mixer)
-                .map_err(|error| error.to_string())?;
-        } else {
-            for _ in 0..remaining_cycles {
-                core.step_with_audio(mixer)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-
+        core.step_with_audio(mixer)
+            .map_err(|error| error.to_string())?;
         if core.current_state() == CpuState::Stopped {
             break;
         }
