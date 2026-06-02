@@ -501,8 +501,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
         run: |
-          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.id')"
-          release_target="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '.target_commitish')"
+          release_api_url="repos/${GH_REPO}/releases/tags/${TAG_NAME}"
+          release_id="$(gh api "${release_api_url}" --jq '.id')"
+          release_target="$(gh api "${release_api_url}" --jq '.target_commitish')"
+          upload_url="$(gh api "${release_api_url}" --jq '.upload_url')"
+          upload_url="${upload_url%\{*}"
           if [[ "${release_target}" != "${CHECKOUT_REF}" ]]; then
             echo "release tag target ${release_target} does not match build commit ${CHECKOUT_REF}" >&2
             exit 1
@@ -541,7 +544,7 @@ jobs:
             gh api \
               --method POST \
               -H "Content-Type: application/octet-stream" \
-              "repos/${GH_REPO}/releases/${release_id}/assets?name=${asset_name}" \
+              "${upload_url}?name=${asset_name}" \
               --input "${file}" \
               >/dev/null
           done
