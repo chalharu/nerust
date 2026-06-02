@@ -72,7 +72,7 @@ jobs:
               -f target_commitish="${GITHUB_SHA}" \
               -f name="${TAG_NAME}" \
               -f body="$(<release-notes.md)" \
-              -f draft=true \
+              -F draft=true \
               --jq '[.id, (.upload_url | sub("\\{.*$"; "")), .target_commitish] | @tsv')"
           fi
 
