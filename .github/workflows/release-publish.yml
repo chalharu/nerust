@@ -16,6 +16,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release_meta.outputs.release_id }}
       upload_url: ${{ steps.release_meta.outputs.upload_url }}
+      target_commitish: ${{ steps.release_meta.outputs.target_commitish }}
       version: ${{ steps.tag_meta.outputs.version }}
       tag_name: ${{ steps.tag_meta.outputs.tag_name }}
     steps:
@@ -58,26 +59,37 @@ jobs:
           VERSION: ${{ steps.tag_meta.outputs.version }}
         run: bash packaging/release/release_flow.sh release-notes "${VERSION}" --output release-notes.md
       - name: Create GitHub release
-        id: create_release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          if gh release view "${TAG_NAME}" > /dev/null 2>&1; then
-            exit 0
-          fi
-          gh release create "${TAG_NAME}" --target "${GITHUB_SHA}" --title "${TAG_NAME}" --notes-file release-notes.md --draft
-      - name: Capture release metadata
         id: release_meta
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          release_api_url="repos/${GH_REPO}/releases/tags/${TAG_NAME}"
+          release_tsv="$(gh api "repos/${GH_REPO}/releases" --paginate --jq ".[] | select(.tag_name == \"${TAG_NAME}\") | [.id, (.upload_url | sub(\"\\\\{.*$\"; \"\")), .target_commitish] | @tsv" | head -n 1 || true)"
+          if [[ -z "${release_tsv}" ]]; then
+            release_tsv="$(gh api -X POST "repos/${GH_REPO}/releases" \
+              -f tag_name="${TAG_NAME}" \
+              -f target_commitish="${GITHUB_SHA}" \
+              -f name="${TAG_NAME}" \
+              -f body="$(<release-notes.md)" \
+              -f draft=true \
+              --jq '[.id, (.upload_url | sub("\\{.*$"; "")), .target_commitish] | @tsv')"
+          fi
+
+          IFS=$'\t' read -r release_id upload_url release_target <<< "${release_tsv}"
+          if [[ -z "${release_id}" || -z "${upload_url}" ]]; then
+            echo "failed to resolve release metadata for ${TAG_NAME}" >&2
+            exit 1
+          fi
+          if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
+            echo "release tag target ${release_target} does not match build commit ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
           {
-            printf 'release_id=%s\n' "$(gh api "${release_api_url}" --jq '.id')"
-            printf 'upload_url=%s\n' "$(gh api "${release_api_url}" --jq '.upload_url' | sed 's/{.*//')"
+            printf 'release_id=%s\n' "${release_id}"
+            printf 'upload_url=%s\n' "${upload_url}"
+            printf 'target_commitish=%s\n' "${release_target}"
           } >> "$GITHUB_OUTPUT"
   release-artifacts:
     name: Release artifacts
@@ -90,6 +102,7 @@ jobs:
       ref: ${{ github.sha }}
       release_id: ${{ needs.publish.outputs.release_id }}
       upload_url: ${{ needs.publish.outputs.upload_url }}
+      target_commitish: ${{ needs.publish.outputs.target_commitish }}
       version: ${{ needs.publish.outputs.version }}
       tag_name: ${{ github.ref_name }}
     secrets:
