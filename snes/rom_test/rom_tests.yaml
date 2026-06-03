@@ -2037,3 +2037,73 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     expected_screen_hash: 0xEDE48F24705541FD
+  # - id: peter-lemon-snes-cpu-msc
+  #   description: |
+  #     The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+  #   rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
+  #   max_steps: 1072098
+  #   check_interval_steps: 1072098
+  #   expected_screen_hash: 0xEDE48F24705541FD
+  - id: peter-lemon-snes-cpu-ora
+    description: |
+      The self-authored CPU ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    expected_screen_hash: 0x02A73EF65F92CEA2
+  # - id: peter-lemon-snes-cpu-phl
+  #   description: |
+  #     The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+  #   rom: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.sfc
+  #   max_steps: 3097172
+  #   check_interval_steps: 3097172
+  #   expected_screen_hash: 0x02A73EF65F92CEA2
+  - id: peter-lemon-snes-cpu-psr
+    description: |
+      The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.sfc
+    max_steps: 1250781
+    check_interval_steps: 1250781
+    expected_screen_hash: 0x47250BC0A20F1244
+  - id: peter-lemon-snes-cpu-ret
+    description: |
+      The self-authored CPU RET test ROM verifies correct RET instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    expected_screen_hash: 0xB0A1A127D4AB3A28
+  - id: peter-lemon-snes-cpu-rol
+    description: |
+      The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUR0L.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    expected_screen_hash: 0x833F3680D0538274
+  - id: peter-lemon-snes-cpu-ror
+    description: |
+      The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUR0R.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    expected_screen_hash: 0xB809D1ED9753496E
+  - id: peter-lemon-snes-cpu-sbc
+    description: |
+      The self-authored CPU SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    expected_screen_hash: 0x7BCF082D0B67D0B6
+  - id: peter-lemon-snes-cpu-str
+    description: |
+      The self-authored CPU STR test ROM verifies correct STR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.sfc
+    max_steps: 4228831
+    check_interval_steps: 4228831
+    expected_screen_hash: 0x03B5E2805B76FD30
+  - id: peter-lemon-snes-cpu-trn
+    description: |
+      The self-authored CPU TRN test ROM verifies correct TRN instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.sfc
+    max_steps: 3394977
+    check_interval_steps: 3394977
+    expected_screen_hash: 0xC7A76245F825519E
