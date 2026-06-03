@@ -5,7 +5,7 @@
     <property name="modal">True</property>
     <property name="destroy-with-parent">True</property>
     <property name="program-name">Nerust</property>
-    <property name="copyright" translatable="yes">© 2019 Mitsuharu Seki</property>
+    <property name="copyright" translatable="yes">© 2019 chalharu</property>
     <property name="website">https://github.com/chalharu/Nerust</property>
     <property name="license">Mozilla Public License Version 2.0
 ==================================
