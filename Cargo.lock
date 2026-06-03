@@ -3323,6 +3323,7 @@ dependencies = [
  "nerust_contract_persistence",
  "nerust_contract_rom",
  "nerust_contract_settings",
+ "nerust_crc64_hasher",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_input_nes",

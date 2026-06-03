@@ -8,6 +8,7 @@ use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_contract_persistence::CanonicalMediaIdentity;
+use nerust_crc64_hasher::Crc64Hasher;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_schema::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
@@ -20,6 +21,7 @@ use nerust_snes_core::Core;
 use nerust_snes_render::render_screen;
 use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use std::fs;
+use std::hash::Hasher as _;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -524,6 +526,15 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
         SnesCommand::Pause => {
             state.paused = true;
             state.speaker.pause();
+            if let Some(core) = state.core.as_ref() {
+                let mut hasher = Crc64Hasher::new();
+                hasher.write(render_snes_frame(core).as_slice());
+                let hash = hasher.finish();
+                log::info!(
+                    "SNES runtime paused at frame {} with screen hash 0x{hash:016X}",
+                    state.frame_counter
+                );
+            }
             publish_worker_metrics(shared, state, 0.0);
         }
         SnesCommand::Resume => {
