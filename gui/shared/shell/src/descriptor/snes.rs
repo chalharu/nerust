@@ -531,8 +531,9 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
                 hasher.write(render_snes_frame(core).as_slice());
                 let hash = hasher.finish();
                 log::info!(
-                    "SNES runtime paused at frame {} with screen hash 0x{hash:016X}",
-                    state.frame_counter
+                    "SNES runtime paused at frame {} with screen hash 0x{hash:016X}, step count {}",
+                    state.frame_counter,
+                    state.frame_counter * CPU_CYCLES_PER_FRAME
                 );
             }
             publish_worker_metrics(shared, state, 0.0);
