@@ -6,8 +6,8 @@
 
 use clap::{Arg, ArgAction, Command};
 use nerust_snes_core::{Cartridge, EnhancementChip};
+use nerust_snes_render::render_screen;
 use nerust_snes_rom_test::manifest::{RomManifest, load_default_manifest, load_manifest};
-use nerust_snes_rom_test::render::render_screen;
 use nerust_snes_rom_test::report::{default_output_root, write_html_report};
 use nerust_snes_rom_test::results::{CaseOutcome, ValidationOptions};
 use nerust_snes_rom_test::runner::{
