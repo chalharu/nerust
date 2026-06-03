@@ -6,9 +6,9 @@
 
 use crate::manifest::{Assertion, ManifestError, RomCase};
 use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH, encode_screenshot_png, screen_hash_rgba};
-use crate::render::render_screen;
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
+use nerust_snes_render::render_screen;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;

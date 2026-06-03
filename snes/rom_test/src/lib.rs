@@ -6,7 +6,6 @@
 
 pub mod manifest;
 pub mod media;
-pub use nerust_snes_render as render;
 pub mod report;
 pub mod results;
 pub mod runner;
