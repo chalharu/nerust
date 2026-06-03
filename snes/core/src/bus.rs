@@ -463,101 +463,78 @@ impl Bus {
         self.video_phase % VBLANK_STUB_SUBTICKS_PER_SCANLINE
     }
 
-    pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
-        self.presented_backdrop_completed_lines
+    fn resolve_presented_line<T: Copy>(
+        current_line: &[Option<T>; PRESENTED_SCANLINE_COUNT],
+        completed_line: &[Option<T>; PRESENTED_SCANLINE_COUNT],
+        line: usize,
+    ) -> Option<T> {
+        completed_line
             .get(line)
             .copied()
             .flatten()
-            .or_else(|| {
-                self.presented_backdrop_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+            .or_else(|| current_line.get(line).copied().flatten())
+    }
+
+    pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
+        Self::resolve_presented_line(
+            &self.presented_backdrop_current_lines,
+            &self.presented_backdrop_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_bg1_line(&self, line: usize) -> Option<PresentedBg1Line> {
-        self.presented_bg1_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_bg1_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_bg1_current_lines,
+            &self.presented_bg1_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_bg2_line(&self, line: usize) -> Option<PresentedBg1Line> {
-        self.presented_bg2_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_bg2_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_bg2_current_lines,
+            &self.presented_bg2_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_bg3_line(&self, line: usize) -> Option<PresentedBg1Line> {
-        self.presented_bg3_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_bg3_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_bg3_current_lines,
+            &self.presented_bg3_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_bg4_line(&self, line: usize) -> Option<PresentedBg1Line> {
-        self.presented_bg4_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_bg4_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_bg4_current_lines,
+            &self.presented_bg4_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_main_screen_line(
         &self,
         line: usize,
     ) -> Option<PresentedMainScreenLine> {
-        self.presented_main_screen_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_main_screen_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_main_screen_current_lines,
+            &self.presented_main_screen_completed_lines,
+            line,
+        )
     }
 
     pub(crate) fn presented_color_window_line(
         &self,
         line: usize,
     ) -> Option<PresentedColorWindowLine> {
-        self.presented_color_window_completed_lines
-            .get(line)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                self.presented_color_window_current_lines
-                    .get(line)
-                    .copied()
-                    .flatten()
-            })
+        Self::resolve_presented_line(
+            &self.presented_color_window_current_lines,
+            &self.presented_color_window_completed_lines,
+            line,
+        )
     }
 
     fn auto_joy_start_reachable(&self) -> bool {
