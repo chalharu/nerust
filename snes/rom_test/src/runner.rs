@@ -1,9 +1,3 @@
-// Copyright (c) 2026 chalharu
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 use crate::manifest::{Assertion, ManifestError, RomCase};
 use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH, encode_screenshot_png, screen_hash_rgba};
 use crate::results::{CaseOutcome, Validation, ValidationOptions};

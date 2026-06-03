@@ -1,9 +1,3 @@
-// Copyright (c) 2018 chalharu
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 //! Android-native audio backend built on CPAL / AAudio.
 //!
 //! On Android API 26+, CPAL selects AAudio as the audio backend automatically.
