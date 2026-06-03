@@ -12,6 +12,7 @@ nerust_console.workspace = true
 nerust_contract_options.workspace = true
 nerust_contract_persistence.workspace = true
 nerust_contract_settings.workspace = true
+nerust_crc64_hasher.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
 nerust_input_nes.workspace = true
