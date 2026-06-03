@@ -1,9 +1,3 @@
-// Copyright (c) 2018 chalharu
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use nerust_rom_test::manifest::{RomManifest, load_default_manifest, load_manifest};
 use nerust_rom_test::report::{default_output_root, write_html_report};
