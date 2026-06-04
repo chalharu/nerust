@@ -121,7 +121,8 @@ pub(crate) struct Bus {
     math_quotient: u16,
     math_result: u16,
     math_pending: Option<MathPending>,
-    /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210.
+    /// RDNMI flag (bit 7 of $4210): set on vblank entry, cleared by reading $4210
+    /// or automatically at the end of vblank.
     nmi_flag: bool,
     /// Pending NMI for the CPU: set when the NMI flag rises while NMI is enabled
     /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
@@ -416,6 +417,9 @@ impl Bus {
             self.presented_main_screen_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_color_window_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         }
+        if was_in_vblank && !in_vblank {
+            self.nmi_flag = false;
+        }
         if self.current_subtick() == 0 && !in_vblank {
             self.capture_presented_scanline();
         }
@@ -464,11 +468,11 @@ impl Bus {
         completed_line: &[Option<T>; PRESENTED_SCANLINE_COUNT],
         line: usize,
     ) -> Option<T> {
-        completed_line
+        current_line
             .get(line)
             .copied()
             .flatten()
-            .or_else(|| current_line.get(line).copied().flatten())
+            .or_else(|| completed_line.get(line).copied().flatten())
     }
 
     pub(crate) fn presented_backdrop_line(&self, line: usize) -> Option<PresentedBackdropLine> {
@@ -878,7 +882,6 @@ impl Bus {
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x2140..=0x217F) => {
                 self.apu.write_cpu_port(offset, value);
-                self.nmi_flag = false;
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 let _ = self.memory.write_mmio(offset, value);
@@ -5075,6 +5078,24 @@ mod tests {
 
         // Second read returns 0x40 (flag already cleared)
         assert_eq!(bus.read(0x004210), 0x40);
+    }
+
+    #[test]
+    fn rdnmi_flag_clears_automatically_at_vblank_end() {
+        let mut bus = Bus::new(test_cartridge());
+
+        for _ in 0..VBLANK_STUB_ACTIVE_START {
+            bus.tick_video_stub();
+        }
+        assert!(bus.nmi_flag, "nmi_flag should be set on vblank entry");
+
+        for _ in 0..(VBLANK_STUB_PERIOD - VBLANK_STUB_ACTIVE_START) {
+            bus.tick_video_stub();
+        }
+        assert!(
+            !bus.nmi_flag,
+            "nmi_flag should clear automatically when vblank ends"
+        );
     }
 
     #[test]
