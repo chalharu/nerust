@@ -2037,13 +2037,14 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     expected_screen_hash: 0xEDE48F24705541FD
+  # TODO: リセット後のPC=0x00FFでの動作が未実装のため、MSCテストは一旦保留
   # - id: peter-lemon-snes-cpu-msc
   #   description: |
   #     The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
   #   rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
   #   max_steps: 1072098
   #   check_interval_steps: 1072098
-  #   expected_screen_hash: 0xEDE48F24705541FD
+  #   expected_screen_hash: 0xF57D3F255B69C0D3
   - id: peter-lemon-snes-cpu-ora
     description: |
       The self-authored CPU ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2051,13 +2052,13 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     expected_screen_hash: 0x02A73EF65F92CEA2
-  # - id: peter-lemon-snes-cpu-phl
-  #   description: |
-  #     The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-  #   rom: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.sfc
-  #   max_steps: 3097172
-  #   check_interval_steps: 3097172
-  #   expected_screen_hash: 0x02A73EF65F92CEA2
+  - id: peter-lemon-snes-cpu-phl
+    description: |
+      The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.sfc
+    max_steps: 2978050
+    check_interval_steps: 2978050
+    expected_screen_hash: 0x832F2C322B814DAA
   - id: peter-lemon-snes-cpu-psr
     description: |
       The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
