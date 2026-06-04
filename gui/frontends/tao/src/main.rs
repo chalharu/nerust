@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 fn main() {
     SimpleLogger::new()
-        .with_level(LevelFilter::Warn)
+        .with_level(LevelFilter::Info)
         .env()
         .init()
         .unwrap();
