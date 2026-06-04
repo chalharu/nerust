@@ -878,6 +878,7 @@ impl Bus {
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x2140..=0x217F) => {
                 self.apu.write_cpu_port(offset, value);
+                self.nmi_flag = false;
             }
             (0x00..=0x3F | 0x80..=0xBF, 0x2180..=0x2183) => {
                 let _ = self.memory.write_mmio(offset, value);
