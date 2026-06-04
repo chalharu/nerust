@@ -2076,14 +2076,14 @@ cases:
   - id: peter-lemon-snes-cpu-rol
     description: |
       The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-    rom: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUR0L.sfc
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.sfc
     max_steps: 1012537
     check_interval_steps: 1012537
     expected_screen_hash: 0x833F3680D0538274
   - id: peter-lemon-snes-cpu-ror
     description: |
       The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-    rom: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUR0R.sfc
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.sfc
     max_steps: 1012537
     check_interval_steps: 1012537
     expected_screen_hash: 0xB809D1ED9753496E
