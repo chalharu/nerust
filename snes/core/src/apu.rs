@@ -18,6 +18,8 @@ const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
 pub(crate) const SMP_IPL_ENTRY_DELAY_CPU_CYCLES: u8 = 32;
 const SNES_NTSC_CPU_CLOCK_HZ: u64 = 3_579_545;
+const SMP_INSTRUCTION_BUDGET_NUMERATOR: u32 = 1;
+const SMP_INSTRUCTION_BUDGET_DENOMINATOR: u32 = 7;
 const DSP_NATIVE_SAMPLE_RATE: u64 = 32_000;
 const DSP_VOICE_COUNT: usize = 8;
 const DSP_VOICE_REGISTER_STRIDE: usize = 0x10;
@@ -146,6 +148,7 @@ pub(crate) struct Apu {
     smp_pc: u16,
     smp_running: bool,
     smp_entry_delay_cpu_cycles: u8,
+    smp_instruction_accumulator: u32,
     audio_accumulator: u64,
     dsp_voices: [DspVoice; DSP_VOICE_COUNT],
 }
@@ -171,6 +174,7 @@ impl Apu {
             smp_pc: 0,
             smp_running: false,
             smp_entry_delay_cpu_cycles: 0,
+            smp_instruction_accumulator: 0,
             audio_accumulator: 0,
             dsp_voices: [DspVoice::default(); DSP_VOICE_COUNT],
         }
@@ -348,31 +352,18 @@ impl Apu {
             return;
         }
 
-        if self.control & 0x07 == 0 {
-            let mut timer_disabled_cycles = 0;
-            while cycles > 0 && self.smp_running && self.control & 0x07 == 0 {
-                let previous_control = self.control;
-                self.execute_smp_instruction();
-                timer_disabled_cycles += 1;
-                cycles -= 1;
+        self.smp_instruction_accumulator = self
+            .smp_instruction_accumulator
+            .saturating_add(cycles.saturating_mul(SMP_INSTRUCTION_BUDGET_NUMERATOR));
+        let instruction_budget =
+            self.smp_instruction_accumulator / SMP_INSTRUCTION_BUDGET_DENOMINATOR;
+        self.smp_instruction_accumulator %= SMP_INSTRUCTION_BUDGET_DENOMINATOR;
 
-                if self.control & 0x07 != 0 {
-                    let enabled_control = self.control;
-                    self.control = previous_control;
-                    self.tick_timers(timer_disabled_cycles);
-                    self.control = enabled_control;
-                    timer_disabled_cycles = 0;
-                    break;
-                }
+        self.tick_timers(cycles);
+        for _ in 0..instruction_budget {
+            if !self.smp_running {
+                break;
             }
-            self.tick_timers(timer_disabled_cycles);
-            if cycles == 0 || !self.smp_running {
-                return;
-            }
-        }
-
-        for _ in 0..cycles {
-            self.tick_timers(1);
             self.execute_smp_instruction();
         }
     }
@@ -439,6 +430,7 @@ impl Apu {
         self.ipl_state = IplState::WaitingForInitialKick;
         self.smp_running = false;
         self.smp_entry_delay_cpu_cycles = 0;
+        self.smp_instruction_accumulator = 0;
     }
 
     fn update_timer_enable(&mut self, previous: u8, value: u8) {
