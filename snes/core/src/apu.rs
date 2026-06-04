@@ -17,9 +17,9 @@ const SMP_TIMER_COUNT: usize = 3;
 const SMP_TIMER01_SOURCE_CPU_CYCLES: u16 = 448;
 const SMP_TIMER2_SOURCE_CPU_CYCLES: u16 = 56;
 pub(crate) const SMP_IPL_ENTRY_DELAY_CPU_CYCLES: u8 = 32;
+const SMP_CYCLE_UNITS_PER_CPU_CYCLE: u32 = 2;
+const SMP_CYCLE_UNITS_PER_SMP_CYCLE: u32 = 1;
 const SNES_NTSC_CPU_CLOCK_HZ: u64 = 3_579_545;
-const SMP_INSTRUCTION_BUDGET_NUMERATOR: u32 = 1;
-const SMP_INSTRUCTION_BUDGET_DENOMINATOR: u32 = 7;
 const DSP_NATIVE_SAMPLE_RATE: u64 = 32_000;
 const DSP_VOICE_COUNT: usize = 8;
 const DSP_VOICE_REGISTER_STRIDE: usize = 0x10;
@@ -148,8 +148,8 @@ pub(crate) struct Apu {
     smp_pc: u16,
     smp_running: bool,
     smp_entry_delay_cpu_cycles: u8,
-    smp_instruction_accumulator: u32,
     audio_accumulator: u64,
+    smp_instruction_accumulator: u32,
     dsp_voices: [DspVoice; DSP_VOICE_COUNT],
 }
 
@@ -174,8 +174,8 @@ impl Apu {
             smp_pc: 0,
             smp_running: false,
             smp_entry_delay_cpu_cycles: 0,
-            smp_instruction_accumulator: 0,
             audio_accumulator: 0,
+            smp_instruction_accumulator: 0,
             dsp_voices: [DspVoice::default(); DSP_VOICE_COUNT],
         }
     }
@@ -214,6 +214,23 @@ impl Apu {
             0x00F8..=0x00F9 => self.aux_io[usize::from(address - 0x00F8)],
             0x00FA..=0x00FC => 0,
             0x00FD..=0x00FF => self.timers[usize::from(address - 0x00FD)].read_output(),
+            _ => self.ram[usize::from(address)],
+        }
+    }
+
+    fn peek_smp(&self, address: u16) -> u8 {
+        if self.control & SMP_CONTROL_ENABLE_IPL_ROM != 0 && address >= SMP_IPL_ROM_START {
+            return SMP_IPL_ROM[usize::from(address - SMP_IPL_ROM_START)];
+        }
+
+        match address {
+            0x00F0..=0x00F1 => 0,
+            0x00F2 => self.dsp_address,
+            0x00F3 => self.dsp_registers[usize::from(self.dsp_address & 0x7F)],
+            0x00F4..=0x00F7 => self.cpu_to_apu_ports[usize::from(address - 0x00F4)],
+            0x00F8..=0x00F9 => self.aux_io[usize::from(address - 0x00F8)],
+            0x00FA..=0x00FC => 0,
+            0x00FD..=0x00FF => self.timers[usize::from(address - 0x00FD)].output & 0x0F,
             _ => self.ram[usize::from(address)],
         }
     }
@@ -352,19 +369,20 @@ impl Apu {
             return;
         }
 
+        self.tick_timers(cycles);
         self.smp_instruction_accumulator = self
             .smp_instruction_accumulator
-            .saturating_add(cycles.saturating_mul(SMP_INSTRUCTION_BUDGET_NUMERATOR));
-        let instruction_budget =
-            self.smp_instruction_accumulator / SMP_INSTRUCTION_BUDGET_DENOMINATOR;
-        self.smp_instruction_accumulator %= SMP_INSTRUCTION_BUDGET_DENOMINATOR;
+            .saturating_add(cycles.saturating_mul(SMP_CYCLE_UNITS_PER_CPU_CYCLE));
 
-        self.tick_timers(cycles);
-        for _ in 0..instruction_budget {
-            if !self.smp_running {
+        while self.smp_running {
+            let opcode = self.peek_smp(self.smp_pc);
+            let instruction_units = Self::smp_instruction_budget_units(self, opcode);
+            if self.smp_instruction_accumulator < instruction_units {
                 break;
             }
+
             self.execute_smp_instruction();
+            self.smp_instruction_accumulator -= instruction_units;
         }
     }
 
@@ -1186,9 +1204,7 @@ impl Apu {
                 let value = self.pop_smp_stack();
                 self.smp_y = value;
             }
-            0xEF | 0xFF => {
-                self.smp_running = false;
-            }
+            0xEF | 0xFF => self.smp_running = false,
             0xF0 => self.branch_relative(self.flag(SMP_FLAG_Z)),
             0xF4 => {
                 let address = self.fetch_direct_indexed_address(self.smp_x);
@@ -1277,6 +1293,115 @@ impl Apu {
                 self.compare_8(self.smp_y, value);
             }
         }
+    }
+
+    fn smp_instruction_budget_units(&self, opcode: u8) -> u32 {
+        Self::smp_instruction_cycles(self, opcode).saturating_mul(SMP_CYCLE_UNITS_PER_SMP_CYCLE)
+    }
+
+    fn smp_instruction_cycles(&self, opcode: u8) -> u32 {
+        match opcode {
+            0x00 => 2,
+            0x01 | 0x11 | 0x21 | 0x31 | 0x41 | 0x51 | 0x61 | 0x71 | 0x81 | 0x91 | 0xA1
+            | 0xB1 | 0xC1 | 0xD1 | 0xE1 | 0xF1 => 8,
+            0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x82 | 0x92 | 0xA2
+            | 0xB2 | 0xC2 | 0xD2 | 0xE2 | 0xF2 => 4,
+            0x03 | 0x13 | 0x23 | 0x33 | 0x43 | 0x53 | 0x63 | 0x73 | 0x83 | 0x93 | 0xA3
+            | 0xB3 | 0xC3 | 0xD3 | 0xE3 | 0xF3 => {
+                let bit_set = matches!(opcode, 0x03 | 0x23 | 0x43 | 0x63 | 0x83 | 0xA3 | 0xC3 | 0xE3);
+                let (address, bit) = self.peek_absolute_bit_address();
+                let value = self.peek_smp(address);
+                let condition = if bit_set {
+                    value & (1 << bit) != 0
+                } else {
+                    value & (1 << bit) == 0
+                };
+                if condition { 7 } else { 5 }
+            }
+            0x04 | 0x24 | 0x44 | 0x64 | 0x84 | 0xA4 | 0xC4 | 0xE4 => 3,
+            0x05 | 0x25 | 0x45 | 0x65 | 0x85 | 0xA5 | 0xC5 | 0xE5 => 4,
+            0x06 | 0x26 | 0x46 | 0x66 | 0x86 | 0xA6 | 0xC6 | 0xE6 => 3,
+            0x07 | 0x27 | 0x47 | 0x67 | 0x87 | 0xA7 | 0xC7 | 0xE7 => 6,
+            0x08 | 0x28 | 0x48 | 0x68 | 0x88 | 0xA8 | 0xC8 | 0xE8 => 2,
+            0x09 | 0x29 | 0x49 | 0x69 | 0x89 | 0xA9 | 0xC9 | 0xE9 => 5,
+            0x0A | 0x4A | 0x6A | 0x8A | 0xAA | 0xCA => 4,
+            0x0B | 0x2B | 0x4B | 0x6B | 0x8B | 0xAB | 0xBB => 4,
+            0x0C | 0x2C | 0x4C | 0x6C | 0x8C | 0xAC | 0xBC => 5,
+            0x0D | 0x2D | 0x4D | 0x6D | 0x8D | 0xAE | 0xEE => 4,
+            0x0E | 0x4E => 6,
+            0x0F => 8,
+            0x10 | 0x30 | 0x50 | 0x70 | 0x90 | 0xB0 | 0xD0 | 0xF0 => {
+                if self.branch_condition(opcode) { 4 } else { 2 }
+            }
+            0x14 | 0x15 | 0x16 | 0x17 | 0x34 | 0x35 | 0x36 | 0x37 | 0x54 | 0x55 | 0x56
+            | 0x57 | 0x74 | 0x75 | 0x76 | 0x77 | 0x94 | 0x95 | 0x96 | 0x97 | 0xB4 | 0xB5
+            | 0xB6 | 0xB7 | 0xD4 | 0xD5 | 0xD6 | 0xD7 | 0xF4 | 0xF5 | 0xF6 | 0xF7 => 4,
+            0x18 | 0x19 | 0x38 | 0x39 | 0x58 | 0x59 | 0x78 | 0x79 | 0x98 | 0x99 | 0xB8
+            | 0xB9 => 5,
+            0x1A | 0x3A => 6,
+            0x1B | 0x3B | 0x5B | 0x7B => 5,
+            0x1C | 0x3C | 0x5C | 0x7C | 0x9C | 0xDC | 0xFC | 0x1D | 0x3D | 0x5D | 0x7D
+            | 0x9D | 0xBD | 0xDD | 0xFD | 0xBF | 0xCE => 2,
+            0x1E | 0x3E | 0x5E => 4,
+            0x1F | 0x5F => 3,
+            0x20 | 0x40 | 0x60 | 0x80 | 0xA0 | 0xC0 | 0xE0 | 0xED => 2,
+            0x2E | 0xDE => {
+                let address = if opcode == 0x2E {
+                    self.peek_direct_address()
+                } else {
+                    self.peek_direct_indexed_address(self.smp_x)
+                };
+                let value = self.peek_smp(address);
+                if value != self.smp_a { 7 } else { 5 }
+            }
+            0x2F => 4,
+            0x3F => 8,
+            0x4F => 6,
+            0x6F => 5,
+            0x7F => 6,
+            0x8F | 0xAF | 0xFA => 5,
+            0x9A | 0xBA => 5,
+            0x9E => 12,
+            0x9F => 5,
+            0xCF => 9,
+            0xAD => 2,
+            0xBE => 3,
+            0xDF => 3,
+            0xFE => 4,
+            0xEF | 0xFF => 2,
+            _ => 2,
+        }
+    }
+
+    fn branch_condition(&self, opcode: u8) -> bool {
+        match opcode {
+            0x10 => !self.flag(SMP_FLAG_N),
+            0x30 => self.flag(SMP_FLAG_N),
+            0x50 => !self.flag(SMP_FLAG_V),
+            0x70 => self.flag(SMP_FLAG_V),
+            0x90 => !self.flag(SMP_FLAG_C),
+            0xB0 => self.flag(SMP_FLAG_C),
+            0xD0 => !self.flag(SMP_FLAG_Z),
+            0xF0 => self.flag(SMP_FLAG_Z),
+            _ => false,
+        }
+    }
+
+    fn peek_absolute_bit_address(&self) -> (u16, u8) {
+        let low = u16::from(self.peek_smp(self.smp_pc.wrapping_add(1)));
+        let high = u16::from(self.peek_smp(self.smp_pc.wrapping_add(2)));
+        let operand = low | (high << 8);
+        let address = operand & 0x1FFF;
+        let bit = (operand >> 13) as u8;
+        (address, bit)
+    }
+
+    fn peek_direct_address(&self) -> u16 {
+        self.direct_address(self.peek_smp(self.smp_pc.wrapping_add(1)))
+    }
+
+    fn peek_direct_indexed_address(&self, index: u8) -> u16 {
+        self.direct_address(self.peek_smp(self.smp_pc.wrapping_add(1)).wrapping_add(index))
     }
 
     fn fetch_smp_byte(&mut self) -> u8 {
