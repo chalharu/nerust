@@ -2288,6 +2288,14 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     expected_screen_hash: "0x12C7A85C1B458550"
+  - id: peter-lemon-snes-gsu-merge
+    description: |
+      Peter Lemon's GSU MERGE test verifies SuperFX merge instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MERGE/GSUMERGE.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    expected_screen_hash: "0x092538D7885C6736"
   - id: peter-lemon-snes-gsu-move
     description: |
       Peter Lemon's GSU MOVE test verifies SuperFX move instruction
@@ -2365,6 +2373,6 @@ cases:
       Peter Lemon's GSU UMULT test verifies SuperFX unsigned multiply instruction
       across all registers and immediate values, checking VSCZ flags.
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/UMULT/GSUUMULT.sfc
-    max_steps: 1667708
-    check_interval_steps: 1667708
+    max_steps: 4586197
+    check_interval_steps: 4586197
     expected_screen_hash: "0x9C4C4ABC4756773D"
