@@ -158,7 +158,7 @@ impl Apu {
         Self {
             ram: Box::new([0; APU_RAM_LEN]),
             cpu_to_apu_ports: [0; APU_PORT_COUNT],
-            apu_to_cpu_ports: IPL_READY_PORTS,
+            apu_to_cpu_ports: [0; APU_PORT_COUNT],
             dsp_address: 0,
             dsp_registers: [0; DSP_REGISTER_COUNT],
             aux_io: [0; 2],
@@ -169,10 +169,10 @@ impl Apu {
             smp_a: 0,
             smp_x: 0,
             smp_y: 0,
-            smp_sp: 0,
+            smp_sp: 0xEF,
             smp_psw: SMP_FLAG_Z,
-            smp_pc: 0,
-            smp_running: false,
+            smp_pc: SMP_IPL_ROM_START,
+            smp_running: true,
             smp_entry_delay_cpu_cycles: 0,
             audio_accumulator: 0,
             smp_instruction_accumulator: 0,
@@ -382,7 +382,7 @@ impl Apu {
             }
 
             self.execute_smp_instruction();
-            self.smp_instruction_accumulator -= instruction_units;
+            self.smp_instruction_accumulator = self.smp_instruction_accumulator.saturating_sub(instruction_units);
         }
     }
 
@@ -396,6 +396,7 @@ impl Apu {
                         IplState::Loaded
                     } else {
                         self.load_ipl_upload_base();
+                        self.smp_running = false;
                         IplState::Transferring { expected_index: 0 }
                     };
                 }

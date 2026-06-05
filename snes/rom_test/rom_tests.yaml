@@ -2122,13 +2122,13 @@ cases:
     max_steps: 100777212
     check_interval_steps: 100777212
     expected_screen_hash: 0x8EA5381AAA3F26C0
-  # - id: peter-lemon-snes-spc700-dec
-  #   description: |
-  #     The self-authored SPC700 DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-  #   rom: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.sfc
-  #   max_steps: 
-  #   check_interval_steps: 
-  #   expected_screen_hash: 
+  - id: peter-lemon-snes-spc700-dec
+    description: |
+      The self-authored SPC700 DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.sfc
+    max_steps: 50000000
+    check_interval_steps: 50000000
+    expected_screen_hash: 0x2996ADFBAC714B39
   - id: peter-lemon-snes-spc700-eor
     description: |
       The self-authored SPC700 EOR test ROM verifies correct EOR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2136,13 +2136,13 @@ cases:
     max_steps: 92557794
     check_interval_steps: 92557794
     expected_screen_hash: 0x2AE303A54A056238
-  # - id: peter-lemon-snes-spc700-inc
-  #   description: |
-  #     The self-authored SPC700 INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-  #   rom: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.sfc
-  #   max_steps: 
-  #   check_interval_steps: 
-  #   expected_screen_hash: 
+  - id: peter-lemon-snes-spc700-inc
+    description: |
+      The self-authored SPC700 INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.sfc
+    max_steps: 50000000
+    check_interval_steps: 50000000
+    expected_screen_hash: 0x27282B1269B8445C
   - id: peter-lemon-snes-spc700-ora
     description: |
       The self-authored SPC700 ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.

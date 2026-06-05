@@ -13,7 +13,8 @@ const VBLANK_STUB_SCANLINES: u16 = 262;
 const VBLANK_STUB_SUBTICKS_PER_SCANLINE: u16 = 4;
 const VBLANK_STUB_PERIOD: u16 = VBLANK_STUB_SCANLINES * VBLANK_STUB_SUBTICKS_PER_SCANLINE;
 const MASTER_CLOCKS_PER_LINE: u32 = 1364;
-const CPU_MASTER_CLOCKS_PER_CYCLE: u32 = 6;
+const CPU_MASTER_CLOCKS_PER_CYCLE_FAST: u32 = 6;
+const CPU_MASTER_CLOCKS_PER_CYCLE_SLOW: u32 = 8;
 const VIDEO_MASTER_CLOCKS_PER_SUBTICK: u32 =
     MASTER_CLOCKS_PER_LINE / (VBLANK_STUB_SUBTICKS_PER_SCANLINE as u32);
 const VBLANK_STUB_ACTIVE_START_LINE: u16 = 225;
@@ -128,6 +129,8 @@ pub(crate) struct Bus {
     /// in NMITIMEN (bit 7 of $4200), cleared when the CPU takes the interrupt.
     nmi_pending: bool,
     irq_flag: bool,
+    /// MEMSEL ($420D) bit 0: 0=2.68MHz (slow ROM), 1=3.58MHz (fast ROM)
+    memsel_fast: bool,
     latched_hcounter: u16,
     latched_vcounter: u16,
     ophct_high_byte: bool,
@@ -186,6 +189,7 @@ impl Bus {
             nmi_flag: false,
             nmi_pending: false,
             irq_flag: false,
+            memsel_fast: true,
             latched_hcounter: 0,
             latched_vcounter: 0,
             ophct_high_byte: false,
@@ -289,7 +293,7 @@ impl Bus {
         self.apu.step_cpu_cycles(cycles);
 
         let total_master_clocks = u64::from(self.video_master_clock_accumulator)
-            + u64::from(cycles) * u64::from(CPU_MASTER_CLOCKS_PER_CYCLE);
+            + u64::from(cycles) * u64::from(self.cpu_master_clocks_per_cycle());
         let video_subticks = total_master_clocks / u64::from(VIDEO_MASTER_CLOCKS_PER_SUBTICK);
         self.video_master_clock_accumulator =
             (total_master_clocks % u64::from(VIDEO_MASTER_CLOCKS_PER_SUBTICK)) as u32;
@@ -309,7 +313,7 @@ impl Bus {
     pub(crate) fn next_event_cycles(&self) -> u32 {
         let video_master_clocks_remaining =
             VIDEO_MASTER_CLOCKS_PER_SUBTICK - self.video_master_clock_accumulator;
-        let video_cycles = video_master_clocks_remaining.div_ceil(CPU_MASTER_CLOCKS_PER_CYCLE);
+        let video_cycles = video_master_clocks_remaining.div_ceil(self.cpu_master_clocks_per_cycle());
         let math_cycles = self.math_pending_cycles().unwrap_or(u32::MAX);
 
         video_cycles.min(math_cycles).max(1)
@@ -431,6 +435,14 @@ impl Bus {
     fn nmi_enabled(&self) -> bool {
         // NMITIMEN ($4200) bit 7 enables VBlank NMI
         self.cpu_io_registers[0x00] & 0x80 != 0
+    }
+
+    fn cpu_master_clocks_per_cycle(&self) -> u32 {
+        if self.memsel_fast {
+            CPU_MASTER_CLOCKS_PER_CYCLE_FAST
+        } else {
+            CPU_MASTER_CLOCKS_PER_CYCLE_SLOW
+        }
     }
 
     fn auto_joy_enabled(&self) -> bool {
@@ -895,6 +907,12 @@ impl Bus {
                     self.execute_dma(value);
                     self.cpu_io_registers[usize::from(offset - 0x4200)] = 0;
                 }
+            }
+            // MEMSEL ($420D): Memory-2 Waitstate Control
+            // Bit 0: 0=2.68MHz (slow ROM), 1=3.58MHz (fast ROM)
+            (0x00..=0x3F | 0x80..=0xBF, 0x420D) => {
+                self.cpu_io_registers[usize::from(offset - 0x4200)] = value;
+                self.memsel_fast = value & 0x01 != 0;
             }
             // NMITIMEN ($4200): track whether NMI is enabled; raise a pending NMI
             // immediately if the NMI flag is already latched (i.e. we are mid-vblank
@@ -1648,7 +1666,7 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, CPU_MASTER_CLOCKS_PER_CYCLE,
+        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, CPU_MASTER_CLOCKS_PER_CYCLE_FAST,
         STANDARD_CONTROLLER_PAYLOAD_BITS, STANDARD_CONTROLLER_PORT_COUNT, VBLANK_STUB_ACTIVE_START,
         VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE, VIDEO_MASTER_CLOCKS_PER_SUBTICK,
     };
@@ -1725,12 +1743,22 @@ mod tests {
     }
 
     #[test]
-    fn apu_ports_expose_ipl_ready_word_and_mirrors() {
+    fn apu_ports_expose_ipl_ready_word_after_boot_and_mirrors() {
         let mut bus = Bus::new(test_cartridge());
+
+        // Ports start at zero; the SPC700 writes the ready values during IPL boot.
+        assert_eq!(bus.read(0x002140), 0x00);
+        assert_eq!(bus.read(0x002141), 0x00);
+        assert_eq!(bus.read(0x002142), 0x00);
+
+        // Let the SPC700 boot so it writes the ready values to the ports.
+        // The IPL ROM loop runs 239 times (X from 0xEF to 0x00), each iteration ~4-5 cycles.
+        for _ in 0..1500 {
+            bus.tick_cpu_cycle();
+        }
 
         assert_eq!(bus.read(0x002140), 0xAA);
         assert_eq!(bus.read(0x002141), 0xBB);
-        assert_eq!(bus.read(0x002142), 0x00);
         assert_eq!(bus.peek(0x802144), 0xAA);
         assert_eq!(bus.read(0x80217D), 0xBB);
         assert_eq!(bus.read(0x00217F), 0x00);
@@ -1745,7 +1773,7 @@ mod tests {
         bus.write(0x002141, 0x01);
         bus.write(0x002140, 0xCC);
         assert_eq!(bus.read(0x002140), 0xCC);
-        assert_eq!(bus.read(0x002141), 0xBB);
+        assert_eq!(bus.read(0x002141), 0x00);
 
         bus.write(0x002141, 0x42);
         bus.write(0x002140, 0x00);
@@ -1829,7 +1857,7 @@ mod tests {
     }
 
     #[test]
-    fn apu_reset_restores_ipl_ready_word() {
+    fn apu_reset_restores_ports_to_zero_and_starts_spc700() {
         let mut bus = Bus::new(test_cartridge());
 
         bus.write(0x002141, 0x01);
@@ -1838,6 +1866,14 @@ mod tests {
 
         bus.reset_ephemeral_state();
 
+        // After reset, ports are zero and SPC700 starts IPL boot.
+        assert_eq!(bus.read(0x002140), 0x00);
+        assert_eq!(bus.read(0x002141), 0x00);
+
+        // After letting the SPC700 boot, it writes the ready values.
+        for _ in 0..1500 {
+            bus.tick_cpu_cycle();
+        }
         assert_eq!(bus.read(0x002140), 0xAA);
         assert_eq!(bus.read(0x002141), 0xBB);
     }
@@ -2021,7 +2057,7 @@ mod tests {
     #[test]
     fn bulk_cpu_cycle_step_keeps_nmi_pending_after_vblank_window() {
         fn cycles_for_subticks(subticks: u32) -> u32 {
-            (subticks * VIDEO_MASTER_CLOCKS_PER_SUBTICK).div_ceil(CPU_MASTER_CLOCKS_PER_CYCLE)
+            (subticks * VIDEO_MASTER_CLOCKS_PER_SUBTICK).div_ceil(CPU_MASTER_CLOCKS_PER_CYCLE_FAST)
         }
 
         let mut bus = Bus::new(test_cartridge());
@@ -2160,7 +2196,7 @@ mod tests {
         ];
         upload_and_start_apu_program(&mut bus, 0x0200, &program);
 
-        for _ in 0..10 {
+        for _ in 0..200 {
             bus.tick_cpu_cycle();
         }
 
@@ -2251,7 +2287,7 @@ mod tests {
         ];
         upload_and_start_apu_program(&mut bus, 0x0200, &program);
 
-        for _ in 0..48 {
+        for _ in 0..200 {
             bus.tick_cpu_cycle();
         }
 
@@ -3369,7 +3405,7 @@ mod tests {
         ];
         upload_and_start_apu_program(&mut bus, 0x0200, &program);
 
-        for _ in 0..32 {
+        for _ in 0..200 {
             bus.tick_cpu_cycle();
         }
 
@@ -3796,6 +3832,11 @@ mod tests {
     #[test]
     fn apu_ports_are_accessible_through_dma_bbus() {
         let mut bus = Bus::new(test_cartridge());
+
+        // Let the SPC700 boot so it writes the ready values to the ports.
+        for _ in 0..1500 {
+            bus.tick_cpu_cycle();
+        }
 
         bus.write(0x002141, 0x01);
         bus.write(0x7E1000, 0xCC);
