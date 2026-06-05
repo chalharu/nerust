@@ -314,7 +314,8 @@ impl Bus {
     pub(crate) fn next_event_cycles(&self) -> u32 {
         let video_master_clocks_remaining =
             VIDEO_MASTER_CLOCKS_PER_SUBTICK - self.video_master_clock_accumulator;
-        let video_cycles = video_master_clocks_remaining.div_ceil(self.cpu_master_clocks_per_cycle());
+        let video_cycles =
+            video_master_clocks_remaining.div_ceil(self.cpu_master_clocks_per_cycle());
         let math_cycles = self.math_pending_cycles().unwrap_or(u32::MAX);
 
         video_cycles.min(math_cycles).max(1)
@@ -1667,9 +1668,10 @@ fn dma_transfer_offsets(pattern: u8) -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus, CPU_MASTER_CLOCKS_PER_CYCLE_FAST,
-        STANDARD_CONTROLLER_PAYLOAD_BITS, STANDARD_CONTROLLER_PORT_COUNT, VBLANK_STUB_ACTIVE_START,
-        VBLANK_STUB_PERIOD, VBLANK_STUB_SUBTICKS_PER_SCANLINE, VIDEO_MASTER_CLOCKS_PER_SUBTICK,
+        AUTO_JOYPAD_ACTIVE_DURATION_SUBTICKS, AUTO_JOYPAD_START, Bus,
+        CPU_MASTER_CLOCKS_PER_CYCLE_FAST, STANDARD_CONTROLLER_PAYLOAD_BITS,
+        STANDARD_CONTROLLER_PORT_COUNT, VBLANK_STUB_ACTIVE_START, VBLANK_STUB_PERIOD,
+        VBLANK_STUB_SUBTICKS_PER_SCANLINE, VIDEO_MASTER_CLOCKS_PER_SUBTICK,
     };
     use crate::{
         Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
