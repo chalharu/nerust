@@ -1494,11 +1494,11 @@ impl SuperFxState {
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0);
 
         let mut registers = [0u16; 16];
-        for i in 0..16 {
+        for (i, value) in registers.iter_mut().enumerate() {
             let offset = 0x3000 + i as u16 * 2;
             let low = self.registers.read(offset).unwrap_or(0);
             let high = self.registers.read(offset + 1).unwrap_or(0);
-            registers[i] = u16::from_le_bytes([low, high]);
+            *value = u16::from_le_bytes([low, high]);
         }
 
         let start = GsuStartState {
