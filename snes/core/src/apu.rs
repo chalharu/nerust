@@ -382,7 +382,9 @@ impl Apu {
             }
 
             self.execute_smp_instruction();
-            self.smp_instruction_accumulator = self.smp_instruction_accumulator.saturating_sub(instruction_units);
+            self.smp_instruction_accumulator = self
+                .smp_instruction_accumulator
+                .saturating_sub(instruction_units);
         }
     }
 
