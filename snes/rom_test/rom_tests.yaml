@@ -2376,3 +2376,66 @@ cases:
     max_steps: 4586197
     check_interval_steps: 4586197
     expected_screen_hash: "0x9C4C4ABC4756773D"
+  - id: peter-lemon-snes-gsu-and
+    description: |
+      Peter Lemon's GSU AND test verifies SuperFX logical AND instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/AND/GSUAND.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0xCD5C424F0F048F2B"
+  - id: peter-lemon-snes-gsu-bic
+    description: |
+      Peter Lemon's GSU BIC test verifies SuperFX bit clear instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/BIC/GSUBIC.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0xDF491EC70DF197DB"
+  - id: peter-lemon-snes-gsu-cacheinject
+    description: |
+      Peter Lemon's GSU CACHEINJECT test verifies SuperFX cache injection instruction.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CACHEINJECT/GSUCACHEINJECT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0xE210E47E3581575C"
+  - id: peter-lemon-snes-gsu-fmult
+    description: |
+      Peter Lemon's GSU FMULT test verifies SuperFX fractional multiply instruction
+      across all registers, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/FMULT/GSUFMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x8F6312E5D0B783C9"
+  - id: peter-lemon-snes-gsu-lmult
+    description: |
+      Peter Lemon's GSU LMULT test verifies SuperFX long multiply instruction
+      across all registers, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LMULT/GSULMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x58973669F8C26C82"
+  - id: peter-lemon-snes-gsu-mult
+    description: |
+      Peter Lemon's GSU MULT test verifies SuperFX multiply instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MULT/GSUMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x1A46E6486B6737DA"
+  - id: peter-lemon-snes-gsu-or
+    description: |
+      Peter Lemon's GSU OR test verifies SuperFX logical OR instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/OR/GSUOR.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x71D98CEDC2D4F132"
+  - id: peter-lemon-snes-gsu-xor
+    description: |
+      Peter Lemon's GSU XOR test verifies SuperFX logical XOR instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/XOR/GSUXOR.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0xBD4907BB3618F034"
