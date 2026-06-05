@@ -244,6 +244,7 @@ impl Bus {
         self.nmi_flag = false;
         self.nmi_pending = false;
         self.irq_flag = false;
+        self.memsel_fast = false;
         self.cpu_io_registers[0x01] = 0xFF;
         self.latched_hcounter = 0;
         self.ophct_high_byte = false;
