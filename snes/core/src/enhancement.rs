@@ -1492,6 +1492,15 @@ impl SuperFxState {
         let screen_base = usize::from(self.registers.read(SUPERFX_SCBR).unwrap_or(0)) * 0x400;
         let screen_mode = self.registers.read(SUPERFX_SCMR).unwrap_or(0);
         let sfr = self.registers.read(SUPERFX_SFR).unwrap_or(0);
+
+        let mut registers = [0u16; 16];
+        for i in 0..16 {
+            let offset = 0x3000 + i as u16 * 2;
+            let low = self.registers.read(offset).unwrap_or(0);
+            let high = self.registers.read(offset + 1).unwrap_or(0);
+            registers[i] = u16::from_le_bytes([low, high]);
+        }
+
         let start = GsuStartState {
             entry: r15,
             pbr,
@@ -1502,7 +1511,7 @@ impl SuperFxState {
             screen_mode,
             sfr,
         };
-        let mut interpreter = GsuInterpreter::new(start, rom, save_ram);
+        let mut interpreter = GsuInterpreter::new_with_registers(start, registers, rom, save_ram);
         interpreter.run();
         let stopped = interpreter.halted;
         for (register, value) in interpreter.registers.iter().copied().enumerate() {
@@ -1568,8 +1577,12 @@ struct GsuStartState {
 }
 
 impl<'a> GsuInterpreter<'a> {
-    fn new(start: GsuStartState, rom: &'a [u8], ram: &'a mut [u8]) -> Self {
-        let mut registers = [0; 16];
+    fn new_with_registers(
+        start: GsuStartState,
+        mut registers: [u16; 16],
+        rom: &'a [u8],
+        ram: &'a mut [u8],
+    ) -> Self {
         registers[15] = start.entry;
         Self {
             rom,
@@ -1647,24 +1660,24 @@ impl<'a> GsuInterpreter<'a> {
                 self.destination = Some(usize::from(opcode & 0x0F));
             }
             (_, 0x20..=0x2F) => {
-                let source = usize::from(opcode & 0x0F);
+                let register = usize::from(opcode & 0x0F);
                 let next = self.peek_instruction_byte();
                 if next & 0xF0 == 0x10 {
                     let operand = self.fetch();
                     self.sync_program_counter();
                     let destination = usize::from(operand & 0x0F);
-                    self.move_register(destination, source);
+                    self.move_register(destination, register);
                 } else if next & 0xF0 == 0xB0 {
                     let operand = self.fetch();
                     self.sync_program_counter();
-                    let destination = source;
+                    let destination = register;
                     let source = usize::from(operand & 0x0F);
                     let value = self.registers[source];
                     self.set_register_with_moves_flags(destination, value);
                 } else {
                     self.sync_program_counter();
-                    self.source = source;
-                    self.destination = Some(source);
+                    self.source = register;
+                    self.destination = Some(register);
                 }
             }
             (0, 0x3C) => {
@@ -2059,11 +2072,10 @@ impl<'a> GsuInterpreter<'a> {
     fn add_with_carry(&mut self, value: u16) {
         let lhs = self.registers[self.source];
         let carry = u16::from(self.carry);
-        let addend = value.wrapping_add(carry);
-        let result = lhs.wrapping_add(addend);
+        let result = lhs.wrapping_add(value).wrapping_add(carry);
         self.set_zero_sign(result);
         self.carry = u32::from(lhs) + u32::from(value) + u32::from(carry) > 0xFFFF;
-        self.overflow = (!(lhs ^ addend) & (lhs ^ result) & 0x8000) != 0;
+        self.overflow = (!(lhs ^ value) & (lhs ^ result) & 0x8000) != 0;
         self.write_result(result);
     }
 
