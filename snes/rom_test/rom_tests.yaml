@@ -2192,3 +2192,11 @@ cases:
     max_steps: 952976
     check_interval_steps: 952976
     expected_screen_hash: 0x643E2688E6B47355
+  - id: peter-lemon-snes-gsu-adc
+    description: |
+      Peter Lemon's GSU ADC test verifies SuperFX add-with-carry instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADC/GSUADC.sfc
+    max_steps: 4705319
+    check_interval_steps: 4705319
+    expected_screen_hash: "0x02EA3EA225ACC856"
