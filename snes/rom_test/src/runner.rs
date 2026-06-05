@@ -23,12 +23,11 @@ pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) ->
 
     while steps_executed < case.max_steps {
         // Check for scheduled reset before stepping
-        if let Some(&reset_at) = case.reset_at_steps.get(next_reset_index) {
-            if steps_executed == reset_at {
+        if let Some(&reset_at) = case.reset_at_steps.get(next_reset_index)
+            && steps_executed == reset_at {
                 core.reset_cpu();
                 next_reset_index += 1;
             }
-        }
 
         match core.step() {
             Ok(()) => {

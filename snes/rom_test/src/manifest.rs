@@ -228,8 +228,8 @@ impl RomCase {
                 });
             }
         }
-        if let Some(&last_step) = self.reset_at_steps.last() {
-            if last_step >= self.max_steps {
+        if let Some(&last_step) = self.reset_at_steps.last()
+            && last_step >= self.max_steps {
                 return Err(ManifestError::Invalid {
                     message: format!(
                         "ROM case `{}` has reset_at_steps value {} >= max_steps {}",
@@ -237,7 +237,6 @@ impl RomCase {
                     ),
                 });
             }
-        }
 
         Ok(())
     }
