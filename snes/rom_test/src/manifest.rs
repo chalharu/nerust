@@ -42,6 +42,8 @@ pub struct RomCase {
     pub expected_screen_hash: Option<String>,
     #[serde(default)]
     pub assertions: Vec<Assertion>,
+    #[serde(default)]
+    pub reset_at_steps: Vec<u64>,
     #[serde(skip)]
     resolved_rom_path: PathBuf,
 }
@@ -215,6 +217,28 @@ impl RomCase {
                 ),
             })?;
 
+        // Validate reset_at_steps is sorted and within max_steps
+        for (i, step) in self.reset_at_steps.windows(2).enumerate() {
+            if step[0] >= step[1] {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{}` has unsorted or duplicate reset_at_steps values at index {}",
+                        self.id, i
+                    ),
+                });
+            }
+        }
+        if let Some(&last_step) = self.reset_at_steps.last() {
+            if last_step >= self.max_steps {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{}` has reset_at_steps value {} >= max_steps {}",
+                        self.id, last_step, self.max_steps
+                    ),
+                });
+            }
+        }
+
         Ok(())
     }
 }
@@ -378,6 +402,7 @@ mod tests {
                 address: "0x00".to_string(),
                 expected: "0x00".to_string(),
             }],
+            reset_at_steps: vec![],
             resolved_rom_path: PathBuf::from(format!("/tmp/{id}.sfc")),
         }
     }

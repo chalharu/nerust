@@ -2037,14 +2037,14 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     expected_screen_hash: 0xEDE48F24705541FD
-  # TODO: リセット後のPC=0x00FFでの動作が未実装のため、MSCテストは一旦保留
-  # - id: peter-lemon-snes-cpu-msc
-  #   description: |
-  #     The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
-  #   rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
-  #   max_steps: 1072098
-  #   check_interval_steps: 1072098
-  #   expected_screen_hash: 0xF57D3F255B69C0D3
+  - id: peter-lemon-snes-cpu-msc
+    description: |
+      The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    expected_screen_hash: 0xF57D3F255B69C0D3
+    reset_at_steps: [100000]
   - id: peter-lemon-snes-cpu-ora
     description: |
       The self-authored CPU ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2157,3 +2157,38 @@ cases:
     max_steps: 93570331
     check_interval_steps: 93570331
     expected_screen_hash: 0xA6D12F4864E6BA58
+  - id: peter-lemon-snes-bank-hiromfastrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
+    rom: snes/peter-lemon-snes/BANK/HiROMFastROM/BANKHiROMFastROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    expected_screen_hash: 0x46D92D7A26B30A5A
+  - id: peter-lemon-snes-bank-hiromslowrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
+    rom: snes/peter-lemon-snes/BANK/HiROMSlowROM/BANKHiROMSlowROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    expected_screen_hash: 0x1C9D87FCAE3A51EA
+  - id: peter-lemon-snes-bank-loromfastrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
+    rom: snes/peter-lemon-snes/BANK/LoROMFastROM/BANKLoROMFastROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    expected_screen_hash: 0xDAFF576D8225CD52
+  - id: peter-lemon-snes-bank-loromslowrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
+    rom: snes/peter-lemon-snes/BANK/LoROMSlowROM/BANKLoROMSlowROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    expected_screen_hash: 0x64FAD9F271723B93
+  - id: peter-lemon-snes-bank-wram
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode and WRAM is accessed.
+    rom: snes/peter-lemon-snes/BANK/WRAM/BANKWRAM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    expected_screen_hash: 0x643E2688E6B47355
