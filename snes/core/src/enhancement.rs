@@ -1501,6 +1501,17 @@ impl SuperFxState {
             *value = u16::from_le_bytes([low, high]);
         }
 
+        // Read cache from $3100-$32FF
+        let mut cache = [0u8; 512];
+        let mut cache_has_data = false;
+        for i in 0..512 {
+            let offset = 0x3100 + i as u16;
+            cache[i] = self.registers.read(offset).unwrap_or(0);
+            if cache[i] != 0 {
+                cache_has_data = true;
+            }
+        }
+
         let start = GsuStartState {
             entry: r15,
             pbr,
@@ -1511,7 +1522,7 @@ impl SuperFxState {
             screen_mode,
             sfr,
         };
-        let mut interpreter = GsuInterpreter::new_with_registers(start, registers, rom, save_ram);
+        let mut interpreter = GsuInterpreter::new_with_registers(start, registers, rom, save_ram, cache, cache_has_data);
         interpreter.run();
         let stopped = interpreter.halted;
         for (register, value) in interpreter.registers.iter().copied().enumerate() {
@@ -1548,6 +1559,8 @@ struct GsuInterpreter<'a> {
     rombr: u8,
     rambr: bool,
     cbr: u16,
+    cache: [u8; 512],
+    cache_valid: bool,
     source: usize,
     destination: Option<usize>,
     alt_mode: u8,
@@ -1582,6 +1595,8 @@ impl<'a> GsuInterpreter<'a> {
         mut registers: [u16; 16],
         rom: &'a [u8],
         ram: &'a mut [u8],
+        cache: [u8; 512],
+        cache_valid: bool,
     ) -> Self {
         registers[15] = start.entry;
         Self {
@@ -1593,6 +1608,8 @@ impl<'a> GsuInterpreter<'a> {
             rombr: start.rombr,
             rambr: start.rambr,
             cbr: start.cbr,
+            cache,
+            cache_valid,
             source: 0,
             destination: None,
             alt_mode: 0,
@@ -1955,6 +1972,13 @@ impl<'a> GsuInterpreter<'a> {
 
     fn peek_instruction_byte(&self) -> u8 {
         let address = (u32::from(self.pbr) << 16) | u32::from(self.pc);
+        
+        // Check if executing from cache (PC in [CBR, CBR+0x1FF] range and cache is valid)
+        if self.cache_valid && self.pc >= self.cbr && self.pc < self.cbr.wrapping_add(0x200) {
+            let cache_offset = (self.pc.wrapping_sub(self.cbr) & 0x01FF) as usize;
+            return self.cache[cache_offset];
+        }
+        
         if self.pbr <= 0x5F {
             return superfx_rom_index(address, self.rom.len())
                 .map(|index| self.rom[index])
@@ -2009,7 +2033,35 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn cache(&mut self) {
-        self.cbr = self.registers[15] & 0xFFF0;
+        let new_cbr = self.registers[15] & 0xFFF0;
+        if self.cbr != new_cbr || !self.cache_valid {
+            self.cbr = new_cbr;
+            self.flush_cache();
+        }
+    }
+
+    fn flush_cache(&mut self) {
+        let address = (u32::from(self.pbr) << 16) | u32::from(self.cbr);
+        for i in 0..512 {
+            let addr = address.wrapping_add(i as u32);
+            self.cache[i] = self.read_memory_byte(addr);
+        }
+        self.cache_valid = true;
+    }
+
+    fn read_memory_byte(&self, address: u32) -> u8 {
+        let pbr = (address >> 16) & 0xFF;
+        if pbr <= 0x5F {
+            return self.read_rom_byte(address);
+        }
+        let ram_address = (usize::from((pbr & 0x01) as u8) << 16) | (address & 0xFFFF) as usize;
+        self.read_ram_raw_usize(ram_address)
+    }
+
+    fn read_rom_byte(&self, address: u32) -> u8 {
+        superfx_rom_index(address, self.rom.len())
+            .map(|index| self.rom[index])
+            .unwrap_or(0)
     }
 
     fn set_register(&mut self, register: usize, value: u16) {
