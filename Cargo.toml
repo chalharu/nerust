@@ -77,7 +77,7 @@ iced = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
 lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
-log = { version = "=0.4.30", default-features = false }
+log = { version = "=0.4.32", default-features = false }
 muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
 nerust_console = { path = "console" }
