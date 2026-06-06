@@ -2166,15 +2166,17 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn multiply_register(&mut self, register: usize) {
-        let result = u16::from(
-            (self.registers[self.source] as i8).wrapping_mul(self.registers[register] as i8) as u16,
-        );
+        let a = self.registers[self.source] as i8 as i16;
+        let b = self.registers[register] as i8 as i16;
+        let result = (a * b) as u16;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn multiply_immediate(&mut self, value: u16) {
-        let result = u16::from((self.registers[self.source] as i8).wrapping_mul(value as i8) as u16);
+        let a = self.registers[self.source] as i8 as i16;
+        let b = value as i8 as i16;
+        let result = (a * b) as u16;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
