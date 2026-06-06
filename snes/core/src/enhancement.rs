@@ -2198,7 +2198,11 @@ impl<'a> GsuInterpreter<'a> {
         }
         let result = (product >> 16) as u16;
         self.clear_arithmetic_flags();
-        self.write_result(result);
+        let destination = self.destination.take().unwrap_or(0);
+        self.set_register(destination, result);
+        if result & 0x8000 != 0 {
+            self.carry = true;
+        }
     }
 
     fn not(&mut self) {
