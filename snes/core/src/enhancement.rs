@@ -1575,6 +1575,7 @@ struct GsuInterpreter<'a> {
     halted: bool,
     last_ram_address: Option<usize>,
     last_ram_word_swapped: bool,
+    pending_branch: Option<u16>,
 }
 
 #[derive(Clone, Copy)]
@@ -1624,6 +1625,7 @@ impl<'a> GsuInterpreter<'a> {
             halted: false,
             last_ram_address: None,
             last_ram_word_swapped: false,
+            pending_branch: None,
         }
     }
 
@@ -1640,6 +1642,12 @@ impl<'a> GsuInterpreter<'a> {
 
     fn step(&mut self) -> bool {
         let opcode = self.fetch();
+
+        if let Some(target) = self.pending_branch.take() {
+            self.pc = target;
+            self.registers[15] = self.pc;
+        }
+
         if self.alt_mode == 0 && matches!(opcode, 0x3D..=0x3F) {
             self.sync_program_counter();
             self.alt_mode = opcode - 0x3C;
@@ -1665,7 +1673,9 @@ impl<'a> GsuInterpreter<'a> {
                 let relative = self.fetch() as i8;
                 self.sync_program_counter();
                 if self.branch_condition(opcode) {
-                    self.branch(relative);
+                    self.pending_branch = Some(
+                        self.pc.wrapping_add_signed(i16::from(relative))
+                    );
                 }
             }
             (0, 0x03) => {
@@ -1698,14 +1708,14 @@ impl<'a> GsuInterpreter<'a> {
                 }
             }
             (0, 0x3C) => {
+                let r13 = self.registers[13];
                 self.sync_program_counter();
                 self.registers[12] = self.registers[12].wrapping_sub(1);
                 self.set_zero_sign(self.registers[12]);
                 self.carry = false;
                 self.overflow = false;
                 if !self.zero {
-                    self.pc = self.registers[13];
-                    self.registers[15] = self.pc;
+                    self.pending_branch = Some(r13);
                 }
             }
             (0, 0x30..=0x3B) => {
@@ -1893,7 +1903,6 @@ impl<'a> GsuInterpreter<'a> {
                 self.set_zero_sign(self.registers[register]);
                 self.carry = false;
                 self.overflow = false;
-                self.source = register;
             }
             (_, 0xE0..=0xEF) => {
                 self.sync_program_counter();
@@ -1902,7 +1911,6 @@ impl<'a> GsuInterpreter<'a> {
                 self.set_zero_sign(self.registers[register]);
                 self.carry = false;
                 self.overflow = false;
-                self.source = register;
             }
             (_, 0xC0) => {
                 self.sync_program_counter();
@@ -1990,11 +1998,6 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn sync_program_counter(&mut self) {
-        self.registers[15] = self.pc;
-    }
-
-    fn branch(&mut self, relative: i8) {
-        self.pc = self.pc.wrapping_add_signed(i16::from(relative));
         self.registers[15] = self.pc;
     }
 
