@@ -160,7 +160,9 @@ pub struct RenderedScreen {
 
 pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let tm = core.peek(0x00212C);
-    let use_presented_tm = use_presented_main_screen(core);
+    let use_presented_tm: bool = use_presented_main_screen(core);
+    let use_presented_inidisp = hdma_targets_bbus(core, &[0x00]);
+
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
             rgba: render_presented_backdrop(core),
@@ -169,17 +171,23 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     let inidisp = core.peek(0x002100);
     let brightness = inidisp & 0x0F;
-    if inidisp & 0x80 != 0 || brightness == 0 {
+    if brightness == 0 && !use_presented_inidisp {
         return Ok(RenderedScreen {
             rgba: opaque_black_screen(),
         });
     }
-    let mut rgba = render_current_backdrop(core);
+
+    let render_brightness = if brightness == 0 { 15 } else { brightness };
+    let mut rgba = if use_presented_inidisp {
+        render_presented_backdrop(core)
+    } else {
+        render_current_backdrop(core)
+    };
 
     render_bg1(
         core,
         BgLayer::Bg1,
-        brightness,
+        render_brightness,
         tm,
         use_presented_tm,
         &mut rgba,
@@ -187,7 +195,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     render_bg1(
         core,
         BgLayer::Bg2,
-        brightness,
+        render_brightness,
         tm,
         use_presented_tm,
         &mut rgba,
@@ -195,7 +203,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     render_bg1(
         core,
         BgLayer::Bg3,
-        brightness,
+        render_brightness,
         tm,
         use_presented_tm,
         &mut rgba,
@@ -203,12 +211,29 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     render_bg1(
         core,
         BgLayer::Bg4,
-        brightness,
+        render_brightness,
         tm,
         use_presented_tm,
         &mut rgba,
     )?;
-    render_obj(core, brightness, tm, use_presented_tm, &mut rgba);
+    render_obj(core, render_brightness, tm, use_presented_tm, &mut rgba);
+
+    // When HDMA changes INIDISP per-scanline, apply per-line force-blank/brightness=0
+    if use_presented_inidisp {
+        for screen_y in 0..SCREEN_HEIGHT {
+            if let Some(backdrop) = core.presented_backdrop_line(screen_y) {
+                if backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0 {
+                    let offset = screen_y * SCREEN_WIDTH * 4;
+                    for pixel in rgba[offset..offset + SCREEN_WIDTH * 4].chunks_exact_mut(4) {
+                        pixel[0] = 0;
+                        pixel[1] = 0;
+                        pixel[2] = 0;
+                        pixel[3] = 0xFF;
+                    }
+                }
+            }
+        }
+    }
 
     Ok(RenderedScreen { rgba })
 }

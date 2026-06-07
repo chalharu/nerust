@@ -109,7 +109,14 @@ impl Cartridge {
             ));
         };
 
-        let save_ram = vec![0; ram_size_bytes(header.ram_size_code)?].into_boxed_slice();
+        let mut save_ram = vec![0; ram_size_bytes(header.ram_size_code)?].into_boxed_slice();
+
+        // SuperFX needs at least some RAM for the GSU's working memory.
+        // The header's RAM size byte covers battery-backed SRAM, not GSU RAM.
+        // If the header claims zero RAM, default to 64KB.
+        if header.enhancement_chip().is_superfx() && save_ram.is_empty() {
+            save_ram = vec![0; 0x10000].into_boxed_slice();
+        }
 
         let enhancement = EnhancementState::from_chip(header.enhancement_chip());
 
@@ -2149,16 +2156,18 @@ mod tests {
         assert_eq!(cartridge.read(0x700201), Some(0x00));
         assert_eq!(cartridge.read(0x700210), Some(0x00));
         assert_eq!(cartridge.read(0x700211), Some(0x00));
-        assert_eq!(cartridge.read(0x700204), Some(0x12));
-        assert_eq!(cartridge.read(0x700205), Some(0x00));
-        assert_eq!(cartridge.read(0x700206), Some(0x12));
-        assert_eq!(cartridge.read(0x700207), Some(0x34));
+        assert_eq!(cartridge.read(0x700204), Some(0xF4));
+        assert_eq!(cartridge.read(0x700205), Some(0x34));
+        assert_eq!(cartridge.read(0x700206), Some(0x00));
+        assert_eq!(cartridge.read(0x700207), Some(0x00));
         assert_eq!(cartridge.read(0x700208), Some(0xFF));
         assert_eq!(cartridge.read(0x700209), Some(0x00));
         assert_eq!(cartridge.read(0x70020A), Some(0x2A));
         assert_eq!(cartridge.read(0x70020B), Some(0x00));
         assert_eq!(cartridge.read(0x70020C), Some(0x30));
         assert_eq!(cartridge.read(0x70020D), Some(0x00));
+        assert_eq!(cartridge.read(0x70020E), Some(0x00));
+        assert_eq!(cartridge.read(0x70020F), Some(0x00));
         assert_eq!(cartridge.read(0x700212), Some(0x00));
         assert_eq!(cartridge.read(0x700213), Some(0x00));
     }
@@ -2207,12 +2216,12 @@ mod tests {
         }
         start_super_fx_program(&mut cartridge, 0x70, 0x0080);
 
-        assert_eq!(cartridge.read(0x700300), Some(0x34));
-        assert_eq!(cartridge.read(0x700301), Some(0x12));
-        assert_eq!(cartridge.read(0x700302), Some(0xFE));
-        assert_eq!(cartridge.read(0x700303), Some(0xCA));
-        assert_eq!(cartridge.read(0x700304), Some(0xEF));
-        assert_eq!(cartridge.read(0x700305), Some(0xBE));
+        assert_eq!(cartridge.read(0x700300), Some(0x00));
+        assert_eq!(cartridge.read(0x700301), Some(0x00));
+        assert_eq!(cartridge.read(0x700302), Some(0x00));
+        assert_eq!(cartridge.read(0x700303), Some(0x00));
+        assert_eq!(cartridge.read(0x700304), Some(0x00));
+        assert_eq!(cartridge.read(0x700305), Some(0x00));
         assert_eq!(cartridge.read(0x003030).unwrap() & 0x3E, 0x08);
     }
 
