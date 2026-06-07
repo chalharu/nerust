@@ -1000,8 +1000,9 @@ impl Bus {
 
     /// Execute all DMA channels whose bit is set in `mdmaen`, lowest first.
     fn execute_dma(&mut self, mdmaen: u8) {
+        let hdmaen = self.cpu_io_registers[0x0C];
         for channel in 0..8u8 {
-            if mdmaen & (1 << channel) != 0 {
+            if mdmaen & (1 << channel) != 0 && hdmaen & (1 << channel) == 0 {
                 self.execute_dma_channel(channel);
             }
         }
@@ -1284,6 +1285,9 @@ impl Bus {
                 if !self.load_hdma_entry(channel as u8) {
                     self.hdma_active_mask &= !bit;
                     self.hdma_ended_mask |= bit;
+                } else if self.hdma_do_transfer[channel] {
+                    self.execute_hdma_transfer(channel as u8);
+                    self.hdma_do_transfer[channel] = !self.hdma_repeat[channel];
                 }
             } else {
                 self.hdma_do_transfer[channel] = !self.hdma_repeat[channel];

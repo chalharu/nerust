@@ -1716,6 +1716,7 @@ impl<'a> GsuInterpreter<'a> {
                 self.overflow = false;
                 if !self.zero {
                     self.pending_branch = Some(r13);
+                    self.source = 0;
                 }
             }
             (0, 0x30..=0x3B) => {
