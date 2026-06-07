@@ -2446,4 +2446,28 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x128/GSU2BPP256x128FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x5107BECC79A09781"
+    expected_screen_hash: "0x280568E4AF4DB31E"
+  - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x160
+    description: |
+      Peter Lemon's GSU 2BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x160/GSU2BPP256x160FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x8F9ED159F879F2FE"
+  - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x192
+    description: |
+      Peter Lemon's GSU 2BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x192/GSU2BPP256x192FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x7770AA0F9A79C407"
+  - id: peter-lemon-snes-gsu-2bpp-plotline-256x128
+    description: |
+      Peter Lemon's GSU 2BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x128/GSU2BPP256x128PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    expected_screen_hash: "0x2DDA3B8DDC35C634"
