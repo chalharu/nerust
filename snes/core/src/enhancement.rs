@@ -1504,10 +1504,10 @@ impl SuperFxState {
         // Read cache from $3100-$32FF
         let mut cache = [0u8; 512];
         let mut cache_has_data = false;
-        for i in 0..512 {
+        for (i, byte) in cache.iter_mut().enumerate() {
             let offset = 0x3100 + i as u16;
-            cache[i] = self.registers.read(offset).unwrap_or(0);
-            if cache[i] != 0 {
+            *byte = self.registers.read(offset).unwrap_or(0);
+            if *byte != 0 {
                 cache_has_data = true;
             }
         }
@@ -1522,7 +1522,14 @@ impl SuperFxState {
             screen_mode,
             sfr,
         };
-        let mut interpreter = GsuInterpreter::new_with_registers(start, registers, rom, save_ram, cache, cache_has_data);
+        let mut interpreter = GsuInterpreter::new_with_registers(
+            start,
+            registers,
+            rom,
+            save_ram,
+            cache,
+            cache_has_data,
+        );
         interpreter.run();
         let stopped = interpreter.halted;
         for (register, value) in interpreter.registers.iter().copied().enumerate() {
@@ -1673,9 +1680,7 @@ impl<'a> GsuInterpreter<'a> {
                 let relative = self.fetch() as i8;
                 self.sync_program_counter();
                 if self.branch_condition(opcode) {
-                    self.pending_branch = Some(
-                        self.pc.wrapping_add_signed(i16::from(relative))
-                    );
+                    self.pending_branch = Some(self.pc.wrapping_add_signed(i16::from(relative)));
                 }
             }
             (0, 0x03) => {
@@ -1984,13 +1989,13 @@ impl<'a> GsuInterpreter<'a> {
 
     fn peek_instruction_byte(&self) -> u8 {
         let address = (u32::from(self.pbr) << 16) | u32::from(self.pc);
-        
+
         // Check if executing from cache (PC in [CBR, CBR+0x1FF] range and cache is valid)
         if self.cache_valid && self.pc >= self.cbr && self.pc < self.cbr.wrapping_add(0x200) {
             let cache_offset = (self.pc.wrapping_sub(self.cbr) & 0x01FF) as usize;
             return self.cache[cache_offset];
         }
-        
+
         if self.pbr <= 0x5F {
             return superfx_rom_index(address, self.rom.len())
                 .map(|index| self.rom[index])
@@ -2241,8 +2246,8 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn unsigned_multiply_register(&mut self, register: usize) {
-        let result = u16::from(self.read_alu_source() as u8)
-            * u16::from(self.registers[register] as u8);
+        let result =
+            u16::from(self.read_alu_source() as u8) * u16::from(self.registers[register] as u8);
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
