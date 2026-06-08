@@ -220,7 +220,7 @@ mod tests {
             .import_bytes("Mega Man", ".NES", b"rom-bytes")
             .unwrap();
 
-        assert_eq!(library.entries(), &[entry.clone()]);
+        assert_eq!(library.entries(), std::slice::from_ref(&entry));
         assert!(entry.file_name.ends_with(".nes"));
         assert_eq!(
             fs::read(paths.roms_dir.join(&entry.file_name)).unwrap(),
@@ -228,7 +228,7 @@ mod tests {
         );
 
         let reopened = RomLibrary::open(paths).unwrap();
-        assert_eq!(reopened.entries(), &[entry.clone()]);
+        assert_eq!(reopened.entries(), std::slice::from_ref(&entry));
         assert_eq!(
             reopened.load_bytes(&entry.id).unwrap(),
             Some(b"rom-bytes".to_vec())
