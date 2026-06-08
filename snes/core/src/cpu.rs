@@ -195,6 +195,18 @@ enum TestModifyOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RmwOp {
+    Inc,
+    Dec,
+    Asl,
+    Lsr,
+    Rol,
+    Ror,
+    Trb,
+    Tsb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockMoveDirection {
     Increment,
     Decrement,
@@ -754,6 +766,34 @@ enum MicroState {
         address: u32,
         low: u8,
     },
+    AbsoluteReadData {
+        target: ImmediateLoadTarget,
+        address: u32,
+    },
+    AbsoluteMathData {
+        op: ImmediateMathOp,
+        address: u32,
+    },
+    AbsoluteBitData {
+        address: u32,
+    },
+    AbsoluteStoreData {
+        address: u32,
+        value: u8,
+    },
+    AbsoluteRmwRead {
+        op: RmwOp,
+        address: u32,
+    },
+    AbsoluteRmwModify {
+        op: RmwOp,
+        address: u32,
+        value: u8,
+    },
+    AbsoluteRmwWrite {
+        address: u32,
+        value: u8,
+    },
     AbsoluteLongLow(AbsoluteLongOp),
     AbsoluteLongHigh(AbsoluteLongOp, u8),
     AbsoluteLongBank(AbsoluteLongOp, u16),
@@ -1137,6 +1177,40 @@ impl Cpu {
                 let value = self.apply_shift16(op, u16::from_le_bytes([low, high]));
                 bus.write(address, value as u8);
                 bus.write(address.wrapping_add(1), (value >> 8) as u8);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteReadData { target, address } => {
+                let low = bus.read(address);
+                self.apply_immediate_load(target, u16::from(low));
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteMathData { op, address } => {
+                let low = bus.read(address);
+                self.apply_immediate_math(op, u16::from(low));
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteBitData { address } => {
+                let value = bus.read(address);
+                self.apply_memory_bit(u16::from(value));
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteStoreData { address, value } => {
+                bus.write(address, value);
+                self.micro_state = MicroState::Fetch;
+            }
+            MicroState::AbsoluteRmwRead { op, address } => {
+                let value = bus.read(address);
+                self.micro_state = MicroState::AbsoluteRmwModify { op, address, value };
+            }
+            MicroState::AbsoluteRmwModify { op, address, value } => {
+                let result = self.apply_rmw8(op, value);
+                self.micro_state = MicroState::AbsoluteRmwWrite {
+                    address,
+                    value: result,
+                };
+            }
+            MicroState::AbsoluteRmwWrite { address, value } => {
+                bus.write(address, value);
                 self.micro_state = MicroState::Fetch;
             }
             MicroState::AbsoluteLongLow(op) => self.execute_absolute_long_low(bus, op),
@@ -2643,228 +2717,278 @@ impl Cpu {
 
         match op {
             AbsoluteOp::Adc { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AdcA,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AdcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AdcA,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::AdcIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AdcA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AdcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AdcA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                    };
                 }
             }
             AbsoluteOp::AdcIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AdcA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AdcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AdcA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                    };
                 }
             }
             AbsoluteOp::Sbc { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::SbcA,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::SbcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::SbcA,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::SbcIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::SbcA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::SbcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::SbcA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                    };
                 }
             }
             AbsoluteOp::SbcIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::SbcA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::SbcA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::SbcA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                    };
                 }
             }
             AbsoluteOp::And { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AndA,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AndA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AndA,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::AndIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AndA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AndA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AndA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                    };
                 }
             }
             AbsoluteOp::AndIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::AndA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::AndA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::AndA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                    };
                 }
             }
             AbsoluteOp::Ora { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::OraA,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::OraA,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::OraIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::OraA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::OraA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                    };
                 }
             }
             AbsoluteOp::OraIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::OraA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::OraA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::OraA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                    };
                 }
             }
             AbsoluteOp::Eor { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::EorA,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::EorA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::EorA,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::EorIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::EorA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::EorA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::EorA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                    };
                 }
             }
             AbsoluteOp::EorIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::EorA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::EorA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::EorA,
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                    };
                 }
             }
             AbsoluteOp::Inc { indexed_x, wide } => {
@@ -2874,62 +2998,69 @@ impl Cpu {
                 } else {
                     self.full_data_address(address)
                 };
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteIncHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    let value = value.wrapping_add(1);
-                    bus.write(full, value);
-                    self.update_nz8(value);
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteRmwRead {
+                        op: RmwOp::Inc,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::CmpA { wide } => {
-                let value = self.read_data_bank(bus, address);
+                let full = self.full_data_address(address);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::CmpA,
-                        address: self.full_data_address(address),
+                        address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::CmpA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::CmpA,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::CmpAIndexedX { wide } => {
                 let full = self
                     .full_data_address(address)
                     .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::CmpA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::CmpA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::CmpA,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::CmpAIndexedY { wide } => {
                 let full = self
                     .full_data_address(address)
                     .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::CmpA,
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::CmpA, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::CmpA,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Dec { indexed_x, wide } => {
@@ -2939,197 +3070,279 @@ impl Cpu {
                 } else {
                     self.full_data_address(address)
                 };
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteDecHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    let value = value.wrapping_sub(1);
-                    bus.write(full, value);
-                    self.update_nz8(value);
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteRmwRead {
+                        op: RmwOp::Dec,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Cpx { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::CmpX,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::CmpX, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::CmpX,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::Cpy { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteMathHigh {
                         op: ImmediateMathOp::CmpY,
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.apply_immediate_math(ImmediateMathOp::CmpY, u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteMathData {
+                        op: ImmediateMathOp::CmpY,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::Ldx { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteReadXHigh {
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.load_x(u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::X,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::LdxIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteReadXHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.load_x(u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::X,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Ldy { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteReadYHigh {
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.load_y(u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::Y,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::LdyIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteReadYHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.load_y(u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::Y,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Lda { wide } => {
-                let value = self.read_data_bank(bus, address);
                 if wide {
+                    let value = self.read_data_bank(bus, address);
                     self.micro_state = MicroState::AbsoluteReadAccumulatorHigh {
                         address: self.full_data_address(address),
                         low: value,
                     };
                 } else {
-                    self.registers.a = (self.registers.a & 0xFF00) | u16::from(value);
-                    self.update_nz8(value);
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::A,
+                        address: self.full_data_address(address),
+                    };
                 }
             }
             AbsoluteOp::LdaIndexedX { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.x));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteReadAccumulatorHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.registers.a = (self.registers.a & 0xFF00) | u16::from(value);
-                    self.update_nz8(value);
-                    self.micro_state = MicroState::Fetch;
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.x));
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::A,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::LdaIndexedY { wide } => {
-                let full = self
-                    .full_data_address(address)
-                    .wrapping_add(u32::from(self.registers.y));
-                let value = bus.read(full);
                 if wide {
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteReadAccumulatorHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.registers.a = (self.registers.a & 0xFF00) | u16::from(value);
-                    self.update_nz8(value);
-                    self.micro_state = MicroState::Fetch;
+                    let full = self
+                        .full_data_address(address)
+                        .wrapping_add(u32::from(self.registers.y));
+                    self.micro_state = MicroState::AbsoluteReadData {
+                        target: ImmediateLoadTarget::A,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Sta { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address),
-                    self.registers.a,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address),
+                        self.registers.a,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self.full_data_address(address),
+                        value: self.registers.a as u8,
+                    };
+                }
             }
             AbsoluteOp::StaIndexedX { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address)
-                        .wrapping_add(u32::from(self.registers.x)),
-                    self.registers.a,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                        self.registers.a,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                        value: self.registers.a as u8,
+                    };
+                }
             }
             AbsoluteOp::StaIndexedY { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address)
-                        .wrapping_add(u32::from(self.registers.y)),
-                    self.registers.a,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                        self.registers.a,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.y)),
+                        value: self.registers.a as u8,
+                    };
+                }
             }
             AbsoluteOp::Stx { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address),
-                    self.registers.x,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address),
+                        self.registers.x,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self.full_data_address(address),
+                        value: self.registers.x as u8,
+                    };
+                }
             }
             AbsoluteOp::Sty { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address),
-                    self.registers.y,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address),
+                        self.registers.y,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self.full_data_address(address),
+                        value: self.registers.y as u8,
+                    };
+                }
             }
             AbsoluteOp::Stz { wide } => {
-                self.write_operand_value(bus, self.full_data_address(address), 0, wide);
+                if wide {
+                    self.write_operand_value(bus, self.full_data_address(address), 0, true);
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self.full_data_address(address),
+                        value: 0,
+                    };
+                }
             }
             AbsoluteOp::StzIndexedX { wide } => {
-                self.write_operand_value(
-                    bus,
-                    self.full_data_address(address)
-                        .wrapping_add(u32::from(self.registers.x)),
-                    0,
-                    wide,
-                );
+                if wide {
+                    self.write_operand_value(
+                        bus,
+                        self.full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                        0,
+                        true,
+                    );
+                } else {
+                    self.micro_state = MicroState::AbsoluteStoreData {
+                        address: self
+                            .full_data_address(address)
+                            .wrapping_add(u32::from(self.registers.x)),
+                        value: 0,
+                    };
+                }
             }
             AbsoluteOp::Bit { indexed_x, wide } => {
                 let full = if indexed_x {
@@ -3138,49 +3351,44 @@ impl Cpu {
                 } else {
                     self.full_data_address(address)
                 };
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteBitHigh {
                         address: full,
                         low: value,
                     };
                 } else {
-                    self.apply_memory_bit(u16::from(value));
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteBitData { address: full };
                 }
             }
-            AbsoluteOp::Trb { wide } => {
+            AbsoluteOp::Trb { wide } | AbsoluteOp::Tsb { wide } => {
                 let full = self.full_data_address(address);
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
+                    let test_op = if matches!(op, AbsoluteOp::Trb { .. }) {
+                        TestModifyOp::Trb
+                    } else {
+                        TestModifyOp::Tsb
+                    };
                     self.micro_state = MicroState::AbsoluteTestModifyHigh {
-                        op: TestModifyOp::Trb,
+                        op: test_op,
                         address: full,
                         low: value,
                     };
                 } else {
-                    let result = self.apply_test_modify8(TestModifyOp::Trb, value);
-                    bus.write(full, result);
-                    self.micro_state = MicroState::Fetch;
-                }
-            }
-            AbsoluteOp::Tsb { wide } => {
-                let full = self.full_data_address(address);
-                let value = bus.read(full);
-                if wide {
-                    self.micro_state = MicroState::AbsoluteTestModifyHigh {
-                        op: TestModifyOp::Tsb,
-                        address: full,
-                        low: value,
+                    let rmw_op = if matches!(op, AbsoluteOp::Trb { .. }) {
+                        RmwOp::Trb
+                    } else {
+                        RmwOp::Tsb
                     };
-                } else {
-                    let result = self.apply_test_modify8(TestModifyOp::Tsb, value);
-                    bus.write(full, result);
-                    self.micro_state = MicroState::Fetch;
+                    self.micro_state = MicroState::AbsoluteRmwRead {
+                        op: rmw_op,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Shift {
-                op,
+                op: shift_op,
                 indexed_x,
                 wide,
             } => {
@@ -3190,17 +3398,24 @@ impl Cpu {
                 } else {
                     self.full_data_address(address)
                 };
-                let value = bus.read(full);
                 if wide {
+                    let value = bus.read(full);
                     self.micro_state = MicroState::AbsoluteShiftHigh {
-                        op,
+                        op: shift_op,
                         address: full,
                         low: value,
                     };
                 } else {
-                    let value = self.apply_shift8(op, value);
-                    bus.write(full, value);
-                    self.micro_state = MicroState::Fetch;
+                    let rmw_op = match shift_op {
+                        ShiftOp::Asl => RmwOp::Asl,
+                        ShiftOp::Lsr => RmwOp::Lsr,
+                        ShiftOp::Rol => RmwOp::Rol,
+                        ShiftOp::Ror => RmwOp::Ror,
+                    };
+                    self.micro_state = MicroState::AbsoluteRmwRead {
+                        op: rmw_op,
+                        address: full,
+                    };
                 }
             }
             AbsoluteOp::Jmp => {
@@ -4648,6 +4863,27 @@ impl Cpu {
             BranchKind::Plus => !self.registers.p.contains(CpuStatus::NEGATIVE),
             BranchKind::OverflowClear => !self.registers.p.contains(CpuStatus::OVERFLOW),
             BranchKind::OverflowSet => self.registers.p.contains(CpuStatus::OVERFLOW),
+        }
+    }
+
+    fn apply_rmw8(&mut self, op: RmwOp, value: u8) -> u8 {
+        match op {
+            RmwOp::Inc => {
+                let r = value.wrapping_add(1);
+                self.update_nz8(r);
+                r
+            }
+            RmwOp::Dec => {
+                let r = value.wrapping_sub(1);
+                self.update_nz8(r);
+                r
+            }
+            RmwOp::Asl => self.apply_shift8(ShiftOp::Asl, value),
+            RmwOp::Lsr => self.apply_shift8(ShiftOp::Lsr, value),
+            RmwOp::Rol => self.apply_shift8(ShiftOp::Rol, value),
+            RmwOp::Ror => self.apply_shift8(ShiftOp::Ror, value),
+            RmwOp::Trb => self.apply_test_modify8(TestModifyOp::Trb, value),
+            RmwOp::Tsb => self.apply_test_modify8(TestModifyOp::Tsb, value),
         }
     }
 
