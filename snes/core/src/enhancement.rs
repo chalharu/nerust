@@ -1704,7 +1704,9 @@ impl<'a> GsuInterpreter<'a> {
                 } else {
                     self.sync_program_counter();
                     self.source = register;
-                    self.destination = Some(register);
+                    if self.destination.is_none() {
+                        self.destination = Some(register);
+                    }
                 }
             }
             (0, 0x3C) => {
@@ -1754,7 +1756,8 @@ impl<'a> GsuInterpreter<'a> {
             }
             (0, 0x4E) => {
                 self.sync_program_counter();
-                self.apply_color_input(self.registers[self.source] as u8);
+                let source = self.registers[self.source] as u8;
+                self.apply_color_input(source);
             }
             (0, 0x4F) => {
                 self.sync_program_counter();
@@ -2031,7 +2034,7 @@ impl<'a> GsuInterpreter<'a> {
 
     fn long_jump_register(&mut self, register: usize) {
         self.pbr = self.registers[register] as u8 & 0x7F;
-        self.pc = self.registers[self.source];
+        self.pc = self.read_alu_source();
         self.registers[15] = self.pc;
         self.cbr = self.pc & 0xFFF0;
     }
@@ -2095,7 +2098,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn compare_register(&mut self, register: usize) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let rhs = self.registers[register];
         let result = lhs.wrapping_sub(rhs);
         self.set_subtract_flags(lhs, rhs, result);
@@ -2103,7 +2106,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn add_register(&mut self, register: usize) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let rhs = self.registers[register];
         let result = lhs.wrapping_add(rhs);
         self.set_add_flags(lhs, rhs, result);
@@ -2111,7 +2114,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn add_immediate(&mut self, value: u16) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let result = lhs.wrapping_add(value);
         self.set_add_flags(lhs, value, result);
         self.write_result(result);
@@ -2126,7 +2129,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn add_with_carry(&mut self, value: u16) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let carry = u16::from(self.carry);
         let result = lhs.wrapping_add(value).wrapping_add(carry);
         self.set_zero_sign(result);
@@ -2136,7 +2139,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn subtract_register(&mut self, register: usize) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let rhs = self.registers[register];
         let result = lhs.wrapping_sub(rhs);
         self.set_subtract_flags(lhs, rhs, result);
@@ -2144,14 +2147,14 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn subtract_immediate(&mut self, value: u16) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let result = lhs.wrapping_sub(value);
         self.set_subtract_flags(lhs, value, result);
         self.write_result(result);
     }
 
     fn subtract_with_carry_register(&mut self, register: usize) {
-        let lhs = self.registers[self.source];
+        let lhs = self.read_alu_source();
         let rhs = self.registers[register];
         let borrow = u16::from(!self.carry);
         let subtrahend = rhs.wrapping_add(borrow);
@@ -2163,49 +2166,49 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn and_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source] & value;
+        let result = self.read_alu_source() & value;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn bic_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source] & !value;
+        let result = self.read_alu_source() & !value;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn and_register(&mut self, register: usize) {
-        let result = self.registers[self.source] & self.registers[register];
+        let result = self.read_alu_source() & self.registers[register];
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn bit_clear_register(&mut self, register: usize) {
-        let result = self.registers[self.source] & !self.registers[register];
+        let result = self.read_alu_source() & !self.registers[register];
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn or_register(&mut self, register: usize) {
-        let result = self.registers[self.source] | self.registers[register];
+        let result = self.read_alu_source() | self.registers[register];
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn or_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source] | value;
+        let result = self.read_alu_source() | value;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn xor_register(&mut self, register: usize) {
-        let result = self.registers[self.source] ^ self.registers[register];
+        let result = self.read_alu_source() ^ self.registers[register];
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn xor_immediate(&mut self, value: u16) {
-        let result = self.registers[self.source] ^ value;
+        let result = self.read_alu_source() ^ value;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
@@ -2222,7 +2225,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn multiply_register(&mut self, register: usize) {
-        let a = self.registers[self.source] as i8 as i16;
+        let a = self.read_alu_source() as i8 as i16;
         let b = self.registers[register] as i8 as i16;
         let result = (a * b) as u16;
         self.clear_arithmetic_flags();
@@ -2230,7 +2233,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn multiply_immediate(&mut self, value: u16) {
-        let a = self.registers[self.source] as i8 as i16;
+        let a = self.read_alu_source() as i8 as i16;
         let b = value as i8 as i16;
         let result = (a * b) as u16;
         self.clear_arithmetic_flags();
@@ -2238,21 +2241,21 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn unsigned_multiply_register(&mut self, register: usize) {
-        let result = u16::from(self.registers[self.source] as u8)
+        let result = u16::from(self.read_alu_source() as u8)
             * u16::from(self.registers[register] as u8);
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn unsigned_multiply_immediate(&mut self, value: u16) {
-        let result = u16::from(self.registers[self.source] as u8) * value;
+        let result = u16::from(self.read_alu_source() as u8) * value;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn fractional_multiply(&mut self, long: bool) {
         let product =
-            i32::from(self.registers[self.source] as i16) * i32::from(self.registers[6] as i16);
+            i32::from(self.read_alu_source() as i16) * i32::from(self.registers[6] as i16);
         if long {
             self.registers[4] = product as u16;
         }
@@ -2266,13 +2269,13 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn not(&mut self) {
-        let result = !self.registers[self.source];
+        let result = !self.read_alu_source();
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn rotate_left(&mut self) {
-        let value = self.registers[self.source];
+        let value = self.read_alu_source();
         let carry = self.carry;
         self.carry = value & 0x8000 != 0;
         self.overflow = false;
@@ -2281,21 +2284,21 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn shift_right(&mut self) {
-        self.carry = self.registers[self.source] & 0x0001 != 0;
+        self.carry = self.read_alu_source() & 0x0001 != 0;
         self.overflow = false;
-        let result = self.registers[self.source] >> 1;
+        let result = self.read_alu_source() >> 1;
         self.write_result(result);
     }
 
     fn arithmetic_shift_right(&mut self) {
-        self.carry = self.registers[self.source] & 0x0001 != 0;
+        self.carry = self.read_alu_source() & 0x0001 != 0;
         self.overflow = false;
-        let result = ((self.registers[self.source] as i16) >> 1) as u16;
+        let result = ((self.read_alu_source() as i16) >> 1) as u16;
         self.write_result(result);
     }
 
     fn divide_by_two(&mut self) {
-        let value = self.registers[self.source];
+        let value = self.read_alu_source();
         self.carry = value & 0x0001 != 0;
         self.overflow = false;
         let result = if value == 0xFFFF {
@@ -2307,7 +2310,7 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn rotate_right(&mut self) {
-        let value = self.registers[self.source];
+        let value = self.read_alu_source();
         let carry = self.carry;
         self.carry = value & 0x0001 != 0;
         self.overflow = false;
@@ -2322,25 +2325,25 @@ impl<'a> GsuInterpreter<'a> {
     }
 
     fn high_byte(&mut self) {
-        let result = self.registers[self.source] >> 8;
+        let result = self.read_alu_source() >> 8;
         self.clear_arithmetic_flags();
         self.write_byte_result(result);
     }
 
     fn low_byte(&mut self) {
-        let result = self.registers[self.source] & 0x00FF;
+        let result = self.read_alu_source() & 0x00FF;
         self.clear_arithmetic_flags();
         self.write_byte_result(result);
     }
 
     fn sign_extend(&mut self) {
-        let result = i16::from(self.registers[self.source] as u8 as i8) as u16;
+        let result = i16::from(self.read_alu_source() as u8 as i8) as u16;
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
 
     fn swap_bytes(&mut self) {
-        let result = self.registers[self.source].swap_bytes();
+        let result = self.read_alu_source().swap_bytes();
         self.clear_arithmetic_flags();
         self.write_result(result);
     }
@@ -2393,6 +2396,10 @@ impl<'a> GsuInterpreter<'a> {
             .unwrap_or(0)
     }
 
+    fn read_alu_source(&self) -> u16 {
+        self.registers[self.source]
+    }
+
     fn write_result(&mut self, result: u16) {
         let destination = self.destination.take().unwrap_or(0);
         self.set_register(destination, result);
@@ -2408,13 +2415,15 @@ impl<'a> GsuInterpreter<'a> {
 
     fn store_word(&mut self, register: usize) {
         let address = self.registers[register];
-        self.write_ram_word(address, self.registers[self.source]);
+        let value = self.read_alu_source();
+        self.write_ram_word(address, value);
         self.destination = None;
     }
 
     fn store_byte(&mut self, register: usize) {
         let address = self.registers[register];
-        self.write_ram(address, self.registers[self.source] as u8);
+        let value = self.read_alu_source() as u8;
+        self.write_ram(address, value);
         self.destination = None;
     }
 
@@ -2480,7 +2489,6 @@ impl<'a> GsuInterpreter<'a> {
             }
         }
         self.registers[1] = self.registers[1].wrapping_add(1);
-        self.source = 1;
         self.destination = None;
     }
 
