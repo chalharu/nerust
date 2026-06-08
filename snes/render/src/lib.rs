@@ -221,15 +221,15 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // When HDMA changes INIDISP per-scanline, apply per-line force-blank/brightness=0
     if use_presented_inidisp {
         for screen_y in 0..SCREEN_HEIGHT {
-            if let Some(backdrop) = core.presented_backdrop_line(screen_y) {
-                if backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0 {
-                    let offset = screen_y * SCREEN_WIDTH * 4;
-                    for pixel in rgba[offset..offset + SCREEN_WIDTH * 4].chunks_exact_mut(4) {
-                        pixel[0] = 0;
-                        pixel[1] = 0;
-                        pixel[2] = 0;
-                        pixel[3] = 0xFF;
-                    }
+            if let Some(backdrop) = core.presented_backdrop_line(screen_y)
+                && (backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0)
+            {
+                let offset = screen_y * SCREEN_WIDTH * 4;
+                for pixel in rgba[offset..offset + SCREEN_WIDTH * 4].chunks_exact_mut(4) {
+                    pixel[0] = 0;
+                    pixel[1] = 0;
+                    pixel[2] = 0;
+                    pixel[3] = 0xFF;
                 }
             }
         }
