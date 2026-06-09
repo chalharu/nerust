@@ -2407,7 +2407,10 @@ impl<'a> GsuInterpreter<'a> {
 
     fn write_result(&mut self, result: u16) {
         let destination = self.destination.take().unwrap_or(0);
-        self.set_register(destination, result);
+        self.registers[destination] = result;
+        self.set_zero_sign(result);
+        self.source = 0;
+        self.destination = None;
     }
 
     fn write_byte_result(&mut self, result: u16) {
