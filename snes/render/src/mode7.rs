@@ -1,7 +1,7 @@
 use nerust_snes_core::{Core, Mode7Registers};
 
 use super::{
-    BgLayer, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
+    BgLayer, SCREEN_HEIGHT,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line, presented_bg_line, use_presented_bg_scroll,
 };
@@ -48,7 +48,7 @@ pub(super) fn render_mode7_bg1(
             vofs: effective_vofs,
             brightness,
         };
-        let mode7_screen_y = (presented_y + VISIBLE_BG_Y_OFFSET) as i32;
+        let mode7_screen_y = presented_y as i32;
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
             if let Some(color) = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y) {

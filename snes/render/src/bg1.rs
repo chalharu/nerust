@@ -1,7 +1,7 @@
 use nerust_snes_core::Core;
 
 use super::{
-    BgLayer, RenderError, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
+    BgLayer, RenderError, SCREEN_HEIGHT,
     color::cgram_raw_color,
     main_screen_for_line,
     mode7::render_mode7_bg1,
@@ -97,7 +97,7 @@ pub(super) fn render_bg1(
             raw_vofs & 0x3FF
         };
         let vofs =
-            (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET) % tilemap_height_pixels.max(1);
+            (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
         let bg_y = (presented_y + vofs) % tilemap_height_pixels;
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
