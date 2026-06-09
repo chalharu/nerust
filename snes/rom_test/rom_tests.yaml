@@ -2675,7 +2675,7 @@ cases:
     max_steps: 4586197
     check_interval_steps: 4586197
     reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.png
-  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-32x328-pal
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg1-32x328-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
       background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
@@ -2683,6 +2683,30 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG1Map2BPP32x328PAL/8x8BG1Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg2-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG2Map2BPP32x328PAL/8x8BG2Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG2Map2BPP32x328PAL/8x8BG2Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg3-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG3Map2BPP32x328PAL/8x8BG3Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG3Map2BPP32x328PAL/8x8BG3Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg4-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG4Map2BPP32x328PAL/8x8BG4Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG4Map2BPP32x328PAL/8x8BG4Map2BPP32x328PAL.png
   - id: peter-lemon-snes-ppu-bgmap-8x8-4bpp-32x328-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 4BPP 32x328 PAL test verifies correct rendering of
@@ -2763,3 +2787,19 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceScroll/InterlaceScroll.png
+  - id: peter-lemon-snes-compress-lz77-lz77wramgfx
+    description: |
+      Peter Lemon's Compress LZ77 LZ77 WRAM GFX test verifies correct decompression of
+      LZ77 compressed graphics data from WRAM, testing the SuperFX's LZ77 decompression capabilities.
+    rom: snes/peter-lemon-snes/Compress/LZ77/LZ77WRAMGFX/LZ77WRAMGFX.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/Compress/LZ77/LZ77WRAMGFX/LZ77WRAMGFX.png
+  - id: peter-lemon-snes-helloworld
+    description: |
+      Peter Lemon's Hello World test verifies basic SuperFX functionality by rendering
+      a simple "Hello World" message on the screen, testing core CPU and PPU features.
+    rom: snes/peter-lemon-snes/HelloWorld/HelloWorld.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/HelloWorld/HelloWorld.png
