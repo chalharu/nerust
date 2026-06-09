@@ -158,6 +158,8 @@ pub enum RenderError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedScreen {
     pub rgba: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
 }
 
 pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
@@ -179,6 +181,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
             rgba: render_presented_backdrop(core, render_width, render_height),
+            width: render_width,
+            height: render_height,
         });
     }
 
@@ -187,6 +191,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     if brightness == 0 && !use_presented_inidisp {
         return Ok(RenderedScreen {
             rgba: opaque_black_screen(render_width, render_height),
+            width: render_width,
+            height: render_height,
         });
     }
 
@@ -286,7 +292,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     render_obj(core, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba);
 
-    Ok(RenderedScreen { rgba })
+    Ok(RenderedScreen { rgba, width: render_width, height: render_height })
 }
 
 #[cfg(test)]

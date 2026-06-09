@@ -1,5 +1,5 @@
 use crate::manifest::{Assertion, ManifestError, RomCase};
-use crate::media::{SCREEN_HEIGHT, SCREEN_WIDTH, encode_screenshot_png, screen_hash_rgba};
+use crate::media::{encode_screenshot_png, screen_hash_rgba};
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use nerust_snes_render::render_screen;
@@ -205,7 +205,7 @@ fn finalize_validation(
         }
     }
     let screenshot_png = if options.capture_screenshot_png {
-        match encode_screenshot_png(&rendered.rgba, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32) {
+        match encode_screenshot_png(&rendered.rgba, rendered.width as u32, rendered.height as u32) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
                 return internal_error(
