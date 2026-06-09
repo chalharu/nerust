@@ -1,8 +1,7 @@
-use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::{Core, Mode7Registers};
 
 use super::{
-    BgLayer, VISIBLE_BG_Y_OFFSET,
+    BgLayer, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line, presented_bg_line, use_presented_bg_scroll,
 };
@@ -12,7 +11,9 @@ pub(super) fn render_mode7_bg1(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
-    interlace_field: bool,
+    interlace_enabled: bool,
+    render_width: usize,
+    render_height: usize,
     rgba: &mut [u8],
 ) {
     let registers = core.mode7_registers();
@@ -20,20 +21,24 @@ pub(super) fn render_mode7_bg1(
     let current_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
-    for screen_y in 0..SCREEN_HEIGHT {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
+    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
+    let width_ratio = (render_width / SCREEN_WIDTH).max(1);
+    for screen_y in 0..render_height {
+        let presented_y = screen_y / height_ratio;
+        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm)
             & BgLayer::Bg1.tm_mask()
             == 0
         {
             continue;
         }
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, presented_y))
             .flatten();
         let raw_vofs = presented.map_or(current_vofs, |line| i32::from(line.vofs)) & 0x3FF;
+        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & !1) | 1
-        } else if core.interlace_enabled() {
+        } else if interlace_enabled {
             raw_vofs & !1
         } else {
             raw_vofs
@@ -44,10 +49,11 @@ pub(super) fn render_mode7_bg1(
             vofs: effective_vofs,
             brightness,
         };
-        let mode7_screen_y = (screen_y + VISIBLE_BG_Y_OFFSET) as i32;
-        for screen_x in 0..SCREEN_WIDTH {
-            if let Some(color) = mode7_pixel(core, &context, screen_x as i32, mode7_screen_y) {
-                put_pixel(rgba, screen_x, screen_y, color);
+        let mode7_screen_y = (presented_y + VISIBLE_BG_Y_OFFSET) as i32;
+        for screen_x in 0..render_width {
+            let mode7_screen_x = (screen_x / width_ratio) as i32;
+            if let Some(color) = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y) {
+                put_pixel(rgba, render_width, screen_x, screen_y, color);
             }
         }
     }

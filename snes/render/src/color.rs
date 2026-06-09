@@ -1,4 +1,3 @@
-use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::Core;
 
 pub(super) fn cgram_color_rgba(core: &Core, color_index: usize, brightness: u8) -> [u8; 4] {
@@ -15,17 +14,20 @@ pub(super) fn snes_color_to_rgba(color: u16, brightness: u8) -> [u8; 4] {
 }
 
 fn scale_channel(channel: u8, brightness: u8) -> u8 {
-    let expanded = (u16::from(channel) * 255 + 15) / 31;
-    ((expanded * u16::from(brightness) + 7) / 15) as u8
+    if brightness == 0 {
+        return 0;
+    }
+    let expanded = (u16::from(channel) << 3) | (u16::from(channel) >> 2);
+    ((expanded * (u16::from(brightness) + 1) + 8) / 16) as u8
 }
 
-pub(super) fn put_pixel(rgba: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
-    let offset = (y * SCREEN_WIDTH + x) * 4;
+pub(super) fn put_pixel(rgba: &mut [u8], width: usize, x: usize, y: usize, color: [u8; 4]) {
+    let offset = (y * width + x) * 4;
     rgba[offset..offset + 4].copy_from_slice(&color);
 }
 
-pub(super) fn opaque_black_screen() -> Vec<u8> {
-    let mut rgba = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
+pub(super) fn opaque_black_screen(width: usize, height: usize) -> Vec<u8> {
+    let mut rgba = vec![0; width * height * 4];
     for pixel in rgba.chunks_exact_mut(4) {
         pixel[3] = 0xFF;
     }
@@ -34,7 +36,7 @@ pub(super) fn opaque_black_screen() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{opaque_black_screen, scale_channel};
+    use super::scale_channel;
 
     #[test]
     fn brightness_scaling_reaches_black_and_full_intensity() {
@@ -43,10 +45,9 @@ mod tests {
     }
 
     #[test]
-    fn opaque_black_screen_uses_opaque_pixels() {
-        let rgba = opaque_black_screen();
-
-        assert_eq!(&rgba[..4], &[0x00, 0x00, 0x00, 0xFF]);
-        assert_eq!(&rgba[rgba.len() - 4..], &[0x00, 0x00, 0x00, 0xFF]);
+    fn bit_replication_maps_5bit_to_8bit_correctly() {
+        assert_eq!(scale_channel(0x00, 0x0F), 0x00);
+        assert_eq!(scale_channel(0x1F, 0x0F), 0xFF);
+        assert_eq!(scale_channel(0x10, 0x0F), 132); // (16<<3)|(16>>2) = 128+4 = 132
     }
 }

@@ -1,7 +1,7 @@
-use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::Core;
 
 use super::{
+    SCREEN_HEIGHT,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line,
     tile::chr_4bpp_pixel,
@@ -16,10 +16,12 @@ pub(super) fn render_obj(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
-    interlace_field: bool,
+    interlace_enabled: bool,
+    render_width: usize,
+    render_height: usize,
     rgba: &mut [u8],
 ) {
-    if !screen_uses_obj(core, current_tm, use_presented_tm) {
+    if !screen_uses_obj(core, current_tm, use_presented_tm, render_height) {
         return;
     }
 
@@ -27,30 +29,34 @@ pub(super) fn render_obj(
     let (small_size, large_size) = obj_size_pair((obsel >> 5) & 0x07);
     let sprites = collect_obj_sprites(core, small_size, large_size);
 
-    for screen_y in 0..SCREEN_HEIGHT {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 == 0 {
+    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
+
+    for screen_y in 0..render_height {
+        let presented_y = screen_y / height_ratio;
+        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & 0x10 == 0 {
             continue;
         }
-        // In interlace mode, the field parity controls the half-line offset for OBJ
+        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
         let interlace_screen_y = if interlace_field {
-            screen_y.wrapping_add(1)
+            presented_y.wrapping_add(1)
         } else {
-            screen_y
+            presented_y
         };
         let slivers = obj_slivers_for_scanline(&sprites, interlace_screen_y);
         for sliver in slivers.iter().rev() {
-            render_obj_sliver(core, obsel, brightness, rgba, screen_y, *sliver);
+            render_obj_sliver(core, obsel, brightness, rgba, render_width, screen_y, *sliver);
         }
     }
 }
 
-fn screen_uses_obj(core: &Core, current_tm: u8, use_presented_tm: bool) -> bool {
+fn screen_uses_obj(core: &Core, current_tm: u8, use_presented_tm: bool, render_height: usize) -> bool {
     if !use_presented_tm {
         return current_tm & 0x10 != 0;
     }
 
-    (0..SCREEN_HEIGHT).any(|screen_y| {
-        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 != 0
+    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
+    (0..render_height).step_by(height_ratio).any(|screen_y| {
+        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & 0x10 != 0
     })
 }
 
@@ -128,6 +134,7 @@ fn render_obj_sliver(
     obsel: u8,
     brightness: u8,
     rgba: &mut [u8],
+    render_width: usize,
     screen_y: usize,
     sliver: ObjSliver,
 ) {
@@ -144,7 +151,7 @@ fn render_obj_sliver(
     for pixel_in_sliver in 0..OBJ_TILE_SIZE {
         let sprite_x = sliver_x_start + pixel_in_sliver;
         let target_x = sliver.sprite.x + i16::from(sprite_x);
-        if !(0..SCREEN_WIDTH as i16).contains(&target_x) {
+        if !(0..render_width as i16).contains(&target_x) {
             continue;
         }
 
@@ -167,7 +174,7 @@ fn render_obj_sliver(
 
         let palette = usize::from((sliver.sprite.attributes >> 1) & 0x07);
         let color = cgram_color_rgba(core, 128 + palette * 16 + usize::from(color), brightness);
-        put_pixel(rgba, target_x as usize, screen_y, color);
+        put_pixel(rgba, render_width, target_x as usize, screen_y, color);
     }
 }
 
