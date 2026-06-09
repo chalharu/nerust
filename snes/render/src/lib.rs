@@ -177,6 +177,9 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         });
     }
 
+    let interlace_enabled = core.interlace_enabled();
+    let interlace_field = interlace_enabled && core.odd_frame();
+
     let render_brightness = if brightness == 0 { 15 } else { brightness };
     let mut rgba = if use_presented_inidisp {
         render_presented_backdrop(core)
@@ -190,6 +193,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_brightness,
         tm,
         use_presented_tm,
+        interlace_field,
         &mut rgba,
     )?;
     render_bg1(
@@ -198,6 +202,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_brightness,
         tm,
         use_presented_tm,
+        interlace_field,
         &mut rgba,
     )?;
     render_bg1(
@@ -206,6 +211,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_brightness,
         tm,
         use_presented_tm,
+        interlace_field,
         &mut rgba,
     )?;
     render_bg1(
@@ -214,9 +220,10 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_brightness,
         tm,
         use_presented_tm,
+        interlace_field,
         &mut rgba,
     )?;
-    render_obj(core, render_brightness, tm, use_presented_tm, &mut rgba);
+    render_obj(core, render_brightness, tm, use_presented_tm, interlace_field, &mut rgba);
 
     // When HDMA changes INIDISP per-scanline, apply per-line force-blank/brightness=0
     if use_presented_inidisp {

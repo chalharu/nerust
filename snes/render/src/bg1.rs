@@ -17,6 +17,7 @@ pub(super) fn render_bg1(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
+    interlace_field: bool,
     rgba: &mut [u8],
 ) -> Result<(), RenderError> {
     if !screen_uses_layer(core, layer, current_tm, use_presented_tm) {
@@ -29,13 +30,14 @@ pub(super) fn render_bg1(
         return Ok(());
     };
     if mode == BgRenderMode::Mode7 {
-        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, rgba);
+        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, interlace_field, rgba);
         return Ok(());
     }
 
     let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
     let bg34nba = core.peek(0x00210C);
+    let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let context = Bg1RenderContext {
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
@@ -45,13 +47,10 @@ pub(super) fn render_bg1(
         } else {
             8
         },
-        horizontal_scale: if screen_mode == 5 || screen_mode == 6 {
-            2
-        } else {
-            1
-        },
+        horizontal_scale: if high_res_mode { 2 } else { 1 },
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
+        high_res_mode,
     };
     let palette = cgram_palette_rgba(core, brightness);
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
@@ -68,10 +67,19 @@ pub(super) fn render_bg1(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, layer, screen_y))
             .flatten();
-        let hofs = presented.map_or(usize::from(current_hofs), |line| usize::from(line.hofs))
+        let hofs_mask = if context.horizontal_scale == 2 { 0x7FF } else { 0x3FF };
+        let hofs = (presented.map_or(usize::from(current_hofs), |line| usize::from(line.hofs))
+            & hofs_mask)
             % tilemap_width_pixels.max(1);
-        let vofs = (presented.map_or(usize::from(current_vofs), |line| usize::from(line.vofs))
-            + VISIBLE_BG_Y_OFFSET)
+        let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
+        let effective_vofs = if interlace_field {
+            (raw_vofs & 0x3FE) | 0x0001
+        } else if core.interlace_enabled() {
+            raw_vofs & 0x3FE
+        } else {
+            raw_vofs & 0x3FF
+        };
+        let vofs = (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET)
             % tilemap_height_pixels.max(1);
         let bg_y = (screen_y + vofs) % tilemap_height_pixels;
         for screen_x in 0..SCREEN_WIDTH {
@@ -106,7 +114,7 @@ fn bg1_pixel(
     bg_x: usize,
     bg_y: usize,
 ) -> Option<[u8; 4]> {
-    let tile_x = bg_x / context.tile_size;
+    let mut tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_size;
     let entry = read_tilemap_entry(
         core,
@@ -117,6 +125,21 @@ fn bg1_pixel(
     );
 
     let mut tile_pixel_x = bg_x % context.tile_size;
+    if context.high_res_mode {
+        let opt = usize::from((entry >> 8) & 0x03);
+        if opt > tile_pixel_x {
+            tile_x = tile_x.wrapping_sub(1);
+            let prev_entry = read_tilemap_entry(
+                core,
+                context.tilemap_base,
+                context.tilemap_width_tiles,
+                tile_x,
+                tile_y,
+            );
+            return bg1_pixel_opt_wrapped(core, context, palette, prev_entry, opt, tile_pixel_x, bg_y);
+        }
+        tile_pixel_x -= opt;
+    }
     let mut tile_pixel_y = bg_y % context.tile_size;
     if entry & 0x4000 != 0 {
         tile_pixel_x = context.tile_size - 1 - tile_pixel_x;
@@ -129,7 +152,11 @@ fn bg1_pixel(
     let subtile_y = tile_pixel_y / 8;
     let pixel_x = tile_pixel_x % 8;
     let pixel_y = tile_pixel_y % 8;
-    let tile_number = usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16;
+    let tile_number = if context.high_res_mode {
+        usize::from(entry & 0x00FF) + subtile_x + subtile_y * 16
+    } else {
+        usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16
+    };
     let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
         BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
@@ -141,7 +168,53 @@ fn bg1_pixel(
         return None;
     }
 
-    let tile_palette = usize::from((entry >> 10) & 0x07);
+    let tile_palette = if context.high_res_mode {
+        usize::from((entry >> 11) & 0x03)
+    } else {
+        usize::from((entry >> 10) & 0x07)
+    };
+    let color_index = match context.mode {
+        BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
+        BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
+        BgRenderMode::Bpp8 => usize::from(color),
+        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
+    };
+    Some(palette[color_index])
+}
+
+fn bg1_pixel_opt_wrapped(
+    core: &Core,
+    context: &Bg1RenderContext,
+    palette: &[[u8; 4]; 256],
+    entry: u16,
+    opt: usize,
+    pixel_x_in: usize,
+    bg_y: usize,
+) -> Option<[u8; 4]> {
+    let mut tpix_x = pixel_x_in + context.tile_size - opt;
+    let mut tile_pixel_y = bg_y % context.tile_size;
+    if entry & 0x4000 != 0 {
+        tpix_x = context.tile_size - 1 - tpix_x;
+    }
+    if entry & 0x8000 != 0 {
+        tile_pixel_y = context.tile_size - 1 - tile_pixel_y;
+    }
+    let subtile_x = tpix_x / 8;
+    let subtile_y = tile_pixel_y / 8;
+    let pixel_x = tpix_x % 8;
+    let pixel_y = tile_pixel_y % 8;
+    let tile_number = usize::from(entry & 0x00FF) + subtile_x + subtile_y * 16;
+    let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
+    let color = match context.mode {
+        BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Bpp4 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Bpp8 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
+        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
+    };
+    if color == 0 {
+        return None;
+    }
+    let tile_palette = usize::from((entry >> 11) & 0x03);
     let color_index = match context.mode {
         BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
         BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
@@ -160,6 +233,7 @@ struct Bg1RenderContext {
     horizontal_scale: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
+    high_res_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

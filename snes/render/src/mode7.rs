@@ -12,11 +12,12 @@ pub(super) fn render_mode7_bg1(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
+    interlace_field: bool,
     rgba: &mut [u8],
 ) {
     let registers = core.mode7_registers();
-    let current_hofs = i32::from(core.bg1_hofs());
-    let current_vofs = i32::from(core.bg1_vofs());
+    let current_hofs = i32::from(core.bg1_hofs()) & 0x3FF;
+    let current_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     for screen_y in 0..SCREEN_HEIGHT {
@@ -29,10 +30,18 @@ pub(super) fn render_mode7_bg1(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
             .flatten();
+        let raw_vofs = presented.map_or(current_vofs, |line| i32::from(line.vofs)) & 0x3FF;
+        let effective_vofs = if interlace_field {
+            (raw_vofs & !1) | 1
+        } else if core.interlace_enabled() {
+            raw_vofs & !1
+        } else {
+            raw_vofs
+        };
         let context = Mode7RenderContext {
             registers,
-            hofs: presented.map_or(current_hofs, |line| i32::from(line.hofs)),
-            vofs: presented.map_or(current_vofs, |line| i32::from(line.vofs)),
+            hofs: presented.map_or(current_hofs, |line| i32::from(line.hofs) & 0x3FF),
+            vofs: effective_vofs,
             brightness,
         };
         let mode7_screen_y = (screen_y + VISIBLE_BG_Y_OFFSET) as i32;

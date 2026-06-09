@@ -266,16 +266,16 @@ impl Ppu1 {
     }
 
     fn write_bg_hofs(&mut self, index: usize, value: u8) {
-        self.bg_hofs[index] = ((u16::from(value) << 8)
+        self.bg_hofs[index] = (u16::from(value) << 8)
             | u16::from(self.bgofs_latch & 0xF8)
-            | u16::from(self.bg_hofs_latch[index] & 0x07))
-            & 0x03FF;
+            | u16::from(self.bg_hofs_latch[index] & 0x07);
         self.bgofs_latch = value;
         self.bg_hofs_latch[index] = value;
     }
 
     fn write_bg_vofs(&mut self, index: usize, value: u8) {
-        self.bg_vofs[index] = ((u16::from(value) << 8) | u16::from(self.bgofs_latch)) & 0x03FF;
+        self.bg_vofs[index] =
+            (u16::from(value) << 8) | u16::from(self.bgofs_latch);
         self.bgofs_latch = value;
     }
 

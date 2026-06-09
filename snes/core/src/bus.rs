@@ -151,6 +151,8 @@ pub(crate) struct Bus {
     hdma_repeat: [bool; DMA_CHANNEL_COUNT],
     hdma_do_transfer: [bool; DMA_CHANNEL_COUNT],
     hdma_indirect: [bool; DMA_CHANNEL_COUNT],
+    odd_frame: bool,
+    completed_odd_frame: bool,
     presented_backdrop_current_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
     presented_backdrop_completed_lines: [Option<PresentedBackdropLine>; PRESENTED_SCANLINE_COUNT],
     presented_bg1_current_lines: [Option<PresentedBg1Line>; PRESENTED_SCANLINE_COUNT],
@@ -209,6 +211,8 @@ impl Bus {
             hdma_repeat: [false; DMA_CHANNEL_COUNT],
             hdma_do_transfer: [false; DMA_CHANNEL_COUNT],
             hdma_indirect: [false; DMA_CHANNEL_COUNT],
+            odd_frame: false,
+            completed_odd_frame: false,
             presented_backdrop_current_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_backdrop_completed_lines: [None; PRESENTED_SCANLINE_COUNT],
             presented_bg1_current_lines: [None; PRESENTED_SCANLINE_COUNT],
@@ -260,6 +264,8 @@ impl Bus {
         self.hdma_repeat = [false; DMA_CHANNEL_COUNT];
         self.hdma_do_transfer = [false; DMA_CHANNEL_COUNT];
         self.hdma_indirect = [false; DMA_CHANNEL_COUNT];
+        self.odd_frame = false;
+        self.completed_odd_frame = false;
         self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_backdrop_completed_lines = [None; PRESENTED_SCANLINE_COUNT];
         self.presented_bg1_current_lines = [None; PRESENTED_SCANLINE_COUNT];
@@ -391,6 +397,7 @@ impl Bus {
         // Rising edge of vblank: latch the NMI flag and optionally queue a
         // pending NMI for the CPU (when NMITIMEN bit 7 is set).
         if !was_in_vblank && in_vblank {
+            self.completed_odd_frame = self.odd_frame;
             self.presented_backdrop_completed_lines = self.presented_backdrop_current_lines;
             self.presented_bg1_completed_lines = self.presented_bg1_current_lines;
             self.presented_bg2_completed_lines = self.presented_bg2_current_lines;
@@ -415,6 +422,7 @@ impl Bus {
             self.auto_joy_active = false;
             self.auto_joy_subticks_remaining = 0;
             self.reload_hdma_channels();
+            self.odd_frame = !self.odd_frame;
             self.presented_backdrop_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_bg1_current_lines = [None; PRESENTED_SCANLINE_COUNT];
             self.presented_bg2_current_lines = [None; PRESENTED_SCANLINE_COUNT];
@@ -538,6 +546,18 @@ impl Bus {
             &self.presented_main_screen_completed_lines,
             line,
         )
+    }
+
+    pub(crate) fn interlace_enabled(&self) -> bool {
+        self.ppu2.interlace_enabled()
+    }
+
+    pub(crate) fn odd_frame(&self) -> bool {
+        self.odd_frame
+    }
+
+    pub(crate) fn completed_odd_frame(&self) -> bool {
+        self.completed_odd_frame
     }
 
     pub(crate) fn presented_color_window_line(
