@@ -5,9 +5,9 @@ mod mode7;
 mod obj;
 mod tile;
 
-use backdrop::{render_current_backdrop, render_presented_backdrop};
+use backdrop::render_presented_backdrop;
 use bg1::render_bg1;
-use color::opaque_black_screen;
+use color::{apply_color_math, opaque_black_screen, snes_color_to_rgba};
 use nerust_snes_core::Core;
 use obj::render_obj;
 
@@ -162,15 +162,19 @@ pub struct RenderedScreen {
 
 pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let tm = core.peek(0x00212C);
+    let ts = core.peek(0x00212D);
     let use_presented_tm: bool = use_presented_main_screen(core);
     let use_presented_inidisp = hdma_targets_bbus(core, &[0x00]);
 
     let bgmode = core.peek(0x002105);
-    let high_res_mode = (bgmode & 0x07) == 5 || (bgmode & 0x07) == 6;
+    let screen_mode = bgmode & 0x07;
+    let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let interlace_enabled = core.interlace_enabled();
+    let color_math_supported = screen_mode <= 4;
 
     let render_width = if high_res_mode { MODE5_6_WIDTH } else { SCREEN_WIDTH };
     let render_height = if interlace_enabled { INTERLACE_HEIGHT } else { SCREEN_HEIGHT };
+    let pixel_count = render_width * render_height;
 
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
@@ -186,77 +190,100 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         });
     }
 
-    let interlace_field = interlace_enabled && core.odd_frame();
-
     let render_brightness = if brightness == 0 { 15 } else { brightness };
-    let mut rgba = if use_presented_inidisp {
-        render_presented_backdrop(core, render_width, render_height)
-    } else {
-        render_current_backdrop(core, render_width, render_height)
-    };
 
-    render_bg1(
-        core,
-        BgLayer::Bg1,
-        render_brightness,
-        tm,
-        use_presented_tm,
-        interlace_field,
-        render_width,
-        render_height,
-        &mut rgba,
-    )?;
-    render_bg1(
-        core,
-        BgLayer::Bg2,
-        render_brightness,
-        tm,
-        use_presented_tm,
-        interlace_field,
-        render_width,
-        render_height,
-        &mut rgba,
-    )?;
-    render_bg1(
-        core,
-        BgLayer::Bg3,
-        render_brightness,
-        tm,
-        use_presented_tm,
-        interlace_field,
-        render_width,
-        render_height,
-        &mut rgba,
-    )?;
-    render_bg1(
-        core,
-        BgLayer::Bg4,
-        render_brightness,
-        tm,
-        use_presented_tm,
-        interlace_field,
-        render_width,
-        render_height,
-        &mut rgba,
-    )?;
-    render_obj(core, render_brightness, tm, use_presented_tm, interlace_field, render_width, render_height, &mut rgba);
+    // --- Render backdrop to RGBA ---
+    let mut rgba = render_presented_backdrop(core, render_width, render_height);
 
-    // When HDMA changes INIDISP per-scanline, apply per-line force-blank/brightness=0
-    if use_presented_inidisp {
-        for screen_y in 0..render_height {
-            if let Some(backdrop) = core.presented_backdrop_line(screen_y)
-                && (backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0)
-            {
-                let offset = screen_y * render_width * 4;
-                for pixel in rgba[offset..offset + render_width * 4].chunks_exact_mut(4) {
-                    pixel[0] = 0;
-                    pixel[1] = 0;
-                    pixel[2] = 0;
-                    pixel[3] = 0xFF;
-                }
+    // --- Main screen: render BG layers to raw 15-bit buffer ---
+    let mut main_raw = vec![0u16; pixel_count];
+
+    render_bg1(core, BgLayer::Bg1, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
+    render_bg1(core, BgLayer::Bg2, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
+    render_bg1(core, BgLayer::Bg3, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
+    render_bg1(core, BgLayer::Bg4, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
+
+    // --- Sub screen: render BG layers if color math is supported ---
+    if ts != 0 && color_math_supported {
+        let mut sub_raw = vec![0u16; pixel_count];
+
+        render_bg1(core, BgLayer::Bg1, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
+        render_bg1(core, BgLayer::Bg2, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
+        render_bg1(core, BgLayer::Bg3, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
+        render_bg1(core, BgLayer::Bg4, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
+
+        let cgwsel = core.peek(0x002130);
+        let cgadsub = core.peek(0x002131);
+        let fixed_color = core.fixed_color();
+        let cgwsel_enable_main = (cgwsel >> 0) & 0x03;
+        let cgwsel_disable_main = (cgwsel >> 4) & 0x03;
+
+        let wobjsel = core.peek(0x002125);
+        let settings = (wobjsel >> 4) & 0x0F;
+        let color_window_enabled = settings & 0x0A != 0;
+        let in_color_window = if color_window_enabled { true } else { false };
+
+        let cgadsub_bg1 = cgadsub & 0x01 != 0;
+        let cgadsub_bg2 = cgadsub & 0x02 != 0;
+        let cgadsub_bg3 = cgadsub & 0x04 != 0;
+        let cgadsub_bg4 = cgadsub & 0x08 != 0;
+        let cgadsub_obj = cgadsub & 0x10 != 0;
+        let cgadsub_backdrop = cgadsub & 0x20 != 0;
+        let subtract = cgadsub & 0x80 != 0;
+        let half = cgadsub & 0x40 != 0;
+
+        let backdrop_color0 = u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF;
+
+        for i in 0..pixel_count {
+            let main_raw_val = main_raw[i];
+            let sub_raw_val = sub_raw[i];
+
+            if main_raw_val == 0 {
+                continue;
             }
+
+            let layer_participates = cgadsub_bg1 || cgadsub_bg2 || cgadsub_bg3 || cgadsub_bg4
+                || cgadsub_obj || (cgadsub_backdrop && main_raw_val == backdrop_color0);
+            if !layer_participates {
+                continue;
+            }
+
+            let enable = match cgwsel_enable_main {
+                0 => false,
+                1 => in_color_window,
+                2 => !in_color_window,
+                _ => true,
+            };
+            if !enable {
+                continue;
+            }
+
+            let disable = match cgwsel_disable_main {
+                0 => false,
+                1 => in_color_window,
+                2 => !in_color_window,
+                _ => true,
+            };
+            if disable {
+                continue;
+            }
+
+            let sub_source = if sub_raw_val != 0 { sub_raw_val } else { fixed_color };
+            main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
         }
     }
+
+    // --- Composite BG raw data onto RGBA backdrop ---
+    for i in 0..pixel_count {
+        let raw = main_raw[i];
+        if raw != 0 {
+            let color = snes_color_to_rgba(raw, render_brightness);
+            let offset = i * 4;
+            rgba[offset..offset + 4].copy_from_slice(&color);
+        }
+    }
+
+    render_obj(core, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba);
 
     Ok(RenderedScreen { rgba })
 }
