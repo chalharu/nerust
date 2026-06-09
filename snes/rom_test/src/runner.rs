@@ -1,5 +1,5 @@
 use crate::manifest::{Assertion, ManifestError, RomCase};
-use crate::media::{encode_screenshot_png, png_hash_from_path, screen_hash_rgba};
+use crate::media::{encode_screenshot_png, load_png_rgba, png_hash_from_path, screen_hash_rgba};
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use nerust_snes_render::render_screen;
@@ -199,6 +199,45 @@ fn finalize_validation(
                 failures.push(format!(
                     "screen_hash: reference PNG 0x{png_hash:016X}, rendered 0x{final_screen_hash:016X}"
                 ));
+                if let Ok(png_rgba) = load_png_rgba(png_path) {
+                    let png_pitch = rendered.width * 4;
+                    let our_pitch = rendered.width * 4;
+                    for y in 0..rendered.height {
+                        for x in 0..rendered.width {
+                            let png_idx = y * png_pitch + x * 4;
+                            let our_idx = y * our_pitch + x * 4;
+                            if png_idx + 4 <= png_rgba.len() && our_idx + 4 <= rendered.rgba.len() {
+                                let pr = png_rgba[png_idx];
+                                let pg = png_rgba[png_idx + 1];
+                                let pb = png_rgba[png_idx + 2];
+                                let pa = png_rgba[png_idx + 3];
+                                let or = rendered.rgba[our_idx];
+                                let og = rendered.rgba[our_idx + 1];
+                                let ob = rendered.rgba[our_idx + 2];
+                                let oa = rendered.rgba[our_idx + 3];
+                                if (pr, pg, pb, pa) != (or, og, ob, oa) {
+                                    let screen_x = x;
+                                    let screen_y = y;
+                                    failures.push(format!(
+                                        "first pixel diff at ({screen_x}, {screen_y}): PNG ({pr},{pg},{pb},{pa}), rendered ({or},{og},{ob},{oa})"
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        if failures.last().map_or(false, |f| f.starts_with("first pixel diff")) {
+                            break;
+                        }
+                    }
+                    if !failures.iter().any(|f| f.starts_with("first pixel diff")) {
+                        failures.push(format!(
+                            "pixel diff: different sizes? PNG {} bytes, rendered {}x{}",
+                            png_rgba.len(),
+                            rendered.width,
+                            rendered.height,
+                        ));
+                    }
+                }
             }
             Ok(_) => {}
             Err(error) => {

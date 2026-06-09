@@ -14,7 +14,7 @@ pub fn screen_hash_rgba(rgba: &[u8]) -> u64 {
     hasher.finish()
 }
 
-pub fn png_hash_from_path(path: &Path) -> Result<u64, String> {
+pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
     let file = fs::read(path).map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
     let cursor = Cursor::new(file);
     let decoder = Decoder::new(cursor);
@@ -41,7 +41,11 @@ pub fn png_hash_from_path(path: &Path) -> Result<u64, String> {
         }
         rgba
     };
+    Ok(rgba)
+}
 
+pub fn png_hash_from_path(path: &Path) -> Result<u64, String> {
+    let rgba = load_png_rgba(path)?;
     let mut hasher = Crc64Hasher::new();
     hasher.write(&rgba);
     Ok(hasher.finish())
