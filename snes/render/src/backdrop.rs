@@ -150,7 +150,7 @@ impl BackdropColorMath {
         );
 
         match (win1, win2) {
-            (None, None) => false,
+            (None, None) => true,
             (Some(value), None) | (None, Some(value)) => value,
             (Some(win1), Some(win2)) => {
                 match (self.wobjlog >> COLOR_WINDOW_LOGIC_SHIFT) & COLOR_WINDOW_SELECTOR_MASK {
