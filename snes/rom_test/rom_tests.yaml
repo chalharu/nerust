@@ -1952,98 +1952,98 @@ cases:
     rom: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.sfc
     max_steps: 4764880
     check_interval_steps: 4764880
-    expected_screen_hash: 0x9FA423204172007E
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.png
   - id: peter-lemon-snes-cpu-adc
     description: |
       The self-authored CPU ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.sfc
     max_steps: 3454538
     check_interval_steps: 3454538
-    expected_screen_hash: 0x4A6307060A412176
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.png
   - id: peter-lemon-snes-cpu-and
     description: |
       The self-authored CPU AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.sfc
     max_steps: 2799367
     check_interval_steps: 2799367
-    expected_screen_hash: 0x1B76573A8CDE5B29
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.png
   - id: peter-lemon-snes-cpu-asl
     description: |
       The self-authored CPU ASL test ROM verifies correct ASL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.sfc
     max_steps: 3692782
     check_interval_steps: 3692782
-    expected_screen_hash: 0x270B715ED335207B
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.png
   - id: peter-lemon-snes-cpu-bit
     description: |
       The self-authored CPU BIT test ROM verifies correct BIT instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.sfc
     max_steps: 3692782
     check_interval_steps: 3692782
-    expected_screen_hash: 0x291284D0A7AD833E
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.png
   - id: peter-lemon-snes-cpu-bra
     description: |
       The self-authored CPU BRA test ROM verifies correct BRA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.sfc
     max_steps: 3692782
     check_interval_steps: 3692782
-    expected_screen_hash: 0x643A00BDEFB4F30D
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.png
   - id: peter-lemon-snes-cpu-dec
     description: |
       The self-authored CPU DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/DEC/CPUDEC.sfc
     max_steps: 1310342
     check_interval_steps: 1310342
-    expected_screen_hash: 0x2879A16D40590CA7
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/DEC/CPUDEC.png
   - id: peter-lemon-snes-cpu-eor
     description: |
       The self-authored CPU EOR test ROM verifies correct EOR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.sfc
     max_steps: 2322879
     check_interval_steps: 2322879
-    expected_screen_hash: 0x9E3FA5C99C10BD68
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.png
   - id: peter-lemon-snes-cpu-inc
     description: |
       The self-authored CPU INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/INC/CPUINC.sfc
     max_steps: 1310342
     check_interval_steps: 1310342
-    expected_screen_hash: 0x7AA892B7B59DD615
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/INC/CPUINC.png
   - id: peter-lemon-snes-cpu-jmp
     description: |
       The self-authored CPU JMP test ROM verifies correct JMP instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.sfc
     max_steps: 1072098
     check_interval_steps: 1072098
-    expected_screen_hash: 0x0013810BB30450A3
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.png
   - id: peter-lemon-snes-cpu-ldr
     description: |
       The self-authored CPU LDR test ROM verifies correct LDR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.sfc
     max_steps: 3335416
     check_interval_steps: 3335416
-    expected_screen_hash: 0xBF4684BD3981DC35
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.png
   - id: peter-lemon-snes-cpu-lsr
     description: |
       The self-authored CPU LSR test ROM verifies correct LSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.sfc
     max_steps: 1072098
     check_interval_steps: 1072098
-    expected_screen_hash: 0xD24E9136BDDF2416
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.png
   - id: peter-lemon-snes-cpu-mov
     description: |
       The self-authored CPU MOV test ROM verifies correct MOV instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/MOV/CPUMOV.sfc
     max_steps: 1072098
     check_interval_steps: 1072098
-    expected_screen_hash: 0xEDE48F24705541FD
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/MOV/CPUMOV.png
   - id: peter-lemon-snes-cpu-msc
     description: |
       The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
     max_steps: 3097172
     check_interval_steps: 3097172
-    expected_screen_hash: 0xF57D3F255B69C0D3
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.png
     reset_at_steps: [100000]
   - id: peter-lemon-snes-cpu-ora
     description: |
@@ -2051,147 +2051,147 @@ cases:
     rom: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.sfc
     max_steps: 3097172
     check_interval_steps: 3097172
-    expected_screen_hash: 0x02A73EF65F92CEA2
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.png
   - id: peter-lemon-snes-cpu-phl
     description: |
       The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.sfc
     max_steps: 2978050
     check_interval_steps: 2978050
-    expected_screen_hash: 0x832F2C322B814DAA
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.png
   - id: peter-lemon-snes-cpu-psr
     description: |
       The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.sfc
     max_steps: 1250781
     check_interval_steps: 1250781
-    expected_screen_hash: 0x47250BC0A20F1244
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.png
   - id: peter-lemon-snes-cpu-ret
     description: |
       The self-authored CPU RET test ROM verifies correct RET instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.sfc
     max_steps: 1012537
     check_interval_steps: 1012537
-    expected_screen_hash: 0xB0A1A127D4AB3A28
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.png
   - id: peter-lemon-snes-cpu-rol
     description: |
       The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.sfc
     max_steps: 1012537
     check_interval_steps: 1012537
-    expected_screen_hash: 0x833F3680D0538274
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.png
   - id: peter-lemon-snes-cpu-ror
     description: |
       The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.sfc
     max_steps: 1012537
     check_interval_steps: 1012537
-    expected_screen_hash: 0xB809D1ED9753496E
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.png
   - id: peter-lemon-snes-cpu-sbc
     description: |
       The self-authored CPU SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.sfc
     max_steps: 3097172
     check_interval_steps: 3097172
-    expected_screen_hash: 0x7BCF082D0B67D0B6
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.png
   - id: peter-lemon-snes-cpu-str
     description: |
       The self-authored CPU STR test ROM verifies correct STR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.sfc
     max_steps: 4228831
     check_interval_steps: 4228831
-    expected_screen_hash: 0x03B5E2805B76FD30
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.png
   - id: peter-lemon-snes-cpu-trn
     description: |
       The self-authored CPU TRN test ROM verifies correct TRN instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.sfc
     max_steps: 3394977
     check_interval_steps: 3394977
-    expected_screen_hash: 0xC7A76245F825519E
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.png
   - id: peter-lemon-snes-spc700-adc
     description: |
       The self-authored SPC700 ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/ADC/SPC700ADC.sfc
     max_steps: 92736477
     check_interval_steps: 92736477
-    expected_screen_hash: 0xE2AFDB71753F42BD
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/ADC/SPC700ADC.png
   - id: peter-lemon-snes-spc700-and
     description: |
       The self-authored SPC700 AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/AND/SPC700AND.sfc
     max_steps: 100777212
     check_interval_steps: 100777212
-    expected_screen_hash: 0x8EA5381AAA3F26C0
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/AND/SPC700AND.png
   - id: peter-lemon-snes-spc700-dec
     description: |
       The self-authored SPC700 DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.sfc
     max_steps: 50000000
     check_interval_steps: 50000000
-    expected_screen_hash: 0x2996ADFBAC714B39
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.png
   - id: peter-lemon-snes-spc700-eor
     description: |
       The self-authored SPC700 EOR test ROM verifies correct EOR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/EOR/SPC700EOR.sfc
     max_steps: 92557794
     check_interval_steps: 92557794
-    expected_screen_hash: 0x2AE303A54A056238
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/EOR/SPC700EOR.png
   - id: peter-lemon-snes-spc700-inc
     description: |
       The self-authored SPC700 INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.sfc
     max_steps: 50000000
     check_interval_steps: 50000000
-    expected_screen_hash: 0x27282B1269B8445C
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.png
   - id: peter-lemon-snes-spc700-ora
     description: |
       The self-authored SPC700 ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/ORA/SPC700ORA.sfc
     max_steps: 100777212
     check_interval_steps: 100777212
-    expected_screen_hash: 0x874209D71326BE1D
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/ORA/SPC700ORA.png
   - id: peter-lemon-snes-spc700-sbc
     description: |
       The self-authored SPC700 SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
     rom: snes/peter-lemon-snes/CPUTest/SPC700/SBC/SPC700SBC.sfc
     max_steps: 93570331
     check_interval_steps: 93570331
-    expected_screen_hash: 0xA6D12F4864E6BA58
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/SBC/SPC700SBC.png
   - id: peter-lemon-snes-bank-hiromfastrom
     description: |
       Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
     rom: snes/peter-lemon-snes/BANK/HiROMFastROM/BANKHiROMFastROM.sfc
     max_steps: 952976
     check_interval_steps: 952976
-    expected_screen_hash: 0x46D92D7A26B30A5A
+    reference_png: snes/peter-lemon-snes/BANK/HiROMFastROM/BANKHiROMFastROM.png
   - id: peter-lemon-snes-bank-hiromslowrom
     description: |
       Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
     rom: snes/peter-lemon-snes/BANK/HiROMSlowROM/BANKHiROMSlowROM.sfc
     max_steps: 952976
     check_interval_steps: 952976
-    expected_screen_hash: 0x1C9D87FCAE3A51EA
+    reference_png: snes/peter-lemon-snes/BANK/HiROMSlowROM/BANKHiROMSlowROM.png
   - id: peter-lemon-snes-bank-loromfastrom
     description: |
       Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
     rom: snes/peter-lemon-snes/BANK/LoROMFastROM/BANKLoROMFastROM.sfc
     max_steps: 952976
     check_interval_steps: 952976
-    expected_screen_hash: 0xDAFF576D8225CD52
+    reference_png: snes/peter-lemon-snes/BANK/LoROMFastROM/BANKLoROMFastROM.png
   - id: peter-lemon-snes-bank-loromslowrom
     description: |
       Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
     rom: snes/peter-lemon-snes/BANK/LoROMSlowROM/BANKLoROMSlowROM.sfc
     max_steps: 952976
     check_interval_steps: 952976
-    expected_screen_hash: 0x64FAD9F271723B93
+    reference_png: snes/peter-lemon-snes/BANK/LoROMSlowROM/BANKLoROMSlowROM.png
   - id: peter-lemon-snes-bank-wram
     description: |
       Test that the CPU master clock rate is correct when MEMSEL is set to fast mode and WRAM is accessed.
     rom: snes/peter-lemon-snes/BANK/WRAM/BANKWRAM.sfc
     max_steps: 952976
     check_interval_steps: 952976
-    expected_screen_hash: 0x643E2688E6B47355
+    reference_png: snes/peter-lemon-snes/BANK/WRAM/BANKWRAM.png
   - id: peter-lemon-snes-gsu-adc
     description: |
       Peter Lemon's GSU ADC test verifies SuperFX add-with-carry instruction
@@ -2199,7 +2199,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADC/GSUADC.sfc
     max_steps: 4705319
     check_interval_steps: 4705319
-    expected_screen_hash: "0x02EA3EA225ACC856"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADC/GSUADC.png
   - id: peter-lemon-snes-gsu-add
     description: |
       Peter Lemon's GSU ADD test verifies SuperFX addition instruction
@@ -2207,7 +2207,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADD/GSUADD.sfc
     max_steps: 3990587
     check_interval_steps: 3990587
-    expected_screen_hash: "0xBBF75A1929F72EC3"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADD/GSUADD.png
   - id: peter-lemon-snes-gsu-asr
     description: |
       Peter Lemon's GSU ASR test verifies SuperFX arithmetic shift right instruction
@@ -2215,7 +2215,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ASR/GSUASR.sfc
     max_steps: 2918489
     check_interval_steps: 2918489
-    expected_screen_hash: "0xF045CBAC9F7EE524"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ASR/GSUASR.png
   - id: peter-lemon-snes-gsu-cmp
     description: |
       Peter Lemon's GSU CMP test verifies SuperFX compare instruction
@@ -2223,7 +2223,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CMP/GSUCMP.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x32BCB768B0C0D2C0"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CMP/GSUCMP.png
   - id: peter-lemon-snes-gsu-dec
     description: |
       Peter Lemon's GSU DEC test verifies SuperFX decrement instruction
@@ -2231,7 +2231,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DEC/GSUDEC.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x8E55D8A236ED7B86"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DEC/GSUDEC.png
   - id: peter-lemon-snes-gsu-div2
     description: |
       Peter Lemon's GSU DIV2 test verifies SuperFX divide by 2 instruction
@@ -2239,7 +2239,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DIV2/GSUDIV2.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x46320E11F525080A"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DIV2/GSUDIV2.png
   - id: peter-lemon-snes-gsu-hib
     description: |
       Peter Lemon's GSU HIB test verifies SuperFX high byte instruction
@@ -2247,7 +2247,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/HIB/GSUHIB.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xC32102F3CA45B4E6"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/HIB/GSUHIB.png
   - id: peter-lemon-snes-gsu-ibt
     description: |
       Peter Lemon's GSU IBT test verifies SuperFX instruction
@@ -2255,7 +2255,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IBT/GSUIBT.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x9DB429E05B3F81F8"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IBT/GSUIBT.png
   - id: peter-lemon-snes-gsu-inc
     description: |
       Peter Lemon's GSU INC test verifies SuperFX increment instruction
@@ -2263,7 +2263,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/INC/GSUINC.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x1A9244E818014257"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/INC/GSUINC.png
   - id: peter-lemon-snes-gsu-iwt
     description: |
       Peter Lemon's GSU IWT test verifies SuperFX instruction
@@ -2271,7 +2271,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IWT/GSUIWT.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xC4B4C8C2E5AF1863"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IWT/GSUIWT.png
   - id: peter-lemon-snes-gsu-lob
     description: |
       Peter Lemon's GSU LOB test verifies SuperFX low byte instruction
@@ -2279,7 +2279,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LOB/GSULOB.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x001F2930C641F789"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LOB/GSULOB.png
   - id: peter-lemon-snes-gsu-lsr
     description: |
       Peter Lemon's GSU LSR test verifies SuperFX logical shift right instruction
@@ -2287,7 +2287,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LSR/GSULSR.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x12C7A85C1B458550"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LSR/GSULSR.png
   - id: peter-lemon-snes-gsu-merge
     description: |
       Peter Lemon's GSU MERGE test verifies SuperFX merge instruction
@@ -2295,7 +2295,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MERGE/GSUMERGE.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x092538D7885C6736"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MERGE/GSUMERGE.png
   - id: peter-lemon-snes-gsu-move
     description: |
       Peter Lemon's GSU MOVE test verifies SuperFX move instruction
@@ -2303,7 +2303,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVE/GSUMOVE.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x630126EE4F5EDB17"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVE/GSUMOVE.png
   - id: peter-lemon-snes-gsu-moves
     description: |
       Peter Lemon's GSU MOVES test verifies SuperFX moves instruction
@@ -2311,7 +2311,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVES/GSUMOVES.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x50B071BB89D56EF9"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVES/GSUMOVES.png
   - id: peter-lemon-snes-gsu-not
     description: |
       Peter Lemon's GSU NOT test verifies SuperFX NOT instruction
@@ -2319,7 +2319,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/NOT/GSUNOT.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x0A64ACB805A3CCAC"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/NOT/GSUNOT.png
   - id: peter-lemon-snes-gsu-rol
     description: |
       Peter Lemon's GSU ROL test verifies SuperFX rotate left instruction
@@ -2327,7 +2327,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROL/GSUROL.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xFC8FAD3E0B827EB0"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROL/GSUROL.png
   - id: peter-lemon-snes-gsu-ror
     description: |
       Peter Lemon's GSU ROR test verifies SuperFX rotate right instruction
@@ -2335,7 +2335,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROR/GSUROR.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x5BAD766B6108D19D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROR/GSUROR.png
   - id: peter-lemon-snes-gsu-sbc
     description: |
       Peter Lemon's GSU SBC test verifies SuperFX subtract with carry instruction
@@ -2343,7 +2343,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SBC/GSUSBC.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xDE4943E70468F665"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SBC/GSUSBC.png
   - id: peter-lemon-snes-gsu-sex
     description: |
       Peter Lemon's GSU SEX test verifies SuperFX sign extend instruction
@@ -2351,7 +2351,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SEX/GSUSEX.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x7C1EF98324B30D4B"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SEX/GSUSEX.png
   - id: peter-lemon-snes-gsu-sub
     description: |
       Peter Lemon's GSU SUB test verifies SuperFX subtract instruction
@@ -2359,7 +2359,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SUB/GSUSUB.sfc
     max_steps: 3990587
     check_interval_steps: 3990587
-    expected_screen_hash: "0x044FD1B60DEDE45D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SUB/GSUSUB.png
   - id: peter-lemon-snes-gsu-swap
     description: |
       Peter Lemon's GSU SWAP test verifies SuperFX swap instruction
@@ -2367,7 +2367,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SWAP/GSUSWAP.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x1D22DD452A9F5B0A"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SWAP/GSUSWAP.png
   - id: peter-lemon-snes-gsu-umult
     description: |
       Peter Lemon's GSU UMULT test verifies SuperFX unsigned multiply instruction
@@ -2375,7 +2375,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/UMULT/GSUUMULT.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x9C4C4ABC4756773D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/UMULT/GSUUMULT.png
   - id: peter-lemon-snes-gsu-and
     description: |
       Peter Lemon's GSU AND test verifies SuperFX logical AND instruction
@@ -2383,7 +2383,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/AND/GSUAND.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xCD5C424F0F048F2B"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/AND/GSUAND.png
   - id: peter-lemon-snes-gsu-bic
     description: |
       Peter Lemon's GSU BIC test verifies SuperFX bit clear instruction
@@ -2391,14 +2391,14 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/BIC/GSUBIC.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xDF491EC70DF197DB"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/BIC/GSUBIC.png
   - id: peter-lemon-snes-gsu-cacheinject
     description: |
       Peter Lemon's GSU CACHEINJECT test verifies SuperFX cache injection instruction.
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CACHEINJECT/GSUCACHEINJECT.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xE210E47E3581575C"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CACHEINJECT/GSUCACHEINJECT.png
   - id: peter-lemon-snes-gsu-fmult
     description: |
       Peter Lemon's GSU FMULT test verifies SuperFX fractional multiply instruction
@@ -2406,7 +2406,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/FMULT/GSUFMULT.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x8F6312E5D0B783C9"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/FMULT/GSUFMULT.png
   - id: peter-lemon-snes-gsu-lmult
     description: |
       Peter Lemon's GSU LMULT test verifies SuperFX long multiply instruction
@@ -2414,7 +2414,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LMULT/GSULMULT.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x58973669F8C26C82"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LMULT/GSULMULT.png
   - id: peter-lemon-snes-gsu-mult
     description: |
       Peter Lemon's GSU MULT test verifies SuperFX multiply instruction
@@ -2422,7 +2422,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MULT/GSUMULT.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x1A46E6486B6737DA"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MULT/GSUMULT.png
   - id: peter-lemon-snes-gsu-or
     description: |
       Peter Lemon's GSU OR test verifies SuperFX logical OR instruction
@@ -2430,7 +2430,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/OR/GSUOR.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x71D98CEDC2D4F132"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/OR/GSUOR.png
   - id: peter-lemon-snes-gsu-xor
     description: |
       Peter Lemon's GSU XOR test verifies SuperFX logical XOR instruction
@@ -2438,7 +2438,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/XOR/GSUXOR.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xBD4907BB3618F034"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/XOR/GSUXOR.png
   - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x128
     description: |
       Peter Lemon's GSU 2BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
@@ -2446,7 +2446,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x128/GSU2BPP256x128FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x280568E4AF4DB31E"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x128/GSU2BPP256x128FillPoly.png
   - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x160
     description: |
       Peter Lemon's GSU 2BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
@@ -2454,7 +2454,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x160/GSU2BPP256x160FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x8F9ED159F879F2FE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x160/GSU2BPP256x160FillPoly.png
   - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x192
     description: |
       Peter Lemon's GSU 2BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
@@ -2462,7 +2462,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x192/GSU2BPP256x192FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x7770AA0F9A79C407"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x192/GSU2BPP256x192FillPoly.png
   - id: peter-lemon-snes-gsu-2bpp-plotline-256x128
     description: |
       Peter Lemon's GSU 2BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
@@ -2470,7 +2470,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x128/GSU2BPP256x128PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x5424E10D4B468A2D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x128/GSU2BPP256x128PlotLine.png
   - id: peter-lemon-snes-gsu-2bpp-plotline-256x160
     description: |
       Peter Lemon's GSU 2BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
@@ -2478,7 +2478,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x160/GSU2BPP256x160PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xD525E56C77CB69DE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x160/GSU2BPP256x160PlotLine.png
   - id: peter-lemon-snes-gsu-2bpp-plotline-256x192
     description: |
       Peter Lemon's GSU 2BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
@@ -2486,7 +2486,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x192/GSU2BPP256x192PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xCBFAAD416281B0D1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x192/GSU2BPP256x192PlotLine.png
   - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x128
     description: |
       Peter Lemon's GSU 2BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2494,7 +2494,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x128/GSU2BPP256x128PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x1D1003A6B3ABE9B8"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x128/GSU2BPP256x128PlotPixel.png
   - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x160
     description: |
       Peter Lemon's GSU 2BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2502,7 +2502,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x160/GSU2BPP256x160PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xBA8BBA1BE49FA858"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x160/GSU2BPP256x160PlotPixel.png
   - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x192
     description: |
       Peter Lemon's GSU 2BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2510,7 +2510,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x192/GSU2BPP256x192PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x4265C14D869F9EA1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x192/GSU2BPP256x192PlotPixel.png
   - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x128
     description: |
       Peter Lemon's GSU 4BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
@@ -2518,7 +2518,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x128/GSU4BPP256x128FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x280568E4AF4DB31E"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x128/GSU4BPP256x128FillPoly.png
   - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x160
     description: |
       Peter Lemon's GSU 4BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
@@ -2526,7 +2526,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x160/GSU4BPP256x160FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x8F9ED159F879F2FE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x160/GSU4BPP256x160FillPoly.png
   - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x192
     description: |
       Peter Lemon's GSU 4BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
@@ -2534,7 +2534,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x192/GSU4BPP256x192FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x7770AA0F9A79C407"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x192/GSU4BPP256x192FillPoly.png
   - id: peter-lemon-snes-gsu-4bpp-plotline-256x128
     description: |
       Peter Lemon's GSU 4BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
@@ -2542,7 +2542,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x128/GSU4BPP256x128PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x5424E10D4B468A2D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x128/GSU4BPP256x128PlotLine.png
   - id: peter-lemon-snes-gsu-4bpp-plotline-256x160
     description: |
       Peter Lemon's GSU 4BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
@@ -2550,7 +2550,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x160/GSU4BPP256x160PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xD525E56C77CB69DE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x160/GSU4BPP256x160PlotLine.png
   - id: peter-lemon-snes-gsu-4bpp-plotline-256x192
     description: |
       Peter Lemon's GSU 4BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
@@ -2558,7 +2558,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x192/GSU4BPP256x192PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xCBFAAD416281B0D1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x192/GSU4BPP256x192PlotLine.png
   - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x128
     description: |
       Peter Lemon's GSU 4BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2566,7 +2566,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x128/GSU4BPP256x128PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x1D1003A6B3ABE9B8"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x128/GSU4BPP256x128PlotPixel.png
   - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x160
     description: |
       Peter Lemon's GSU 4BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2574,7 +2574,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x160/GSU4BPP256x160PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xBA8BBA1BE49FA858"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x160/GSU4BPP256x160PlotPixel.png
   - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x192
     description: |
       Peter Lemon's GSU 4BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2582,7 +2582,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x192/GSU4BPP256x192PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x4265C14D869F9EA1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x192/GSU4BPP256x192PlotPixel.png
   - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x128
     description: |
       Peter Lemon's GSU 8BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
@@ -2590,7 +2590,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x128/GSU8BPP256x128FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x280568E4AF4DB31E"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x128/GSU8BPP256x128FillPoly.png
   - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x160
     description: |
       Peter Lemon's GSU 8BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
@@ -2598,7 +2598,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x160/GSU8BPP256x160FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x8F9ED159F879F2FE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x160/GSU8BPP256x160FillPoly.png
   - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x192
     description: |
       Peter Lemon's GSU 8BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
@@ -2606,7 +2606,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x7770AA0F9A79C407"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.png
   - id: peter-lemon-snes-gsu-8bpp-plotline-256x128
     description: |
       Peter Lemon's GSU 8BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
@@ -2614,7 +2614,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x128/GSU8BPP256x128PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x5424E10D4B468A2D"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x128/GSU8BPP256x128PlotLine.png
   - id: peter-lemon-snes-gsu-8bpp-plotline-256x160
     description: |
       Peter Lemon's GSU 8BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
@@ -2622,7 +2622,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x160/GSU8BPP256x160PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xD525E56C77CB69DE"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x160/GSU8BPP256x160PlotLine.png
   - id: peter-lemon-snes-gsu-8bpp-plotline-256x192
     description: |
       Peter Lemon's GSU 8BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
@@ -2630,7 +2630,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x192/GSU8BPP256x192PlotLine.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xCBFAAD416281B0D1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x192/GSU8BPP256x192PlotLine.png
   - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x128
     description: |
       Peter Lemon's GSU 8BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2638,7 +2638,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x128/GSU8BPP256x128PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x1D1003A6B3ABE9B8"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x128/GSU8BPP256x128PlotPixel.png
   - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x160
     description: |
       Peter Lemon's GSU 8BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2646,7 +2646,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x160/GSU8BPP256x160PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0xBA8BBA1BE49FA858"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x160/GSU8BPP256x160PlotPixel.png
   - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x192
     description: |
       Peter Lemon's GSU 8BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
@@ -2654,7 +2654,7 @@ cases:
     rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.sfc
     max_steps: 4586197
     check_interval_steps: 4586197
-    expected_screen_hash: "0x4265C14D869F9EA1"
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.png
   - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-32x328-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
