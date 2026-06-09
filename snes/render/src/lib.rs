@@ -14,6 +14,11 @@ use obj::render_obj;
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 224;
 
+/// Sentinel value for "no pixel" in raw output buffers.
+/// 0xFFFF (bit 15 set) is not a valid 15-bit SNES color, so
+/// it safely distinguishes "transparent/no pixel" from CGRAM[0]=0x0000 (black).
+const TRANSPARENT: u16 = 0xFFFF;
+
 pub const MODE5_6_WIDTH: usize = 512;
 pub const INTERLACE_HEIGHT: usize = 448;
 
@@ -210,7 +215,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let mut rgba = render_presented_backdrop(core, render_width, render_height);
 
     // --- Main screen: render BG layers to raw 15-bit buffer ---
-    let mut main_raw = vec![0u16; pixel_count];
+    let mut main_raw = vec![TRANSPARENT; pixel_count];
 
     render_bg1(
         core,
@@ -263,7 +268,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     // --- Sub screen: render BG layers if color math is supported ---
     if ts != 0 && color_math_supported {
-        let mut sub_raw = vec![0u16; pixel_count];
+        let mut sub_raw = vec![TRANSPARENT; pixel_count];
 
         render_bg1(
             core,
@@ -341,7 +346,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             let main_raw_val = main_raw[i];
             let sub_raw_val = sub_raw[i];
 
-            if main_raw_val == 0 {
+            if main_raw_val == TRANSPARENT {
                 continue;
             }
 
@@ -375,7 +380,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
                 continue;
             }
 
-            let sub_source = if sub_raw_val != 0 {
+            let sub_source = if sub_raw_val != TRANSPARENT {
                 sub_raw_val
             } else {
                 fixed_color
@@ -387,7 +392,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
         let raw = main_raw[i];
-        if raw != 0 {
+        if raw != TRANSPARENT {
             let color = snes_color_to_rgba(raw, render_brightness);
             let offset = i * 4;
             rgba[offset..offset + 4].copy_from_slice(&color);
