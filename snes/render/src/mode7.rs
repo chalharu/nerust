@@ -1,7 +1,7 @@
 use nerust_snes_core::{Core, Mode7Registers};
 
 use super::{
-    BgLayer, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
+    BgLayer, SCREEN_HEIGHT, VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line, presented_bg_line, use_presented_bg_scroll,
 };

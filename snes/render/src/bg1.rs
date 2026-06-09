@@ -1,7 +1,7 @@
 use nerust_snes_core::Core;
 
 use super::{
-    BgLayer, RenderError, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
+    BgLayer, RenderError, SCREEN_HEIGHT, VISIBLE_BG_Y_OFFSET,
     color::cgram_raw_color,
     main_screen_for_line,
     mode7::render_mode7_bg1,
