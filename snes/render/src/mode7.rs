@@ -22,7 +22,6 @@ pub(super) fn render_mode7_bg1(
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
-    let width_ratio = (render_width / SCREEN_WIDTH).max(1);
     for screen_y in 0..render_height {
         let presented_y = screen_y / height_ratio;
         if main_screen_for_line(core, presented_y, current_tm, use_presented_tm)
@@ -51,7 +50,7 @@ pub(super) fn render_mode7_bg1(
         };
         let mode7_screen_y = (presented_y + VISIBLE_BG_Y_OFFSET) as i32;
         for screen_x in 0..render_width {
-            let mode7_screen_x = (screen_x / width_ratio) as i32;
+            let mode7_screen_x = screen_x as i32;
             if let Some(color) = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y) {
                 put_pixel(rgba, render_width, screen_x, screen_y, color);
             }
