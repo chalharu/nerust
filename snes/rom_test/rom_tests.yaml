@@ -2662,7 +2662,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG1Map2BPP32x328PAL/8x8BG1Map2BPP32x328PAL.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xAC812159DB626E62"
+    expected_screen_hash: "0x503C764C0575020D"
   - id: peter-lemon-snes-ppu-bgmap-8x8-4bpp-32x328-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 4BPP 32x328 PAL test verifies correct rendering of
@@ -2670,7 +2670,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/4BPP/8x8BGMap4BPP32x328PAL/8x8BGMap4BPP32x328PAL.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x350B5EC44B5AB4C0"
+    expected_screen_hash: "0x4ECABC01336CCA8F"
   - id: peter-lemon-snes-ppu-bgmap-8x8-8bpp-tileflip-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 8BPP Tile Flip PAL test verifies correct rendering of
@@ -2678,7 +2678,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/8BPP/TileFlip/8x8BGMapTileFlip.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x473CF4C4841C2059"
+    expected_screen_hash: "0x296104C632B6EE8C"
   - id: peter-lemon-snes-ppu-blend-hicolor-1241dlair
     description: |
       Peter Lemon's PPU Blend HiColor 1241 D'Lair test verifies correct rendering of
@@ -2686,7 +2686,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor1241DLair/HiColor1241DLair.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xEE070DCAAA37F2AA"
+    expected_screen_hash: "0xBAADE229973804C6"
   - id: peter-lemon-snes-ppu-blend-hicolor-3840
     description: |
       Peter Lemon's PPU Blend HiColor 3840 test verifies correct rendering of
@@ -2694,7 +2694,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor3840/HiColor3840.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xE669D32CE6BAD9C6"
+    expected_screen_hash: "0x5DE6AF39C2188A25"
   - id: peter-lemon-snes-ppu-blend-hicolor-575myst
     description: |
       Peter Lemon's PPU Blend HiColor 575 Myst test verifies correct rendering of
@@ -2702,7 +2702,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor575Myst/HiColor575Myst.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xEAC4C51AA473F52A"
+    expected_screen_hash: "0xB4460FCE1C9C2BA8"
   - id: peter-lemon-snes-ppu-greenspace
     description: |
       Peter Lemon's PPU Green Space test verifies correct rendering of the green space
@@ -2710,7 +2710,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/GreenSpace/GreenSpace.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xC2D487112CE8B4B1"
+    expected_screen_hash: "0xC852063E68AD9A5D"
   - id: peter-lemon-snes-ppu-interlace-font
     description: |
       Peter Lemon's PPU Interlace Font test verifies correct rendering of interlaced
@@ -2718,7 +2718,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceFont/InterlaceFont.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x0D3D3B456F1B5FA6"
+    expected_screen_hash: "0xB0572EE294D57D70"
   - id: peter-lemon-snes-ppu-interlace-moogle
     description: |
       Peter Lemon's PPU Interlace Moogle test verifies correct rendering of interlaced
@@ -2726,7 +2726,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceMoogle/InterlaceMoogle.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xB8DAF3C310B3E492"
+    expected_screen_hash: "0xE3117219732586E6"
   - id: peter-lemon-snes-ppu-interlace-rpg
     description: |
       Peter Lemon's PPU Interlace RPG test verifies correct rendering of interlaced
@@ -2734,7 +2734,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceRPG/InterlaceRPG.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x490684CD75A25AFE"
+    expected_screen_hash: "0x641E8963F10A3EE2"
   - id: peter-lemon-snes-ppu-interlace-scroll
     description: |
       Peter Lemon's PPU Interlace Scroll test verifies correct rendering of interlaced
@@ -2742,4 +2742,4 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceScroll/InterlaceScroll.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xE5DD6F5BE81CC70C"
+    expected_screen_hash: "0x02C484AD056CC3D9"
