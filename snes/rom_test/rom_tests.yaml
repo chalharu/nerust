@@ -601,7 +601,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
     max_steps: 69632
     check_interval_steps: 69632
-    expected_screen_hash: "0xB129A88E67E79062"
+    expected_screen_hash: "0x27B04E15F9FEB305"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -877,7 +877,7 @@ cases:
     rom: snes-test-roms/bin/effects/window-mask-logic.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x6573608BCE649214"
+    expected_screen_hash: "0x2917479C919BB726"
     assertions:
       - kind: bus_u8
         address: "0x002100"

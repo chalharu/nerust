@@ -181,7 +181,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         BgRenderMode::Bpp8 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
         BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
-    if color == 0 {
+    if color == 0 && context.mode != BgRenderMode::Bpp8 {
         return None;
     }
 
@@ -227,7 +227,7 @@ fn bg1_pixel_opt_wrapped(
         BgRenderMode::Bpp8 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
         BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
-    if color == 0 {
+    if color == 0 && context.mode != BgRenderMode::Bpp8 {
         return None;
     }
     let tile_palette = usize::from((entry >> 11) & 0x03);
