@@ -98,7 +98,7 @@ pub(super) fn render_bg1(
         };
         let vofs =
             (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
-        let bg_y = (presented_y + vofs) % tilemap_height_pixels;
+        let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
             let bg_x = (screen_x + hofs) % tilemap_width_pixels;

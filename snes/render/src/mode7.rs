@@ -48,7 +48,7 @@ pub(super) fn render_mode7_bg1(
             vofs: effective_vofs,
             brightness,
         };
-        let mode7_screen_y = presented_y as i32;
+        let mode7_screen_y = (presented_y + 1) as i32;
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
             if let Some(color) = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y) {
