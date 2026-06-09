@@ -52,22 +52,27 @@ pub(super) fn render_bg1(
     let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
     let bg34nba = core.peek(0x00210C);
+    let tile_size: usize = if bgmode & layer.tile_size_mask() != 0 {
+        16
+    } else {
+        8
+    };
+    // In Mode 5/6, tiles are 16 pixels wide and 8 pixels tall.
+    // For all other modes, tiles are square (8x8 or 16x16).
+    let tile_height = if high_res_mode { 8 } else { tile_size };
     let context = Bg1RenderContext {
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
         chr_base: layer.chr_base(bg12nba, bg34nba),
-        tile_size: if bgmode & layer.tile_size_mask() != 0 {
-            16
-        } else {
-            8
-        },
+        tile_size,
+        tile_height,
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
         high_res_mode,
     };
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
-    let tilemap_height_pixels = tilemap_height_tiles * context.tile_size;
+    let tilemap_height_pixels = tilemap_height_tiles * context.tile_height;
     let (current_hofs, current_vofs) = layer.current_scroll(core);
     let use_presented_scroll = use_presented_bg_scroll(core, layer);
 
@@ -132,7 +137,7 @@ fn screen_uses_layer(
 
 fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
     let mut tile_x = bg_x / context.tile_size;
-    let tile_y = bg_y / context.tile_size;
+    let tile_y = bg_y / context.tile_height;
     let entry = read_tilemap_entry(
         core,
         context.tilemap_base,
@@ -157,12 +162,12 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         }
         tile_pixel_x -= opt;
     }
-    let mut tile_pixel_y = bg_y % context.tile_size;
+    let mut tile_pixel_y = bg_y % context.tile_height;
     if entry & 0x4000 != 0 {
         tile_pixel_x = context.tile_size - 1 - tile_pixel_x;
     }
     if entry & 0x8000 != 0 {
-        tile_pixel_y = context.tile_size - 1 - tile_pixel_y;
+        tile_pixel_y = context.tile_height - 1 - tile_pixel_y;
     }
 
     let subtile_x = tile_pixel_x / 8;
@@ -208,12 +213,12 @@ fn bg1_pixel_opt_wrapped(
     bg_y: usize,
 ) -> Option<u16> {
     let mut tpix_x = pixel_x_in + context.tile_size - opt;
-    let mut tile_pixel_y = bg_y % context.tile_size;
+    let mut tile_pixel_y = bg_y % context.tile_height;
     if entry & 0x4000 != 0 {
         tpix_x = context.tile_size - 1 - tpix_x;
     }
     if entry & 0x8000 != 0 {
-        tile_pixel_y = context.tile_size - 1 - tile_pixel_y;
+        tile_pixel_y = context.tile_height - 1 - tile_pixel_y;
     }
     let subtile_x = tpix_x / 8;
     let subtile_y = tile_pixel_y / 8;
@@ -246,6 +251,7 @@ struct Bg1RenderContext {
     tilemap_base: usize,
     chr_base: usize,
     tile_size: usize,
+    tile_height: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
     high_res_mode: bool,
