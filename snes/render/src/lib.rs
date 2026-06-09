@@ -220,8 +220,9 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
         let wobjsel = core.peek(0x002125);
         let settings = (wobjsel >> 4) & 0x0F;
-        let color_window_enabled = settings & 0x0A != 0;
-        let in_color_window = if color_window_enabled { true } else { false };
+        let window1_setting = settings & 0x03;
+        let window2_setting = (settings >> 2) & 0x03;
+        let in_color_window = window1_setting == 0 && window2_setting == 0;
 
         let cgadsub_bg1 = cgadsub & 0x01 != 0;
         let cgadsub_bg2 = cgadsub & 0x02 != 0;
@@ -250,8 +251,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
             let enable = match cgwsel_enable_main {
                 0 => false,
-                1 => in_color_window,
-                2 => !in_color_window,
+                1 => !in_color_window,
+                2 => in_color_window,
                 _ => true,
             };
             if !enable {
@@ -260,8 +261,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
             let disable = match cgwsel_disable_main {
                 0 => false,
-                1 => in_color_window,
-                2 => !in_color_window,
+                1 => !in_color_window,
+                2 => in_color_window,
                 _ => true,
             };
             if disable {
