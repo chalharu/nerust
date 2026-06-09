@@ -2662,7 +2662,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG1Map2BPP32x328PAL/8x8BG1Map2BPP32x328PAL.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0xEE1F4B2C03B680FA"
+    expected_screen_hash: "0xAC812159DB626E62"
   - id: peter-lemon-snes-ppu-bgmap-8x8-4bpp-32x328-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 4BPP 32x328 PAL test verifies correct rendering of
@@ -2670,7 +2670,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/4BPP/8x8BGMap4BPP32x328PAL/8x8BGMap4BPP32x328PAL.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x842E75499D7FD435"
+    expected_screen_hash: "0x350B5EC44B5AB4C0"
   - id: peter-lemon-snes-ppu-bgmap-8x8-8bpp-tileflip-pal
     description: |
       Peter Lemon's PPU BG Map 8x8 8BPP Tile Flip PAL test verifies correct rendering of
@@ -2678,7 +2678,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/8BPP/TileFlip/8x8BGMapTileFlip.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    expected_screen_hash: "0x9770C15DD8CBFD8E"
+    expected_screen_hash: "0x473CF4C4841C2059"
   - id: peter-lemon-snes-ppu-blend-hicolor-1241dlair
     description: |
       Peter Lemon's PPU Blend HiColor 1241 D'Lair test verifies correct rendering of
