@@ -9,7 +9,7 @@ pub(super) fn read_tilemap_entry(
 ) -> u16 {
     let quadrant_columns = tilemap_width_tiles / 32;
     let quadrant = (tile_y / 32) * quadrant_columns + (tile_x / 32);
-    let quadrant_base = tilemap_base + quadrant * 2048;
+    let quadrant_base = tilemap_base.wrapping_add(quadrant.wrapping_mul(2048));
     let entry_offset = ((tile_y % 32) * 32 + (tile_x % 32)) * 2;
     u16::from_le_bytes([
         core.peek_vram(quadrant_base + entry_offset),
