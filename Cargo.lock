@@ -3511,7 +3511,7 @@ dependencies = [
 name = "nerust_snes_core"
 version = "0.1.0-dev"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags 2.12.1",
  "nerust_sound_traits",
  "thiserror 2.0.18",
 ]
