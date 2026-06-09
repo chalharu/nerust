@@ -58,7 +58,7 @@ pub(super) fn render_current_backdrop(core: &Core, width: usize, height: usize) 
     rgba
 }
 
-fn current_backdrop_line(core: &Core) -> PresentedBackdropLine {
+pub(super) fn current_backdrop_line(core: &Core) -> PresentedBackdropLine {
     PresentedBackdropLine {
         inidisp: core.peek(0x002100),
         color0: u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF,

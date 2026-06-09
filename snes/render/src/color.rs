@@ -21,6 +21,32 @@ fn scale_channel(channel: u8, brightness: u8) -> u8 {
     ((expanded * (u16::from(brightness) + 1) + 8) / 16) as u8
 }
 
+pub(super) fn cgram_raw_color(core: &Core, color_index: usize) -> u16 {
+    let base = color_index * 2;
+    u16::from_le_bytes([core.peek_cgram(base), core.peek_cgram(base + 1)]) & 0x7FFF
+}
+
+pub(super) fn apply_color_math(main_15: u16, sub_15: u16, subtract: bool, half: bool) -> u16 {
+    let mr = (main_15 >> 0) & 0x1F;
+    let mg = (main_15 >> 5) & 0x1F;
+    let mb = (main_15 >> 10) & 0x1F;
+    let sr = (sub_15 >> 0) & 0x1F;
+    let sg = (sub_15 >> 5) & 0x1F;
+    let sb = (sub_15 >> 10) & 0x1F;
+
+    let mut r = if subtract { mr.saturating_sub(sr) } else { (mr + sr).min(31) };
+    let mut g = if subtract { mg.saturating_sub(sg) } else { (mg + sg).min(31) };
+    let mut b = if subtract { mb.saturating_sub(sb) } else { (mb + sb).min(31) };
+
+    if half {
+        r = (r + 1) >> 1;
+        g = (g + 1) >> 1;
+        b = (b + 1) >> 1;
+    }
+
+    r | (g << 5) | (b << 10)
+}
+
 pub(super) fn put_pixel(rgba: &mut [u8], width: usize, x: usize, y: usize, color: [u8; 4]) {
     let offset = (y * width + x) * 4;
     rgba[offset..offset + 4].copy_from_slice(&color);

@@ -2,7 +2,7 @@ use nerust_snes_core::Core;
 
 use super::{
     BgLayer, RenderError, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
-    color::{cgram_color_rgba, put_pixel},
+    color::cgram_raw_color,
     main_screen_for_line,
     mode7::render_mode7_bg1,
     presented_bg_line,
@@ -20,6 +20,7 @@ pub(super) fn render_bg1(
     render_width: usize,
     render_height: usize,
     rgba: &mut [u8],
+    raw_output: &mut [u16],
 ) -> Result<(), RenderError> {
     if !screen_uses_layer(core, layer, current_tm, use_presented_tm, render_height) {
         return Ok(());
@@ -35,6 +36,9 @@ pub(super) fn render_bg1(
         render_mode7_bg1(core, brightness, current_tm, use_presented_tm, interlace_enabled, render_width, render_height, rgba);
         return Ok(());
     }
+
+    // For Mode7 we write directly to RGBA; for other modes we write to raw_output
+    // No-op for raw_output in Mode7 path
 
     let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
@@ -52,7 +56,6 @@ pub(super) fn render_bg1(
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
         high_res_mode,
     };
-    let palette = cgram_palette_rgba(core, brightness);
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
     let tilemap_height_pixels = tilemap_height_tiles * context.tile_size;
@@ -87,10 +90,11 @@ pub(super) fn render_bg1(
         let vofs = (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET)
             % tilemap_height_pixels.max(1);
         let bg_y = (presented_y + vofs) % tilemap_height_pixels;
+        let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
             let bg_x = ((screen_x / width_ratio) + hofs) % tilemap_width_pixels;
-            if let Some(color) = bg1_pixel(core, &context, &palette, bg_x, bg_y) {
-                put_pixel(rgba, render_width, screen_x, screen_y, color);
+            if let Some(raw) = bg1_pixel(core, &context, bg_x, bg_y) {
+                raw_output[row_offset + screen_x] = raw;
             }
         }
     }
@@ -109,17 +113,12 @@ fn screen_uses_layer(core: &Core, layer: BgLayer, current_tm: u8, use_presented_
     })
 }
 
-fn cgram_palette_rgba(core: &Core, brightness: u8) -> [[u8; 4]; 256] {
-    std::array::from_fn(|index| cgram_color_rgba(core, index, brightness))
-}
-
 fn bg1_pixel(
     core: &Core,
     context: &Bg1RenderContext,
-    palette: &[[u8; 4]; 256],
     bg_x: usize,
     bg_y: usize,
-) -> Option<[u8; 4]> {
+) -> Option<u16> {
     let mut tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_size;
     let entry = read_tilemap_entry(
@@ -142,7 +141,7 @@ fn bg1_pixel(
                 tile_x,
                 tile_y,
             );
-            return bg1_pixel_opt_wrapped(core, context, palette, prev_entry, opt, tile_pixel_x, bg_y);
+            return bg1_pixel_opt_wrapped(core, context, prev_entry, opt, tile_pixel_x, bg_y);
         }
         tile_pixel_x -= opt;
     }
@@ -185,18 +184,17 @@ fn bg1_pixel(
         BgRenderMode::Bpp8 => usize::from(color),
         BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
-    Some(palette[color_index])
+    Some(cgram_raw_color(core, color_index))
 }
 
 fn bg1_pixel_opt_wrapped(
     core: &Core,
     context: &Bg1RenderContext,
-    palette: &[[u8; 4]; 256],
     entry: u16,
     opt: usize,
     pixel_x_in: usize,
     bg_y: usize,
-) -> Option<[u8; 4]> {
+) -> Option<u16> {
     let mut tpix_x = pixel_x_in + context.tile_size - opt;
     let mut tile_pixel_y = bg_y % context.tile_size;
     if entry & 0x4000 != 0 {
@@ -227,7 +225,7 @@ fn bg1_pixel_opt_wrapped(
         BgRenderMode::Bpp8 => usize::from(color),
         BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
     };
-    Some(palette[color_index])
+    Some(cgram_raw_color(core, color_index))
 }
 
 #[derive(Debug, Clone, Copy)]
