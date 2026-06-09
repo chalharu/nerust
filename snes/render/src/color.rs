@@ -6,6 +6,19 @@ pub(super) fn cgram_color_rgba(core: &Core, color_index: usize, brightness: u8) 
     snes_color_to_rgba(color, brightness)
 }
 
+const CHANNEL_TO_8BIT: [u8; 32] = {
+    let mut lut = [0u8; 32];
+    let mut c = 0u32;
+    loop {
+        lut[c as usize] = ((c * 255 + 15) / 31) as u8;
+        c += 1;
+        if c == 32 {
+            break;
+        }
+    }
+    lut
+};
+
 pub(super) fn snes_color_to_rgba(color: u16, brightness: u8) -> [u8; 4] {
     let red = scale_channel((color & 0x1F) as u8, brightness);
     let green = scale_channel(((color >> 5) & 0x1F) as u8, brightness);
@@ -17,7 +30,7 @@ fn scale_channel(channel: u8, brightness: u8) -> u8 {
     if brightness == 0 {
         return 0;
     }
-    let expanded = (u16::from(channel) << 3) | (u16::from(channel) >> 2);
+    let expanded = u16::from(CHANNEL_TO_8BIT[channel as usize]);
     ((expanded * (u16::from(brightness) + 1) + 8) / 16) as u8
 }
 
