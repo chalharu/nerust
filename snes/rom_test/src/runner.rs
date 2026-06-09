@@ -205,7 +205,11 @@ fn finalize_validation(
         }
     }
     let screenshot_png = if options.capture_screenshot_png {
-        match encode_screenshot_png(&rendered.rgba, rendered.width as u32, rendered.height as u32) {
+        match encode_screenshot_png(
+            &rendered.rgba,
+            rendered.width as u32,
+            rendered.height as u32,
+        ) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
                 return internal_error(

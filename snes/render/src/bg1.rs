@@ -33,7 +33,16 @@ pub(super) fn render_bg1(
     };
     let high_res_mode = screen_mode == 5 || screen_mode == 6;
     if mode == BgRenderMode::Mode7 {
-        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, interlace_enabled, render_width, render_height, rgba);
+        render_mode7_bg1(
+            core,
+            brightness,
+            current_tm,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            rgba,
+        );
         return Ok(());
     }
 
@@ -68,7 +77,8 @@ pub(super) fn render_bg1(
 
     for screen_y in 0..render_height {
         let presented_y = screen_y / height_ratio;
-        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer.tm_mask() == 0
+        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer.tm_mask()
+            == 0
         {
             continue;
         }
@@ -87,8 +97,8 @@ pub(super) fn render_bg1(
         } else {
             raw_vofs & 0x3FF
         };
-        let vofs = (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET)
-            % tilemap_height_pixels.max(1);
+        let vofs =
+            (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET) % tilemap_height_pixels.max(1);
         let bg_y = (presented_y + vofs) % tilemap_height_pixels;
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
@@ -102,23 +112,26 @@ pub(super) fn render_bg1(
     Ok(())
 }
 
-fn screen_uses_layer(core: &Core, layer: BgLayer, current_tm: u8, use_presented_tm: bool, render_height: usize) -> bool {
+fn screen_uses_layer(
+    core: &Core,
+    layer: BgLayer,
+    current_tm: u8,
+    use_presented_tm: bool,
+    render_height: usize,
+) -> bool {
     if !use_presented_tm {
         return current_tm & layer.tm_mask() != 0;
     }
 
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
     (0..render_height).step_by(height_ratio).any(|screen_y| {
-        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & layer.tm_mask() != 0
+        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm)
+            & layer.tm_mask()
+            != 0
     })
 }
 
-fn bg1_pixel(
-    core: &Core,
-    context: &Bg1RenderContext,
-    bg_x: usize,
-    bg_y: usize,
-) -> Option<u16> {
+fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
     let mut tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_size;
     let entry = read_tilemap_entry(
