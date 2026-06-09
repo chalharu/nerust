@@ -174,8 +174,16 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let interlace_enabled = core.interlace_enabled();
     let color_math_supported = screen_mode <= 4;
 
-    let render_width = if high_res_mode { MODE5_6_WIDTH } else { SCREEN_WIDTH };
-    let render_height = if interlace_enabled { INTERLACE_HEIGHT } else { SCREEN_HEIGHT };
+    let render_width = if high_res_mode {
+        MODE5_6_WIDTH
+    } else {
+        SCREEN_WIDTH
+    };
+    let render_height = if interlace_enabled {
+        INTERLACE_HEIGHT
+    } else {
+        SCREEN_HEIGHT
+    };
     let pixel_count = render_width * render_height;
 
     if tm == 0 && !use_presented_tm {
@@ -204,19 +212,107 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // --- Main screen: render BG layers to raw 15-bit buffer ---
     let mut main_raw = vec![0u16; pixel_count];
 
-    render_bg1(core, BgLayer::Bg1, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
-    render_bg1(core, BgLayer::Bg2, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
-    render_bg1(core, BgLayer::Bg3, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
-    render_bg1(core, BgLayer::Bg4, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut main_raw)?;
+    render_bg1(
+        core,
+        BgLayer::Bg1,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+        &mut main_raw,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg2,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+        &mut main_raw,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg3,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+        &mut main_raw,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg4,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+        &mut main_raw,
+    )?;
 
     // --- Sub screen: render BG layers if color math is supported ---
     if ts != 0 && color_math_supported {
         let mut sub_raw = vec![0u16; pixel_count];
 
-        render_bg1(core, BgLayer::Bg1, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
-        render_bg1(core, BgLayer::Bg2, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
-        render_bg1(core, BgLayer::Bg3, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
-        render_bg1(core, BgLayer::Bg4, render_brightness, ts, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba, &mut sub_raw)?;
+        render_bg1(
+            core,
+            BgLayer::Bg1,
+            render_brightness,
+            ts,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            &mut rgba,
+            &mut sub_raw,
+        )?;
+        render_bg1(
+            core,
+            BgLayer::Bg2,
+            render_brightness,
+            ts,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            &mut rgba,
+            &mut sub_raw,
+        )?;
+        render_bg1(
+            core,
+            BgLayer::Bg3,
+            render_brightness,
+            ts,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            &mut rgba,
+            &mut sub_raw,
+        )?;
+        render_bg1(
+            core,
+            BgLayer::Bg4,
+            render_brightness,
+            ts,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            &mut rgba,
+            &mut sub_raw,
+        )?;
 
         let cgwsel = core.peek(0x002130);
         let cgadsub = core.peek(0x002131);
@@ -249,8 +345,12 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
                 continue;
             }
 
-            let layer_participates = cgadsub_bg1 || cgadsub_bg2 || cgadsub_bg3 || cgadsub_bg4
-                || cgadsub_obj || (cgadsub_backdrop && main_raw_val == backdrop_color0);
+            let layer_participates = cgadsub_bg1
+                || cgadsub_bg2
+                || cgadsub_bg3
+                || cgadsub_bg4
+                || cgadsub_obj
+                || (cgadsub_backdrop && main_raw_val == backdrop_color0);
             if !layer_participates {
                 continue;
             }
@@ -275,7 +375,11 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
                 continue;
             }
 
-            let sub_source = if sub_raw_val != 0 { sub_raw_val } else { fixed_color };
+            let sub_source = if sub_raw_val != 0 {
+                sub_raw_val
+            } else {
+                fixed_color
+            };
             main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
         }
     }
@@ -290,9 +394,22 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         }
     }
 
-    render_obj(core, render_brightness, tm, use_presented_tm, interlace_enabled, render_width, render_height, &mut rgba);
+    render_obj(
+        core,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+    );
 
-    Ok(RenderedScreen { rgba, width: render_width, height: render_height })
+    Ok(RenderedScreen {
+        rgba,
+        width: render_width,
+        height: render_height,
+    })
 }
 
 #[cfg(test)]

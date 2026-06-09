@@ -34,9 +34,21 @@ pub(super) fn apply_color_math(main_15: u16, sub_15: u16, subtract: bool, half: 
     let sg = (sub_15 >> 5) & 0x1F;
     let sb = (sub_15 >> 10) & 0x1F;
 
-    let mut r = if subtract { mr.saturating_sub(sr) } else { (mr + sr).min(31) };
-    let mut g = if subtract { mg.saturating_sub(sg) } else { (mg + sg).min(31) };
-    let mut b = if subtract { mb.saturating_sub(sb) } else { (mb + sb).min(31) };
+    let mut r = if subtract {
+        mr.saturating_sub(sr)
+    } else {
+        (mr + sr).min(31)
+    };
+    let mut g = if subtract {
+        mg.saturating_sub(sg)
+    } else {
+        (mg + sg).min(31)
+    };
+    let mut b = if subtract {
+        mb.saturating_sub(sb)
+    } else {
+        (mb + sb).min(31)
+    };
 
     if half {
         r = (r + 1) >> 1;

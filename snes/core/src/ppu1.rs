@@ -274,8 +274,7 @@ impl Ppu1 {
     }
 
     fn write_bg_vofs(&mut self, index: usize, value: u8) {
-        self.bg_vofs[index] =
-            (u16::from(value) << 8) | u16::from(self.bgofs_latch);
+        self.bg_vofs[index] = (u16::from(value) << 8) | u16::from(self.bgofs_latch);
         self.bgofs_latch = value;
     }
 

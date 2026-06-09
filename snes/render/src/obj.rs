@@ -44,19 +44,33 @@ pub(super) fn render_obj(
         };
         let slivers = obj_slivers_for_scanline(&sprites, interlace_screen_y);
         for sliver in slivers.iter().rev() {
-            render_obj_sliver(core, obsel, brightness, rgba, render_width, screen_y, *sliver);
+            render_obj_sliver(
+                core,
+                obsel,
+                brightness,
+                rgba,
+                render_width,
+                screen_y,
+                *sliver,
+            );
         }
     }
 }
 
-fn screen_uses_obj(core: &Core, current_tm: u8, use_presented_tm: bool, render_height: usize) -> bool {
+fn screen_uses_obj(
+    core: &Core,
+    current_tm: u8,
+    use_presented_tm: bool,
+    render_height: usize,
+) -> bool {
     if !use_presented_tm {
         return current_tm & 0x10 != 0;
     }
 
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
     (0..render_height).step_by(height_ratio).any(|screen_y| {
-        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & 0x10 != 0
+        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & 0x10
+            != 0
     })
 }
 
