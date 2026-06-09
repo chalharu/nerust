@@ -73,7 +73,6 @@ pub(super) fn render_bg1(
 
     let hofs_mask = if high_res_mode { 0x7FF } else { 0x3FF };
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
-    let width_ratio = (render_width / SCREEN_WIDTH).max(1);
 
     for screen_y in 0..render_height {
         let presented_y = screen_y / height_ratio;
@@ -102,7 +101,7 @@ pub(super) fn render_bg1(
         let bg_y = (presented_y + vofs) % tilemap_height_pixels;
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
-            let bg_x = ((screen_x / width_ratio) + hofs) % tilemap_width_pixels;
+            let bg_x = (screen_x + hofs) % tilemap_width_pixels;
             if let Some(raw) = bg1_pixel(core, &context, bg_x, bg_y) {
                 raw_output[row_offset + screen_x] = raw;
             }

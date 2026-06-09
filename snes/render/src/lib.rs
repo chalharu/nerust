@@ -13,7 +13,7 @@ use obj::render_obj;
 
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 224;
-pub(crate) const VISIBLE_BG_Y_OFFSET: usize = 1;
+pub(crate) const VISIBLE_BG_Y_OFFSET: usize = 0;
 pub const MODE5_6_WIDTH: usize = 512;
 pub const INTERLACE_HEIGHT: usize = 448;
 
