@@ -224,6 +224,18 @@ impl Core {
         self.bus.ppu2.fixed_color()
     }
 
+    pub fn interlace_enabled(&self) -> bool {
+        self.bus.interlace_enabled()
+    }
+
+    pub fn odd_frame(&self) -> bool {
+        self.bus.odd_frame()
+    }
+
+    pub fn completed_odd_frame(&self) -> bool {
+        self.bus.completed_odd_frame()
+    }
+
     pub fn peek_oam(&self, address: usize) -> u8 {
         self.bus.ppu1.peek_oam(address)
     }

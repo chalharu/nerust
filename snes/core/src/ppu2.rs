@@ -118,6 +118,10 @@ impl Ppu2 {
         self.inidisp & 0x80 != 0
     }
 
+    pub(crate) fn interlace_enabled(&self) -> bool {
+        self.registers[register_index(0x2133)] & 0x01 != 0
+    }
+
     fn store_register(&mut self, offset: u16, value: u8) {
         self.registers[register_index(offset)] = value;
     }

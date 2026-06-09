@@ -16,6 +16,7 @@ pub(super) fn render_obj(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
+    interlace_field: bool,
     rgba: &mut [u8],
 ) {
     if !screen_uses_obj(core, current_tm, use_presented_tm) {
@@ -30,7 +31,13 @@ pub(super) fn render_obj(
         if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 == 0 {
             continue;
         }
-        let slivers = obj_slivers_for_scanline(&sprites, screen_y);
+        // In interlace mode, the field parity controls the half-line offset for OBJ
+        let interlace_screen_y = if interlace_field {
+            screen_y.wrapping_add(1)
+        } else {
+            screen_y
+        };
+        let slivers = obj_slivers_for_scanline(&sprites, interlace_screen_y);
         for sliver in slivers.iter().rev() {
             render_obj_sliver(core, obsel, brightness, rgba, screen_y, *sliver);
         }
