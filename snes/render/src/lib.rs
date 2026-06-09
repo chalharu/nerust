@@ -14,6 +14,8 @@ use obj::render_obj;
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 224;
 pub(crate) const VISIBLE_BG_Y_OFFSET: usize = 1;
+pub const MODE5_6_WIDTH: usize = 512;
+pub const INTERLACE_HEIGHT: usize = 448;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BgLayer {
@@ -163,9 +165,16 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let use_presented_tm: bool = use_presented_main_screen(core);
     let use_presented_inidisp = hdma_targets_bbus(core, &[0x00]);
 
+    let bgmode = core.peek(0x002105);
+    let high_res_mode = (bgmode & 0x07) == 5 || (bgmode & 0x07) == 6;
+    let interlace_enabled = core.interlace_enabled();
+
+    let render_width = if high_res_mode { MODE5_6_WIDTH } else { SCREEN_WIDTH };
+    let render_height = if interlace_enabled { INTERLACE_HEIGHT } else { SCREEN_HEIGHT };
+
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
-            rgba: render_presented_backdrop(core),
+            rgba: render_presented_backdrop(core, render_width, render_height),
         });
     }
 
@@ -173,18 +182,17 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let brightness = inidisp & 0x0F;
     if brightness == 0 && !use_presented_inidisp {
         return Ok(RenderedScreen {
-            rgba: opaque_black_screen(),
+            rgba: opaque_black_screen(render_width, render_height),
         });
     }
 
-    let interlace_enabled = core.interlace_enabled();
     let interlace_field = interlace_enabled && core.odd_frame();
 
     let render_brightness = if brightness == 0 { 15 } else { brightness };
     let mut rgba = if use_presented_inidisp {
-        render_presented_backdrop(core)
+        render_presented_backdrop(core, render_width, render_height)
     } else {
-        render_current_backdrop(core)
+        render_current_backdrop(core, render_width, render_height)
     };
 
     render_bg1(
@@ -194,6 +202,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_field,
+        render_width,
+        render_height,
         &mut rgba,
     )?;
     render_bg1(
@@ -203,6 +213,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_field,
+        render_width,
+        render_height,
         &mut rgba,
     )?;
     render_bg1(
@@ -212,6 +224,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_field,
+        render_width,
+        render_height,
         &mut rgba,
     )?;
     render_bg1(
@@ -221,18 +235,20 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_field,
+        render_width,
+        render_height,
         &mut rgba,
     )?;
-    render_obj(core, render_brightness, tm, use_presented_tm, interlace_field, &mut rgba);
+    render_obj(core, render_brightness, tm, use_presented_tm, interlace_field, render_width, render_height, &mut rgba);
 
     // When HDMA changes INIDISP per-scanline, apply per-line force-blank/brightness=0
     if use_presented_inidisp {
-        for screen_y in 0..SCREEN_HEIGHT {
+        for screen_y in 0..render_height {
             if let Some(backdrop) = core.presented_backdrop_line(screen_y)
                 && (backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0)
             {
-                let offset = screen_y * SCREEN_WIDTH * 4;
-                for pixel in rgba[offset..offset + SCREEN_WIDTH * 4].chunks_exact_mut(4) {
+                let offset = screen_y * render_width * 4;
+                for pixel in rgba[offset..offset + render_width * 4].chunks_exact_mut(4) {
                     pixel[0] = 0;
                     pixel[1] = 0;
                     pixel[2] = 0;

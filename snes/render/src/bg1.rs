@@ -1,8 +1,7 @@
-use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::Core;
 
 use super::{
-    BgLayer, RenderError, VISIBLE_BG_Y_OFFSET,
+    BgLayer, RenderError, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_BG_Y_OFFSET,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line,
     mode7::render_mode7_bg1,
@@ -17,10 +16,12 @@ pub(super) fn render_bg1(
     brightness: u8,
     current_tm: u8,
     use_presented_tm: bool,
-    interlace_field: bool,
+    interlace_enabled: bool,
+    render_width: usize,
+    render_height: usize,
     rgba: &mut [u8],
 ) -> Result<(), RenderError> {
-    if !screen_uses_layer(core, layer, current_tm, use_presented_tm) {
+    if !screen_uses_layer(core, layer, current_tm, use_presented_tm, render_height) {
         return Ok(());
     }
 
@@ -29,15 +30,15 @@ pub(super) fn render_bg1(
     let Some(mode) = BgRenderMode::from_bgmode(layer, screen_mode)? else {
         return Ok(());
     };
+    let high_res_mode = screen_mode == 5 || screen_mode == 6;
     if mode == BgRenderMode::Mode7 {
-        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, interlace_field, rgba);
+        render_mode7_bg1(core, brightness, current_tm, use_presented_tm, interlace_enabled, render_width, render_height, rgba);
         return Ok(());
     }
 
     let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
     let bg34nba = core.peek(0x00210C);
-    let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let context = Bg1RenderContext {
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
@@ -47,7 +48,6 @@ pub(super) fn render_bg1(
         } else {
             8
         },
-        horizontal_scale: if high_res_mode { 2 } else { 1 },
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
         high_res_mode,
@@ -59,33 +59,38 @@ pub(super) fn render_bg1(
     let (current_hofs, current_vofs) = layer.current_scroll(core);
     let use_presented_scroll = use_presented_bg_scroll(core, layer);
 
-    for screen_y in 0..SCREEN_HEIGHT {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() == 0
+    let hofs_mask = if high_res_mode { 0x7FF } else { 0x3FF };
+    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
+    let width_ratio = (render_width / SCREEN_WIDTH).max(1);
+
+    for screen_y in 0..render_height {
+        let presented_y = screen_y / height_ratio;
+        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer.tm_mask() == 0
         {
             continue;
         }
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, layer, screen_y))
+            .then(|| presented_bg_line(core, layer, presented_y))
             .flatten();
-        let hofs_mask = if context.horizontal_scale == 2 { 0x7FF } else { 0x3FF };
         let hofs = (presented.map_or(usize::from(current_hofs), |line| usize::from(line.hofs))
             & hofs_mask)
             % tilemap_width_pixels.max(1);
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
+        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & 0x3FE) | 0x0001
-        } else if core.interlace_enabled() {
+        } else if interlace_enabled {
             raw_vofs & 0x3FE
         } else {
             raw_vofs & 0x3FF
         };
         let vofs = (usize::from(effective_vofs) + VISIBLE_BG_Y_OFFSET)
             % tilemap_height_pixels.max(1);
-        let bg_y = (screen_y + vofs) % tilemap_height_pixels;
-        for screen_x in 0..SCREEN_WIDTH {
-            let bg_x = (screen_x * context.horizontal_scale + hofs) % tilemap_width_pixels;
+        let bg_y = (presented_y + vofs) % tilemap_height_pixels;
+        for screen_x in 0..render_width {
+            let bg_x = ((screen_x / width_ratio) + hofs) % tilemap_width_pixels;
             if let Some(color) = bg1_pixel(core, &context, &palette, bg_x, bg_y) {
-                put_pixel(rgba, screen_x, screen_y, color);
+                put_pixel(rgba, render_width, screen_x, screen_y, color);
             }
         }
     }
@@ -93,13 +98,14 @@ pub(super) fn render_bg1(
     Ok(())
 }
 
-fn screen_uses_layer(core: &Core, layer: BgLayer, current_tm: u8, use_presented_tm: bool) -> bool {
+fn screen_uses_layer(core: &Core, layer: BgLayer, current_tm: u8, use_presented_tm: bool, render_height: usize) -> bool {
     if !use_presented_tm {
         return current_tm & layer.tm_mask() != 0;
     }
 
-    (0..SCREEN_HEIGHT).any(|screen_y| {
-        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0
+    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
+    (0..render_height).step_by(height_ratio).any(|screen_y| {
+        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & layer.tm_mask() != 0
     })
 }
 
@@ -230,7 +236,6 @@ struct Bg1RenderContext {
     tilemap_base: usize,
     chr_base: usize,
     tile_size: usize,
-    horizontal_scale: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
     high_res_mode: bool,

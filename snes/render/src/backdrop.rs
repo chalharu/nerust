@@ -1,4 +1,3 @@
-use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use nerust_snes_core::{Core, PresentedBackdropLine, PresentedColorWindowLine};
 
 use super::color::{opaque_black_screen, put_pixel, snes_color_to_rgba};
@@ -16,41 +15,43 @@ const CGADSUB_SUBTRACT: u8 = 0x80;
 const CGADSUB_HALF: u8 = 0x40;
 const CGADSUB_ENABLE_BACKDROP: u8 = 0x20;
 
-pub(super) fn render_presented_backdrop(core: &Core) -> Vec<u8> {
+pub(super) fn render_presented_backdrop(core: &Core, width: usize, height: usize) -> Vec<u8> {
     let fallback_backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
     let color_math = BackdropColorMath::from_core(core);
-    let mut rgba = opaque_black_screen();
+    let mut rgba = opaque_black_screen(width, height);
 
-    for screen_y in 0..SCREEN_HEIGHT {
+    for screen_y in 0..height {
+        let presented_y = screen_y / (height / 224).max(1);
         let backdrop = core
-            .presented_backdrop_line(screen_y)
+            .presented_backdrop_line(presented_y)
             .unwrap_or(fallback_backdrop);
         let window = core
-            .presented_color_window_line(screen_y)
+            .presented_color_window_line(presented_y)
             .unwrap_or(fallback_window);
-        for screen_x in 0..SCREEN_WIDTH {
+        for screen_x in 0..width {
             let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);
-            put_pixel(&mut rgba, screen_x, screen_y, line_color);
+            put_pixel(&mut rgba, width, screen_x, screen_y, line_color);
         }
     }
 
     rgba
 }
 
-pub(super) fn render_current_backdrop(core: &Core) -> Vec<u8> {
+pub(super) fn render_current_backdrop(core: &Core, width: usize, height: usize) -> Vec<u8> {
     let backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
     let color_math = BackdropColorMath::from_core(core);
-    let mut rgba = opaque_black_screen();
+    let mut rgba = opaque_black_screen(width, height);
 
-    for screen_y in 0..SCREEN_HEIGHT {
+    for screen_y in 0..height {
+        let presented_y = screen_y / (height / 224).max(1);
         let window = core
-            .presented_color_window_line(screen_y)
+            .presented_color_window_line(presented_y)
             .unwrap_or(fallback_window);
-        for screen_x in 0..SCREEN_WIDTH {
+        for screen_x in 0..width {
             let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);
-            put_pixel(&mut rgba, screen_x, screen_y, line_color);
+            put_pixel(&mut rgba, width, screen_x, screen_y, line_color);
         }
     }
 
