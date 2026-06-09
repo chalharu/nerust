@@ -186,23 +186,27 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     };
     let pixel_count = render_width * render_height;
 
-    if tm == 0 && !use_presented_tm {
-        return Ok(RenderedScreen {
-            rgba: render_presented_backdrop(core, render_width, render_height),
-            width: render_width,
-            height: render_height,
-        });
-    }
-
     let inidisp = core.peek(0x002100);
     let brightness = inidisp & 0x0F;
-    if brightness == 0 && !use_presented_inidisp {
+    if brightness == 0 && !use_presented_inidisp && !use_presented_tm {
         return Ok(RenderedScreen {
             rgba: opaque_black_screen(render_width, render_height),
             width: render_width,
             height: render_height,
         });
     }
+
+    // When current TM is 0, check if the completed frame had any layers enabled
+    let tm = if tm == 0 {
+        // Try completed frame data
+        let completed_tm = (0..224).filter_map(|i| core.presented_main_screen_line(i))
+            .find(|line| line.tm != 0)
+            .map_or(tm, |line| line.tm);
+        if completed_tm != 0 { completed_tm } else { tm }
+    } else {
+        tm
+    };
+    let use_presented_tm = use_presented_tm || (tm != 0);
 
     let render_brightness = if brightness == 0 { 15 } else { brightness };
 

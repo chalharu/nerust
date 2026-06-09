@@ -12,7 +12,7 @@ pub fn validate_case(case: &RomCase) -> CaseOutcome {
 }
 
 pub fn validate_case_with_options(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
-    let should_wait_for_final_screen = case.expected_screen_hash.is_some();
+    let should_wait_for_final_screen = case.expected_screen_hash.is_some() || case.png_path().is_some();
     let mut core = match load_core_for_case(case) {
         Ok(core) => core,
         Err(error) => return internal_error(case, error),
