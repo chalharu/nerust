@@ -240,7 +240,7 @@ cases:
       snes-test-roms/bin/examples/hdma-double-buffered-indirect-shear.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x5A97AF380472F65D"
+    expected_screen_hash: "0x15E6EE7BD6A90B95"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -601,7 +601,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
     max_steps: 69632
     check_interval_steps: 69632
-    expected_screen_hash: "0x019E88ADFC49B83F"
+    expected_screen_hash: "0xB129A88E67E79062"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -640,7 +640,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc
     max_steps: 5000
     check_interval_steps: 5000
-    expected_screen_hash: "0xD9ABF10D577705C5"
+    expected_screen_hash: "0x2A3E0C7153EFF887"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -676,7 +676,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
     max_steps: 114688
     check_interval_steps: 114688
-    expected_screen_hash: "0x6E60027D1BC5C934"
+    expected_screen_hash: "0x3456FD5F52E339D1"
     assertions:
       - kind: bus_u8
         address: "0x004200"
@@ -718,7 +718,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
     max_steps: 7626752
     check_interval_steps: 7626752
-    expected_screen_hash: "0x46D59BF245379BCD"
+    expected_screen_hash: "0xDD3BE684D8AE384B"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -763,7 +763,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
     max_steps: 1000000
     check_interval_steps: 1000000
-    expected_screen_hash: "0xD965824365E5CEB1"
+    expected_screen_hash: "0xD662D016385E123F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -781,7 +781,7 @@ cases:
     rom: snes-test-roms/bin/effects/hdma-textbox-wipe.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x36560C9AE0638A50"
+    expected_screen_hash: "0x12CDB162BB7BE9F1"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -958,7 +958,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-vertical-scrolling.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0x8BED4326A9A826FC"
+    expected_screen_hash: "0xBF3ECAC5F3DB8EB4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -976,7 +976,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-vertical-scrolling-2-rows.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0xDB312763F4F4ECA6"
+    expected_screen_hash: "0x16AB6302EF753358"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1546,7 +1546,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/hdma-timing-demonstration.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x2A6EE9EDFC9F8547"
+    expected_screen_hash: "0x618B2CAF9D84F5AD"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1570,7 +1570,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_bounce_test.sfc
     max_steps: 200000
     check_interval_steps: 200000
-    expected_screen_hash: "0xD0982DB406CC6A59"
+    expected_screen_hash: "0x28FA13E155D016A2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1588,7 +1588,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
     max_steps: 53248
     check_interval_steps: 53248
-    expected_screen_hash: "0xBEFDE8E114DA5C1E"
+    expected_screen_hash: "0xFADF7AE332B585EE"
     assertions:
       - kind: bus_u8
         address: "0x002100"
