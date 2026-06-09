@@ -1,5 +1,5 @@
 use crate::manifest::{Assertion, ManifestError, RomCase};
-use crate::media::{encode_screenshot_png, screen_hash_rgba};
+use crate::media::{encode_screenshot_png, png_hash_from_path, screen_hash_rgba};
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
 use nerust_snes_render::render_screen;
@@ -193,15 +193,26 @@ fn finalize_validation(
         }
     };
     let final_screen_hash = screen_hash_rgba(&rendered.rgba);
-    match case.expected_screen_hash() {
-        Ok(Some(expected_screen_hash)) if expected_screen_hash != final_screen_hash => {
+    if let Some(png_path) = case.png_path() {
+        match png_hash_from_path(png_path) {
+            Ok(png_hash) if png_hash != final_screen_hash => {
+                failures.push(format!(
+                    "screen_hash: reference PNG 0x{png_hash:016X}, rendered 0x{final_screen_hash:016X}"
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return internal_error(case, format!(
+                    "failed to hash reference PNG `{}`: {error}",
+                    png_path.display()
+                ));
+            }
+        }
+    } else if let Ok(Some(expected_screen_hash)) = case.expected_screen_hash() {
+        if expected_screen_hash != final_screen_hash {
             failures.push(format!(
                 "screen_hash: expected 0x{expected_screen_hash:016X}, got 0x{final_screen_hash:016X}"
             ));
-        }
-        Ok(_) => {}
-        Err(error) => {
-            return internal_error(case, error.to_string());
         }
     }
     let screenshot_png = if options.capture_screenshot_png {

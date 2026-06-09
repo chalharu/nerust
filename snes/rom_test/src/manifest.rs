@@ -41,11 +41,15 @@ pub struct RomCase {
     #[serde(default)]
     pub expected_screen_hash: Option<String>,
     #[serde(default)]
+    pub reference_png: Option<PathBuf>,
+    #[serde(default)]
     pub assertions: Vec<Assertion>,
     #[serde(default)]
     pub reset_at_steps: Vec<u64>,
     #[serde(skip)]
     resolved_rom_path: PathBuf,
+    #[serde(skip)]
+    resolved_png_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +172,10 @@ impl RomCase {
         &self.resolved_rom_path
     }
 
+    pub fn png_path(&self) -> Option<&Path> {
+        self.resolved_png_path.as_deref()
+    }
+
     pub fn expected_screen_hash(&self) -> Result<Option<u64>, ManifestError> {
         self.expected_screen_hash
             .as_deref()
@@ -186,10 +194,13 @@ impl RomCase {
                 message: format!("ROM case `{}` must have check_interval_steps > 0", self.id),
             });
         }
-        if self.assertions.is_empty() && self.expected_screen_hash.is_none() {
+        if self.assertions.is_empty()
+            && self.expected_screen_hash.is_none()
+            && self.reference_png.is_none()
+        {
             return Err(ManifestError::Invalid {
                 message: format!(
-                    "ROM case `{}` must contain at least one assertion or expected_screen_hash",
+                    "ROM case `{}` must contain at least one assertion, expected_screen_hash, or reference_png",
                     self.id
                 ),
             });
@@ -206,16 +217,34 @@ impl RomCase {
             });
         }
 
+        self.resolved_png_path = self
+            .reference_png
+            .as_ref()
+            .map(|png| rom_root.join(png));
+        if let Some(ref png_path) = self.resolved_png_path {
+            if !png_path.is_file() {
+                return Err(ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{}` points to missing reference PNG `{}`",
+                        self.id,
+                        png_path.display()
+                    ),
+                });
+            }
+        }
+
         for assertion in &self.assertions {
             assertion.validate(&self.id)?;
         }
-        self.expected_screen_hash()
-            .map_err(|error| ManifestError::Invalid {
-                message: format!(
-                    "ROM case `{}` has invalid expected_screen_hash: {error}",
-                    self.id
-                ),
-            })?;
+        if self.expected_screen_hash.is_some() {
+            self.expected_screen_hash()
+                .map_err(|error| ManifestError::Invalid {
+                    message: format!(
+                        "ROM case `{}` has invalid expected_screen_hash: {error}",
+                        self.id
+                    ),
+                })?;
+        }
 
         // Validate reset_at_steps is sorted and within max_steps
         for (i, step) in self.reset_at_steps.windows(2).enumerate() {
@@ -398,12 +427,14 @@ mod tests {
             max_steps: 1,
             check_interval_steps: 1,
             expected_screen_hash: None,
+            reference_png: None,
             assertions: vec![Assertion::BusU8 {
                 address: "0x00".to_string(),
                 expected: "0x00".to_string(),
             }],
             reset_at_steps: vec![],
             resolved_rom_path: PathBuf::from(format!("/tmp/{id}.sfc")),
+            resolved_png_path: None,
         }
     }
 
