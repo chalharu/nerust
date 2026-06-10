@@ -161,11 +161,12 @@ fn in_window(
     wh2: u8,
     wh3: u8,
 ) -> bool {
-    let win1_inverted = wh0 > wh1;
-    let in_win1_range = if win1_inverted {
-        true
-    } else {
+    // When WH0 > WH1, the window covers everything EXCEPT [WH1, WH0]
+    // (the range between the two boundaries is the EXCLUDED region).
+    let in_win1_range = if wh0 <= wh1 {
         (wh0..=wh1).contains(&(screen_x as u8))
+    } else {
+        !((wh1..=wh0).contains(&(screen_x as u8)))
     };
     let in_win1 = if win1_setting == 0 {
         false
@@ -177,19 +178,16 @@ fn in_window(
         in_win1_range
     };
 
-    let win2_inverted = wh2 > wh3;
-    let in_win2_range = if win2_inverted {
-        true
-    } else {
+    let in_win2_range = if wh2 <= wh3 {
         (wh2..=wh3).contains(&(screen_x as u8))
+    } else {
+        !((wh3..=wh2).contains(&(screen_x as u8)))
     };
     let in_win2 = if win2_setting == 0 {
         false
     } else if win2_setting & 0x01 != 0 {
-        // outside mode
         !in_win2_range
     } else {
-        // inside mode
         in_win2_range
     };
 
