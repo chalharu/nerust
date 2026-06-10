@@ -44,11 +44,12 @@ pub(super) fn render_presented_backdrop(
         }
         // Scanline 0's captured CGRAM colour comes from the previous frame,
         // not the current frame's first HDMA write. When CGRAM HDMA is
-        // active and scanline 0's colour is 0 (initial/uninitialized), use
-        // scanline 1's value which reflects the first HDMA entry.
-        if presented_y == 0 && cgram_hdma_active && backdrop.color0 == 0 {
+        // active, use scanline 1's value which reflects the first HDMA entry.
+        if presented_y == 0 && cgram_hdma_active {
             if let Some(next) = core.presented_backdrop_line(1) {
-                backdrop.color0 = next.color0;
+                if backdrop.color0 != next.color0 {
+                    backdrop.color0 = next.color0;
+                }
             }
         }
         let window = core
