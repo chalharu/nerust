@@ -18,13 +18,17 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
     let file = fs::read(path).map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
     let cursor = Cursor::new(file);
     let decoder = Decoder::new(cursor);
-    let mut reader = decoder.read_info().map_err(|e| format!("failed to decode `{}`: {e}", path.display()))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("failed to decode `{}`: {e}", path.display()))?;
     let width = reader.info().width as usize;
     let height = reader.info().height as usize;
     let pixel_count = width * height;
     let buf_size = reader.output_buffer_size().unwrap_or(pixel_count * 4);
     let mut raw = vec![0u8; buf_size];
-    let _info = reader.next_frame(&mut raw).map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
+    let _info = reader
+        .next_frame(&mut raw)
+        .map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
 
     let output_size = pixel_count * 4;
     let rgba = if raw.len() >= output_size {
@@ -39,7 +43,11 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
             png::BitDepth::Eight => 8,
             png::BitDepth::Sixteen => 16,
         };
-        let pixels_per_byte = if bits_per_pixel < 8 { 8 / bits_per_pixel } else { 1 };
+        let pixels_per_byte = if bits_per_pixel < 8 {
+            8 / bits_per_pixel
+        } else {
+            1
+        };
         let palette = reader.info().palette.as_ref();
         let trns = reader.info().trns.as_ref();
         let mut rgba = Vec::with_capacity(output_size);
@@ -65,8 +73,16 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
                 let src_bpp = if raw.len() >= pixel_count * 3 { 3 } else { 1 };
                 let src = i * src_bpp;
                 let r = if src < raw.len() { raw[src] } else { 0 };
-                let g = if src_bpp > 1 && src + 1 < raw.len() { raw[src + 1] } else { r };
-                let b = if src_bpp > 2 && src + 2 < raw.len() { raw[src + 2] } else { r };
+                let g = if src_bpp > 1 && src + 1 < raw.len() {
+                    raw[src + 1]
+                } else {
+                    r
+                };
+                let b = if src_bpp > 2 && src + 2 < raw.len() {
+                    raw[src + 2]
+                } else {
+                    r
+                };
                 (r, g, b, 0xFF)
             };
             rgba.push(r);

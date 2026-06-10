@@ -217,10 +217,7 @@ impl RomCase {
             });
         }
 
-        self.resolved_png_path = self
-            .reference_png
-            .as_ref()
-            .map(|png| rom_root.join(png));
+        self.resolved_png_path = self.reference_png.as_ref().map(|png| rom_root.join(png));
         if let Some(ref png_path) = self.resolved_png_path {
             if !png_path.is_file() {
                 return Err(ManifestError::Invalid {

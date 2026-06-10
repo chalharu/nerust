@@ -180,12 +180,9 @@ fn render_obj_sliver(
         let tile_column = usize::from(source_x / OBJ_TILE_SIZE);
         let pixel_x = usize::from(source_x % OBJ_TILE_SIZE);
         let tile_number = if obj_interlace {
-            usize::from(sliver.sprite.tile)
-                + tile_column
-                + tile_row * 16
+            usize::from(sliver.sprite.tile) + tile_column + tile_row * 16
         } else {
-            (usize::from(sliver.sprite.tile)
-                | (usize::from(sliver.sprite.attributes & 0x01) << 8))
+            (usize::from(sliver.sprite.tile) | (usize::from(sliver.sprite.attributes & 0x01) << 8))
                 + tile_column
                 + tile_row * 16
         };
