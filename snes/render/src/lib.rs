@@ -347,7 +347,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
-            if high_res_mode { 0 } else { 0 },
+            0,
         )?;
 
         if color_math_supported {
