@@ -131,6 +131,7 @@ serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
 serde_derive = { version = "=1.0.228", default-features = false }
 serde_yaml = { version = "=0.9.34" }
+sevenz-rust2 = { version = "=0.21.0", default-features = false }
 shared_library = { version = "=0.1.9" }
 simple_logger = { version = "=5.2.0" }
 strum = { version = "=0.28.0" }
