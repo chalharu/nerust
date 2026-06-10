@@ -202,7 +202,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
-            rgba: render_presented_backdrop(core, render_width, render_height, use_presented_inidisp),
+            rgba: render_presented_backdrop(core, render_width, render_height),
             width: render_width,
             height: render_height,
         });
@@ -221,7 +221,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let render_brightness = if brightness == 0 { 15 } else { brightness };
 
     // --- Render backdrop to RGBA ---
-    let mut rgba = render_presented_backdrop(core, render_width, render_height, use_presented_inidisp);
+    let mut rgba = render_presented_backdrop(core, render_width, render_height);
 
     // --- Main screen: render BG layers to raw 15-bit buffer ---
     let mut main_raw = vec![TRANSPARENT; pixel_count];
