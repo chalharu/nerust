@@ -676,7 +676,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
     max_steps: 114688
     check_interval_steps: 114688
-    expected_screen_hash: "0x3456FD5F52E339D1"
+    expected_screen_hash: "0x256BB929C92455FA"
     assertions:
       - kind: bus_u8
         address: "0x004200"

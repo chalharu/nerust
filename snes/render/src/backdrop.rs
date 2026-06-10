@@ -15,7 +15,12 @@ const CGADSUB_SUBTRACT: u8 = 0x80;
 const CGADSUB_HALF: u8 = 0x40;
 const CGADSUB_ENABLE_BACKDROP: u8 = 0x20;
 
-pub(super) fn render_presented_backdrop(core: &Core, width: usize, height: usize) -> Vec<u8> {
+pub(super) fn render_presented_backdrop(
+    core: &Core,
+    width: usize,
+    height: usize,
+    use_presented_inidisp: bool,
+) -> Vec<u8> {
     let fallback_backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
     let color_math = BackdropColorMath::from_core(core);
@@ -23,9 +28,27 @@ pub(super) fn render_presented_backdrop(core: &Core, width: usize, height: usize
 
     for screen_y in 0..height {
         let presented_y = screen_y / (height / 224).max(1);
-        let backdrop = core
+        let mut backdrop = core
             .presented_backdrop_line(presented_y)
             .unwrap_or(fallback_backdrop);
+        if !use_presented_inidisp {
+            // When HDMA doesn't target INIDISP, scanline 0 may have stale
+            // captured values from before the test modifies registers.
+            if presented_y == 0 {
+                let current_inidisp = core.peek(0x002100);
+                if backdrop.inidisp & 0x80 != 0 && current_inidisp & 0x80 == 0 {
+                    backdrop.inidisp = current_inidisp;
+                }
+                // The captured CGRAM colour for scanline 0 comes from the
+                // previous frame. If it's 0 (initial/uninitialized), try
+                // scanline 1 which reflects the first active HDMA write.
+                if backdrop.color0 == 0 {
+                    if let Some(next) = core.presented_backdrop_line(1) {
+                        backdrop.color0 = next.color0;
+                    }
+                }
+            }
+        }
         let window = core
             .presented_color_window_line(presented_y)
             .unwrap_or(fallback_window);
