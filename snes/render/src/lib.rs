@@ -291,7 +291,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_height,
         &mut rgba,
         &mut main_raw,
-        0,
+        if high_res_mode { 1 } else { 0 },
     )?;
 
     // --- Sub screen: render BG layers for color math and Mode 5/6 interleaving ---
@@ -428,9 +428,9 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
             let screen_x = i % render_width;
             if screen_x & 1 != 0 {
-                sub_raw[i]
-            } else {
                 main_raw[i]
+            } else {
+                sub_raw[i]
             }
         } else {
             main_raw[i]
