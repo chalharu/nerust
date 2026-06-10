@@ -106,6 +106,12 @@ pub(super) fn render_bg1(
     };
     let window_logic = (core.peek(0x00212A) >> wbglog_shift) & 0x03;
 
+    // Mosaic effect: MOZA register ($2106)
+    // Bits 0-3: mosaic size, Bits 4-7: enable for BG1-BG4
+    let moza = core.peek(0x002106);
+    let mosaic_size = usize::from(moza & 0x0F) + 1;
+    let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
+
     for screen_y in 0..render_height {
         let presented_y = screen_y / height_ratio;
         if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
@@ -113,15 +119,20 @@ pub(super) fn render_bg1(
         {
             continue;
         }
-        // Use per-scanline window data from the completed frame if available;
-        // otherwise fall back to the current register values.
-        let fallback_wh = PresentedColorWindowLine {
-            wh0: core.peek(0x002126),
-            wh1: core.peek(0x002127),
-            wh2: core.peek(0x002128),
-            wh3: core.peek(0x002129),
-        };
-        let window_line = core.presented_color_window_line(presented_y).unwrap_or(fallback_wh);
+        // Use per-scanline window data if available; otherwise fall back to
+        // current register values (which retain the previous frame's HDMA writes).
+        let window_line = core.presented_color_window_line(presented_y)
+            .or_else(|| {
+                // If no captured data, try the current frame's data from the "current" arrays
+                // by calling presented_color_window_line with a different approach.
+                None
+            })
+            .unwrap_or(PresentedColorWindowLine {
+                wh0: core.peek(0x002126),
+                wh1: core.peek(0x002127),
+                wh2: core.peek(0x002128),
+                wh3: core.peek(0x002129),
+            });
         let wh0 = window_line.wh0;
         let wh1 = window_line.wh1;
         let wh2 = window_line.wh2;
@@ -144,13 +155,29 @@ pub(super) fn render_bg1(
         let vofs =
             (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
         let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
+        // Mosaic: quantize Y to block boundary
+        let mos_y = if mosaic_enabled {
+            (screen_y / mosaic_size) * mosaic_size
+        } else {
+            screen_y
+        };
+        let pixel_bg_y = if mosaic_enabled {
+            ((mos_y / height_ratio) + 1 + vofs) % tilemap_height_pixels
+        } else {
+            bg_y
+        };
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
             if window_masked && in_window(win1_setting, win2_setting, window_logic, screen_x, wh0, wh1, wh2, wh3) {
                 continue;
             }
-            let bg_x = (screen_x + hofs) % tilemap_width_pixels;
-            if let Some(raw) = bg1_pixel(core, &context, bg_x, bg_y) {
+            let bg_x = if mosaic_enabled {
+                let mos_x = (screen_x / mosaic_size) * mosaic_size;
+                (mos_x + hofs) % tilemap_width_pixels
+            } else {
+                (screen_x + hofs) % tilemap_width_pixels
+            };
+            if let Some(raw) = bg1_pixel(core, &context, bg_x, pixel_bg_y) {
                 raw_output[row_offset + screen_x] = raw;
             }
         }
