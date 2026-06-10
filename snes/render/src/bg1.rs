@@ -54,14 +54,15 @@ pub(super) fn render_bg1(
     let bgsc = core.peek(layer.bgsc_register());
     let bg12nba = core.peek(0x00210B);
     let bg34nba = core.peek(0x00210C);
-    let tile_size: usize = if bgmode & layer.tile_size_mask() != 0 {
-        16
+    // In Mode 5/6, tiles are always 16 pixels wide. The tile size bit
+    // (BGMODE bits A/B/C/D) controls the height: 8 or 16 pixels tall.
+    // In all other modes, tiles are square (8x8 or 16x16).
+    let (tile_size, tile_height) = if high_res_mode {
+        (16, if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 })
     } else {
-        8
+        let s = if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 };
+        (s, s)
     };
-    // In Mode 5/6, tiles are 16 pixels wide and 8 pixels tall.
-    // For all other modes, tiles are square (8x8 or 16x16).
-    let tile_height = if high_res_mode { 8 } else { tile_size };
     let context = Bg1RenderContext {
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
