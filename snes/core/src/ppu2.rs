@@ -122,6 +122,10 @@ impl Ppu2 {
         self.registers[register_index(0x2133)] & 0x01 != 0
     }
 
+    pub(crate) fn pseudo_hires_enabled(&self) -> bool {
+        self.registers[register_index(0x2133)] & 0x08 != 0
+    }
+
     fn store_register(&mut self, offset: u16, value: u8) {
         self.registers[register_index(offset)] = value;
     }

@@ -187,9 +187,10 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let screen_mode = bgmode & 0x07;
     let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let interlace_enabled = core.interlace_enabled();
-    let color_math_supported = screen_mode <= 4;
+    let pseudo_hires = core.pseudo_hires_enabled();
+    let color_math_supported = screen_mode <= 4 || pseudo_hires;
 
-    let render_width = if high_res_mode {
+    let render_width = if high_res_mode || pseudo_hires {
         MODE5_6_WIDTH
     } else {
         SCREEN_WIDTH
@@ -409,7 +410,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
-        let raw = if high_res_mode && ts != 0 {
+        let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
             // Mode 5/6: interleave main screen (even columns) and
             // sub screen (odd columns) at the pixel level.
             let screen_x = i % render_width;
