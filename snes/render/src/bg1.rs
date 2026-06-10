@@ -22,6 +22,7 @@ pub(super) fn render_bg1(
     render_height: usize,
     rgba: &mut [u8],
     raw_output: &mut [u16],
+    hofs_extra: u16,
 ) -> Result<(), RenderError> {
     if !screen_uses_layer(core, layer, current_tm, use_presented_tm, render_height) {
         return Ok(());
@@ -140,7 +141,7 @@ pub(super) fn render_bg1(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, layer, presented_y))
             .flatten();
-        let hofs = (presented.map_or(usize::from(current_hofs), |line| usize::from(line.hofs))
+        let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| usize::from(line.hofs.wrapping_add(hofs_extra)))
             & hofs_mask)
             % tilemap_width_pixels.max(1);
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);

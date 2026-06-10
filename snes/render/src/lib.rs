@@ -238,6 +238,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_height,
         &mut rgba,
         &mut main_raw,
+        0,
     )?;
     render_bg1(
         core,
@@ -250,6 +251,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_height,
         &mut rgba,
         &mut main_raw,
+        0,
     )?;
     render_bg1(
         core,
@@ -262,6 +264,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_height,
         &mut rgba,
         &mut main_raw,
+        0,
     )?;
     render_bg1(
         core,
@@ -274,11 +277,12 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         render_height,
         &mut rgba,
         &mut main_raw,
+        0,
     )?;
 
-    // --- Sub screen: render BG layers if color math is supported ---
+    // --- Sub screen: render BG layers for color math and Mode 5/6 interleaving ---
+    let mut sub_raw = vec![TRANSPARENT; pixel_count];
     if ts != 0 && color_math_supported {
-        let mut sub_raw = vec![TRANSPARENT; pixel_count];
 
         render_bg1(
             core,
@@ -291,6 +295,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
+            0,
         )?;
         render_bg1(
             core,
@@ -303,6 +308,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
+            0,
         )?;
         render_bg1(
             core,
@@ -315,6 +321,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
+            0,
         )?;
         render_bg1(
             core,
@@ -327,6 +334,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
+            if high_res_mode { 1 } else { 0 },
         )?;
 
         let cgwsel = core.peek(0x002130);
@@ -401,7 +409,18 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
-        let raw = main_raw[i];
+        let raw = if high_res_mode && ts != 0 {
+            // Mode 5/6: interleave main screen (even columns) and
+            // sub screen (odd columns) at the pixel level.
+            let screen_x = i % render_width;
+            if screen_x & 1 != 0 {
+                sub_raw[i]
+            } else {
+                main_raw[i]
+            }
+        } else {
+            main_raw[i]
+        };
         if raw != TRANSPARENT {
             let color = snes_color_to_rgba(raw, render_brightness);
             let offset = i * 4;
