@@ -16,4 +16,5 @@ png.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_yaml.workspace = true
+sevenz-rust2.workspace = true
 thiserror.workspace = true

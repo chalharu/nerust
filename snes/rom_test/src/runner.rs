@@ -106,15 +106,57 @@ fn load_msu1_sidecars(rom_path: &Path) -> Result<Msu1Sidecars, String> {
 }
 
 fn load_msu1_data_sidecar(rom_path: &Path) -> Result<Option<Vec<u8>>, String> {
+    // Try .msu file first (uncompressed sidecar).
     let data_path = rom_path.with_extension("msu");
     match fs::read(&data_path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!(
-            "failed to read MSU-1 data sidecar `{}`: {error}",
-            data_path.display()
-        )),
+        Ok(bytes) => return Ok(Some(bytes)),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "failed to read MSU-1 data sidecar `{}`: {error}",
+                data_path.display()
+            ));
+        }
     }
+
+    // Try .msu.7z file (compressed sidecar, decompress to memory).
+    let compressed_path = rom_path.with_extension("msu.7z");
+    let compressed = match fs::read(&compressed_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to read MSU-1 compressed sidecar `{}`: {error}",
+                compressed_path.display()
+            ));
+        }
+    };
+    decompress_msu_7z(&compressed).map(Some)
+}
+
+/// Decompress a 7z archive containing an MSU-1 data file.
+///
+/// The archive is expected to hold a single file (the .msu data).
+/// Its contents are decompressed entirely to memory and returned.
+fn decompress_msu_7z(compressed: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Cursor;
+
+    let cursor = Cursor::new(compressed);
+    let mut reader = sevenz_rust2::ArchiveReader::new(cursor, sevenz_rust2::Password::empty())
+        .map_err(|e| format!("failed to open MSU-1 7z archive: {e}"))?;
+
+    let mut result: Option<Vec<u8>> = None;
+    reader
+        .for_each_entries(|_entry, entry_reader| {
+            let mut data = Vec::new();
+            entry_reader.read_to_end(&mut data)?;
+            result = Some(data);
+            // Stop after the first entry (a 7z archive should contain a single file).
+            Ok(false)
+        })
+        .map_err(|e| format!("failed to decompress MSU-1 7z archive: {e}"))?;
+
+    result.ok_or_else(|| "MSU-1 7z archive contains no files".to_string())
 }
 
 pub fn discover_msu1_audio_tracks(rom_path: &Path) -> Result<Vec<u16>, String> {
