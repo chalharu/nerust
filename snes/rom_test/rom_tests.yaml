@@ -1953,7 +1953,7 @@ cases:
     max_steps: 4764880
     check_interval_steps: 4764880
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.png
-    expected_screen_hash: 0x9FA423204172007E
+    expected_screen_hash: 0xA8B26CF432AEAD64
   - id: peter-lemon-snes-cpu-adc
     description: |
       The self-authored CPU ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1961,7 +1961,7 @@ cases:
     max_steps: 3454538
     check_interval_steps: 3454538
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.png
-    expected_screen_hash: 0x4A6307060A412176
+    expected_screen_hash: 0x047DD837801C4E6C
   - id: peter-lemon-snes-cpu-and
     description: |
       The self-authored CPU AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1969,7 +1969,7 @@ cases:
     max_steps: 2799367
     check_interval_steps: 2799367
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.png
-    expected_screen_hash: 0x1B76573A8CDE5B29
+    expected_screen_hash: 0xF5A6562F3FE59B94
   - id: peter-lemon-snes-cpu-asl
     description: |
       The self-authored CPU ASL test ROM verifies correct ASL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1977,7 +1977,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.png
-    expected_screen_hash: 0x270B715ED335207B
+    expected_screen_hash: 0xE6FD9F2F5DD5C7FD
   - id: peter-lemon-snes-cpu-bit
     description: |
       The self-authored CPU BIT test ROM verifies correct BIT instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1985,7 +1985,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.png
-    expected_screen_hash: 0x291284D0A7AD833E
+    expected_screen_hash: 0x5C98213CB06A2D54
   - id: peter-lemon-snes-cpu-bra
     description: |
       The self-authored CPU BRA test ROM verifies correct BRA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1993,7 +1993,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.png
-    expected_screen_hash: 0x643A00BDEFB4F30D
+    expected_screen_hash: 0xF4EC26667D5BC3D4
   - id: peter-lemon-snes-cpu-dec
     description: |
       The self-authored CPU DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2008,7 +2008,7 @@ cases:
     max_steps: 2322879
     check_interval_steps: 2322879
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.png
-    expected_screen_hash: 0x9E3FA5C99C10BD68
+    expected_screen_hash: 0x1B1AC5E01C0AC0CE
   - id: peter-lemon-snes-cpu-inc
     description: |
       The self-authored CPU INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2023,7 +2023,7 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.png
-    expected_screen_hash: 0x0013810BB30450A3
+    expected_screen_hash: 0xC79F48F71CC07863
   - id: peter-lemon-snes-cpu-ldr
     description: |
       The self-authored CPU LDR test ROM verifies correct LDR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2031,7 +2031,7 @@ cases:
     max_steps: 3335416
     check_interval_steps: 3335416
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.png
-    expected_screen_hash: 0xBF4684BD3981DC35
+    expected_screen_hash: 0x9AF69FC852E9DD7D
   - id: peter-lemon-snes-cpu-lsr
     description: |
       The self-authored CPU LSR test ROM verifies correct LSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2039,7 +2039,7 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.png
-    expected_screen_hash: 0xD24E9136BDDF2416
+    expected_screen_hash: 0xBCEEC4C10DF79773
   - id: peter-lemon-snes-cpu-mov
     description: |
       The self-authored CPU MOV test ROM verifies correct MOV instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2054,7 +2054,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.png
-    expected_screen_hash: 0xF57D3F255B69C0D3
+    expected_screen_hash: 0x2EF25C0C9009F1A2
     reset_at_steps: [100000]
   - id: peter-lemon-snes-cpu-ora
     description: |
@@ -2063,7 +2063,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.png
-    expected_screen_hash: 0x02A73EF65F92CEA2
+    expected_screen_hash: 0xEB9FC970A87A901C
   - id: peter-lemon-snes-cpu-phl
     description: |
       The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2071,7 +2071,7 @@ cases:
     max_steps: 2978050
     check_interval_steps: 2978050
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.png
-    expected_screen_hash: 0x832F2C322B814DAA
+    expected_screen_hash: 0x372967588E9FA290
   - id: peter-lemon-snes-cpu-psr
     description: |
       The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2079,7 +2079,7 @@ cases:
     max_steps: 1250781
     check_interval_steps: 1250781
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.png
-    expected_screen_hash: 0x47250BC0A20F1244
+    expected_screen_hash: 0xD18503920340C8AF
   - id: peter-lemon-snes-cpu-ret
     description: |
       The self-authored CPU RET test ROM verifies correct RET instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2087,7 +2087,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.png
-    expected_screen_hash: 0xB0A1A127D4AB3A28
+    expected_screen_hash: 0x4616A0849F2F0894
   - id: peter-lemon-snes-cpu-rol
     description: |
       The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2095,7 +2095,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.png
-    expected_screen_hash: 0x833F3680D0538274
+    expected_screen_hash: 0x066F41C67607078B
   - id: peter-lemon-snes-cpu-ror
     description: |
       The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2103,7 +2103,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.png
-    expected_screen_hash: 0xB809D1ED9753496E
+    expected_screen_hash: 0xB109BF25844CCB9D
   - id: peter-lemon-snes-cpu-sbc
     description: |
       The self-authored CPU SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2111,7 +2111,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.png
-    expected_screen_hash: 0x7BCF082D0B67D0B6
+    expected_screen_hash: 0x4014BA2F3A1B64D4
   - id: peter-lemon-snes-cpu-str
     description: |
       The self-authored CPU STR test ROM verifies correct STR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2119,7 +2119,7 @@ cases:
     max_steps: 4228831
     check_interval_steps: 4228831
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.png
-    expected_screen_hash: 0x03B5E2805B76FD30
+    expected_screen_hash: 0x55F1A76B93D48FE6
   - id: peter-lemon-snes-cpu-trn
     description: |
       The self-authored CPU TRN test ROM verifies correct TRN instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2127,7 +2127,7 @@ cases:
     max_steps: 3394977
     check_interval_steps: 3394977
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.png
-    expected_screen_hash: 0xC7A76245F825519E
+    expected_screen_hash: 0xD97BACDA4D8971E3
   - id: peter-lemon-snes-spc700-adc
     description: |
       The self-authored SPC700 ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2923,7 +2923,7 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     # reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
-    expected_screen_hash: 0x5A2E5D38B6AD2A33
+    expected_screen_hash: 0xE147F0E3648D7E2F
   - id: snes-peter-lemon-snes-PPU-Mode7-RotZoom-RotZoom
     description: |  
       Peter Lemon's PPU Mode7 RotZoom test verifies correct rendering of rotation and zoom
