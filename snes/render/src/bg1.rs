@@ -9,6 +9,7 @@ use super::{
     tile::{bg_chr_2bpp_pixel, bg_chr_8bpp_pixel, chr_4bpp_pixel, read_tilemap_entry},
     use_presented_bg_scroll,
 };
+use nerust_snes_core::PresentedColorWindowLine;
 
 pub(super) fn render_bg1(
     core: &Core,
@@ -79,13 +80,44 @@ pub(super) fn render_bg1(
     let hofs_mask = if high_res_mode { 0x7FF } else { 0x3FF };
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
 
+    // Window masking: TMW ($212E) controls which layers are masked
+    // by the color window on the main screen.
+    let tmw = core.peek(0x00212E);
+    let layer_tm_mask = layer.tm_mask();
+    let window_masked = tmw & layer_tm_mask != 0;
+    let window_settings = if layer == BgLayer::Bg1 || layer == BgLayer::Bg2 {
+        core.peek(0x002123)
+    } else {
+        core.peek(0x002124)
+    };
+    let layer_window_shift = match layer {
+        BgLayer::Bg1 => 0,
+        BgLayer::Bg2 => 4,
+        BgLayer::Bg3 => 0,
+        BgLayer::Bg4 => 4,
+    };
+    let win1_setting = (window_settings >> layer_window_shift) & 0x03;
+    let win2_setting = (window_settings >> (layer_window_shift + 2)) & 0x03;
+    let wbglog_shift = match layer {
+        BgLayer::Bg1 => 0,
+        BgLayer::Bg2 => 2,
+        BgLayer::Bg3 => 4,
+        BgLayer::Bg4 => 6,
+    };
+    let window_logic = (core.peek(0x00212A) >> wbglog_shift) & 0x03;
+
     for screen_y in 0..render_height {
         let presented_y = screen_y / height_ratio;
-        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer.tm_mask()
+        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
             == 0
         {
             continue;
         }
+        let window_line = core.presented_color_window_line(presented_y).unwrap_or(PresentedColorWindowLine { wh0: core.peek(0x002126), wh1: core.peek(0x002127), wh2: core.peek(0x002128), wh3: core.peek(0x002129) });
+        let wh0 = window_line.wh0;
+        let wh1 = window_line.wh1;
+        let wh2 = window_line.wh2;
+        let wh3 = window_line.wh3;
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, layer, presented_y))
             .flatten();
@@ -106,6 +138,9 @@ pub(super) fn render_bg1(
         let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
+            if window_masked && in_window(win1_setting, win2_setting, window_logic, screen_x, wh0, wh1, wh2, wh3) {
+                continue;
+            }
             let bg_x = (screen_x + hofs) % tilemap_width_pixels;
             if let Some(raw) = bg1_pixel(core, &context, bg_x, bg_y) {
                 raw_output[row_offset + screen_x] = raw;
@@ -114,6 +149,56 @@ pub(super) fn render_bg1(
     }
 
     Ok(())
+}
+
+fn in_window(
+    win1_setting: u8,
+    win2_setting: u8,
+    logic: u8,
+    screen_x: usize,
+    wh0: u8,
+    wh1: u8,
+    wh2: u8,
+    wh3: u8,
+) -> bool {
+    let win1_inverted = wh0 > wh1;
+    let in_win1_range = if win1_inverted {
+        true
+    } else {
+        (wh0..=wh1).contains(&(screen_x as u8))
+    };
+    let in_win1 = if win1_setting == 0 {
+        false
+    } else if win1_setting & 0x01 != 0 {
+        // outside mode: mask when pixel is outside the window
+        !in_win1_range
+    } else {
+        // inside mode: mask when pixel is inside the window
+        in_win1_range
+    };
+
+    let win2_inverted = wh2 > wh3;
+    let in_win2_range = if win2_inverted {
+        true
+    } else {
+        (wh2..=wh3).contains(&(screen_x as u8))
+    };
+    let in_win2 = if win2_setting == 0 {
+        false
+    } else if win2_setting & 0x01 != 0 {
+        // outside mode
+        !in_win2_range
+    } else {
+        // inside mode
+        in_win2_range
+    };
+
+    match logic {
+        0 => in_win1 || in_win2,
+        1 => in_win1 && in_win2,
+        2 => in_win1 ^ in_win2,
+        _ => !(in_win1 ^ in_win2),
+    }
 }
 
 fn screen_uses_layer(
