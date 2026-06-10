@@ -30,14 +30,49 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
     let rgba = if raw.len() >= output_size {
         raw[..output_size].to_vec()
     } else {
+        // Paletted PNG with bit_depth < 8: pixels are packed (e.g. 4-bit = 2 pixels/byte).
+        // The decoder provides raw packed bytes; expand to RGBA via palette lookup.
+        let bits_per_pixel = match reader.info().bit_depth {
+            png::BitDepth::One => 1,
+            png::BitDepth::Two => 2,
+            png::BitDepth::Four => 4,
+            png::BitDepth::Eight => 8,
+            png::BitDepth::Sixteen => 16,
+        };
+        let pixels_per_byte = if bits_per_pixel < 8 { 8 / bits_per_pixel } else { 1 };
+        let palette = reader.info().palette.as_ref();
+        let trns = reader.info().trns.as_ref();
         let mut rgba = Vec::with_capacity(output_size);
-        let src_bpp = if raw.len() >= pixel_count * 3 { 3 } else { 1 };
         for i in 0..pixel_count {
-            let src = i * src_bpp;
-            rgba.push(if src_bpp > 0 { raw[src] } else { 0 });
-            rgba.push(if src_bpp > 1 { raw[src + 1] } else { 0 });
-            rgba.push(if src_bpp > 2 { raw[src + 2] } else { 0 });
-            rgba.push(0xFF);
+            let (r, g, b, a) = if pixels_per_byte > 1 && palette.is_some() {
+                // Packed indexed pixels: extract nibble/bit and look up palette.
+                let byte_idx = i / pixels_per_byte;
+                let shift = ((i % pixels_per_byte) * bits_per_pixel) as u8;
+                let idx = if byte_idx < raw.len() {
+                    (raw[byte_idx] >> shift) & ((1u8 << bits_per_pixel) - 1)
+                } else {
+                    0
+                } as usize;
+                let pal = palette.unwrap();
+                if idx * 3 + 2 < pal.len() {
+                    let alpha = trns.and_then(|t| t.get(idx).copied()).unwrap_or(0xFF);
+                    (pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2], alpha)
+                } else {
+                    (0, 0, 0, 0xFF)
+                }
+            } else {
+                // Full-byte format (RGB, RGBA, or grayscale).
+                let src_bpp = if raw.len() >= pixel_count * 3 { 3 } else { 1 };
+                let src = i * src_bpp;
+                let r = if src < raw.len() { raw[src] } else { 0 };
+                let g = if src_bpp > 1 && src + 1 < raw.len() { raw[src + 1] } else { r };
+                let b = if src_bpp > 2 && src + 2 < raw.len() { raw[src + 2] } else { r };
+                (r, g, b, 0xFF)
+            };
+            rgba.push(r);
+            rgba.push(g);
+            rgba.push(b);
+            rgba.push(a);
         }
         rgba
     };
