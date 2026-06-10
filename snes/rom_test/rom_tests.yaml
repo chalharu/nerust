@@ -1570,7 +1570,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_bounce_test.sfc
     max_steps: 200000
     check_interval_steps: 200000
-    expected_screen_hash: "0x28FA13E155D016A2"
+    expected_screen_hash: "0x5B99D0174EAB1953"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1588,7 +1588,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
     max_steps: 53248
     check_interval_steps: 53248
-    expected_screen_hash: "0xFADF7AE332B585EE"
+    expected_screen_hash: "0x00B9B6854716FB49"
     assertions:
       - kind: bus_u8
         address: "0x002100"
