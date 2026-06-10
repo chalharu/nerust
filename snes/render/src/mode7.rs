@@ -51,9 +51,8 @@ pub(super) fn render_mode7_bg1(
         let mode7_screen_y = (presented_y + 1) as i32;
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
-            if let Some(color) = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y) {
-                put_pixel(rgba, render_width, screen_x, screen_y, color);
-            }
+            let color = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y);
+            put_pixel(rgba, render_width, screen_x, screen_y, color);
         }
     }
 }
@@ -63,18 +62,10 @@ fn mode7_pixel(
     context: &Mode7RenderContext,
     screen_x: i32,
     screen_y: i32,
-) -> Option<[u8; 4]> {
+) -> [u8; 4] {
     let (source_x, source_y) = mode7_source_coordinates(context, screen_x, screen_y);
     let color = mode7_vram_pixel(core, source_x, source_y);
-    if color == 0 {
-        return None;
-    }
-
-    Some(cgram_color_rgba(
-        core,
-        usize::from(color),
-        context.brightness,
-    ))
+    cgram_color_rgba(core, usize::from(color), context.brightness)
 }
 
 fn mode7_source_coordinates(
