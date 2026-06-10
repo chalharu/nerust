@@ -113,7 +113,15 @@ pub(super) fn render_bg1(
         {
             continue;
         }
-        let window_line = core.presented_color_window_line(presented_y).unwrap_or(PresentedColorWindowLine { wh0: core.peek(0x002126), wh1: core.peek(0x002127), wh2: core.peek(0x002128), wh3: core.peek(0x002129) });
+        // Use per-scanline window data from the completed frame if available;
+        // otherwise fall back to the current register values.
+        let fallback_wh = PresentedColorWindowLine {
+            wh0: core.peek(0x002126),
+            wh1: core.peek(0x002127),
+            wh2: core.peek(0x002128),
+            wh3: core.peek(0x002129),
+        };
+        let window_line = core.presented_color_window_line(presented_y).unwrap_or(fallback_wh);
         let wh0 = window_line.wh0;
         let wh1 = window_line.wh1;
         let wh2 = window_line.wh2;
@@ -161,34 +169,31 @@ fn in_window(
     wh2: u8,
     wh3: u8,
 ) -> bool {
-    // When WH0 > WH1, the window covers everything EXCEPT [WH1, WH0]
-    // (the range between the two boundaries is the EXCLUDED region).
+    // When WH0 > WH1 (inverted), the window covers ALL pixels.
     let in_win1_range = if wh0 <= wh1 {
         (wh0..=wh1).contains(&(screen_x as u8))
     } else {
-        !((wh1..=wh0).contains(&(screen_x as u8)))
+        true
     };
     let in_win1 = if win1_setting == 0 {
         false
     } else if win1_setting & 0x01 != 0 {
-        // outside mode: mask when pixel is outside the window
-        !in_win1_range
-    } else {
-        // inside mode: mask when pixel is inside the window
         in_win1_range
+    } else {
+        !in_win1_range
     };
 
     let in_win2_range = if wh2 <= wh3 {
         (wh2..=wh3).contains(&(screen_x as u8))
     } else {
-        !((wh3..=wh2).contains(&(screen_x as u8)))
+        true
     };
     let in_win2 = if win2_setting == 0 {
         false
     } else if win2_setting & 0x01 != 0 {
-        !in_win2_range
-    } else {
         in_win2_range
+    } else {
+        !in_win2_range
     };
 
     match logic {
