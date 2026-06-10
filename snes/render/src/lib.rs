@@ -426,16 +426,11 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
-            let screen_x = i % render_width;
             let screen_y = i / render_width;
-            // Mode 5 pseudo-512: even pixel columns = sub, odd = main.
-            // Interlace: even scanlines use main, odd scanlines use sub.
-            // Combined: the screen selection toggles per (scanline × column).
-            let is_main = (screen_x & 1) != (screen_y & 1);
-            if is_main {
-                main_raw[i]
-            } else {
+            if screen_y & 1 != 0 {
                 sub_raw[i]
+            } else {
+                main_raw[i]
             }
         } else {
             main_raw[i]
