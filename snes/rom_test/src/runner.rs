@@ -200,7 +200,11 @@ fn finalize_validation(
                     "screen_hash: reference PNG 0x{png_hash:016X}, rendered 0x{final_screen_hash:016X}"
                 ));
                 if let Ok(png_rgba) = load_png_rgba(png_path) {
-                    let png_pitch = rendered.width * 4;
+                    let png_pitch = if rendered.height > 0 {
+                        png_rgba.len() / rendered.height
+                    } else {
+                        rendered.width * 4
+                    };
                     let our_pitch = rendered.width * 4;
                     for y in 0..rendered.height {
                         for x in 0..rendered.width {
