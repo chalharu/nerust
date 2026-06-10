@@ -64,7 +64,8 @@ fn mode7_pixel(
     screen_y: i32,
 ) -> [u8; 4] {
     let (source_x, source_y) = mode7_source_coordinates(context, screen_x, screen_y);
-    let color = mode7_vram_pixel(core, source_x, source_y);
+    let extbg = context.registers.m7sel & 0x80 != 0;
+    let color = mode7_vram_pixel(core, source_x, source_y, extbg);
     cgram_color_rgba(core, usize::from(color), context.brightness)
 }
 
@@ -89,13 +90,18 @@ fn mode7_source_coordinates(
     )
 }
 
-fn mode7_vram_pixel(core: &Core, source_x: usize, source_y: usize) -> u8 {
+fn mode7_vram_pixel(core: &Core, source_x: usize, source_y: usize, extbg: bool) -> u8 {
     let tile_x = (source_x / 8) & 0x7F;
     let tile_y = (source_y / 8) & 0x7F;
     let pixel_x = source_x & 0x07;
     let pixel_y = source_y & 0x07;
     let tile_number = usize::from(core.peek_vram((tile_y * 128 + tile_x) * 2));
-    core.peek_vram((tile_number * 64 + pixel_y * 8 + pixel_x) * 2 + 1)
+    let raw = core.peek_vram((tile_number * 64 + pixel_y * 8 + pixel_x) * 2 + 1);
+    if extbg {
+        raw & 0x07
+    } else {
+        raw
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
