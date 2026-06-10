@@ -219,19 +219,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     render_bg1(
         core,
-        BgLayer::Bg1,
-        render_brightness,
-        tm,
-        use_presented_tm,
-        interlace_enabled,
-        render_width,
-        render_height,
-        &mut rgba,
-        &mut main_raw,
-    )?;
-    render_bg1(
-        core,
-        BgLayer::Bg2,
+        BgLayer::Bg4,
         render_brightness,
         tm,
         use_presented_tm,
@@ -255,7 +243,19 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     )?;
     render_bg1(
         core,
-        BgLayer::Bg4,
+        BgLayer::Bg2,
+        render_brightness,
+        tm,
+        use_presented_tm,
+        interlace_enabled,
+        render_width,
+        render_height,
+        &mut rgba,
+        &mut main_raw,
+    )?;
+    render_bg1(
+        core,
+        BgLayer::Bg1,
         render_brightness,
         tm,
         use_presented_tm,
@@ -272,19 +272,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
         render_bg1(
             core,
-            BgLayer::Bg1,
-            render_brightness,
-            ts,
-            use_presented_tm,
-            interlace_enabled,
-            render_width,
-            render_height,
-            &mut rgba,
-            &mut sub_raw,
-        )?;
-        render_bg1(
-            core,
-            BgLayer::Bg2,
+            BgLayer::Bg4,
             render_brightness,
             ts,
             use_presented_tm,
@@ -308,7 +296,19 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         )?;
         render_bg1(
             core,
-            BgLayer::Bg4,
+            BgLayer::Bg2,
+            render_brightness,
+            ts,
+            use_presented_tm,
+            interlace_enabled,
+            render_width,
+            render_height,
+            &mut rgba,
+            &mut sub_raw,
+        )?;
+        render_bg1(
+            core,
+            BgLayer::Bg1,
             render_brightness,
             ts,
             use_presented_tm,
