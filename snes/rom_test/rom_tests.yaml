@@ -2962,7 +2962,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedSpaceIndirectHDMA.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedSpaceIndirectHDMA.png
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedspaceIndirectHDMA.png
   - id: snes-peter-lemon-snes-PPU-HDMA-WaveHDMA-WaveHDMA
     description: |  
       Peter Lemon's PPU HDMA Wave HDMA test verifies correct rendering of wave HDMA effects
@@ -3106,7 +3106,7 @@ cases:
     rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedSpaceHDMA.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedSpaceHDMA.png
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedspaceHDMA.png
   - id: snes-peter-lemon-snes-Games-MonsterFarmJump-MonsterFarmJump
     description: |  
       Peter Lemon's Monster Farm Jump test verifies correct rendering of
