@@ -37,11 +37,7 @@ pub(super) fn render_obj(
             continue;
         }
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
-        let interlace_screen_y = if interlace_field {
-            presented_y.wrapping_add(1)
-        } else {
-            presented_y
-        };
+        let interlace_screen_y = presented_y;
         let slivers = obj_slivers_for_scanline(&sprites, interlace_screen_y);
         for sliver in slivers.iter().rev() {
             render_obj_sliver(
