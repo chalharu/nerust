@@ -34,6 +34,15 @@ pub(super) fn render_bg1(
         return Ok(());
     };
     let high_res_mode = screen_mode == 5 || screen_mode == 6;
+    // In Mode 5/6, tiles are always 16 pixels wide. The tile size bit
+    // (BGMODE bits A/B/C/D) controls the height: 8 or 16 pixels tall.
+    // In all other modes, tiles are square (8x8 or 16x16).
+    let (tile_size, tile_height) = if high_res_mode {
+        (16, if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 })
+    } else {
+        let s = if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 };
+        (s, s)
+    };
     if mode == BgRenderMode::Mode7 {
         render_mode7_bg1(
             core,
@@ -337,10 +346,18 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     let subtile_y = tile_pixel_y / 8;
     let pixel_x = tile_pixel_x % 8;
     let pixel_y = tile_pixel_y % 8;
-    let tile_number = if context.high_res_mode {
-        usize::from(entry & 0x00FF) + subtile_x + subtile_y * 16
+    // VRAM tile stride: for standard modes (0-4) it is 16 tiles per row.
+    // In high-resolution modes (5/6) the CHR data is stored contiguously
+    // with a stride equal to the tile width in 8-pixel subtiles.
+    let chr_row_stride = if context.high_res_mode {
+        context.tile_size / 8
     } else {
-        usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16
+        16
+    };
+    let tile_number = if context.high_res_mode {
+        usize::from(entry & 0x00FF) + subtile_x + subtile_y * chr_row_stride
+    } else {
+        usize::from(entry & 0x03FF) + subtile_x + subtile_y * chr_row_stride
     };
     let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
@@ -478,10 +495,10 @@ impl BgLayer {
 
     const fn tile_size_mask(self) -> u8 {
         match self {
-            Self::Bg1 => 0x10,
-            Self::Bg2 => 0x20,
-            Self::Bg3 => 0x40,
-            Self::Bg4 => 0x80,
+            Self::Bg1 => 0x08,
+            Self::Bg2 => 0x10,
+            Self::Bg3 => 0x20,
+            Self::Bg4 => 0x40,
         }
     }
 
