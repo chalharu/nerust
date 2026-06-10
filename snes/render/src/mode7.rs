@@ -30,8 +30,16 @@ pub(super) fn render_mode7_bg1(
     let raw_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
     // Mode 7 scroll offsets are 10-bit signed values.
     // Sign-extend from 10 bits to match bsnes behavior.
-    let current_hofs = if raw_hofs & 0x200 != 0 { raw_hofs | !0x3FF } else { raw_hofs };
-    let current_vofs = if raw_vofs & 0x200 != 0 { raw_vofs | !0x3FF } else { raw_vofs };
+    let current_hofs = if raw_hofs & 0x200 != 0 {
+        raw_hofs | !0x3FF
+    } else {
+        raw_hofs
+    };
+    let current_vofs = if raw_vofs & 0x200 != 0 {
+        raw_vofs | !0x3FF
+    } else {
+        raw_vofs
+    };
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
@@ -70,8 +78,10 @@ pub(super) fn render_mode7_bg1(
         let dx = hofs - center_x;
         let dy = vofs - center_y;
         let mode7_screen_y = presented_y as i32;
-        let origin_x = ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
-        let origin_y = ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
+        let origin_x =
+            ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
+        let origin_y =
+            ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
 
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
@@ -95,9 +105,24 @@ pub(super) fn render_mode7_bg1(
     //   bit 7    = BG2 priority
     // When BG2 color index is 0, the pixel is transparent and BG1 shows through.
     if extbg {
-        render_mode7_bg2_overlay(core, brightness, a, b, c, d, center_x, center_y,
-            repeat, current_hofs, current_vofs, use_presented_scroll,
-            interlace_enabled, render_width, render_height, rgba);
+        render_mode7_bg2_overlay(
+            core,
+            brightness,
+            a,
+            b,
+            c,
+            d,
+            center_x,
+            center_y,
+            repeat,
+            current_hofs,
+            current_vofs,
+            use_presented_scroll,
+            interlace_enabled,
+            render_width,
+            render_height,
+            rgba,
+        );
     }
 }
 
@@ -146,8 +171,10 @@ fn render_mode7_bg2_overlay(
         let dx = hofs - center_x;
         let dy = vofs - center_y;
         let mode7_screen_y = presented_y as i32;
-        let origin_x = ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
-        let origin_y = ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
+        let origin_x =
+            ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
+        let origin_y =
+            ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
 
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
@@ -200,5 +227,4 @@ pub(super) fn mode7_pixel_value(
 }
 
 #[cfg(test)]
-mod tests {
-}
+mod tests {}

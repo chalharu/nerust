@@ -122,7 +122,8 @@ pub(super) fn render_bg1(
         }
         // Use per-scanline window data if available; otherwise fall back to
         // current register values (which retain the previous frame's HDMA writes).
-        let window_line = core.presented_color_window_line(presented_y)
+        let window_line = core
+            .presented_color_window_line(presented_y)
             .or_else(|| {
                 // If no captured data, try the current frame's data from the "current" arrays
                 // by calling presented_color_window_line with a different approach.
@@ -141,8 +142,9 @@ pub(super) fn render_bg1(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, layer, presented_y))
             .flatten();
-        let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| usize::from(line.hofs.wrapping_add(hofs_extra)))
-            & hofs_mask)
+        let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| {
+            usize::from(line.hofs.wrapping_add(hofs_extra))
+        }) & hofs_mask)
             % tilemap_width_pixels.max(1);
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
@@ -153,8 +155,7 @@ pub(super) fn render_bg1(
         } else {
             raw_vofs & 0x3FF
         };
-        let vofs =
-            (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
+        let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
         // The PPU's tile-fetch pipeline starts during the VBlank pre-render
         // scanline, loading the first tile row into an internal latch. Our stub
         // model captures each scanline's register state AFTER the latch has
@@ -190,7 +191,18 @@ pub(super) fn render_bg1(
         };
         let row_offset = screen_y * render_width;
         for screen_x in 0..render_width {
-            if window_masked && in_window(win1_setting, win2_setting, window_logic, screen_x, wh0, wh1, wh2, wh3) {
+            if window_masked
+                && in_window(
+                    win1_setting,
+                    win2_setting,
+                    window_logic,
+                    screen_x,
+                    wh0,
+                    wh1,
+                    wh2,
+                    wh3,
+                )
+            {
                 continue;
             }
             let bg_x = if mosaic_enabled {

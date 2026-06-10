@@ -201,11 +201,17 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     } else {
         SCREEN_HEIGHT
     };
-        let pixel_count = render_width * render_height;
+    let pixel_count = render_width * render_height;
 
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
-            rgba: render_presented_backdrop(core, render_width, render_height, use_presented_inidisp, cgram_hdma_active),
+            rgba: render_presented_backdrop(
+                core,
+                render_width,
+                render_height,
+                use_presented_inidisp,
+                cgram_hdma_active,
+            ),
             width: render_width,
             height: render_height,
         });
@@ -224,7 +230,13 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let render_brightness = if brightness == 0 { 15 } else { brightness };
 
     // --- Render backdrop to RGBA ---
-    let mut rgba = render_presented_backdrop(core, render_width, render_height, use_presented_inidisp, cgram_hdma_active);
+    let mut rgba = render_presented_backdrop(
+        core,
+        render_width,
+        render_height,
+        use_presented_inidisp,
+        cgram_hdma_active,
+    );
 
     // --- Main screen: render BG layers to raw 15-bit buffer ---
     let mut main_raw = vec![TRANSPARENT; pixel_count];
@@ -284,8 +296,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
 
     // --- Sub screen: render BG layers for color math and Mode 5/6 interleaving ---
     let mut sub_raw = vec![TRANSPARENT; pixel_count];
-    if ts != 0 && color_math_supported {
-
+    if ts != 0 {
         render_bg1(
             core,
             BgLayer::Bg4,
@@ -336,76 +347,79 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
-            0,
+            if high_res_mode { 0 } else { 0 },
         )?;
 
-        let cgwsel = core.peek(0x002130);
-        let cgadsub = core.peek(0x002131);
-        let fixed_color = core.fixed_color();
-        let cgwsel_enable_main = (cgwsel >> 0) & 0x03;
-        let cgwsel_disable_main = (cgwsel >> 4) & 0x03;
+        if color_math_supported {
+            let cgwsel = core.peek(0x002130);
+            let cgadsub = core.peek(0x002131);
+            let fixed_color = core.fixed_color();
+            let cgwsel_enable_main = (cgwsel >> 0) & 0x03;
+            let cgwsel_disable_main = (cgwsel >> 4) & 0x03;
 
-        let wobjsel = core.peek(0x002125);
-        let settings = (wobjsel >> 4) & 0x0F;
-        let window1_setting = settings & 0x03;
-        let window2_setting = (settings >> 2) & 0x03;
-        let in_color_window = window1_setting == 0 && window2_setting == 0;
+            let wobjsel = core.peek(0x002125);
+            let settings = (wobjsel >> 4) & 0x0F;
+            let window1_setting = settings & 0x03;
+            let window2_setting = (settings >> 2) & 0x03;
+            let in_color_window = window1_setting == 0 && window2_setting == 0;
 
-        let cgadsub_bg1 = cgadsub & 0x01 != 0;
-        let cgadsub_bg2 = cgadsub & 0x02 != 0;
-        let cgadsub_bg3 = cgadsub & 0x04 != 0;
-        let cgadsub_bg4 = cgadsub & 0x08 != 0;
-        let cgadsub_obj = cgadsub & 0x10 != 0;
-        let cgadsub_backdrop = cgadsub & 0x20 != 0;
-        let subtract = cgadsub & 0x80 != 0;
-        let half = cgadsub & 0x40 != 0;
+            let cgadsub_bg1 = cgadsub & 0x01 != 0;
+            let cgadsub_bg2 = cgadsub & 0x02 != 0;
+            let cgadsub_bg3 = cgadsub & 0x04 != 0;
+            let cgadsub_bg4 = cgadsub & 0x08 != 0;
+            let cgadsub_obj = cgadsub & 0x10 != 0;
+            let cgadsub_backdrop = cgadsub & 0x20 != 0;
+            let subtract = cgadsub & 0x80 != 0;
+            let half = cgadsub & 0x40 != 0;
 
-        let backdrop_color0 = u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF;
+            let backdrop_color0 =
+                u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF;
 
-        for i in 0..pixel_count {
-            let main_raw_val = main_raw[i];
-            let sub_raw_val = sub_raw[i];
+            for i in 0..pixel_count {
+                let main_raw_val = main_raw[i];
+                let sub_raw_val = sub_raw[i];
 
-            if main_raw_val == TRANSPARENT {
-                continue;
+                if main_raw_val == TRANSPARENT {
+                    continue;
+                }
+
+                let layer_participates = cgadsub_bg1
+                    || cgadsub_bg2
+                    || cgadsub_bg3
+                    || cgadsub_bg4
+                    || cgadsub_obj
+                    || (cgadsub_backdrop && main_raw_val == backdrop_color0);
+                if !layer_participates {
+                    continue;
+                }
+
+                let enable = match cgwsel_enable_main {
+                    0 => false,
+                    1 => !in_color_window,
+                    2 => in_color_window,
+                    _ => true,
+                };
+                if !enable {
+                    continue;
+                }
+
+                let disable = match cgwsel_disable_main {
+                    0 => false,
+                    1 => !in_color_window,
+                    2 => in_color_window,
+                    _ => true,
+                };
+                if disable {
+                    continue;
+                }
+
+                let sub_source = if sub_raw_val != TRANSPARENT {
+                    sub_raw_val
+                } else {
+                    fixed_color
+                };
+                main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
             }
-
-            let layer_participates = cgadsub_bg1
-                || cgadsub_bg2
-                || cgadsub_bg3
-                || cgadsub_bg4
-                || cgadsub_obj
-                || (cgadsub_backdrop && main_raw_val == backdrop_color0);
-            if !layer_participates {
-                continue;
-            }
-
-            let enable = match cgwsel_enable_main {
-                0 => false,
-                1 => !in_color_window,
-                2 => in_color_window,
-                _ => true,
-            };
-            if !enable {
-                continue;
-            }
-
-            let disable = match cgwsel_disable_main {
-                0 => false,
-                1 => !in_color_window,
-                2 => in_color_window,
-                _ => true,
-            };
-            if disable {
-                continue;
-            }
-
-            let sub_source = if sub_raw_val != TRANSPARENT {
-                sub_raw_val
-            } else {
-                fixed_color
-            };
-            main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
         }
     }
 
@@ -448,8 +462,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             if let Some(backdrop) = core.presented_backdrop_line(presented_y) {
                 if backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0 {
                     let row_start = screen_y * render_width * 4;
-                    for pixel in rgba[row_start..row_start + render_width * 4].chunks_exact_mut(4)
-                    {
+                    for pixel in rgba[row_start..row_start + render_width * 4].chunks_exact_mut(4) {
                         pixel[0] = 0;
                         pixel[1] = 0;
                         pixel[2] = 0;
