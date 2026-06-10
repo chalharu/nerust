@@ -20,6 +20,7 @@ pub(super) fn render_presented_backdrop(
     width: usize,
     height: usize,
     use_presented_inidisp: bool,
+    cgram_hdma_active: bool,
 ) -> Vec<u8> {
     let fallback_backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
@@ -39,14 +40,15 @@ pub(super) fn render_presented_backdrop(
                 if backdrop.inidisp & 0x80 != 0 && current_inidisp & 0x80 == 0 {
                     backdrop.inidisp = current_inidisp;
                 }
-                // The captured CGRAM colour for scanline 0 comes from the
-                // previous frame. If it's 0 (initial/uninitialized), try
-                // scanline 1 which reflects the first active HDMA write.
-                if backdrop.color0 == 0 {
-                    if let Some(next) = core.presented_backdrop_line(1) {
-                        backdrop.color0 = next.color0;
-                    }
-                }
+            }
+        }
+        // Scanline 0's captured CGRAM colour comes from the previous frame,
+        // not the current frame's first HDMA write. When CGRAM HDMA is
+        // active and scanline 0's colour is 0 (initial/uninitialized), use
+        // scanline 1's value which reflects the first HDMA entry.
+        if presented_y == 0 && cgram_hdma_active && backdrop.color0 == 0 {
+            if let Some(next) = core.presented_backdrop_line(1) {
+                backdrop.color0 = next.color0;
             }
         }
         let window = core
