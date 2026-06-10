@@ -198,16 +198,19 @@ fn in_window(
     wh3: u8,
 ) -> bool {
     // When WH0 > WH1 (inverted), the window covers ALL pixels.
-    let in_win1_range = if wh0 <= wh1 {
-        (wh0..=wh1).contains(&(screen_x as u8))
-    } else {
+    let inv1 = wh0 > wh1;
+    let in_win1_range = if inv1 {
         true
+    } else {
+        (wh0..=wh1).contains(&(screen_x as u8))
     };
     let in_win1 = if win1_setting == 0 {
         false
     } else if win1_setting & 0x01 != 0 {
-        // 01 = mask inside range; 11 = mask outside range (per bsnes behavior)
-        if win1_setting == 0x03 {
+        // 01 = mask inside range; 11 = mask outside when non-inverted,
+        // mask inside when inverted (inverted window covers all pixels,
+        // so "mask inside" effectively masks everything).
+        if win1_setting == 0x03 && !inv1 {
             !in_win1_range
         } else {
             in_win1_range
@@ -216,15 +219,16 @@ fn in_window(
         !in_win1_range
     };
 
-    let in_win2_range = if wh2 <= wh3 {
-        (wh2..=wh3).contains(&(screen_x as u8))
-    } else {
+    let inv2 = wh2 > wh3;
+    let in_win2_range = if inv2 {
         true
+    } else {
+        (wh2..=wh3).contains(&(screen_x as u8))
     };
     let in_win2 = if win2_setting == 0 {
         false
     } else if win2_setting & 0x01 != 0 {
-        if win2_setting == 0x03 {
+        if win2_setting == 0x03 && !inv2 {
             !in_win2_range
         } else {
             in_win2_range
