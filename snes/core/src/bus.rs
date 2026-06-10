@@ -552,6 +552,10 @@ impl Bus {
         self.ppu2.interlace_enabled()
     }
 
+    pub(crate) fn obj_interlace_enabled(&self) -> bool {
+        self.ppu2.obj_interlace_enabled()
+    }
+
     pub(crate) fn pseudo_hires_enabled(&self) -> bool {
         self.ppu2.pseudo_hires_enabled()
     }
@@ -1358,14 +1362,10 @@ impl Bus {
     }
 
     fn capture_presented_scanline(&mut self) {
-        let raw_scanline = usize::from(self.current_scanline());
-        // Hardware scanline 0 is a pre-render scanline that precedes the
-        // first visible scanline. Map it out so that index 0 in the capture
-        // arrays corresponds to the first visible scanline (scanline 1).
-        if raw_scanline == 0 || raw_scanline > PRESENTED_SCANLINE_COUNT {
+        let scanline = usize::from(self.current_scanline());
+        if scanline >= PRESENTED_SCANLINE_COUNT {
             return;
         }
-        let scanline = raw_scanline - 1;
 
         let color0 =
             u16::from_le_bytes([self.ppu2.peek_cgram(0), self.ppu2.peek_cgram(1)]) & 0x7FFF;

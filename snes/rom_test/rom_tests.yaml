@@ -8,7 +8,7 @@ cases:
     rom: snes-tests/cputest/cputest-basic.sfc
     max_steps: 6651904
     check_interval_steps: 6651904
-    expected_screen_hash: "0xC93561729BB28392"
+    expected_screen_hash: "0xB6B9DE953F18A401"
     assertions:
       - kind: bus_u16
         address: "0x0010"
@@ -41,7 +41,7 @@ cases:
     rom: snes-tests/cputest/cputest-full.sfc
     max_steps: 9633792
     check_interval_steps: 9633792
-    expected_screen_hash: "0x91A43CED661B4A45"
+    expected_screen_hash: "0xA05D7EE0B5E1FD17"
     assertions:
       - kind: bus_u16
         address: "0x0010"
@@ -74,7 +74,7 @@ cases:
     rom: snes-tests/spctest/spctest.sfc
     max_steps: 4000000
     check_interval_steps: 4000000
-    expected_screen_hash: "0x17A60FC3F3F29FF8"
+    expected_screen_hash: "0x6355F99FAC09A849"
     assertions:
       - kind: bus_u16
         address: "0x002142"
@@ -131,7 +131,7 @@ cases:
     rom: snes-test-roms/bin/65816-examples/arguments-after-jsr.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xD1A14810D2AB7B80"
+    expected_screen_hash: "0x5EE4948C7C61C2A5"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -149,7 +149,7 @@ cases:
     rom: snes-test-roms/bin/examples/textbuffer-hello-world.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x2D1087C46AC400C1"
+    expected_screen_hash: "0x0519133F376900A8"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -167,7 +167,7 @@ cases:
     rom: snes-test-roms/bin/examples/vram-writes-without-dma.sfc
     max_steps: 300000
     check_interval_steps: 256
-    expected_screen_hash: "0x0E03325080A2B1E8"
+    expected_screen_hash: "0x164C473087C35D5D"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -191,7 +191,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-to-cgram.sfc
     max_steps: 500000
     check_interval_steps: 256
-    expected_screen_hash: "0xCBFACF7D71C40665"
+    expected_screen_hash: "0x573DA5CCE4D37653"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -203,7 +203,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-repeat-entry.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xC2C074EFF8F9C0DF"
+    expected_screen_hash: "0xA70C4BB46FFD192F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -221,7 +221,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-double-buffered-parallax.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x05257F8CDF145687"
+    expected_screen_hash: "0xDC8BB6AB64B78DB4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -240,7 +240,7 @@ cases:
       snes-test-roms/bin/examples/hdma-double-buffered-indirect-shear.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xE020619A90083582"
+    expected_screen_hash: "0x15E6EE7BD6A90B95"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -258,7 +258,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-160scanline-hdma-entry.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xFBEB4B1B5F9CDC5F"
+    expected_screen_hash: "0xCA867431445F45F8"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -276,7 +276,7 @@ cases:
     rom: snes-test-roms/bin/examples/hdma-indirect-mapping.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xB2789ABCB50DDF3A"
+    expected_screen_hash: "0xA54807DAE4E757BC"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -295,7 +295,7 @@ cases:
       snes-test-roms/bin/examples/hdma-indirect-repeating-pattern.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x4FBEA660AFE95BF8"
+    expected_screen_hash: "0x741CCA01312348AC"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -314,7 +314,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x747682EA06D58AE4"
+    expected_screen_hash: "0x9C85794034B6E29D"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -348,7 +348,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-1bpp-no-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xDF2DA3CEE618FC3D"
+    expected_screen_hash: "0x71C78EC78270F557"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -367,7 +367,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-1bpp-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xDF2DA3CEE618FC3D"
+    expected_screen_hash: "0x71C78EC78270F557"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -386,7 +386,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-no-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x747682EA06D58AE4"
+    expected_screen_hash: "0x9C85794034B6E29D"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -405,7 +405,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-split-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x747682EA06D58AE4"
+    expected_screen_hash: "0x9C85794034B6E29D"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -424,7 +424,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x8B7C5271230932BE"
+    expected_screen_hash: "0x97DCE715B9555BA2"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -437,7 +437,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-no-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x8B7C5271230932BE"
+    expected_screen_hash: "0x97DCE715B9555BA2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -456,7 +456,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-no-remapping-word.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x8B7C5271230932BE"
+    expected_screen_hash: "0x97DCE715B9555BA2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -475,7 +475,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-with-remapping-word.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x8B7C5271230932BE"
+    expected_screen_hash: "0x97DCE715B9555BA2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -494,7 +494,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xA13EDC5CAE547B09"
+    expected_screen_hash: "0xFDED1B889D95799F"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -507,7 +507,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-8bpp-no-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xA13EDC5CAE547B09"
+    expected_screen_hash: "0xFDED1B889D95799F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -601,7 +601,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
     max_steps: 69632
     check_interval_steps: 69632
-    expected_screen_hash: "0xD7D716E50DC103F0"
+    expected_screen_hash: "0x27B04E15F9FEB305"
     assertions:
       - kind: cgram_u16
         address: "0x0002"
@@ -640,7 +640,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc
     max_steps: 5000
     check_interval_steps: 5000
-    expected_screen_hash: "0x1BB0E2838DF07112"
+    expected_screen_hash: "0x2A3E0C7153EFF887"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -676,7 +676,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
     max_steps: 114688
     check_interval_steps: 114688
-    expected_screen_hash: "0x8AB8E7A75E626A78"
+    expected_screen_hash: "0x256BB929C92455FA"
     assertions:
       - kind: bus_u8
         address: "0x004200"
@@ -718,7 +718,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
     max_steps: 7626752
     check_interval_steps: 7626752
-    expected_screen_hash: "0x7B6E798A63539166"
+    expected_screen_hash: "0xDD3BE684D8AE384B"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -745,7 +745,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xB14912BF6C9CAA50"
+    expected_screen_hash: "0x6863F6EDAE5267ED"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -763,7 +763,7 @@ cases:
     rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
     max_steps: 1000000
     check_interval_steps: 1000000
-    expected_screen_hash: "0x3629DD065FA81657"
+    expected_screen_hash: "0xD662D016385E123F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -781,7 +781,7 @@ cases:
     rom: snes-test-roms/bin/effects/hdma-textbox-wipe.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xAA5F22DAA60E6586"
+    expected_screen_hash: "0x12CDB162BB7BE9F1"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -796,7 +796,7 @@ cases:
     rom: snes-test-roms/bin/effects/repeating_hdma_pattern.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x0B4085E0186F4EF6"
+    expected_screen_hash: "0x98F06010DC2F2DA5"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -814,7 +814,7 @@ cases:
     rom: snes-test-roms/bin/effects/window-shapes-single.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xB7039F1023CA167F"
+    expected_screen_hash: "0xCD6FBF100DF02484"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -835,7 +835,7 @@ cases:
     rom: snes-test-roms/bin/effects/window-precalculated-single.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xF4751F94D542CA9B"
+    expected_screen_hash: "0xF6742E5F14A62CF4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -856,7 +856,7 @@ cases:
     rom: snes-test-roms/bin/effects/window-precalculated-symmetrical.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x7BDA9AEAE58EC9F1"
+    expected_screen_hash: "0xBA0B0EE07528FDC6"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -877,7 +877,7 @@ cases:
     rom: snes-test-roms/bin/effects/window-mask-logic.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x567CBDF65C5F8D0D"
+    expected_screen_hash: "0x2917479C919BB726"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -904,7 +904,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-0.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x9A20342C62109B55"
+    expected_screen_hash: "0x9E1FB4791831EA80"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -922,7 +922,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-1.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x86B2D05269245C1C"
+    expected_screen_hash: "0x7C8B0EE8F1650C4F"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -940,7 +940,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-horizontal-scrolling.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0x72AA7E0F0B712FE2"
+    expected_screen_hash: "0xCBE9FCCE3E06CB19"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -958,7 +958,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-vertical-scrolling.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0x5A625F74122A20C2"
+    expected_screen_hash: "0xBF3ECAC5F3DB8EB4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -976,7 +976,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-vertical-scrolling-2-rows.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0x74277D59B0B3A7C2"
+    expected_screen_hash: "0x16AB6302EF753358"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1057,7 +1057,7 @@ cases:
     rom: snes-coprocessor-tests/hirom-gsu-test/build/HiRomGsuTest.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x20430683012FFDCD"
+    expected_screen_hash: "0xFC95F36A460D3625"
     assertions:
       - kind: wram_u8
         address: "0x0003"
@@ -1426,7 +1426,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_delay.sfc
     max_steps: 16384
     check_interval_steps: 16384
-    expected_screen_hash: "0xCA536C5C3A2F3A98"
+    expected_screen_hash: "0xBD1C16C241905E87"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1492,7 +1492,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xF032FF8027411968"
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1507,7 +1507,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test_2.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xF032FF8027411968"
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1522,7 +1522,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/wrmpyb-in-flight.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xE1D23C4D6A153F25"
+    expected_screen_hash: "0x3DE75D479A103EF6"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1534,7 +1534,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/reset-position-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xEB50A9FB3AAE441B"
+    expected_screen_hash: "0x3A1FF072F7F6F82C"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1546,7 +1546,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/hdma-timing-demonstration.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xAD51A1B4AEE77F8A"
+    expected_screen_hash: "0x618B2CAF9D84F5AD"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1570,7 +1570,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_bounce_test.sfc
     max_steps: 200000
     check_interval_steps: 200000
-    expected_screen_hash: "0x1A1C3976A0B17A66"
+    expected_screen_hash: "0x5B99D0174EAB1953"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1588,7 +1588,7 @@ cases:
     rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
     max_steps: 53248
     check_interval_steps: 53248
-    expected_screen_hash: "0x27E89775874DC500"
+    expected_screen_hash: "0x00B9B6854716FB49"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1745,7 +1745,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/auto-joy-timing-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xE48C59F1AF64DE2F"
+    expected_screen_hash: "0xA88B5A2C44D7FD34"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1764,7 +1764,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-timing-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x739228C4EFAE9F83"
+    expected_screen_hash: "0x1C509DCEC3A8A475"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1783,7 +1783,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x1B97834878DBF23E"
+    expected_screen_hash: "0x1F6EE8AC51D1A874"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1802,7 +1802,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test-automatic.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x3C33B0B0073B9A74"
+    expected_screen_hash: "0x4C53A210FB34C019"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1821,7 +1821,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-timing-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x80082AB008D772BF"
+    expected_screen_hash: "0x33C79963D63E7B29"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1840,7 +1840,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-latches-joypad-test.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0x521A6604ADD1D652"
+    expected_screen_hash: "0xFEAFDE8611AD723D"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1859,7 +1859,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-1st-vb-sl.sfc
     max_steps: 300000
     check_interval_steps: 300000
-    expected_screen_hash: "0xDDE0135F36D5FDCF"
+    expected_screen_hash: "0xFA8ECF09843DDE0D"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1878,7 +1878,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-clear-during-autojoy.sfc
     max_steps: 110592
     check_interval_steps: 110592
-    expected_screen_hash: "0xDB9B8D2B55FC3986"
+    expected_screen_hash: "0x99E592A55875DB6A"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1891,7 +1891,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-set-during-autojoy.sfc
     max_steps: 110592
     check_interval_steps: 110592
-    expected_screen_hash: "0x042E27EFECBA1A7C"
+    expected_screen_hash: "0x16D2DE27375F62FE"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1904,7 +1904,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc
     max_steps: 110592
     check_interval_steps: 110592
-    expected_screen_hash: "0xF0436163B3A9950D"
+    expected_screen_hash: "0x08080EBE1D43AF88"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1917,7 +1917,7 @@ cases:
       snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc
     max_steps: 110592
     check_interval_steps: 110592
-    expected_screen_hash: "0x57C32AAAB0DFBCBF"
+    expected_screen_hash: "0xC62139DA6C909817"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1953,7 +1953,7 @@ cases:
     max_steps: 4764880
     check_interval_steps: 4764880
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.png
-    expected_screen_hash: 0xE8EF3DBD218085C7
+    expected_screen_hash: 0x9FA423204172007E
   - id: peter-lemon-snes-cpu-adc
     description: |
       The self-authored CPU ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1961,7 +1961,7 @@ cases:
     max_steps: 3454538
     check_interval_steps: 3454538
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.png
-    expected_screen_hash: 0x0FF79FE824865A16
+    expected_screen_hash: 0x4A6307060A412176
   - id: peter-lemon-snes-cpu-and
     description: |
       The self-authored CPU AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1969,7 +1969,7 @@ cases:
     max_steps: 2799367
     check_interval_steps: 2799367
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.png
-    expected_screen_hash: 0x3EA7E461292545DA
+    expected_screen_hash: 0x1B76573A8CDE5B29
   - id: peter-lemon-snes-cpu-asl
     description: |
       The self-authored CPU ASL test ROM verifies correct ASL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1977,7 +1977,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.png
-    expected_screen_hash: 0x4E89AB36AE77F781
+    expected_screen_hash: 0x270B715ED335207B
   - id: peter-lemon-snes-cpu-bit
     description: |
       The self-authored CPU BIT test ROM verifies correct BIT instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1985,7 +1985,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.png
-    expected_screen_hash: 0xF365E220D6D44937
+    expected_screen_hash: 0x291284D0A7AD833E
   - id: peter-lemon-snes-cpu-bra
     description: |
       The self-authored CPU BRA test ROM verifies correct BRA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -1993,7 +1993,7 @@ cases:
     max_steps: 3692782
     check_interval_steps: 3692782
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.png
-    expected_screen_hash: 0xE45DCBFD1DFD7C55
+    expected_screen_hash: 0x643A00BDEFB4F30D
   - id: peter-lemon-snes-cpu-dec
     description: |
       The self-authored CPU DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2008,7 +2008,7 @@ cases:
     max_steps: 2322879
     check_interval_steps: 2322879
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.png
-    expected_screen_hash: 0x964A73E0F6581C4E
+    expected_screen_hash: 0x9E3FA5C99C10BD68
   - id: peter-lemon-snes-cpu-inc
     description: |
       The self-authored CPU INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2023,7 +2023,7 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.png
-    expected_screen_hash: 0x2997AB949608B2A2
+    expected_screen_hash: 0x0013810BB30450A3
   - id: peter-lemon-snes-cpu-ldr
     description: |
       The self-authored CPU LDR test ROM verifies correct LDR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2031,7 +2031,7 @@ cases:
     max_steps: 3335416
     check_interval_steps: 3335416
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.png
-    expected_screen_hash: 0xFC63D3157833E942
+    expected_screen_hash: 0xBF4684BD3981DC35
   - id: peter-lemon-snes-cpu-lsr
     description: |
       The self-authored CPU LSR test ROM verifies correct LSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2039,7 +2039,7 @@ cases:
     max_steps: 1072098
     check_interval_steps: 1072098
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.png
-    expected_screen_hash: 0x048976226076AC2F
+    expected_screen_hash: 0xD24E9136BDDF2416
   - id: peter-lemon-snes-cpu-mov
     description: |
       The self-authored CPU MOV test ROM verifies correct MOV instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2054,7 +2054,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.png
-    expected_screen_hash: 0x198B0269B33EA88B
+    expected_screen_hash: 0xF57D3F255B69C0D3
     reset_at_steps: [100000]
   - id: peter-lemon-snes-cpu-ora
     description: |
@@ -2063,7 +2063,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.png
-    expected_screen_hash: 0x48C6F5DFDA1BA518
+    expected_screen_hash: 0x02A73EF65F92CEA2
   - id: peter-lemon-snes-cpu-phl
     description: |
       The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2071,7 +2071,7 @@ cases:
     max_steps: 2978050
     check_interval_steps: 2978050
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.png
-    expected_screen_hash: 0x30A381E69B56CC69
+    expected_screen_hash: 0x832F2C322B814DAA
   - id: peter-lemon-snes-cpu-psr
     description: |
       The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2079,7 +2079,7 @@ cases:
     max_steps: 1250781
     check_interval_steps: 1250781
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.png
-    expected_screen_hash: 0xD6EFE42DFECEC782
+    expected_screen_hash: 0x47250BC0A20F1244
   - id: peter-lemon-snes-cpu-ret
     description: |
       The self-authored CPU RET test ROM verifies correct RET instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2087,7 +2087,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.png
-    expected_screen_hash: 0xF02D216678E14E7B
+    expected_screen_hash: 0xB0A1A127D4AB3A28
   - id: peter-lemon-snes-cpu-rol
     description: |
       The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2095,7 +2095,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.png
-    expected_screen_hash: 0x9DCD251362D34C99
+    expected_screen_hash: 0x833F3680D0538274
   - id: peter-lemon-snes-cpu-ror
     description: |
       The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2103,7 +2103,7 @@ cases:
     max_steps: 1012537
     check_interval_steps: 1012537
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.png
-    expected_screen_hash: 0x7DB436AC8ED993CF
+    expected_screen_hash: 0xB809D1ED9753496E
   - id: peter-lemon-snes-cpu-sbc
     description: |
       The self-authored CPU SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2111,7 +2111,7 @@ cases:
     max_steps: 3097172
     check_interval_steps: 3097172
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.png
-    expected_screen_hash: 0x1B1BCE9A8EBFA56D
+    expected_screen_hash: 0x7BCF082D0B67D0B6
   - id: peter-lemon-snes-cpu-str
     description: |
       The self-authored CPU STR test ROM verifies correct STR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2119,7 +2119,7 @@ cases:
     max_steps: 4228831
     check_interval_steps: 4228831
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.png
-    expected_screen_hash: 0xF570804637FB01A1
+    expected_screen_hash: 0x03B5E2805B76FD30
   - id: peter-lemon-snes-cpu-trn
     description: |
       The self-authored CPU TRN test ROM verifies correct TRN instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2127,7 +2127,7 @@ cases:
     max_steps: 3394977
     check_interval_steps: 3394977
     # reference_png: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.png
-    expected_screen_hash: 0x4D169749D2FB1E59
+    expected_screen_hash: 0xC7A76245F825519E
   - id: peter-lemon-snes-spc700-adc
     description: |
       The self-authored SPC700 ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
@@ -2923,7 +2923,7 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     # reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
-    expected_screen_hash: 0xE147F0E3648D7E2F
+    expected_screen_hash: 0x5A2E5D38B6AD2A33
   - id: snes-peter-lemon-snes-PPU-Mode7-RotZoom-RotZoom
     description: |  
       Peter Lemon's PPU Mode7 RotZoom test verifies correct rendering of rotation and zoom

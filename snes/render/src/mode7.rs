@@ -26,7 +26,6 @@ pub(super) fn render_mode7_bg1(
     let m7sel = registers.m7sel;
     let repeat = m7sel & 0x03;
     let extbg = m7sel & 0x80 != 0;
-
     let raw_hofs = i32::from(core.bg1_hofs()) & 0x3FF;
     let raw_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
     // Mode 7 scroll offsets are 10-bit signed values.
