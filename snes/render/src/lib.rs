@@ -200,7 +200,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     } else {
         SCREEN_HEIGHT
     };
-    let pixel_count = render_width * render_height;
+        let pixel_count = render_width * render_height;
 
     if tm == 0 && !use_presented_tm {
         return Ok(RenderedScreen {
@@ -411,8 +411,6 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
-            // Mode 5/6: interleave main screen (even columns) and
-            // sub screen (odd columns) at the pixel level.
             let screen_x = i % render_width;
             if screen_x & 1 != 0 {
                 sub_raw[i]
