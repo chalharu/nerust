@@ -1300,6 +1300,10 @@ impl Bus {
                 continue;
             }
 
+            if self.hdma_line_counter[channel] == 0 {
+                continue;
+            }
+
             if self.hdma_do_transfer[channel] {
                 self.execute_hdma_transfer(channel as u8);
             }
