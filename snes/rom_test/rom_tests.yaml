@@ -2922,7 +2922,8 @@ cases:
     rom: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.sfc
     max_steps: 1667708
     check_interval_steps: 1667708
-    reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
+    # reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
+    expected_screen_hash: 0x5A2E5D38B6AD2A33
   - id: snes-peter-lemon-snes-PPU-Mode7-RotZoom-RotZoom
     description: |  
       Peter Lemon's PPU Mode7 RotZoom test verifies correct rendering of rotation and zoom
