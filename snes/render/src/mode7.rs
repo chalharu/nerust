@@ -1,4 +1,4 @@
-use nerust_snes_core::{Core, Mode7Registers};
+use nerust_snes_core::Core;
 
 use super::{
     BgLayer, SCREEN_HEIGHT,
@@ -17,6 +17,16 @@ pub(super) fn render_mode7_bg1(
     rgba: &mut [u8],
 ) {
     let registers = core.mode7_registers();
+    let a = i32::from(registers.a);
+    let b = i32::from(registers.b);
+    let c = i32::from(registers.c);
+    let d = i32::from(registers.d);
+    let center_x = i32::from(registers.x);
+    let center_y = i32::from(registers.y);
+    let m7sel = registers.m7sel;
+    let repeat = m7sel & 0x03;
+    let extbg = m7sel & 0x80 != 0;
+
     let current_hofs = i32::from(core.bg1_hofs()) & 0x3FF;
     let current_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
@@ -42,64 +52,41 @@ pub(super) fn render_mode7_bg1(
         } else {
             raw_vofs
         };
-        let context = Mode7RenderContext {
-            registers,
-            hofs: presented.map_or(current_hofs, |line| i32::from(line.hofs) & 0x3FF),
-            vofs: effective_vofs,
-            brightness,
-        };
+        let hofs = presented.map_or(current_hofs, |line| i32::from(line.hofs) & 0x3FF);
+        let vofs = effective_vofs;
+
+        // bsnes-style two-step Mode 7 coordinate computation:
+        // 1. Per-scanline origin (with 6-bit sub-pixel truncation)
+        // 2. Per-pixel contribution
+        let dx = hofs - center_x;
+        let dy = vofs - center_y;
         let mode7_screen_y = (presented_y + 1) as i32;
+        let origin_x = ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
+        let origin_y = ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
+
         for screen_x in 0..render_width {
             let mode7_screen_x = screen_x as i32;
-            let color = mode7_pixel(core, &context, mode7_screen_x, mode7_screen_y);
+            let transformed_x = (origin_x + a * mode7_screen_x) >> 8;
+            let transformed_y = (origin_y + c * mode7_screen_x) >> 8;
+
+            let color = mode7_vram_color(core, transformed_x, transformed_y, repeat, extbg, brightness);
             put_pixel(rgba, render_width, screen_x, screen_y, color);
         }
     }
 }
 
-fn mode7_pixel(
-    core: &Core,
-    context: &Mode7RenderContext,
-    screen_x: i32,
-    screen_y: i32,
-) -> [u8; 4] {
-    let (transformed_x, transformed_y) = mode7_source_coordinates(context, screen_x, screen_y);
-    let repeat = context.registers.m7sel & 0x03;
-    let extbg = context.registers.m7sel & 0x80 != 0;
-    let color = mode7_vram_pixel(core, transformed_x, transformed_y, repeat, extbg);
-    cgram_color_rgba(core, usize::from(color), context.brightness)
-}
-
-fn mode7_source_coordinates(
-    context: &Mode7RenderContext,
-    screen_x: i32,
-    screen_y: i32,
-) -> (i32, i32) {
-    let registers = context.registers;
-    let center_x = i32::from(registers.x);
-    let center_y = i32::from(registers.y);
-    let source_x = screen_x + context.hofs - center_x;
-    let source_y = screen_y + context.vofs - center_y;
-    let transformed_x =
-        (i32::from(registers.a) * source_x + i32::from(registers.b) * source_y) / 256 + center_x;
-    let transformed_y =
-        (i32::from(registers.c) * source_x + i32::from(registers.d) * source_y) / 256 + center_y;
-
-    (transformed_x, transformed_y)
-}
-
-fn mode7_vram_pixel(
+fn mode7_vram_color(
     core: &Core,
     transformed_x: i32,
     transformed_y: i32,
     repeat: u8,
     extbg: bool,
-) -> u8 {
+    brightness: u8,
+) -> [u8; 4] {
     // Check if the transformed coordinate is outside the 1024x1024 tilemap
     // (13-bit signed space; any bit above bit 9 set means out of bounds).
     let out_of_bounds_mask: i32 = !1023;
-    let out_of_bounds =
-        (transformed_x | transformed_y) & out_of_bounds_mask != 0;
+    let out_of_bounds = (transformed_x | transformed_y) & out_of_bounds_mask != 0;
 
     // VRAM addressing always wraps (mask to 7-bit tile index and 3-bit pixel offset).
     let tile_x = ((transformed_x >> 3) as u32 & 0x7F) as usize;
@@ -108,58 +95,27 @@ fn mode7_vram_pixel(
     let pixel_y = (transformed_y as u32 & 0x07) as usize;
 
     // Repeat mode 3 (Reserved): use tile 0 when out of bounds.
-    // All other modes: tile is always read from VRAM (wrapping via the mask above).
     let tile_number = if repeat == 3 && out_of_bounds {
         0
     } else {
         usize::from(core.peek_vram((tile_y * 128 + tile_x) * 2))
     };
 
-    // Repeat mode 2 (Mirror): palette = 0 (transparent/color 0) when out of bounds.
-    // All other modes: palette is always read from VRAM.
+    // Repeat mode 2 (Mirror): palette = 0 (transparent) when out of bounds.
     let palette = if repeat == 2 && out_of_bounds {
         0
     } else {
         core.peek_vram((tile_number * 64 + pixel_y * 8 + pixel_x) * 2 + 1)
     };
 
-    if extbg {
-        palette & 0x07
+    let color_index = if extbg {
+        usize::from(palette & 0x07)
     } else {
-        palette
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Mode7RenderContext {
-    registers: Mode7Registers,
-    hofs: i32,
-    vofs: i32,
-    brightness: u8,
+        usize::from(palette)
+    };
+    cgram_color_rgba(core, color_index, brightness)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode7RenderContext, mode7_source_coordinates};
-    use nerust_snes_core::Mode7Registers;
-
-    #[test]
-    fn mode7_source_coordinates_apply_identity_scale() {
-        let mut context = Mode7RenderContext {
-            registers: Mode7Registers {
-                a: 0x0100,
-                d: 0x0100,
-                ..Mode7Registers::default()
-            },
-            hofs: 0,
-            vofs: 0,
-            brightness: 0x0F,
-        };
-
-        assert_eq!(mode7_source_coordinates(&context, 3, 4), (3, 4));
-
-        context.registers.a = 0x0200;
-        context.registers.d = 0x0200;
-        assert_eq!(mode7_source_coordinates(&context, 3, 4), (6, 8));
-    }
 }
