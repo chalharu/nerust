@@ -40,6 +40,15 @@ impl BgLayer {
         }
     }
 
+    const fn bit_index(self) -> usize {
+        match self {
+            Self::Bg1 => 0,
+            Self::Bg2 => 1,
+            Self::Bg3 => 2,
+            Self::Bg4 => 3,
+        }
+    }
+
     const fn scroll_targets(self) -> (u8, u8) {
         match self {
             Self::Bg1 => (0x0D, 0x0E),
