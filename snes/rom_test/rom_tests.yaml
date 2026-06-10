@@ -2803,3 +2803,331 @@ cases:
     max_steps: 1667708
     check_interval_steps: 1667708
     reference_png: snes/peter-lemon-snes/HelloWorld/HelloWorld.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS15Col16Pal-VIDEO15FPS15Col16Pal
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 15 Color 16 Pal test verifies correct playback of
+      a 15 frames per second video with 15 colors and a 16-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col16Pal/VIDEO15FPS15Col16Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col16Pal/VIDEO15FPS15Col16Pal.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16Col8Pal-VIDEO15FPS16Col8Pal
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color 8 Pal test verifies correct playback of
+      a 15 frames per second video with 16 colors and an 8-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col8Pal/VIDEO15FPS16Col8Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col8Pal/VIDEO15FPS16Col8Pal.png
+  - id: snes-peter-lemon-snes-MSU-Touhou-BadApple!15FPS16ColInterlace-Touhou-BadApple!15FPS16ColInterlace
+    description: |
+      Peter Lemon's MSU Touhou Bad Apple! 15FPS 16 Color Interlace test verifies correct playback of
+      a 15 frames per second interlaced video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/Touhou-BadApple!15FPS16ColInterlace/Touhou-BadApple!15FPS16ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/Touhou-BadApple!15FPS16ColInterlace/Touhou-BadApple!15FPS16ColInterlace.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS15Col8Pal-VIDEO15FPS15Col8Pal
+    description: |  
+      Peter Lemon's MSU VIDEO 15FPS 15 Color 8 Pal test verifies correct playback of
+      a 15 frames per second video with 15 colors and an 8-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col8Pal/VIDEO15FPS15Col8Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col8Pal/VIDEO15FPS15Col8Pal.png
+  - id: snes-peter-lemon-snes-MSU-Touhou-BadApple!30FPS4ColInterlace-Touhou-BadApple!30FPS4ColInterlace
+    description: |
+      Peter Lemon's MSU Touhou Bad Apple! 30FPS 4 Color Interlace test verifies correct playback of
+      a 30 frames per second interlaced video with 4 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/Touhou-BadApple!30FPS4ColInterlace/Touhou-BadApple!30FPS4ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/Touhou-BadApple!30FPS4ColInterlace/Touhou-BadApple!30FPS4ColInterlace.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16Col-VIDEO15FPS16Col
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color test verifies correct playback of
+      a 15 frames per second video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col/VIDEO15FPS16Col.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col/VIDEO15FPS16Col.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16ColInterlace-VIDEO15FPS16ColInterlace
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color Interlace test verifies correct playback of
+      a 15 frames per second interlaced video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16ColInterlace/VIDEO15FPS16ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16ColInterlace/VIDEO15FPS16ColInterlace.png
+  - id: snes-peter-lemon-snes-INPUT-XBandKeyboard-XBandKeyboard
+    description: |
+      Peter Lemon's INPUT XBand Keyboard test verifies correct input handling of the
+      XBand keyboard peripheral, testing SuperFX's input capabilities and compatibility with the XBand keyboard.
+    rom: snes/peter-lemon-snes/INPUT/XBandKeyboard/XBandKeyboard.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/INPUT/XBandKeyboard/XBandKeyboard.png
+  - id: snes-peter-lemon-snes-INPUT-ControllerLatency-ControllerLatency
+    description: |
+      Peter Lemon's INPUT Controller Latency test verifies correct input handling of the
+      controller, testing SuperFX's input capabilities and controller latency.
+    rom: snes/peter-lemon-snes/INPUT/ControllerLatency/ControllerLatency.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/INPUT/ControllerLatency/ControllerLatency.png
+  - id: snes-peter-lemon-snes-PPU-Interlace-InterlaceSimpsonsHDMA-InterlaceSimpsonsHDMA
+    description: |  
+      Peter Lemon's PPU Interlace Simpsons HDMA test verifies correct rendering of interlaced
+      backgrounds and sprites with HDMA effects in the interlace Simpsons HDMA demo, which tests PPU interlace mode, HDMA functionality, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Interlace-InterlaceMystHDMA-InterlaceMystHDMA
+    description: |  
+      Peter Lemon's PPU Interlace Myst HDMA test verifies correct rendering of interlaced
+      backgrounds and sprites with HDMA effects in the interlace Myst HDMA demo, which tests PPU interlace mode, HDMA functionality, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceMystHDMA/InterlaceMystHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceMystHDMA/InterlaceMystHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Rings-Rings
+    description: |  
+      Peter Lemon's PPU Rings test verifies correct rendering of the rings demo, which
+      tests various PPU features and effects, including sprite rendering, color math, and transformations.
+    rom: snes/peter-lemon-snes/PPU/Rings/Rings.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Rings/Rings.png
+  - id: snes-peter-lemon-snes-PPU-Window-WindowMultiHDMA-WindowMultiHDMA
+    description: |  
+      Peter Lemon's PPU Window Multi HDMA test verifies correct rendering of multiple
+      HDMA effects applied to the window layer in the Window Multi HDMA demo, which tests PPU window functionality, HDMA capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Window/WindowMultiHDMA/WindowMultiHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Window/WindowMultiHDMA/WindowMultiHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Window-WindowHDMA-WindowHDMA
+    description: |  
+      Peter Lemon's PPU Window HDMA test verifies correct rendering of HDMA effects applied
+      to the window layer in the Window HDMA demo, which tests PPU window functionality, HDMA capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Window/WindowHDMA/WindowHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Window/WindowHDMA/WindowHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Mode7-Perspective-Perspective
+    description: |  
+      Peter Lemon's PPU Mode7 Perspective test verifies correct rendering of perspective
+      transformations in the Mode 7 Perspective demo, which tests PPU Mode 7 capabilities and perspective transformation effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
+  - id: snes-peter-lemon-snes-PPU-Mode7-RotZoom-RotZoom
+    description: |  
+      Peter Lemon's PPU Mode7 RotZoom test verifies correct rendering of rotation and zoom
+      transformations in the Mode 7 RotZoom demo, which tests PPU Mode 7 capabilities and rotation/zoom effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/RotZoom/RotZoom.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mode7/RotZoom/RotZoom.png
+  - id: snes-peter-lemon-snes-PPU-Mode7-StarWars-StarWars
+    description: |  
+      Peter Lemon's PPU Mode7 StarWars test verifies correct rendering of the StarWars demo,
+      which tests PPU Mode 7 capabilities and various rendering effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/StarWars/StarWars.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mode7/StarWars/StarWars.png
+  - id: snes-peter-lemon-snes-PPU-Mosaic-Mode3-MosaicMode3
+    description: |  
+      Peter Lemon's PPU Mosaic Mode 3 test verifies correct rendering of mosaic effects
+      in Mode 3 in the Mosaic Mode 3 demo, which tests PPU mosaic functionality and Mode 3 rendering capabilities.
+    rom: snes/peter-lemon-snes/PPU/Mosaic/Mode3/MosaicMode3.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mosaic/Mode3/MosaicMode3.png
+  - id: snes-peter-lemon-snes-PPU-Mosaic-Mode5-MosaicMode5
+    description: |  
+      Peter Lemon's PPU Mosaic Mode 5 test verifies correct rendering of mosaic effects
+      in Mode 5 in the Mosaic Mode 5 demo, which tests PPU mosaic functionality and Mode 5 rendering capabilities.
+    rom: snes/peter-lemon-snes/PPU/Mosaic/Mode5/MosaicMode5.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mosaic/Mode5/MosaicMode5.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpaceIndirectHDMA-RedSpaceIndirectHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space Indirect HDMA test verifies correct rendering of
+      indirect HDMA effects in the Red Space Indirect HDMA demo, which tests PPU HDMA functionality, indirect addressing modes, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedSpaceIndirectHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedSpaceIndirectHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-WaveHDMA-WaveHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Wave HDMA test verifies correct rendering of wave HDMA effects
+      in the Wave HDMA demo, which tests PPU HDMA functionality, wave transformations, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/WaveHDMA/WaveHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/WaveHDMA/WaveHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-Mode7HDMA-Mode7HDMA
+    description: |  
+      Peter Lemon's PPU HDMA Mode 7 HDMA test verifies correct rendering of HDMA effects
+      applied to Mode 7 transformations in the Mode 7 HDMA demo, which tests PPU HDMA functionality, Mode 7 capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/Mode7HDMA/Mode7HDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/Mode7HDMA/Mode7HDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-HiColor128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row in the HiColor 128 Per Tile Row demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/HiColor128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/HiColor128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-RGB_24bits_palette_color_test_chart128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a 24-bit RGB palette color test chart in the HiColor 128 Per Tile Row RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/RGB_24bits_palette_color_test_chart128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/RGB_24bits_palette_color_test_chart128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-mandrill128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a mandrill image in the HiColor 128 Per Tile Row Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/mandrill128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/mandrill128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-lenna128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a Lenna image in the HiColor 128 Per Tile Row Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/lenna128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/lenna128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-DQ128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row DQ test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a DQ image in the HiColor 128 Per Tile Row DQ demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/DQ128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/DQ128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpace9BitHDMA-RedSpace9BitHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space 9 Bit HDMA test verifies correct rendering of
+      9-bit color HDMA effects in the Red Space 9 Bit HDMA demo, which tests PPU HDMA functionality, 9-bit color rendering capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpace9BitHDMA/RedSpace9BitHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpace9BitHDMA/RedSpace9BitHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-lenna64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a Lenna image in the HiColor 64 Per Tile Row Pseudo HiRes Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-mandrill64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a mandrill image in the HiColor 64 Per Tile Row Pseudo HiRes Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-RGB_24bits_palette_color_test_chart64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a 24-bit RGB palette color test chart in the HiColor 64 Per Tile Row Pseudo HiRes RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-HiColor64PerTileRowPseudoHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode in the HiColor 64 Per Tile Row Pseudo HiRes demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-RGB_24bits_palette_color_test_chart64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a 24-bit RGB palette color test chart in the HiColor 64 Per Tile Row RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/RGB_24bits_palette_color_test_chart64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/RGB_24bits_palette_color_test_chart64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-mandrill64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a mandrill image in the HiColor 64 Per Tile Row Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/mandrill64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/mandrill64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-DQ64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row DQ test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a DQ image in the HiColor 64 Per Tile Row DQ demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/DQ64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/DQ64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-lenna64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a Lenna image in the HiColor 64 Per Tile Row Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/lenna64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/lenna64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-HiColor64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in the HiColor 64 Per Tile Row demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/HiColor64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/HiColor64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpaceHDMA-RedSpaceHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space test verifies correct rendering of
+      HDMA effects in the Red Space demo, which tests PPU HDMA functionality and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedSpaceHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedSpaceHDMA.png
+  - id: snes-peter-lemon-snes-Games-MonsterFarmJump-MonsterFarmJump
+    description: |  
+      Peter Lemon's Monster Farm Jump test verifies correct rendering of
+      gameplay and graphics in the Monster Farm Jump demo, which tests game mechanics, PPU functionality, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/Games/MonsterFarmJump/MonsterFarmJump.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/Games/MonsterFarmJump/MonsterFarmJump.png
+  - id: snes-peter-lemon-snes-PlotPixel-Mode7-PlotPixelMode7
+    description: |  
+      Peter Lemon's Plot Pixel Mode 7 test verifies correct rendering of
+      Mode 7 graphics in the Plot Pixel Mode 7 demo, which tests PPU functionality, Mode 7 rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PlotPixel/Mode7/PlotPixelMode7.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PlotPixel/Mode7/PlotPixelMode7.png
+  - id: snes-peter-lemon-snes-PlotLine-Mode7-PlotLineMode7
+    description: |  
+      Peter Lemon's Plot Line Mode 7 test verifies correct rendering of
+      Mode 7 graphics in the Plot Line Mode 7 demo, which tests PPU functionality, Mode 7 rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PlotLine/Mode7/PlotLineMode7.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PlotLine/Mode7/PlotLineMode7.png
