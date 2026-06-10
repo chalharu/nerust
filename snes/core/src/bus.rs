@@ -552,6 +552,10 @@ impl Bus {
         self.ppu2.interlace_enabled()
     }
 
+    pub(crate) fn pseudo_hires_enabled(&self) -> bool {
+        self.ppu2.pseudo_hires_enabled()
+    }
+
     pub(crate) fn odd_frame(&self) -> bool {
         self.odd_frame
     }

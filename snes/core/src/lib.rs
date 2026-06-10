@@ -228,6 +228,10 @@ impl Core {
         self.bus.interlace_enabled()
     }
 
+    pub fn pseudo_hires_enabled(&self) -> bool {
+        self.bus.pseudo_hires_enabled()
+    }
+
     pub fn odd_frame(&self) -> bool {
         self.bus.odd_frame()
     }
