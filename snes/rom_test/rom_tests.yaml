@@ -526,7 +526,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -545,7 +545,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-8bit-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -564,7 +564,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-10bit-remapping.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0xD1CBCF641F34AAA6"
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -583,7 +583,7 @@ cases:
       snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc
     max_steps: 8500000
     check_interval_steps: 8500000
-    expected_screen_hash: "0x33FCFA7866C77176"
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
     assertions:
       - kind: bus_u8
         address: "0x002100"
@@ -1012,7 +1012,7 @@ cases:
     rom: snes-test-roms/bin/effects/vmain-mode7-tilemap-rows.sfc
     max_steps: 5000000
     check_interval_steps: 5000000
-    expected_screen_hash: "0x707A1B8A48968F81"
+    expected_screen_hash: "0x742C899411F142F9"
     assertions:
       - kind: bus_u8
         address: "0x002100"

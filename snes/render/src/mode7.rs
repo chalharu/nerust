@@ -27,8 +27,12 @@ pub(super) fn render_mode7_bg1(
     let repeat = m7sel & 0x03;
     let extbg = m7sel & 0x80 != 0;
 
-    let current_hofs = i32::from(core.bg1_hofs()) & 0x3FF;
-    let current_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
+    let raw_hofs = i32::from(core.bg1_hofs()) & 0x3FF;
+    let raw_vofs = i32::from(core.bg1_vofs()) & 0x3FF;
+    // Mode 7 scroll offsets are 10-bit signed values.
+    // Sign-extend from 10 bits to match bsnes behavior.
+    let current_hofs = if raw_hofs & 0x200 != 0 { raw_hofs | !0x3FF } else { raw_hofs };
+    let current_vofs = if raw_vofs & 0x200 != 0 { raw_vofs | !0x3FF } else { raw_vofs };
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
@@ -43,7 +47,10 @@ pub(super) fn render_mode7_bg1(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, BgLayer::Bg1, presented_y))
             .flatten();
-        let raw_vofs = presented.map_or(current_vofs, |line| i32::from(line.vofs)) & 0x3FF;
+        let raw_vofs = presented.map_or(current_vofs, |line| {
+            let raw = i32::from(line.vofs) & 0x3FF;
+            if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
+        });
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & !1) | 1
@@ -52,7 +59,10 @@ pub(super) fn render_mode7_bg1(
         } else {
             raw_vofs
         };
-        let hofs = presented.map_or(current_hofs, |line| i32::from(line.hofs) & 0x3FF);
+        let hofs = presented.map_or(current_hofs, |line| {
+            let raw = i32::from(line.hofs) & 0x3FF;
+            if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
+        });
         let vofs = effective_vofs;
 
         // bsnes-style two-step Mode 7 coordinate computation:
@@ -60,7 +70,7 @@ pub(super) fn render_mode7_bg1(
         // 2. Per-pixel contribution
         let dx = hofs - center_x;
         let dy = vofs - center_y;
-        let mode7_screen_y = (presented_y + 1) as i32;
+        let mode7_screen_y = presented_y as i32;
         let origin_x = ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
         let origin_y = ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
 
@@ -116,7 +126,10 @@ fn render_mode7_bg2_overlay(
         let presented = use_presented_scroll
             .then(|| presented_bg_line(core, BgLayer::Bg1, presented_y))
             .flatten();
-        let raw_vofs = presented.map_or(current_vofs, |line| i32::from(line.vofs)) & 0x3FF;
+        let raw_vofs = presented.map_or(current_vofs, |line| {
+            let raw = i32::from(line.vofs) & 0x3FF;
+            if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
+        });
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & !1) | 1
@@ -125,12 +138,15 @@ fn render_mode7_bg2_overlay(
         } else {
             raw_vofs
         };
-        let hofs = presented.map_or(current_hofs, |line| i32::from(line.hofs) & 0x3FF);
+        let hofs = presented.map_or(current_hofs, |line| {
+            let raw = i32::from(line.hofs) & 0x3FF;
+            if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
+        });
         let vofs = effective_vofs;
 
         let dx = hofs - center_x;
         let dy = vofs - center_y;
-        let mode7_screen_y = (presented_y + 1) as i32;
+        let mode7_screen_y = presented_y as i32;
         let origin_x = ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
         let origin_y = ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
 
