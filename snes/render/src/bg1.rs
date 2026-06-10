@@ -206,7 +206,12 @@ fn in_window(
     let in_win1 = if win1_setting == 0 {
         false
     } else if win1_setting & 0x01 != 0 {
-        in_win1_range
+        // 01 = mask inside range; 11 = mask outside range (per bsnes behavior)
+        if win1_setting == 0x03 {
+            !in_win1_range
+        } else {
+            in_win1_range
+        }
     } else {
         !in_win1_range
     };
@@ -219,7 +224,11 @@ fn in_window(
     let in_win2 = if win2_setting == 0 {
         false
     } else if win2_setting & 0x01 != 0 {
-        in_win2_range
+        if win2_setting == 0x03 {
+            !in_win2_range
+        } else {
+            in_win2_range
+        }
     } else {
         !in_win2_range
     };
