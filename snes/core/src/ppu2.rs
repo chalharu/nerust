@@ -122,6 +122,10 @@ impl Ppu2 {
         self.registers[register_index(0x2133)] & 0x01 != 0
     }
 
+    pub(crate) fn obj_interlace_enabled(&self) -> bool {
+        self.registers[register_index(0x2133)] & 0x02 != 0
+    }
+
     pub(crate) fn pseudo_hires_enabled(&self) -> bool {
         self.registers[register_index(0x2133)] & 0x08 != 0
     }

@@ -187,6 +187,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let screen_mode = bgmode & 0x07;
     let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let interlace_enabled = core.interlace_enabled();
+    let obj_interlace = core.obj_interlace_enabled();
     let pseudo_hires = core.pseudo_hires_enabled();
     let color_math_supported = screen_mode <= 4 || pseudo_hires;
 
@@ -335,7 +336,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             render_height,
             &mut rgba,
             &mut sub_raw,
-            if high_res_mode { 1 } else { 0 },
+            0,
         )?;
 
         let cgwsel = core.peek(0x002130);
@@ -433,6 +434,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        obj_interlace,
         render_width,
         render_height,
         &mut rgba,

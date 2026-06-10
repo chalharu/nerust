@@ -17,6 +17,7 @@ pub(super) fn render_obj(
     current_tm: u8,
     use_presented_tm: bool,
     interlace_enabled: bool,
+    obj_interlace: bool,
     render_width: usize,
     render_height: usize,
     rgba: &mut [u8],
@@ -37,9 +38,11 @@ pub(super) fn render_obj(
             continue;
         }
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
-        let interlace_screen_y = presented_y;
-        let slivers = obj_slivers_for_scanline(&sprites, interlace_screen_y);
+        let slivers = obj_slivers_for_scanline(&sprites, presented_y);
         for sliver in slivers.iter().rev() {
+            if obj_interlace && ((sliver.sprite.attributes & 0x01) != 0) != interlace_field {
+                continue;
+            }
             render_obj_sliver(
                 core,
                 obsel,
@@ -47,7 +50,9 @@ pub(super) fn render_obj(
                 rgba,
                 render_width,
                 screen_y,
+                presented_y,
                 *sliver,
+                obj_interlace,
             );
         }
     }
@@ -146,9 +151,11 @@ fn render_obj_sliver(
     rgba: &mut [u8],
     render_width: usize,
     screen_y: usize,
+    presented_y: usize,
     sliver: ObjSliver,
+    obj_interlace: bool,
 ) {
-    let sprite_y = screen_y as i16 - sliver.sprite.y;
+    let sprite_y = presented_y as i16 - sliver.sprite.y;
     let source_y = if sliver.sprite.attributes & 0x80 != 0 {
         sliver.sprite.size.height - 1 - sprite_y as u8
     } else {
@@ -172,10 +179,16 @@ fn render_obj_sliver(
         };
         let tile_column = usize::from(source_x / OBJ_TILE_SIZE);
         let pixel_x = usize::from(source_x % OBJ_TILE_SIZE);
-        let tile_number = (usize::from(sliver.sprite.tile)
-            | (usize::from(sliver.sprite.attributes & 0x01) << 8))
-            + tile_column
-            + tile_row * 16;
+        let tile_number = if obj_interlace {
+            usize::from(sliver.sprite.tile)
+                + tile_column
+                + tile_row * 16
+        } else {
+            (usize::from(sliver.sprite.tile)
+                | (usize::from(sliver.sprite.attributes & 0x01) << 8))
+                + tile_column
+                + tile_row * 16
+        };
         let tile_addr = obj_tile_address(obsel, tile_number);
         let color = chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y);
         if color == 0 {

@@ -155,7 +155,27 @@ pub(super) fn render_bg1(
         };
         let vofs =
             (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
-        let bg_y = (presented_y + vofs) % tilemap_height_pixels;
+        // The PPU's tile-fetch pipeline starts during the VBlank pre-render
+        // scanline, loading the first tile row into an internal latch. Our stub
+        // model captures each scanline's register state AFTER the latch has
+        // been loaded (subtick 0 of each scanline). Consequently the bg_y
+        // formula is: presented_y + vofs — no extra +1 needed.
+        // The PPU fetches tiles for the first visible scanline during the
+        // last VBlank scanline (pre-fetch). Our stub model does not simulate
+        // this VBlank tile fetch, so we add 1 to presented_y to compensate:
+        // the first visible scanline uses the tile data that would have been
+        // pre-fetched at vofs + 0 during VBlank, making the effective offset
+        // presented_y + 1 + vofs.
+        // The PPU fetches tiles for the first visible scanline during the
+        // last VBlank scanline (pre-fetch). Our stub model does not simulate
+        // this VBlank tile fetch, so we add 1 to presented_y to compensate
+        // for non-high-res modes. In high-resolution modes (5/6) tiles are
+        // 16 pixels wide and the pre-fetch offset does not apply.
+        let bg_y = if context.high_res_mode {
+            (presented_y + vofs) % tilemap_height_pixels
+        } else {
+            (presented_y + 1 + vofs) % tilemap_height_pixels
+        };
         // Mosaic: quantize Y to block boundary
         let mos_y = if mosaic_enabled {
             (screen_y / mosaic_size) * mosaic_size
@@ -163,7 +183,8 @@ pub(super) fn render_bg1(
             screen_y
         };
         let pixel_bg_y = if mosaic_enabled {
-            ((mos_y / height_ratio) + vofs) % tilemap_height_pixels
+            let extra = if context.high_res_mode { 0 } else { 1 };
+            ((mos_y / height_ratio) + extra + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
@@ -320,7 +341,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     }
 
     let tile_palette = if context.high_res_mode {
-        usize::from((entry >> 11) & 0x03)
+        usize::from((entry >> 10) & 0x03)
     } else {
         usize::from((entry >> 10) & 0x07)
     };
