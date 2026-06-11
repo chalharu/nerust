@@ -113,9 +113,8 @@ pub(super) fn render_bg1(
     let mosaic_size = usize::from(moza & 0x0F) + 1;
     let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
 
-    let field_ratio = if interlace_enabled { render_height / SCREEN_HEIGHT } else { 1 };
     for screen_y in 0..render_height {
-        let presented_y = screen_y / field_ratio;
+        let presented_y = screen_y;
         if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
             == 0
         {
@@ -157,7 +156,11 @@ pub(super) fn render_bg1(
             raw_vofs & 0x3FF
         };
         let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
-        let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
+        let bg_y = if interlace_enabled {
+            (presented_y + vofs) % tilemap_height_pixels
+        } else {
+            (presented_y + 1 + vofs) % tilemap_height_pixels
+        };
         // Mosaic: quantize Y to block boundary
         let mos_y = if mosaic_enabled {
             (screen_y / mosaic_size) * mosaic_size
@@ -165,8 +168,8 @@ pub(super) fn render_bg1(
             screen_y
         };
         let pixel_bg_y = if mosaic_enabled {
-            let extra = if context.high_res_mode { 0 } else { 1 };
-            ((mos_y) + extra + vofs) % tilemap_height_pixels
+            let mosaic_adj = if interlace_enabled { 0 } else { 1 };
+            ((mos_y) + mosaic_adj + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
