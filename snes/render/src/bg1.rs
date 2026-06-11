@@ -147,9 +147,7 @@ pub(super) fn render_bg1(
         }) & hofs_mask)
             % tilemap_width_pixels.max(1);
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
-        // VOFFS bit 0 adjustment for screen interlace (SETINI bit 3).
-        // For Mode 5/6 (high_res) the pseudo-512 mode disables this adjustment.
-        let vofs_adjust = interlace_enabled && !high_res_mode;
+        let vofs_adjust = interlace_enabled;
         let interlace_field = vofs_adjust && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & 0x3FE) | 0x0001
@@ -159,11 +157,7 @@ pub(super) fn render_bg1(
             raw_vofs & 0x3FF
         };
         let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
-        let bg_y = if interlace_enabled {
-            (presented_y + vofs) % tilemap_height_pixels
-        } else {
-            (presented_y + 1 + vofs) % tilemap_height_pixels
-        };
+        let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
         // Mosaic: quantize Y to block boundary
         let mos_y = if mosaic_enabled {
             (screen_y / mosaic_size) * mosaic_size
@@ -171,8 +165,7 @@ pub(super) fn render_bg1(
             screen_y
         };
         let pixel_bg_y = if mosaic_enabled {
-            let mosaic_adj = if interlace_enabled { 0 } else { 1 };
-            ((mos_y) + mosaic_adj + vofs) % tilemap_height_pixels
+            ((mos_y) + 1 + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
