@@ -113,9 +113,8 @@ pub(super) fn render_bg1(
     let mosaic_size = usize::from(moza & 0x0F) + 1;
     let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
 
-    let field_ratio = render_height / SCREEN_HEIGHT;
     for screen_y in 0..render_height {
-        let presented_y = screen_y / field_ratio;
+        let presented_y = screen_y;
         if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
             == 0
         {
