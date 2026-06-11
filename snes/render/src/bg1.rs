@@ -7,6 +7,7 @@ use super::{
     mode7::render_mode7_bg1,
     presented_bg_line,
     tile::{bg_chr_2bpp_pixel, bg_chr_8bpp_pixel, chr_4bpp_pixel, read_tilemap_entry},
+    use_presented_bg_char_base,
     use_presented_bg_scroll,
 };
 use nerust_snes_core::PresentedColorWindowLine;
@@ -79,7 +80,6 @@ pub(super) fn render_bg1(
     let context = Bg1RenderContext {
         mode,
         tilemap_base: (usize::from(bgsc & 0xFC)) << 9,
-        chr_base: layer.chr_base(bg12nba, bg34nba),
         tile_size,
         tile_height,
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
@@ -90,6 +90,7 @@ pub(super) fn render_bg1(
     let tilemap_height_pixels = (tilemap_height_tiles * context.tile_height).max(1);
     let (current_hofs, current_vofs) = layer.current_scroll(core);
     let use_presented_scroll = use_presented_bg_scroll(core, layer);
+    let use_presented_char_base = use_presented_bg_char_base(core, layer);
 
     let hofs_mask = if high_res_mode { 0x7FF } else { 0x3FF };
 
@@ -157,7 +158,7 @@ pub(super) fn render_bg1(
         let wh1 = window_line.wh1;
         let wh2 = window_line.wh2;
         let wh3 = window_line.wh3;
-        let presented = use_presented_scroll
+        let presented = (use_presented_scroll || use_presented_char_base)
             .then(|| presented_bg_line(core, layer, presented_y, render_height))
             .flatten();
         let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| {
@@ -165,6 +166,9 @@ pub(super) fn render_bg1(
         }) & hofs_mask)
             % tilemap_width_pixels;
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
+        let line_bg12nba = presented.map_or(bg12nba, |line| line.bg12nba);
+        let line_bg34nba = presented.map_or(bg34nba, |line| line.bg34nba);
+        let line_chr_base = layer.chr_base(line_bg12nba, line_bg34nba);
         let vofs = (usize::from(raw_vofs & 0x3FF)) % tilemap_height_pixels.max(1);
         let bg_y = (presented_y + vofs + 1 + usize::from(interlace_enabled && interlace_field))
             % tilemap_height_pixels;
@@ -205,7 +209,7 @@ pub(super) fn render_bg1(
             } else {
                 (screen_x + hofs) % tilemap_width_pixels
             };
-            if let Some(raw) = bg1_pixel(core, &context, bg_x, pixel_bg_y) {
+            if let Some(raw) = bg1_pixel(core, &context, line_chr_base, bg_x, pixel_bg_y) {
                 raw_output[row_offset + screen_x] = raw;
             }
         }
@@ -290,7 +294,13 @@ fn screen_uses_layer(
     })
 }
 
-fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
+fn bg1_pixel(
+    core: &Core,
+    context: &Bg1RenderContext,
+    chr_base: usize,
+    bg_x: usize,
+    bg_y: usize,
+) -> Option<u16> {
     let tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_height;
     let entry = read_tilemap_entry(
@@ -315,7 +325,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     let pixel_x = tile_pixel_x % 8;
     let pixel_y = tile_pixel_y % 8;
     let tile_number = usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16;
-    let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
+    let tile_addr = chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
         BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
         BgRenderMode::Bpp4 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
@@ -340,7 +350,6 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
 struct Bg1RenderContext {
     mode: BgRenderMode,
     tilemap_base: usize,
-    chr_base: usize,
     tile_size: usize,
     tile_height: usize,
     tilemap_width_tiles: usize,
