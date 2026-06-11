@@ -288,7 +288,7 @@ fn screen_uses_layer(
 }
 
 fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
-    let mut tile_x = bg_x / context.tile_size;
+    let tile_x = bg_x / context.tile_size;
     let tile_y = bg_y / context.tile_height;
     let entry = read_tilemap_entry(
         core,
@@ -299,21 +299,6 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     );
 
     let mut tile_pixel_x = bg_x % context.tile_size;
-    if context.high_res_mode {
-        let opt = usize::from((entry >> 8) & 0x03);
-        if opt > tile_pixel_x {
-            tile_x = tile_x.wrapping_sub(1);
-            let prev_entry = read_tilemap_entry(
-                core,
-                context.tilemap_base,
-                context.tilemap_width_tiles,
-                tile_x,
-                tile_y,
-            );
-            return bg1_pixel_opt_wrapped(core, context, prev_entry, opt, tile_pixel_x, bg_y);
-        }
-        tile_pixel_x -= opt;
-    }
     let mut tile_pixel_y = bg_y % context.tile_height;
     if entry & 0x4000 != 0 {
         tile_pixel_x = context.tile_size - 1 - tile_pixel_x;
@@ -326,11 +311,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     let subtile_y = tile_pixel_y / 8;
     let pixel_x = tile_pixel_x % 8;
     let pixel_y = tile_pixel_y % 8;
-    let tile_number = if context.high_res_mode {
-        (usize::from(entry & 0x00FF) | (usize::from((entry >> 4) & 0x0300))) + subtile_x + subtile_y * 16
-    } else {
-        usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16
-    };
+    let tile_number = usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16;
     let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
         BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
@@ -347,47 +328,6 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     } else {
         usize::from((entry >> 10) & 0x07)
     };
-    let color_index = match context.mode {
-        BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
-        BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
-        BgRenderMode::Bpp8 => usize::from(color),
-        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
-    };
-    Some(cgram_raw_color(core, color_index))
-}
-
-fn bg1_pixel_opt_wrapped(
-    core: &Core,
-    context: &Bg1RenderContext,
-    entry: u16,
-    opt: usize,
-    pixel_x_in: usize,
-    bg_y: usize,
-) -> Option<u16> {
-    let mut tpix_x = pixel_x_in + context.tile_size - opt;
-    let mut tile_pixel_y = bg_y % context.tile_height;
-    if entry & 0x4000 != 0 {
-        tpix_x = context.tile_size - 1 - tpix_x;
-    }
-    if entry & 0x8000 != 0 {
-        tile_pixel_y = context.tile_height - 1 - tile_pixel_y;
-    }
-    let subtile_x = tpix_x / 8;
-    let subtile_y = tile_pixel_y / 8;
-    let pixel_x = tpix_x % 8;
-    let pixel_y = tile_pixel_y % 8;
-    let tile_number = (usize::from(entry & 0x00FF) | (usize::from((entry >> 4) & 0x0300))) + subtile_x + subtile_y * 16;
-    let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
-    let color = match context.mode {
-        BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        BgRenderMode::Bpp4 => chr_4bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        BgRenderMode::Bpp8 => bg_chr_8bpp_pixel(core, tile_addr, pixel_x, pixel_y),
-        BgRenderMode::Mode7 => unreachable!("Mode7 uses its own renderer"),
-    };
-    if color == 0 && context.mode != BgRenderMode::Bpp8 {
-        return None;
-    }
-    let tile_palette = usize::from((entry >> 10) & 0x03);
     let color_index = match context.mode {
         BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
         BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
