@@ -219,15 +219,16 @@ impl RomCase {
 
         self.resolved_png_path = self.reference_png.as_ref().map(|png| rom_root.join(png));
         if let Some(ref png_path) = self.resolved_png_path
-            && !png_path.is_file() {
-                return Err(ManifestError::Invalid {
-                    message: format!(
-                        "ROM case `{}` points to missing reference PNG `{}`",
-                        self.id,
-                        png_path.display()
-                    ),
-                });
-            }
+            && !png_path.is_file()
+        {
+            return Err(ManifestError::Invalid {
+                message: format!(
+                    "ROM case `{}` points to missing reference PNG `{}`",
+                    self.id,
+                    png_path.display()
+                ),
+            });
+        }
 
         for assertion in &self.assertions {
             assertion.validate(&self.id)?;

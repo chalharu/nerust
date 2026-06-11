@@ -1,7 +1,7 @@
 use nerust_snes_core::Core;
 
 use super::{
-    BgLayer, SCREEN_HEIGHT,
+    BgLayer,
     color::{cgram_color_rgba, put_pixel},
     main_screen_for_line, presented_bg_line, use_presented_bg_scroll,
 };
@@ -42,17 +42,15 @@ pub(super) fn render_mode7_bg1(
     };
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
     for screen_y in 0..render_height {
-        let presented_y = screen_y / height_ratio;
-        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm)
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
             & BgLayer::Bg1.tm_mask()
             == 0
         {
             continue;
         }
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, BgLayer::Bg1, presented_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
             .flatten();
         let raw_vofs = presented.map_or(current_vofs, |line| {
             let raw = i32::from(line.vofs) & 0x3FF;
@@ -77,7 +75,7 @@ pub(super) fn render_mode7_bg1(
         // 2. Per-pixel contribution
         let dx = hofs - center_x;
         let dy = vofs - center_y;
-        let mode7_screen_y = presented_y as i32;
+        let mode7_screen_y = screen_y as i32;
         let origin_x =
             ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
         let origin_y =
@@ -144,11 +142,9 @@ fn render_mode7_bg2_overlay(
     render_height: usize,
     rgba: &mut [u8],
 ) {
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
     for screen_y in 0..render_height {
-        let presented_y = screen_y / height_ratio;
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, BgLayer::Bg1, presented_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
             .flatten();
         let raw_vofs = presented.map_or(current_vofs, |line| {
             let raw = i32::from(line.vofs) & 0x3FF;
@@ -170,16 +166,14 @@ fn render_mode7_bg2_overlay(
 
         let dx = hofs - center_x;
         let dy = vofs - center_y;
-        let mode7_screen_y = presented_y as i32;
         let origin_x =
-            ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
+            ((a * dx) & !63) + ((b * dy) & !63) + ((b * screen_y as i32) & !63) + (center_x << 8);
         let origin_y =
-            ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
+            ((c * dx) & !63) + ((d * dy) & !63) + ((d * screen_y as i32) & !63) + (center_y << 8);
 
         for screen_x in 0..render_width {
-            let mode7_screen_x = screen_x as i32;
-            let transformed_x = (origin_x + a * mode7_screen_x) >> 8;
-            let transformed_y = (origin_y + c * mode7_screen_x) >> 8;
+            let transformed_x = (origin_x + a * screen_x as i32) >> 8;
+            let transformed_y = (origin_y + c * screen_x as i32) >> 8;
 
             // BG2 pixel interpretation (per Fullsnes EXTBG):
             // bits 0-2: BG1 color index (already handled in BG1 pass)

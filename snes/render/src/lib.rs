@@ -467,17 +467,17 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // forced blanking (bit 7) or zero brightness must be black.
     if use_presented_inidisp {
         for screen_y in 0..render_height {
-            let presented_y = screen_y / (render_height / SCREEN_HEIGHT).max(1);
-            if let Some(backdrop) = core.presented_backdrop_line(presented_y)
-                && (backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0) {
-                    let row_start = screen_y * render_width * 4;
-                    for pixel in rgba[row_start..row_start + render_width * 4].chunks_exact_mut(4) {
-                        pixel[0] = 0;
-                        pixel[1] = 0;
-                        pixel[2] = 0;
-                        pixel[3] = 0xFF;
-                    }
+            if let Some(backdrop) = core.presented_backdrop_line(screen_y)
+                && (backdrop.inidisp & 0x80 != 0 || backdrop.inidisp & 0x0F == 0)
+            {
+                let row_start = screen_y * render_width * 4;
+                for pixel in rgba[row_start..row_start + render_width * 4].chunks_exact_mut(4) {
+                    pixel[0] = 0;
+                    pixel[1] = 0;
+                    pixel[2] = 0;
+                    pixel[3] = 0xFF;
                 }
+            }
         }
     }
 
