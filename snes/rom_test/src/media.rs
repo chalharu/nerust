@@ -52,7 +52,9 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
         let trns = reader.info().trns.as_ref();
         let mut rgba = Vec::with_capacity(output_size);
         for i in 0..pixel_count {
-            let (r, g, b, a) = if pixels_per_byte > 1 && palette.is_some() {
+            let (r, g, b, a) = if pixels_per_byte > 1
+                && let Some(pal) = palette
+            {
                 // Packed indexed pixels: extract nibble/bit and look up palette.
                 let byte_idx = i / pixels_per_byte;
                 let shift = ((i % pixels_per_byte) * bits_per_pixel) as u8;
@@ -61,7 +63,6 @@ pub fn load_png_rgba(path: &Path) -> Result<Vec<u8>, String> {
                 } else {
                     0
                 } as usize;
-                let pal = palette.unwrap();
                 if idx * 3 + 2 < pal.len() {
                     let alpha = trns.and_then(|t| t.get(idx).copied()).unwrap_or(0xFF);
                     (pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2], alpha)
