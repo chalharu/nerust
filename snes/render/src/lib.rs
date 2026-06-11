@@ -57,6 +57,20 @@ impl BgLayer {
             Self::Bg4 => (0x13, 0x14),
         }
     }
+
+    const fn char_base_register(self) -> u8 {
+        match self {
+            Self::Bg1 | Self::Bg2 => 0x0B,
+            Self::Bg3 | Self::Bg4 => 0x0C,
+        }
+    }
+
+    const fn chr_base_register_value(self, bg12nba: u8, bg34nba: u8) -> u8 {
+        match self {
+            Self::Bg1 | Self::Bg2 => bg12nba,
+            Self::Bg3 | Self::Bg4 => bg34nba,
+        }
+    }
 }
 
 pub(crate) fn use_presented_main_screen(core: &Core) -> bool {
@@ -114,6 +128,29 @@ pub(crate) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
             return true;
         }
     }
+    false
+}
+
+pub(crate) fn use_presented_bg_char_base(core: &Core, layer: BgLayer) -> bool {
+    if !hdma_targets_bbus(core, &[layer.char_base_register()]) {
+        return false;
+    }
+
+    let mut first = None;
+    for line in 0..SCREEN_HEIGHT {
+        let Some(bg_line) = presented_bg_line(core, layer, line, SCREEN_HEIGHT) else {
+            continue;
+        };
+        let value = layer.chr_base_register_value(bg_line.bg12nba, bg_line.bg34nba);
+        let Some(first_value) = first else {
+            first = Some(value);
+            continue;
+        };
+        if value != first_value {
+            return true;
+        }
+    }
+
     false
 }
 

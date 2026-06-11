@@ -1375,18 +1375,26 @@ impl Bus {
         self.presented_bg1_current_lines[scanline] = Some(PresentedBg1Line {
             hofs: self.ppu1.bg1_hofs(),
             vofs: self.ppu1.bg1_vofs(),
+            bg12nba: self.ppu1.peek(0x210B).unwrap_or(0),
+            bg34nba: self.ppu1.peek(0x210C).unwrap_or(0),
         });
         self.presented_bg2_current_lines[scanline] = Some(PresentedBg1Line {
             hofs: self.ppu1.bg2_hofs(),
             vofs: self.ppu1.bg2_vofs(),
+            bg12nba: self.ppu1.peek(0x210B).unwrap_or(0),
+            bg34nba: self.ppu1.peek(0x210C).unwrap_or(0),
         });
         self.presented_bg3_current_lines[scanline] = Some(PresentedBg1Line {
             hofs: self.ppu1.bg3_hofs(),
             vofs: self.ppu1.bg3_vofs(),
+            bg12nba: self.ppu1.peek(0x210B).unwrap_or(0),
+            bg34nba: self.ppu1.peek(0x210C).unwrap_or(0),
         });
         self.presented_bg4_current_lines[scanline] = Some(PresentedBg1Line {
             hofs: self.ppu1.bg4_hofs(),
             vofs: self.ppu1.bg4_vofs(),
+            bg12nba: self.ppu1.peek(0x210B).unwrap_or(0),
+            bg34nba: self.ppu1.peek(0x210C).unwrap_or(0),
         });
         self.presented_main_screen_current_lines[scanline] = Some(PresentedMainScreenLine {
             tm: self.ppu2.peek(0x212C).unwrap_or(0),
@@ -4379,6 +4387,8 @@ mod tests {
             Some(PresentedBg1Line {
                 hofs: 0x0123,
                 vofs: 0x02AB,
+                bg12nba: 0x00,
+                bg34nba: 0x00,
             })
         );
 
@@ -4393,6 +4403,8 @@ mod tests {
             Some(PresentedBg1Line {
                 hofs: 0x0345,
                 vofs: 0x0067,
+                bg12nba: 0x00,
+                bg34nba: 0x00,
             })
         );
     }
@@ -4426,6 +4438,8 @@ mod tests {
             Some(PresentedBg1Line {
                 hofs: 0x0356,
                 vofs: 0x009A,
+                bg12nba: 0x00,
+                bg34nba: 0x00,
             })
         );
         assert_eq!(
@@ -4433,6 +4447,8 @@ mod tests {
             Some(PresentedBg1Line {
                 hofs: 0x02BC,
                 vofs: 0x01DE,
+                bg12nba: 0x00,
+                bg34nba: 0x00,
             })
         );
         assert_eq!(
@@ -4440,6 +4456,8 @@ mod tests {
             Some(PresentedBg1Line {
                 hofs: 0x0324,
                 vofs: 0x0068,
+                bg12nba: 0x00,
+                bg34nba: 0x00,
             })
         );
         assert_eq!(

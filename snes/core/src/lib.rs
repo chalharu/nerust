@@ -54,6 +54,8 @@ pub struct PresentedBackdropLine {
 pub struct PresentedBg1Line {
     pub hofs: u16,
     pub vofs: u16,
+    pub bg12nba: u8,
+    pub bg34nba: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
