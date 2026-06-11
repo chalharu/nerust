@@ -47,6 +47,7 @@ pub(super) fn render_obj(
                 rgba,
                 render_width,
                 screen_y,
+                screen_y,
                 *sliver,
                 obj_interlace,
             );
@@ -145,6 +146,7 @@ fn render_obj_sliver(
     rgba: &mut [u8],
     render_width: usize,
     screen_y: usize,
+    target_y: usize,
     sliver: ObjSliver,
     obj_interlace: bool,
 ) {
@@ -187,7 +189,7 @@ fn render_obj_sliver(
 
         let palette = usize::from((sliver.sprite.attributes >> 1) & 0x07);
         let color = cgram_color_rgba(core, 128 + palette * 16 + usize::from(color), brightness);
-        put_pixel(rgba, render_width, target_x as usize, screen_y, color);
+        put_pixel(rgba, render_width, target_x as usize, target_y, color);
     }
 }
 
