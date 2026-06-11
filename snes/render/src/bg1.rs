@@ -163,23 +163,24 @@ pub(super) fn render_bg1(
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
         let effective_vofs = raw_vofs & 0x3FF;
         let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels;
-        let bg_y = (screen_y + 1 + vofs) % tilemap_height_pixels;
-        // Mosaic: quantize Y to block boundary
-        let mos_y = if mosaic_enabled {
-            (screen_y / mosaic_size) * mosaic_size
+        let field_y = if interlace_enabled {
+            screen_y / 2
         } else {
             screen_y
+        };
+        let bg_y = (field_y + 1 + vofs) % tilemap_height_pixels;
+        // Mosaic: quantize field Y to block boundary
+        let mos_y = if mosaic_enabled {
+            (field_y / mosaic_size) * mosaic_size
+        } else {
+            field_y
         };
         let pixel_bg_y = if mosaic_enabled {
             (mos_y + 1 + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
-        let row_offset = if interlace_enabled && context.tilemap_width_tiles == 32 {
-            (screen_y + 7 + (screen_y / 16)) * render_width
-        } else {
-            screen_y * render_width
-        };
+        let row_offset = screen_y * render_width;
         if row_offset + render_width > raw_output.len() {
             continue;
         }
@@ -326,7 +327,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
     let pixel_x = tile_pixel_x % 8;
     let pixel_y = tile_pixel_y % 8;
     let tile_number = if context.high_res_mode {
-        usize::from(entry & 0x00FF) + subtile_x + subtile_y * 16
+        (usize::from(entry & 0x00FF) | (usize::from((entry >> 4) & 0x0300))) + subtile_x + subtile_y * 16
     } else {
         usize::from(entry & 0x03FF) + subtile_x + subtile_y * 16
     };
@@ -375,7 +376,7 @@ fn bg1_pixel_opt_wrapped(
     let subtile_y = tile_pixel_y / 8;
     let pixel_x = tpix_x % 8;
     let pixel_y = tile_pixel_y % 8;
-    let tile_number = usize::from(entry & 0x00FF) + subtile_x + subtile_y * 16;
+    let tile_number = (usize::from(entry & 0x00FF) | (usize::from((entry >> 4) & 0x0300))) + subtile_x + subtile_y * 16;
     let tile_addr = context.chr_base + tile_number * context.mode.tile_bytes();
     let color = match context.mode {
         BgRenderMode::Bpp2 => bg_chr_2bpp_pixel(core, tile_addr, pixel_x, pixel_y),
@@ -386,7 +387,7 @@ fn bg1_pixel_opt_wrapped(
     if color == 0 && context.mode != BgRenderMode::Bpp8 {
         return None;
     }
-    let tile_palette = usize::from((entry >> 11) & 0x03);
+    let tile_palette = usize::from((entry >> 10) & 0x03);
     let color_index = match context.mode {
         BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
         BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
