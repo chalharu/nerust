@@ -147,10 +147,13 @@ pub(super) fn render_bg1(
         }) & hofs_mask)
             % tilemap_width_pixels.max(1);
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
-        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
+        // VOFFS bit 0 adjustment for screen interlace (SETINI bit 3).
+        // For Mode 5/6 (high_res) the pseudo-512 mode disables this adjustment.
+        let vofs_adjust = interlace_enabled && !high_res_mode;
+        let interlace_field = vofs_adjust && (screen_y & 1) == 1;
         let effective_vofs = if interlace_field {
             (raw_vofs & 0x3FE) | 0x0001
-        } else if interlace_enabled {
+        } else if vofs_adjust {
             raw_vofs & 0x3FE
         } else {
             raw_vofs & 0x3FF
