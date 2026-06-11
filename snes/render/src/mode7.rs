@@ -75,7 +75,7 @@ pub(super) fn render_mode7_bg1(
         // 2. Per-pixel contribution
         let dx = hofs - center_x;
         let dy = vofs - center_y;
-        let mode7_screen_y = screen_y as i32;
+        let mode7_screen_y = screen_y as i32 + 1;
         let origin_x =
             ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
         let origin_y =
@@ -167,10 +167,11 @@ fn render_mode7_bg2_overlay(
 
         let dx = hofs - center_x;
         let dy = vofs - center_y;
+        let mode7_screen_y = screen_y as i32 + 1;
         let origin_x =
-            ((a * dx) & !63) + ((b * dy) & !63) + ((b * screen_y as i32) & !63) + (center_x << 8);
+            ((a * dx) & !63) + ((b * dy) & !63) + ((b * mode7_screen_y) & !63) + (center_x << 8);
         let origin_y =
-            ((c * dx) & !63) + ((d * dy) & !63) + ((d * screen_y as i32) & !63) + (center_y << 8);
+            ((c * dx) & !63) + ((d * dy) & !63) + ((d * mode7_screen_y) & !63) + (center_y << 8);
 
         for screen_x in 0..render_width {
             let transformed_x = (origin_x + a * screen_x as i32) >> 8;
@@ -222,4 +223,49 @@ pub(super) fn mode7_pixel_value(
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::mode7_pixel_value;
+    use nerust_snes_core::{Core, CpuState};
+
+    const HEADER_OFFSET: usize = 0x7FC0;
+    const RESET_VECTOR_OFFSET: usize = 0x7FFC;
+
+    fn build_lorom(reset_vector: u16) -> Vec<u8> {
+        let mut rom = vec![0; 0x10000];
+        rom[HEADER_OFFSET..HEADER_OFFSET + 21].copy_from_slice(b"TEST SCREEN ROM      ");
+        rom[0x7FD5] = 0x30;
+        rom[0x7FD7] = 0x08;
+        rom[RESET_VECTOR_OFFSET..RESET_VECTOR_OFFSET + 2]
+            .copy_from_slice(&reset_vector.to_le_bytes());
+        rom
+    }
+
+    fn run_until_stopped(core: &mut Core, max_steps: usize) {
+        for _ in 0..max_steps {
+            core.step().unwrap();
+            if core.current_state() == CpuState::Stopped {
+                return;
+            }
+        }
+
+        panic!("core did not stop within {max_steps} steps");
+    }
+
+    #[test]
+    fn mode7_pixel_value_reads_bg_map_from_even_bytes_and_tiles_from_odd_bytes() {
+        let program = [
+            0x18, 0xFB, 0xC2, 0x30, 0xE2, 0x20, 0xA9, 0x80, 0x8D, 0x00, 0x21, 0xA9, 0x80, 0x8D,
+            0x15, 0x21, 0x9C, 0x16, 0x21, 0x9C, 0x17, 0x21, 0xA9, 0x00, 0x8D, 0x18, 0x21, 0xA9,
+            0x5A, 0x8D, 0x19, 0x21, 0xDB,
+        ];
+        let mut rom = build_lorom(0x8000);
+        rom[..program.len()].copy_from_slice(&program);
+
+        let mut core = Core::from_rom_bytes(&rom).unwrap();
+        run_until_stopped(&mut core, 256);
+
+        assert_eq!(core.peek_vram(0), 0x00);
+        assert_eq!(core.peek_vram(1), 0x5A);
+        assert_eq!(mode7_pixel_value(&core, 0, 0, 0), 0x5A);
+    }
+}
