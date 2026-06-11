@@ -27,10 +27,10 @@ pub(super) fn cgram_raw_color(core: &Core, color_index: usize) -> u16 {
 }
 
 pub(super) fn apply_color_math(main_15: u16, sub_15: u16, subtract: bool, half: bool) -> u16 {
-    let mr = (main_15 >> 0) & 0x1F;
+    let mr = main_15 & 0x1F;
     let mg = (main_15 >> 5) & 0x1F;
     let mb = (main_15 >> 10) & 0x1F;
-    let sr = (sub_15 >> 0) & 0x1F;
+    let sr = sub_15 & 0x1F;
     let sg = (sub_15 >> 5) & 0x1F;
     let sb = (sub_15 >> 10) & 0x1F;
 
