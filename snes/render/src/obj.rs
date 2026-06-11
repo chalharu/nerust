@@ -30,15 +30,12 @@ pub(super) fn render_obj(
     let (small_size, large_size) = obj_size_pair((obsel >> 5) & 0x07);
     let sprites = collect_obj_sprites(core, small_size, large_size);
 
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
-
     for screen_y in 0..render_height {
-        let presented_y = screen_y / height_ratio;
-        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & 0x10 == 0 {
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 == 0 {
             continue;
         }
         let interlace_field = interlace_enabled && (screen_y & 1) == 1;
-        let slivers = obj_slivers_for_scanline(&sprites, presented_y);
+        let slivers = obj_slivers_for_scanline(&sprites, screen_y);
         for sliver in slivers.iter().rev() {
             if obj_interlace && ((sliver.sprite.attributes & 0x01) != 0) != interlace_field {
                 continue;
@@ -50,7 +47,6 @@ pub(super) fn render_obj(
                 rgba,
                 render_width,
                 screen_y,
-                presented_y,
                 *sliver,
                 obj_interlace,
             );
@@ -68,10 +64,8 @@ fn screen_uses_obj(
         return current_tm & 0x10 != 0;
     }
 
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
-    (0..render_height).step_by(height_ratio).any(|screen_y| {
-        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm) & 0x10
-            != 0
+    (0..render_height).any(|screen_y| {
+        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 != 0
     })
 }
 
@@ -151,11 +145,10 @@ fn render_obj_sliver(
     rgba: &mut [u8],
     render_width: usize,
     screen_y: usize,
-    presented_y: usize,
     sliver: ObjSliver,
     obj_interlace: bool,
 ) {
-    let sprite_y = presented_y as i16 - sliver.sprite.y;
+    let sprite_y = screen_y as i16 - sliver.sprite.y;
     let source_y = if sliver.sprite.attributes & 0x80 != 0 {
         sliver.sprite.size.height - 1 - sprite_y as u8
     } else {

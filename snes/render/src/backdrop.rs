@@ -28,14 +28,13 @@ pub(super) fn render_presented_backdrop(
     let mut rgba = opaque_black_screen(width, height);
 
     for screen_y in 0..height {
-        let presented_y = screen_y / (height / 224).max(1);
         let mut backdrop = core
-            .presented_backdrop_line(presented_y)
+            .presented_backdrop_line(screen_y)
             .unwrap_or(fallback_backdrop);
         if !use_presented_inidisp {
             // When HDMA doesn't target INIDISP, scanline 0 may have stale
             // captured values from before the test modifies registers.
-            if presented_y == 0 {
+            if screen_y == 0 {
                 let current_inidisp = core.peek(0x002100);
                 if backdrop.inidisp & 0x80 != 0 && current_inidisp & 0x80 == 0 {
                     backdrop.inidisp = current_inidisp;
@@ -46,12 +45,15 @@ pub(super) fn render_presented_backdrop(
         // not the current frame's first HDMA write. When CGRAM HDMA is
         // active and scanline 0's colour is 0 (uninitialized), use
         // scanline 1's value which reflects the first HDMA entry.
-        if presented_y == 0 && cgram_hdma_active && backdrop.color0 == 0
-            && let Some(next) = core.presented_backdrop_line(1) {
-                backdrop.color0 = next.color0;
-            }
+        if screen_y == 0
+            && cgram_hdma_active
+            && backdrop.color0 == 0
+            && let Some(next) = core.presented_backdrop_line(1)
+        {
+            backdrop.color0 = next.color0;
+        }
         let window = core
-            .presented_color_window_line(presented_y)
+            .presented_color_window_line(screen_y)
             .unwrap_or(fallback_window);
         for screen_x in 0..width {
             let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);

@@ -301,11 +301,12 @@ fn finalize_validation(
             }
         }
     } else if let Ok(Some(expected_screen_hash)) = case.expected_screen_hash()
-        && expected_screen_hash != final_screen_hash {
-            failures.push(format!(
-                "screen_hash: expected 0x{expected_screen_hash:016X}, got 0x{final_screen_hash:016X}"
-            ));
-        }
+        && expected_screen_hash != final_screen_hash
+    {
+        failures.push(format!(
+            "screen_hash: expected 0x{expected_screen_hash:016X}, got 0x{final_screen_hash:016X}"
+        ));
+    }
     let screenshot_png = if options.capture_screenshot_png {
         match encode_screenshot_png(
             &rendered.rgba,

@@ -125,16 +125,13 @@ pub(super) fn render_bg1(
     let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
 
     for screen_y in 0..render_height {
-        let presented_y = screen_y;
-        if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
-            == 0
-        {
+        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer_tm_mask == 0 {
             continue;
         }
         // Use per-scanline window data if available; otherwise fall back to
         // current register values (which retain the previous frame's HDMA writes).
         let window_line = core
-            .presented_color_window_line(presented_y)
+            .presented_color_window_line(screen_y)
             .or({
                 // If no captured data, try the current frame's data from the "current" arrays
                 // by calling presented_color_window_line with a different approach.
@@ -151,7 +148,7 @@ pub(super) fn render_bg1(
         let wh2 = window_line.wh2;
         let wh3 = window_line.wh3;
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, layer, presented_y))
+            .then(|| presented_bg_line(core, layer, screen_y))
             .flatten();
         let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| {
             usize::from(line.hofs.wrapping_add(hofs_extra))
@@ -160,7 +157,7 @@ pub(super) fn render_bg1(
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
         let effective_vofs = raw_vofs & 0x3FF;
         let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels;
-        let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
+        let bg_y = (screen_y + 1 + vofs) % tilemap_height_pixels;
         // Mosaic: quantize Y to block boundary
         let mos_y = if mosaic_enabled {
             (screen_y / mosaic_size) * mosaic_size
