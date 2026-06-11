@@ -1,7 +1,7 @@
 use nerust_snes_core::Core;
 
 use super::{
-    BgLayer, RenderError, SCREEN_HEIGHT,
+    BgLayer, RenderError,
     color::cgram_raw_color,
     main_screen_for_line,
     mode7::render_mode7_bg1,
@@ -58,9 +58,20 @@ pub(super) fn render_bg1(
     // (BGMODE bits A/B/C/D) controls the height: 8 or 16 pixels tall.
     // In all other modes, tiles are square (8x8 or 16x16).
     let (tile_size, tile_height) = if high_res_mode {
-        (16, if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 })
+        (
+            16,
+            if bgmode & layer.tile_size_mask() != 0 {
+                16
+            } else {
+                8
+            },
+        )
     } else {
-        let s = if bgmode & layer.tile_size_mask() != 0 { 16 } else { 8 };
+        let s = if bgmode & layer.tile_size_mask() != 0 {
+            16
+        } else {
+            8
+        };
         (s, s)
     };
     let context = Bg1RenderContext {
@@ -74,8 +85,8 @@ pub(super) fn render_bg1(
         high_res_mode,
     };
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
-    let tilemap_width_pixels = context.tilemap_width_tiles * context.tile_size;
-    let tilemap_height_pixels = tilemap_height_tiles * context.tile_height;
+    let tilemap_width_pixels = (context.tilemap_width_tiles * context.tile_size).max(1);
+    let tilemap_height_pixels = (tilemap_height_tiles * context.tile_height).max(1);
     let (current_hofs, current_vofs) = layer.current_scroll(core);
     let use_presented_scroll = use_presented_bg_scroll(core, layer);
 
@@ -145,20 +156,10 @@ pub(super) fn render_bg1(
         let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| {
             usize::from(line.hofs.wrapping_add(hofs_extra))
         }) & hofs_mask)
-            % tilemap_width_pixels.max(1);
+            % tilemap_width_pixels;
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
-        // VOFFS bit 0 adjustment: only for true screen interlace (SETINI bit 3).
-        // Mode 5/6 pseudo-512 mode (SETINI bit 0) does not apply this adjustment.
-        let vofs_adjust = interlace_enabled && !high_res_mode;
-        let interlace_field = vofs_adjust && (screen_y & 1) == 1;
-        let effective_vofs = if interlace_field {
-            (raw_vofs & 0x3FE) | 0x0001
-        } else if vofs_adjust {
-            raw_vofs & 0x3FE
-        } else {
-            raw_vofs & 0x3FF
-        };
-        let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels.max(1);
+        let effective_vofs = raw_vofs & 0x3FF;
+        let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels;
         let bg_y = (presented_y + 1 + vofs) % tilemap_height_pixels;
         // Mosaic: quantize Y to block boundary
         let mos_y = if mosaic_enabled {
@@ -167,7 +168,7 @@ pub(super) fn render_bg1(
             screen_y
         };
         let pixel_bg_y = if mosaic_enabled {
-            ((mos_y) + 1 + vofs) % tilemap_height_pixels
+            (mos_y + 1 + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
@@ -272,9 +273,7 @@ fn screen_uses_layer(
     }
 
     (0..render_height).any(|screen_y| {
-        main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
-            & layer.tm_mask()
-            != 0
+        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0
     })
 }
 
