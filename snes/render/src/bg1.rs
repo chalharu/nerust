@@ -80,7 +80,6 @@ pub(super) fn render_bg1(
     let use_presented_scroll = use_presented_bg_scroll(core, layer);
 
     let hofs_mask = if high_res_mode { 0x7FF } else { 0x3FF };
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
 
     // Window masking: TMW ($212E) controls which layers are masked
     // by the color window on the main screen.
@@ -115,7 +114,7 @@ pub(super) fn render_bg1(
     let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
 
     for screen_y in 0..render_height {
-        let presented_y = screen_y / height_ratio;
+        let presented_y = screen_y;
         if main_screen_for_line(core, presented_y, current_tm, use_presented_tm) & layer_tm_mask
             == 0
         {
@@ -166,7 +165,7 @@ pub(super) fn render_bg1(
         };
         let pixel_bg_y = if mosaic_enabled {
             let extra = if context.high_res_mode { 0 } else { 1 };
-            ((mos_y / height_ratio) + extra + vofs) % tilemap_height_pixels
+            ((mos_y) + extra + vofs) % tilemap_height_pixels
         } else {
             bg_y
         };
@@ -270,9 +269,8 @@ fn screen_uses_layer(
         return current_tm & layer.tm_mask() != 0;
     }
 
-    let height_ratio = (render_height / SCREEN_HEIGHT).max(1);
-    (0..render_height).step_by(height_ratio).any(|screen_y| {
-        main_screen_for_line(core, screen_y / height_ratio, current_tm, use_presented_tm)
+    (0..render_height).any(|screen_y| {
+        main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
             & layer.tm_mask()
             != 0
     })
