@@ -17,6 +17,7 @@ pub(super) fn render_obj(
     current_tm: u8,
     use_presented_tm: bool,
     interlace_enabled: bool,
+    interlace_field: bool,
     obj_interlace: bool,
     render_width: usize,
     render_height: usize,
@@ -31,10 +32,13 @@ pub(super) fn render_obj(
     let sprites = collect_obj_sprites(core, small_size, large_size);
 
     for screen_y in 0..render_height {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 == 0 {
+        if main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
+            & 0x10
+            == 0
+        {
             continue;
         }
-        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
+        let interlace_field = interlace_enabled && interlace_field;
         let slivers = obj_slivers_for_scanline(&sprites, screen_y);
         for sliver in slivers.iter().rev() {
             if obj_interlace && ((sliver.sprite.attributes & 0x01) != 0) != interlace_field {
@@ -66,7 +70,9 @@ fn screen_uses_obj(
     }
 
     (0..render_height).any(|screen_y| {
-        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & 0x10 != 0
+        main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
+            & 0x10
+            != 0
     })
 }
 

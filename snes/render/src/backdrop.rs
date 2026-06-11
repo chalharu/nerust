@@ -1,6 +1,7 @@
 use nerust_snes_core::{Core, PresentedBackdropLine, PresentedColorWindowLine};
 
 use super::color::{opaque_black_screen, put_pixel, snes_color_to_rgba};
+use super::presented_scanline_for_render;
 
 const COLOR_WINDOW_SHIFT: u8 = 4;
 const WINDOW1_ENABLE: u8 = 0x02;
@@ -28,8 +29,9 @@ pub(super) fn render_presented_backdrop(
     let mut rgba = opaque_black_screen(width, height);
 
     for screen_y in 0..height {
+        let presented_y = presented_scanline_for_render(screen_y, height);
         let mut backdrop = core
-            .presented_backdrop_line(screen_y)
+            .presented_backdrop_line(presented_y)
             .unwrap_or(fallback_backdrop);
         if !use_presented_inidisp {
             // When HDMA doesn't target INIDISP, scanline 0 may have stale
@@ -48,12 +50,12 @@ pub(super) fn render_presented_backdrop(
         if screen_y == 0
             && cgram_hdma_active
             && backdrop.color0 == 0
-            && let Some(next) = core.presented_backdrop_line(1)
+            && let Some(next) = core.presented_backdrop_line(presented_scanline_for_render(1, height))
         {
             backdrop.color0 = next.color0;
         }
         let window = core
-            .presented_color_window_line(screen_y)
+            .presented_color_window_line(presented_y)
             .unwrap_or(fallback_window);
         for screen_x in 0..width {
             let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);
