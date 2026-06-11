@@ -428,10 +428,18 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
             if interlace_enabled {
                 let screen_y = i / render_width;
-                if screen_y & 1 != 0 { sub_raw[i] } else { main_raw[i] }
+                if screen_y & 1 != 0 {
+                    sub_raw[i]
+                } else {
+                    main_raw[i]
+                }
             } else {
                 let screen_x = i % render_width;
-                if screen_x & 1 != 0 { main_raw[i] } else { sub_raw[i] }
+                if screen_x & 1 != 0 {
+                    main_raw[i]
+                } else {
+                    sub_raw[i]
+                }
             }
         } else {
             main_raw[i]
