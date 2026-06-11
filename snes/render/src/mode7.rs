@@ -12,6 +12,7 @@ pub(super) fn render_mode7_bg1(
     current_tm: u8,
     use_presented_tm: bool,
     interlace_enabled: bool,
+    interlace_field: bool,
     render_width: usize,
     render_height: usize,
     rgba: &mut [u8],
@@ -43,21 +44,20 @@ pub(super) fn render_mode7_bg1(
     let use_presented_scroll = use_presented_bg_scroll(core, BgLayer::Bg1);
 
     for screen_y in 0..render_height {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm)
+        if main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
             & BgLayer::Bg1.tm_mask()
             == 0
         {
             continue;
         }
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y, render_height))
             .flatten();
         let raw_vofs = presented.map_or(current_vofs, |line| {
             let raw = i32::from(line.vofs) & 0x3FF;
             if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
         });
-        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
-        let effective_vofs = if interlace_field {
+        let effective_vofs = if interlace_enabled && interlace_field {
             (raw_vofs & !1) | 1
         } else if interlace_enabled {
             raw_vofs & !1
@@ -117,6 +117,7 @@ pub(super) fn render_mode7_bg1(
             current_vofs,
             use_presented_scroll,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             rgba,
@@ -138,20 +139,20 @@ fn render_mode7_bg2_overlay(
     current_vofs: i32,
     use_presented_scroll: bool,
     interlace_enabled: bool,
+    interlace_field: bool,
     render_width: usize,
     render_height: usize,
     rgba: &mut [u8],
 ) {
     for screen_y in 0..render_height {
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y))
+            .then(|| presented_bg_line(core, BgLayer::Bg1, screen_y, render_height))
             .flatten();
         let raw_vofs = presented.map_or(current_vofs, |line| {
             let raw = i32::from(line.vofs) & 0x3FF;
             if raw & 0x200 != 0 { raw | !0x3FF } else { raw }
         });
-        let interlace_field = interlace_enabled && (screen_y & 1) == 1;
-        let effective_vofs = if interlace_field {
+        let effective_vofs = if interlace_enabled && interlace_field {
             (raw_vofs & !1) | 1
         } else if interlace_enabled {
             raw_vofs & !1

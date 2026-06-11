@@ -83,11 +83,12 @@ pub(crate) fn use_presented_main_screen(core: &Core) -> bool {
 pub(crate) fn main_screen_for_line(
     core: &Core,
     screen_y: usize,
+    render_height: usize,
     current_tm: u8,
     use_presented_tm: bool,
 ) -> u8 {
     if use_presented_tm {
-        core.presented_main_screen_line(screen_y)
+        core.presented_main_screen_line(presented_scanline_for_render(screen_y, render_height))
             .map_or(current_tm, |line| line.tm)
     } else {
         current_tm
@@ -102,7 +103,7 @@ pub(crate) fn use_presented_bg_scroll(core: &Core, layer: BgLayer) -> bool {
 
     let mut first = None;
     for line in 0..SCREEN_HEIGHT {
-        let Some(scroll) = presented_bg_line(core, layer, line) else {
+        let Some(scroll) = presented_bg_line(core, layer, line, SCREEN_HEIGHT) else {
             continue;
         };
         let Some(first_scroll) = first else {
@@ -120,12 +121,22 @@ pub(crate) fn presented_bg_line(
     core: &Core,
     layer: BgLayer,
     screen_y: usize,
+    render_height: usize,
 ) -> Option<nerust_snes_core::PresentedBg1Line> {
+    let screen_y = presented_scanline_for_render(screen_y, render_height);
     match layer {
         BgLayer::Bg1 => core.presented_bg1_line(screen_y),
         BgLayer::Bg2 => core.presented_bg2_line(screen_y),
         BgLayer::Bg3 => core.presented_bg3_line(screen_y),
         BgLayer::Bg4 => core.presented_bg4_line(screen_y),
+    }
+}
+
+pub(crate) fn presented_scanline_for_render(screen_y: usize, render_height: usize) -> usize {
+    if render_height > SCREEN_HEIGHT {
+        screen_y / 2
+    } else {
+        screen_y
     }
 }
 
@@ -187,6 +198,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     let screen_mode = bgmode & 0x07;
     let high_res_mode = screen_mode == 5 || screen_mode == 6;
     let interlace_enabled = core.interlace_enabled();
+    let interlace_field = interlace_enabled && core.completed_odd_frame();
     let obj_interlace = core.obj_interlace_enabled();
     let pseudo_hires = core.pseudo_hires_enabled();
     let color_math_supported = screen_mode <= 4 || pseudo_hires;
@@ -248,6 +260,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        interlace_field,
         render_width,
         render_height,
         &mut rgba,
@@ -261,6 +274,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        interlace_field,
         render_width,
         render_height,
         &mut rgba,
@@ -274,6 +288,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        interlace_field,
         render_width,
         render_height,
         &mut rgba,
@@ -287,6 +302,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        interlace_field,
         render_width,
         render_height,
         &mut rgba,
@@ -304,6 +320,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             ts,
             use_presented_tm,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             &mut rgba,
@@ -317,6 +334,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             ts,
             use_presented_tm,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             &mut rgba,
@@ -330,6 +348,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             ts,
             use_presented_tm,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             &mut rgba,
@@ -343,6 +362,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             ts,
             use_presented_tm,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             &mut rgba,
@@ -426,27 +446,20 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     // --- Composite BG raw data onto RGBA backdrop ---
     for i in 0..pixel_count {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
-            if interlace_enabled {
-                let screen_y = i / render_width;
-                if screen_y & 1 != 0 {
-                    sub_raw[i]
-                } else {
-                    main_raw[i]
-                }
+            let screen_x = i % render_width;
+            if screen_x & 1 == 0 {
+                main_raw[i]
             } else {
-                let screen_x = i % render_width;
-                if screen_x & 1 != 0 {
-                    main_raw[i]
-                } else {
-                    sub_raw[i]
-                }
+                sub_raw[i]
             }
         } else {
             main_raw[i]
         };
         if raw != TRANSPARENT {
             let color = snes_color_to_rgba(raw, render_brightness);
-            let offset = i * 4;
+            let screen_y = i / render_width;
+            let screen_x = i % render_width;
+            let offset = (screen_y * render_width + screen_x) * 4;
             rgba[offset..offset + 4].copy_from_slice(&color);
         }
     }
@@ -457,6 +470,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         tm,
         use_presented_tm,
         interlace_enabled,
+        interlace_field,
         obj_interlace,
         render_width,
         render_height,
@@ -528,6 +542,16 @@ mod tests {
             &rendered.rgba[rendered.rgba.len() - 4..],
             &[0x00, 0x00, 0x00, 0xFF]
         );
+    }
+
+    #[test]
+    fn presented_scanline_is_folded_for_interlace_render_height() {
+        use super::{INTERLACE_HEIGHT, SCREEN_HEIGHT, presented_scanline_for_render};
+
+        assert_eq!(presented_scanline_for_render(0, SCREEN_HEIGHT), 0);
+        assert_eq!(presented_scanline_for_render(223, SCREEN_HEIGHT), 223);
+        assert_eq!(presented_scanline_for_render(224, INTERLACE_HEIGHT), 112);
+        assert_eq!(presented_scanline_for_render(447, INTERLACE_HEIGHT), 223);
     }
 
     #[test]

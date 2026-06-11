@@ -18,19 +18,14 @@ pub(super) fn render_bg1(
     current_tm: u8,
     use_presented_tm: bool,
     interlace_enabled: bool,
+    interlace_field: bool,
     render_width: usize,
     render_height: usize,
     rgba: &mut [u8],
     raw_output: &mut [u16],
     hofs_extra: u16,
 ) -> Result<(), RenderError> {
-    if !screen_uses_layer(
-        core,
-        layer,
-        current_tm,
-        use_presented_tm,
-        render_height,
-    ) {
+    if !screen_uses_layer(core, layer, current_tm, use_presented_tm, render_height) {
         return Ok(());
     }
 
@@ -47,6 +42,7 @@ pub(super) fn render_bg1(
             current_tm,
             use_presented_tm,
             interlace_enabled,
+            interlace_field,
             render_width,
             render_height,
             rgba,
@@ -88,7 +84,6 @@ pub(super) fn render_bg1(
         tile_height,
         tilemap_width_tiles: if bgsc & 0x01 != 0 { 64 } else { 32 },
         bpp2_palette_base: bpp2_palette_base(layer, screen_mode),
-        high_res_mode,
     };
     let tilemap_height_tiles = if bgsc & 0x02 != 0 { 64 } else { 32 };
     let tilemap_width_pixels = (context.tilemap_width_tiles * context.tile_size).max(1);
@@ -131,14 +126,23 @@ pub(super) fn render_bg1(
     let mosaic_enabled = (moza >> (4 + layer.bit_index())) & 0x01 != 0;
 
     for screen_y in 0..render_height {
-        if main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer_tm_mask == 0 {
+        let presented_y = screen_y;
+        if main_screen_for_line(
+            core,
+            presented_y,
+            render_height,
+            current_tm,
+            use_presented_tm,
+        ) & layer_tm_mask
+            == 0
+        {
             continue;
         }
         // Use per-scanline window data if available; otherwise fall back to
         // current register values (which retain the previous frame's HDMA writes).
         let window_line = core
-            .presented_color_window_line(screen_y)
-            .or({
+            .presented_color_window_line(presented_y)
+            .or_else(|| {
                 // If no captured data, try the current frame's data from the "current" arrays
                 // by calling presented_color_window_line with a different approach.
                 None
@@ -154,29 +158,25 @@ pub(super) fn render_bg1(
         let wh2 = window_line.wh2;
         let wh3 = window_line.wh3;
         let presented = use_presented_scroll
-            .then(|| presented_bg_line(core, layer, screen_y))
+            .then(|| presented_bg_line(core, layer, presented_y, render_height))
             .flatten();
         let hofs = (presented.map_or(usize::from(current_hofs.wrapping_add(hofs_extra)), |line| {
             usize::from(line.hofs.wrapping_add(hofs_extra))
         }) & hofs_mask)
             % tilemap_width_pixels;
         let raw_vofs = presented.map_or(current_vofs, |line| line.vofs);
-        let effective_vofs = raw_vofs & 0x3FF;
-        let vofs = (usize::from(effective_vofs)) % tilemap_height_pixels;
-        let field_y = if interlace_enabled {
-            screen_y / 2
+        let vofs = (usize::from(raw_vofs & 0x3FF)) % tilemap_height_pixels.max(1);
+        let bg_y = (presented_y + vofs + 1 + usize::from(interlace_enabled && interlace_field))
+            % tilemap_height_pixels;
+        // Mosaic: quantize Y to block boundary
+        let mos_y = if mosaic_enabled {
+            (screen_y / mosaic_size) * mosaic_size
         } else {
             screen_y
         };
-        let bg_y = (field_y + 1 + vofs) % tilemap_height_pixels;
-        // Mosaic: quantize field Y to block boundary
-        let mos_y = if mosaic_enabled {
-            (field_y / mosaic_size) * mosaic_size
-        } else {
-            field_y
-        };
         let pixel_bg_y = if mosaic_enabled {
-            (mos_y + 1 + vofs) % tilemap_height_pixels
+            (mos_y + vofs + 1 + usize::from(interlace_enabled && interlace_field))
+                % tilemap_height_pixels
         } else {
             bg_y
         };
@@ -283,8 +283,11 @@ fn screen_uses_layer(
         return current_tm & layer.tm_mask() != 0;
     }
 
-    (0..render_height)
-        .any(|screen_y| main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0)
+    (0..render_height).any(|screen_y| {
+        main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
+            & layer.tm_mask()
+            != 0
+    })
 }
 
 fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
@@ -323,11 +326,7 @@ fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) 
         return None;
     }
 
-    let tile_palette = if context.high_res_mode {
-        usize::from((entry >> 10) & 0x03)
-    } else {
-        usize::from((entry >> 10) & 0x07)
-    };
+    let tile_palette = usize::from((entry >> 10) & 0x07);
     let color_index = match context.mode {
         BgRenderMode::Bpp2 => context.bpp2_palette_base + tile_palette * 4 + usize::from(color),
         BgRenderMode::Bpp4 => tile_palette * 16 + usize::from(color),
@@ -346,7 +345,6 @@ struct Bg1RenderContext {
     tile_height: usize,
     tilemap_width_tiles: usize,
     bpp2_palette_base: usize,
-    high_res_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
