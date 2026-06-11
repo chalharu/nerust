@@ -24,7 +24,13 @@ pub(super) fn render_bg1(
     raw_output: &mut [u16],
     hofs_extra: u16,
 ) -> Result<(), RenderError> {
-    if !screen_uses_layer(core, layer, current_tm, use_presented_tm, render_height) {
+    if !screen_uses_layer(
+        core,
+        layer,
+        current_tm,
+        use_presented_tm,
+        render_height,
+    ) {
         return Ok(());
     }
 
@@ -169,7 +175,14 @@ pub(super) fn render_bg1(
         } else {
             bg_y
         };
-        let row_offset = screen_y * render_width;
+        let row_offset = if interlace_enabled && context.tilemap_width_tiles == 32 {
+            (screen_y + 7 + (screen_y / 16)) * render_width
+        } else {
+            screen_y * render_width
+        };
+        if row_offset + render_width > raw_output.len() {
+            continue;
+        }
         for screen_x in 0..render_width {
             if window_masked
                 && in_window(
@@ -269,9 +282,8 @@ fn screen_uses_layer(
         return current_tm & layer.tm_mask() != 0;
     }
 
-    (0..render_height).any(|screen_y| {
-        main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0
-    })
+    (0..render_height)
+        .any(|screen_y| main_screen_for_line(core, screen_y, current_tm, use_presented_tm) & layer.tm_mask() != 0)
 }
 
 fn bg1_pixel(core: &Core, context: &Bg1RenderContext, bg_x: usize, bg_y: usize) -> Option<u16> {
