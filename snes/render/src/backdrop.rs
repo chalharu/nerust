@@ -50,7 +50,8 @@ pub(super) fn render_presented_backdrop(
         if screen_y == 0
             && cgram_hdma_active
             && backdrop.color0 == 0
-            && let Some(next) = core.presented_backdrop_line(presented_scanline_for_render(1, height))
+            && let Some(next) =
+                core.presented_backdrop_line(presented_scanline_for_render(1, height))
         {
             backdrop.color0 = next.color0;
         }

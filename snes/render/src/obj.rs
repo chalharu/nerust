@@ -32,8 +32,7 @@ pub(super) fn render_obj(
     let sprites = collect_obj_sprites(core, small_size, large_size);
 
     for screen_y in 0..render_height {
-        if main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
-            & 0x10
+        if main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm) & 0x10
             == 0
         {
             continue;
@@ -70,8 +69,7 @@ fn screen_uses_obj(
     }
 
     (0..render_height).any(|screen_y| {
-        main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm)
-            & 0x10
+        main_screen_for_line(core, screen_y, render_height, current_tm, use_presented_tm) & 0x10
             != 0
     })
 }

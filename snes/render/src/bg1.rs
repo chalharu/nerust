@@ -7,8 +7,7 @@ use super::{
     mode7::render_mode7_bg1,
     presented_bg_line,
     tile::{bg_chr_2bpp_pixel, bg_chr_8bpp_pixel, chr_4bpp_pixel, read_tilemap_entry},
-    use_presented_bg_char_base,
-    use_presented_bg_scroll,
+    use_presented_bg_char_base, use_presented_bg_scroll,
 };
 use nerust_snes_core::PresentedColorWindowLine;
 
