@@ -142,7 +142,7 @@ pub(super) fn render_bg1(
         // current register values (which retain the previous frame's HDMA writes).
         let window_line = core
             .presented_color_window_line(presented_y)
-            .or_else(|| {
+            .or({
                 // If no captured data, try the current frame's data from the "current" arrays
                 // by calling presented_color_window_line with a different approach.
                 None
