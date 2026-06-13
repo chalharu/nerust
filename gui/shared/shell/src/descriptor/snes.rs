@@ -18,7 +18,7 @@ use nerust_input_schema::{
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_snes_core::Core;
-use nerust_snes_render::render_screen;
+use nerust_snes_render::{RenderContext, render_screen};
 use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
 use std::fs;
 use std::hash::Hasher as _;
@@ -420,7 +420,7 @@ fn run_worker<S: 'static + Sound + MixerInput + Send>(
         if let Some(core) = state.core.as_mut() {
             match step_snes_frame(core, &mut state.speaker) {
                 Ok(()) => {
-                    shared.publish_frame(render_snes_frame(core));
+                    shared.publish_frame(render_snes_frame(core, &mut state.render_ctx));
                     state.frame_counter = state.frame_counter.wrapping_add(1);
                     timer.wait();
                     publish_worker_metrics(&shared, &state, timer.as_fps());
@@ -438,6 +438,7 @@ fn run_worker<S: 'static + Sound + MixerInput + Send>(
 struct SnesWorkerState<S: 'static + Sound + MixerInput + Send> {
     core: Option<Core>,
     speaker: S,
+    render_ctx: RenderContext,
     loaded: bool,
     paused: bool,
     frame_counter: u64,
@@ -450,6 +451,7 @@ impl<S: 'static + Sound + MixerInput + Send> SnesWorkerState<S> {
         Self {
             core: None,
             speaker,
+            render_ctx: RenderContext::new(),
             loaded: false,
             paused: true,
             frame_counter: 0,
@@ -488,7 +490,7 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
                     state.reset_timer = true;
                     state.speaker.pause();
                     if let Some(core) = state.core.as_ref() {
-                        shared.publish_frame(render_snes_frame(core));
+                        shared.publish_frame(render_snes_frame(core, &mut state.render_ctx));
                     }
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
@@ -515,7 +517,7 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
                     apply_controller_buttons(core, state.input_buttons);
                     state.frame_counter = 0;
                     state.reset_timer = true;
-                    shared.publish_frame(render_snes_frame(core));
+                    shared.publish_frame(render_snes_frame(core, &mut state.render_ctx));
                     publish_worker_metrics(shared, state, 0.0);
                     Ok(())
                 }
@@ -528,7 +530,8 @@ fn handle_command<S: 'static + Sound + MixerInput + Send>(
             state.speaker.pause();
             if let Some(core) = state.core.as_ref() {
                 let mut hasher = Crc64Hasher::new();
-                hasher.write(render_snes_frame(core).as_slice());
+                let frame = render_snes_frame(core, &mut state.render_ctx);
+                hasher.write(frame.as_slice());
                 let hash = hasher.finish();
                 log::info!(
                     "SNES runtime paused at frame {} with screen hash 0x{hash:016X}, step count {}",
@@ -669,9 +672,9 @@ fn apply_controller_buttons(core: &mut Core, buttons: [u16; 2]) {
     }
 }
 
-fn render_snes_frame(core: &Core) -> Vec<u8> {
-    match render_screen(core) {
-        Ok(rendered) => rendered.rgba,
+fn render_snes_frame(core: &Core, ctx: &mut RenderContext) -> Vec<u8> {
+    match render_screen(core, ctx) {
+        Ok(()) => ctx.frame.as_ref().to_vec(),
         Err(error) => {
             log::warn!("SNES software renderer failed: {error}");
             opaque_black_frame()

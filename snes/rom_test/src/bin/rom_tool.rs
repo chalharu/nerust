@@ -1,6 +1,6 @@
 use clap::{Arg, ArgAction, Command};
 use nerust_snes_core::{Cartridge, EnhancementChip};
-use nerust_snes_render::render_screen;
+use nerust_snes_render::{RenderContext, render_screen};
 use nerust_snes_rom_test::manifest::{RomManifest, load_default_manifest, load_manifest};
 use nerust_snes_rom_test::report::{default_output_root, write_html_report};
 use nerust_snes_rom_test::results::{CaseOutcome, ValidationOptions};
@@ -199,6 +199,7 @@ fn run_benchmark(
         );
 
         let mut core = load_core_for_case(case)?;
+        let mut ctx = RenderContext::new();
         let start_cycles = core.master_cycles();
         let started = Instant::now();
         let mut frames_executed = 0_u64;
@@ -210,7 +211,7 @@ fn run_benchmark(
                 .map_err(|error| format!("core error during benchmark: {error}"))?;
             frames_executed += 1;
             if render_each_frame {
-                render_screen(&core)
+                render_screen(&core, &mut ctx)
                     .map_err(|error| format!("failed to render benchmark frame: {error}"))?;
             }
         }

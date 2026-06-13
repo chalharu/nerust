@@ -229,7 +229,7 @@ impl ObjSize {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ObjSprite {
+pub(super) struct ObjSprite {
     x: i16,
     y: i16,
     tile: u8,
@@ -238,7 +238,7 @@ struct ObjSprite {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ObjSliver {
+pub(super) struct ObjSliver {
     sprite: ObjSprite,
     tile_column: u8,
 }
