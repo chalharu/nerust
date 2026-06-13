@@ -3230,7 +3230,6 @@ name = "nerust_core"
 version = "0.1.0-dev"
 dependencies = [
  "bitflags 2.13.0",
- "crc",
  "hound",
  "log",
  "nerust_contract_mirror",
@@ -3537,10 +3536,6 @@ dependencies = [
  "nerust_sound_traits",
  "thiserror 2.0.18",
 ]
-
-[[package]]
-name = "nerust_snes_device"
-version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_snes_render"
