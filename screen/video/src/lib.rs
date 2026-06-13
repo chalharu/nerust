@@ -91,7 +91,7 @@ pub enum PixelFormat {
     /// 1 byte/pixel, palette index + palette LUT.
     PaletteIndex {
         /// 256エントリのRGBAパレット (u32 = 0xRRGGBBAA)
-        palette: [u32; 256],
+        palette: Box<[u32; 256]>,
     },
 }
 
