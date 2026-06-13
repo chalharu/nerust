@@ -1,7 +1,7 @@
 use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
 use nerust_contract_rom::RomFormat;
-use nerust_core::cartridge_data_parts::CartridgeDataParts;
-use nerust_core::cartridge_rom::CartridgeData;
+use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
+use nerust_nes_core::cartridge_rom::CartridgeData;
 use std::cmp;
 
 pub(crate) fn read_ines<I: Iterator<Item = u8>>(

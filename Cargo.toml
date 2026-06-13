@@ -14,7 +14,7 @@ members = [
   "contract/persistence",
   "contract/rom",
   "contract/settings",
-  "core",
+  "nes/core",
   "nes/device",
   "input/schema",
   "input/nes",
@@ -44,12 +44,12 @@ members = [
   "sound/android",
   "timer",
 ]
-default-members = ["core", "persistence", "console"]
+default-members = ["nes/core", "persistence", "console"]
 
 [profile.release]
 debug = false
 
-[profile.release.package.nerust_core]
+[profile.release.package.nerust_nes_core]
 codegen-units = 1
 
 [workspace.package]
@@ -91,7 +91,7 @@ nerust_contract_options = { path = "contract/options" }
 nerust_contract_persistence = { path = "contract/persistence" }
 nerust_contract_rom = { path = "contract/rom" }
 nerust_contract_settings = { path = "contract/settings" }
-nerust_core = { path = "core" }
+nerust_nes_core = { path = "nes/core" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
 nerust_gui_session = { path = "gui/shared/session" }

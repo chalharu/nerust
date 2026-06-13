@@ -3,9 +3,9 @@ use crate::error::RomTestError;
 use crate::manifest::RomCase;
 use crate::media::{HashingMixer, validation_screen_buffer};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_core::Core;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::StandardController;
+use nerust_nes_core::Core;
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(

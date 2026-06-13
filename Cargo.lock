@@ -3124,7 +3124,7 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_contract_mirror",
  "nerust_contract_rom",
- "nerust_core",
+ "nerust_nes_core",
  "thiserror 2.0.18",
 ]
 
@@ -3139,8 +3139,8 @@ dependencies = [
  "nerust_contract_options",
  "nerust_contract_persistence",
  "nerust_contract_rom",
- "nerust_core",
  "nerust_input_nes",
+ "nerust_nes_core",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
@@ -3163,12 +3163,16 @@ version = "0.1.0-dev"
 name = "nerust_contract_controller_runtime"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_core",
+ "nerust_nes_core",
 ]
 
 [[package]]
 name = "nerust_contract_core"
 version = "0.1.0-dev"
+dependencies = [
+ "nerust_screen_video",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "nerust_contract_device"
@@ -3217,30 +3221,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_yaml",
-]
-
-[[package]]
-name = "nerust_core"
-version = "0.1.0-dev"
-dependencies = [
- "bitflags 2.13.0",
- "crc",
- "hound",
- "log",
- "nerust_contract_mirror",
- "nerust_contract_options",
- "nerust_contract_rom",
- "nerust_screen_video",
- "nerust_serialize",
- "nerust_sound_traits",
- "rmp-serde",
- "serde",
- "serde_bytes",
- "serde_derive",
- "strum",
- "strum_macros",
- "thiserror 2.0.18",
- "typetag",
 ]
 
 [[package]]
@@ -3360,8 +3340,8 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_contract_controller_runtime",
- "nerust_core",
  "nerust_input_nes",
+ "nerust_nes_core",
  "rmp-serde",
  "serde",
  "serde_derive",
@@ -3373,6 +3353,30 @@ version = "0.1.0-dev"
 dependencies = [
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "nerust_nes_core"
+version = "0.1.0-dev"
+dependencies = [
+ "bitflags 2.13.0",
+ "crc",
+ "hound",
+ "log",
+ "nerust_contract_mirror",
+ "nerust_contract_options",
+ "nerust_contract_rom",
+ "nerust_screen_video",
+ "nerust_serialize",
+ "nerust_sound_traits",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.18",
+ "typetag",
 ]
 
 [[package]]
@@ -3409,9 +3413,9 @@ dependencies = [
  "crc",
  "nerust_cartridge_data",
  "nerust_contract_options",
- "nerust_core",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
+ "nerust_nes_core",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
