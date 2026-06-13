@@ -19,6 +19,7 @@ use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
+
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
@@ -170,8 +171,9 @@ impl Console {
     ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
-        let mut frame_buffer = vec![0; screen.frame_len()].into_boxed_slice();
-        screen.copy_frame_buffer(frame_buffer.as_mut());
+        let frame_len = screen.frame_len();
+        let mut frame_buffer = vec![0; frame_len].into_boxed_slice();
+        screen.write_frame_into(&mut frame_buffer);
         let frame_buffer = Arc::new(RwLock::new(frame_buffer));
         let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
             paused: true,
