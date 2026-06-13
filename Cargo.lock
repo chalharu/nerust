@@ -3512,10 +3512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_snes_device"
-version = "0.1.0-dev"
-
-[[package]]
 name = "nerust_sound_android"
 version = "0.1.0-dev"
 dependencies = [
