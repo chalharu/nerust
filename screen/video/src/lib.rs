@@ -83,7 +83,7 @@ impl VideoPresentation {
 // === 新設計: FrameBuffer / PixelFormat ===
 
 /// ピクセルフォーマット
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PixelFormat {
     /// 4 bytes/pixel, RGBA各8bit. GPUにそのまま転送.
     Rgba,
@@ -144,14 +144,6 @@ impl FrameBuffer {
         self.data.resize(self.stride * height, 0);
     }
 
-    pub fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
-
-    pub fn as_ref(&self) -> &[u8] {
-        &self.data
-    }
-
     pub fn width(&self) -> usize {
         self.width
     }
@@ -164,8 +156,8 @@ impl FrameBuffer {
         self.stride
     }
 
-    pub fn format(&self) -> PixelFormat {
-        self.format
+    pub fn format(&self) -> &PixelFormat {
+        &self.format
     }
 
     /// フレームを publish する。Vec の実データを Arc<[u8]> に移譲。
@@ -180,7 +172,7 @@ impl FrameBuffer {
         debug_assert!(self.data.is_empty());
         self.format = format;
         self.data
-            .reserve(self.width * self.height * format.bytes_per_pixel());
+            .reserve(self.width * self.height * self.format.bytes_per_pixel());
     }
 
     /// 所有権を交換する（データコピーなし）
@@ -189,7 +181,19 @@ impl FrameBuffer {
     }
 }
 
-// === 既存: Screen trait（Phase 2 で削除予定） ===
+impl AsRef<[u8]> for FrameBuffer {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl AsMut<[u8]> for FrameBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+}
+
+// === 既存: Screen trait（あとで削除予定） ===
 
 pub trait Screen {
     fn push(&mut self, palette: u8);
