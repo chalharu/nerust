@@ -7,7 +7,7 @@ mod tile;
 
 use backdrop::render_presented_backdrop;
 use bg1::render_bg1;
-use color::{apply_color_math, snes_color_to_rgba};
+use color::{apply_color_math, opaque_black_screen, snes_color_to_rgba};
 use nerust_screen_video::FrameBuffer;
 use nerust_snes_core::Core;
 use obj::{ObjSliver, ObjSprite, render_obj};
@@ -298,10 +298,7 @@ pub fn render_screen(core: &Core, ctx: &mut RenderContext) -> Result<(), RenderE
     let inidisp = core.peek(0x002100);
     let brightness = inidisp & 0x0F;
     if brightness == 0 && !use_presented_inidisp {
-        rgba.fill(0);
-        for pixel in rgba.chunks_exact_mut(4) {
-            pixel[3] = 0xFF;
-        }
+        opaque_black_screen(rgba);
         return Ok(());
     }
 

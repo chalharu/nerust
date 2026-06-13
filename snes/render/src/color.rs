@@ -64,6 +64,15 @@ pub(super) fn put_pixel(rgba: &mut [u8], width: usize, x: usize, y: usize, color
     rgba[offset..offset + 4].copy_from_slice(&color);
 }
 
+pub(super) fn opaque_black_screen(rgba: &mut [u8]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[0] = 0;
+        pixel[1] = 0;
+        pixel[2] = 0;
+        pixel[3] = 0xFF;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::scale_channel;
