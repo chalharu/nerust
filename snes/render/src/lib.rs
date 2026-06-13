@@ -225,8 +225,8 @@ pub struct RenderContext {
     pub frame: FrameBuffer,
     pub main_raw: Vec<u16>,
     pub sub_raw: Vec<u16>,
-    pub sprites: Vec<ObjSprite>,
-    pub slivers: Vec<ObjSliver>,
+    sprites: Vec<ObjSprite>,
+    slivers: Vec<ObjSliver>,
 }
 
 impl RenderContext {
