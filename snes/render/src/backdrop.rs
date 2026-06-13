@@ -22,11 +22,12 @@ pub(super) fn render_presented_backdrop(
     height: usize,
     use_presented_inidisp: bool,
     cgram_hdma_active: bool,
-) -> Vec<u8> {
+    rgba: &mut [u8],
+) {
     let fallback_backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
     let color_math = BackdropColorMath::from_core(core);
-    let mut rgba = opaque_black_screen(width, height);
+    opaque_black_screen(rgba);
 
     for screen_y in 0..height {
         let presented_y = presented_scanline_for_render(screen_y, height);
@@ -60,11 +61,9 @@ pub(super) fn render_presented_backdrop(
             .unwrap_or(fallback_window);
         for screen_x in 0..width {
             let line_color = presented_backdrop_pixel_rgba(backdrop, window, screen_x, color_math);
-            put_pixel(&mut rgba, width, screen_x, screen_y, line_color);
+            put_pixel(rgba, width, screen_x, screen_y, line_color);
         }
     }
-
-    rgba
 }
 
 pub(super) fn current_backdrop_line(core: &Core) -> PresentedBackdropLine {

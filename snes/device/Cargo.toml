@@ -1,5 +1,5 @@
 [package]
-name = "nerust_snes_render"
+name = "nerust_snes_device"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -7,6 +7,3 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_screen_video.workspace = true
-nerust_snes_core.workspace = true
-thiserror.workspace = true
