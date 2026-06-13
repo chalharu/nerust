@@ -1,6 +1,6 @@
 use nerust_snes_core::{Core, PresentedBackdropLine, PresentedColorWindowLine};
 
-use super::color::{put_pixel, snes_color_to_rgba};
+use super::color::{opaque_black_screen, put_pixel, snes_color_to_rgba};
 use super::presented_scanline_for_render;
 
 const COLOR_WINDOW_SHIFT: u8 = 4;
@@ -27,10 +27,7 @@ pub(super) fn render_presented_backdrop(
     let fallback_backdrop = current_backdrop_line(core);
     let fallback_window = current_color_window_line(core);
     let color_math = BackdropColorMath::from_core(core);
-    rgba.fill(0);
-    for pixel in rgba.chunks_exact_mut(4) {
-        pixel[3] = 0xFF;
-    }
+    opaque_black_screen(rgba);
 
     for screen_y in 0..height {
         let presented_y = presented_scanline_for_render(screen_y, height);
