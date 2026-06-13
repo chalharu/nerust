@@ -140,7 +140,10 @@ impl FrameBuffer {
         self.width = width;
         self.height = height;
         let bpp = self.format.bytes_per_pixel();
-        self.stride = ((width * bpp).max(1) + 255) & !255;
+        self.stride = match self.format {
+            PixelFormat::Rgba => ((width * bpp).max(1) + 255) & !255,
+            PixelFormat::PaletteIndex { .. } => width * bpp,
+        };
         self.data.resize(self.stride * height, 0);
     }
 

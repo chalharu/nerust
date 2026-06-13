@@ -235,7 +235,7 @@ fn validate_console_state_target(
 fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
     let logical_size = screen.logical_size();
     let mut rgba = vec![0; screen.frame_len()];
-    screen.copy_frame_buffer(&mut rgba);
+    screen.write_frame_into(&mut rgba);
     Some(PreviewFrame {
         width: logical_size.width as u32,
         height: logical_size.height as u32,

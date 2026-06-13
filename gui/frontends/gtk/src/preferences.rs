@@ -1064,63 +1064,6 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     (scroller, page)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
-    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
-    use nerust_gui_shell::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use std::cell::RefCell;
-
-    #[derive(Default)]
-    struct FakeState {
-        apply_calls: usize,
-        finish_calls: usize,
-    }
-
-    impl SettingsApplier for FakeState {
-        fn apply_settings(
-            &mut self,
-            _settings: SettingsSnapshot,
-        ) -> Result<SettingsApplyPlan, String> {
-            self.apply_calls += 1;
-            Ok(SettingsApplyPlan::default())
-        }
-    }
-
-    fn snapshot() -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        }
-    }
-
-    #[test]
-    fn apply_helper_releases_mutable_borrow_before_follow_up_work() {
-        let state = RefCell::new(FakeState::default());
-
-        match apply_settings_without_reentrant_borrow(&state, snapshot()) {
-            Ok(_) => {
-                state.borrow_mut().finish_calls += 1;
-            }
-            Err(error) => panic!("unexpected error: {error}"),
-        }
-
-        let state = state.borrow();
-        assert_eq!(state.apply_calls, 1);
-        assert_eq!(state.finish_calls, 1);
-    }
-
-    #[test]
-    fn close_button_uses_apply_path() {
-        assert!(should_apply_response(gtk::ResponseType::Ok));
-        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
-        assert!(!should_apply_response(gtk::ResponseType::Cancel));
-    }
-}
-
 fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
     Some(match key {
         gdk::Key::_0 => KeyboardKey::Digit0,
@@ -1186,5 +1129,62 @@ fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
 fn run_finish_callback(finish: &FinishCallback) {
     if let Some(callback) = finish.borrow_mut().take() {
         callback();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
+    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_shell::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeState {
+        apply_calls: usize,
+        finish_calls: usize,
+    }
+
+    impl SettingsApplier for FakeState {
+        fn apply_settings(
+            &mut self,
+            _settings: SettingsSnapshot,
+        ) -> Result<SettingsApplyPlan, String> {
+            self.apply_calls += 1;
+            Ok(SettingsApplyPlan::default())
+        }
+    }
+
+    fn snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        }
+    }
+
+    #[test]
+    fn apply_helper_releases_mutable_borrow_before_follow_up_work() {
+        let state = RefCell::new(FakeState::default());
+
+        match apply_settings_without_reentrant_borrow(&state, snapshot()) {
+            Ok(_) => {
+                state.borrow_mut().finish_calls += 1;
+            }
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+
+        let state = state.borrow();
+        assert_eq!(state.apply_calls, 1);
+        assert_eq!(state.finish_calls, 1);
+    }
+
+    #[test]
+    fn close_button_uses_apply_path() {
+        assert!(should_apply_response(gtk::ResponseType::Ok));
+        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
+        assert!(!should_apply_response(gtk::ResponseType::Cancel));
     }
 }
