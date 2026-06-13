@@ -3,14 +3,14 @@ use crate::controller::{StandardControllerState, encode_standard_controller_stat
 use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_contract_options::CoreOptions;
 use nerust_contract_rom::RomIdentity;
-use nerust_core::Core;
 use nerust_input_nes::frame::Buttons;
+use nerust_nes_core::Core;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 
 /// Compatibility version for the console-owned wrapper around opaque core machine-state bytes.
 ///
 /// Bump this only when the console wrapper schema or its validation rules change. The nested
-/// `core_state` bytes remain owned by `nerust_core` and must continue to be treated as opaque by
+/// `core_state` bytes remain owned by `nerust_nes_core` and must continue to be treated as opaque by
 /// the archive layer.
 const LEGACY_CONSOLE_STATE_SCHEMA_VERSION: u32 = 1;
 const STRUCTURED_CONSOLE_STATE_SCHEMA_VERSION: u32 = 2;
@@ -60,7 +60,7 @@ struct StructuredControllerStatePayload {
 
 /// Console-owned save-state wrapper.
 ///
-/// `core_state` is an opaque `nerust_core` machine-state payload stored without interpretation in
+/// `core_state` is an opaque `nerust_nes_core` machine-state payload stored without interpretation in
 /// this crate. The console layer owns paused/frame counter/controller/source-frame restoration and
 /// rejects wrapper schema mismatches before mutating any live console state.
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]

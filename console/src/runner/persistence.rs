@@ -1,7 +1,7 @@
 use super::ConsoleRunner;
 use crate::{ConsoleError, ConsoleReply, state};
 use nerust_contract_persistence::CanonicalMediaIdentity;
-use nerust_core::Core;
+use nerust_nes_core::Core;
 
 impl ConsoleRunner {
     pub(super) fn export_mapper_save_reply(
