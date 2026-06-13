@@ -7,9 +7,10 @@ mod tile;
 
 use backdrop::render_presented_backdrop;
 use bg1::render_bg1;
-use color::{apply_color_math, opaque_black_screen, snes_color_to_rgba};
+use color::{apply_color_math, snes_color_to_rgba};
+use nerust_screen_video::FrameBuffer;
 use nerust_snes_core::Core;
-use obj::render_obj;
+use obj::{ObjSliver, ObjSprite, render_obj};
 
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 224;
@@ -217,14 +218,41 @@ pub enum RenderError {
     UnsupportedBgMode { mode: u8 },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderedScreen {
-    pub rgba: Vec<u8>,
-    pub width: usize,
-    pub height: usize,
+/// レンダリングに必要な中間バッファを保持するコンテキスト。
+/// 事前確保・再利用により、毎フレームのアロケーションを削減する。
+#[derive(Debug)]
+pub struct RenderContext {
+    pub frame: FrameBuffer,
+    pub main_raw: Vec<u16>,
+    pub sub_raw: Vec<u16>,
+    pub sprites: Vec<ObjSprite>,
+    pub slivers: Vec<ObjSliver>,
 }
 
-pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
+impl RenderContext {
+    pub fn new() -> Self {
+        let max_pixels = MODE5_6_WIDTH * INTERLACE_HEIGHT;
+        Self {
+            frame: FrameBuffer::with_capacity(
+                MODE5_6_WIDTH,
+                INTERLACE_HEIGHT,
+                nerust_screen_video::PixelFormat::Rgba,
+            ),
+            main_raw: Vec::with_capacity(max_pixels),
+            sub_raw: Vec::with_capacity(max_pixels),
+            sprites: Vec::with_capacity(128),
+            slivers: Vec::with_capacity(34),
+        }
+    }
+}
+
+impl Default for RenderContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn render_screen(core: &Core, ctx: &mut RenderContext) -> Result<(), RenderError> {
     let tm = core.peek(0x00212C);
     let ts = core.peek(0x00212D);
     let use_presented_tm: bool = use_presented_main_screen(core);
@@ -252,43 +280,45 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
     };
     let pixel_count = render_width * render_height;
 
+    ctx.frame.resize(render_width, render_height);
+    let rgba = ctx.frame.as_mut();
+
     if tm == 0 && !use_presented_tm {
-        return Ok(RenderedScreen {
-            rgba: render_presented_backdrop(
-                core,
-                render_width,
-                render_height,
-                use_presented_inidisp,
-                cgram_hdma_active,
-            ),
-            width: render_width,
-            height: render_height,
-        });
+        render_presented_backdrop(
+            core,
+            render_width,
+            render_height,
+            use_presented_inidisp,
+            cgram_hdma_active,
+            rgba,
+        );
+        return Ok(());
     }
 
     let inidisp = core.peek(0x002100);
     let brightness = inidisp & 0x0F;
     if brightness == 0 && !use_presented_inidisp {
-        return Ok(RenderedScreen {
-            rgba: opaque_black_screen(render_width, render_height),
-            width: render_width,
-            height: render_height,
-        });
+        rgba.fill(0);
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel[3] = 0xFF;
+        }
+        return Ok(());
     }
 
     let render_brightness = if brightness == 0 { 15 } else { brightness };
 
     // --- Render backdrop to RGBA ---
-    let mut rgba = render_presented_backdrop(
+    render_presented_backdrop(
         core,
         render_width,
         render_height,
         use_presented_inidisp,
         cgram_hdma_active,
+        rgba,
     );
 
     // --- Main screen: render BG layers to raw 15-bit buffer ---
-    let mut main_raw = vec![TRANSPARENT; pixel_count];
+    ctx.main_raw.resize(pixel_count, TRANSPARENT);
 
     render_bg1(
         core,
@@ -300,8 +330,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         interlace_field,
         render_width,
         render_height,
-        &mut rgba,
-        &mut main_raw,
+        rgba,
+        &mut ctx.main_raw,
         0,
     )?;
     render_bg1(
@@ -314,8 +344,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         interlace_field,
         render_width,
         render_height,
-        &mut rgba,
-        &mut main_raw,
+        rgba,
+        &mut ctx.main_raw,
         0,
     )?;
     render_bg1(
@@ -328,8 +358,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         interlace_field,
         render_width,
         render_height,
-        &mut rgba,
-        &mut main_raw,
+        rgba,
+        &mut ctx.main_raw,
         0,
     )?;
     render_bg1(
@@ -342,13 +372,13 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         interlace_field,
         render_width,
         render_height,
-        &mut rgba,
-        &mut main_raw,
+        rgba,
+        &mut ctx.main_raw,
         0,
     )?;
 
     // --- Sub screen: render BG layers for color math and Mode 5/6 interleaving ---
-    let mut sub_raw = vec![TRANSPARENT; pixel_count];
+    ctx.sub_raw.resize(pixel_count, TRANSPARENT);
     if ts != 0 {
         render_bg1(
             core,
@@ -360,8 +390,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             interlace_field,
             render_width,
             render_height,
-            &mut rgba,
-            &mut sub_raw,
+            rgba,
+            &mut ctx.sub_raw,
             0,
         )?;
         render_bg1(
@@ -374,8 +404,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             interlace_field,
             render_width,
             render_height,
-            &mut rgba,
-            &mut sub_raw,
+            rgba,
+            &mut ctx.sub_raw,
             0,
         )?;
         render_bg1(
@@ -388,8 +418,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             interlace_field,
             render_width,
             render_height,
-            &mut rgba,
-            &mut sub_raw,
+            rgba,
+            &mut ctx.sub_raw,
             0,
         )?;
         render_bg1(
@@ -402,8 +432,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
             interlace_field,
             render_width,
             render_height,
-            &mut rgba,
-            &mut sub_raw,
+            rgba,
+            &mut ctx.sub_raw,
             0,
         )?;
 
@@ -433,8 +463,8 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
                 u16::from_le_bytes([core.peek_cgram(0), core.peek_cgram(1)]) & 0x7FFF;
 
             for i in 0..pixel_count {
-                let main_raw_val = main_raw[i];
-                let sub_raw_val = sub_raw[i];
+                let main_raw_val = ctx.main_raw[i];
+                let sub_raw_val = ctx.sub_raw[i];
 
                 if main_raw_val == TRANSPARENT {
                     continue;
@@ -475,7 +505,7 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
                 } else {
                     fixed_color
                 };
-                main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
+                ctx.main_raw[i] = apply_color_math(main_raw_val, sub_source, subtract, half);
             }
         }
     }
@@ -485,12 +515,12 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         let raw = if (high_res_mode || pseudo_hires) && ts != 0 {
             let screen_x = i % render_width;
             if screen_x & 1 == 0 {
-                main_raw[i]
+                ctx.main_raw[i]
             } else {
-                sub_raw[i]
+                ctx.sub_raw[i]
             }
         } else {
-            main_raw[i]
+            ctx.main_raw[i]
         };
         if raw != TRANSPARENT {
             let color = snes_color_to_rgba(raw, render_brightness);
@@ -511,8 +541,10 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         obj_interlace,
         render_width,
         render_height,
-        &mut rgba,
+        ctx.frame.as_mut(),
     );
+
+    let rgba = ctx.frame.as_mut();
 
     // Apply per-scanline INIDISP forced blanking: scanlines with
     // forced blanking (bit 7) or zero brightness must be black.
@@ -532,16 +564,12 @@ pub fn render_screen(core: &Core) -> Result<RenderedScreen, RenderError> {
         }
     }
 
-    Ok(RenderedScreen {
-        rgba,
-        width: render_width,
-        height: render_height,
-    })
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::render_screen;
+    use super::{RenderContext, render_screen};
     use nerust_snes_core::{Core, CpuState};
 
     const HEADER_OFFSET: usize = 0x7FC0;
@@ -572,11 +600,12 @@ mod tests {
     fn brightness_zero_renders_opaque_black_frame() {
         let core = Core::from_rom_bytes(&build_lorom(0x8000)).unwrap();
 
-        let rendered = render_screen(&core).unwrap();
+        let mut ctx = RenderContext::new();
+        render_screen(&core, &mut ctx).unwrap();
 
-        assert_eq!(&rendered.rgba[..4], &[0x00, 0x00, 0x00, 0xFF]);
+        assert_eq!(&ctx.frame.as_ref()[..4], &[0x00, 0x00, 0x00, 0xFF]);
         assert_eq!(
-            &rendered.rgba[rendered.rgba.len() - 4..],
+            &ctx.frame.as_ref()[ctx.frame.as_ref().len() - 4..],
             &[0x00, 0x00, 0x00, 0xFF]
         );
     }
@@ -610,10 +639,11 @@ mod tests {
         let mut core = Core::from_rom_bytes(&rom).unwrap();
         run_until_stopped(&mut core, 256);
 
-        let rendered = render_screen(&core).unwrap();
-        assert_eq!(&rendered.rgba[..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        let mut ctx = RenderContext::new();
+        render_screen(&core, &mut ctx).unwrap();
+        assert_eq!(&ctx.frame.as_ref()[..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
         assert_eq!(
-            &rendered.rgba[rendered.rgba.len() - 4..],
+            &ctx.frame.as_ref()[ctx.frame.as_ref().len() - 4..],
             &[0xFF, 0xFF, 0xFF, 0xFF]
         );
     }
@@ -633,8 +663,9 @@ mod tests {
         let mut core = Core::from_rom_bytes(&rom).unwrap();
         run_until_stopped(&mut core, 256);
 
-        let rendered = render_screen(&core).unwrap();
-        assert_eq!(&rendered.rgba[..4], &[0xFF, 0x00, 0x00, 0xFF]);
+        let mut ctx = RenderContext::new();
+        render_screen(&core, &mut ctx).unwrap();
+        assert_eq!(&ctx.frame.as_ref()[..4], &[0xFF, 0x00, 0x00, 0xFF]);
     }
 
     #[test]
@@ -654,7 +685,8 @@ mod tests {
         let mut core = Core::from_rom_bytes(&rom).unwrap();
         run_until_stopped(&mut core, 256);
 
-        let rendered = render_screen(&core).unwrap();
-        assert_eq!(&rendered.rgba[..4], &[0xFF, 0x00, 0x00, 0xFF]);
+        let mut ctx = RenderContext::new();
+        render_screen(&core, &mut ctx).unwrap();
+        assert_eq!(&ctx.frame.as_ref()[..4], &[0xFF, 0x00, 0x00, 0xFF]);
     }
 }

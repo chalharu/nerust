@@ -37,6 +37,7 @@ members = [
   "screen/rgb",
   "screen/wgpu",
   "screen/video",
+  "snes/device",
   "serialize",
   "sound/openal",
   "sound/filter",

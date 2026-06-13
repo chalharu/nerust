@@ -2,7 +2,7 @@ use crate::manifest::{Assertion, ManifestError, RomCase};
 use crate::media::{encode_screenshot_png, load_png_rgba, png_hash_from_path, screen_hash_rgba};
 use crate::results::{CaseOutcome, Validation, ValidationOptions};
 use nerust_snes_core::{Core, CpuState};
-use nerust_snes_render::render_screen;
+use nerust_snes_render::{RenderContext, render_screen};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -226,8 +226,9 @@ fn finalize_validation(
     core: &Core,
     options: ValidationOptions,
 ) -> CaseOutcome {
-    let rendered = match render_screen(core) {
-        Ok(rendered) => rendered,
+    let mut ctx = RenderContext::new();
+    match render_screen(core, &mut ctx) {
+        Ok(()) => (),
         Err(error) => {
             return internal_error(
                 case,
@@ -235,7 +236,7 @@ fn finalize_validation(
             );
         }
     };
-    let final_screen_hash = screen_hash_rgba(&rendered.rgba);
+    let final_screen_hash = screen_hash_rgba(ctx.frame.as_ref());
     if let Some(png_path) = case.png_path() {
         match png_hash_from_path(png_path) {
             Ok(png_hash) if png_hash != final_screen_hash => {
@@ -243,24 +244,25 @@ fn finalize_validation(
                     "screen_hash: reference PNG 0x{png_hash:016X}, rendered 0x{final_screen_hash:016X}"
                 ));
                 if let Ok(png_rgba) = load_png_rgba(png_path) {
-                    let our_pitch = rendered.width * 4;
+                    let our_pitch = ctx.frame.width() * 4;
                     let png_pitch = png_rgba
                         .len()
-                        .checked_div(rendered.height)
+                        .checked_div(ctx.frame.height())
                         .unwrap_or(our_pitch);
-                    for y in 0..rendered.height {
-                        for x in 0..rendered.width {
+                    for y in 0..ctx.frame.height() {
+                        for x in 0..ctx.frame.width() {
                             let png_idx = y * png_pitch + x * 4;
                             let our_idx = y * our_pitch + x * 4;
-                            if png_idx + 4 <= png_rgba.len() && our_idx + 4 <= rendered.rgba.len() {
+                            let rgba = ctx.frame.as_ref();
+                            if png_idx + 4 <= png_rgba.len() && our_idx + 4 <= rgba.len() {
                                 let pr = png_rgba[png_idx];
                                 let pg = png_rgba[png_idx + 1];
                                 let pb = png_rgba[png_idx + 2];
                                 let pa = png_rgba[png_idx + 3];
-                                let or = rendered.rgba[our_idx];
-                                let og = rendered.rgba[our_idx + 1];
-                                let ob = rendered.rgba[our_idx + 2];
-                                let oa = rendered.rgba[our_idx + 3];
+                                let or = rgba[our_idx];
+                                let og = rgba[our_idx + 1];
+                                let ob = rgba[our_idx + 2];
+                                let oa = rgba[our_idx + 3];
                                 if (pr, pg, pb, pa) != (or, og, ob, oa) {
                                     let screen_x = x;
                                     let screen_y = y;
@@ -282,8 +284,8 @@ fn finalize_validation(
                         failures.push(format!(
                             "pixel diff: different sizes? PNG {} bytes, rendered {}x{}",
                             png_rgba.len(),
-                            rendered.width,
-                            rendered.height,
+                            ctx.frame.width(),
+                            ctx.frame.height(),
                         ));
                     }
                 }
@@ -308,9 +310,9 @@ fn finalize_validation(
     }
     let screenshot_png = if options.capture_screenshot_png {
         match encode_screenshot_png(
-            &rendered.rgba,
-            rendered.width as u32,
-            rendered.height as u32,
+            ctx.frame.as_ref(),
+            ctx.frame.width() as u32,
+            ctx.frame.height() as u32,
         ) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
