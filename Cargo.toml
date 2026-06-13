@@ -5,6 +5,9 @@ members = [
   "backend/wgpu",
   "cartridge/data",
   "console",
+  "contract/audio",
+  "contract/core",
+  "contract/device",
   "contract/controller_runtime",
   "contract/mirror",
   "contract/options",
@@ -12,6 +15,7 @@ members = [
   "contract/rom",
   "contract/settings",
   "core",
+  "nes/device",
   "input/schema",
   "input/nes",
   "input/nes_runtime",
@@ -65,7 +69,7 @@ rust-version = "1.89"
 [workspace.dependencies]
 alto = { version = "=3.0.4" }
 android_logger = { version = "=0.15.1" }
-bitflags = { version = "=2.12.1", features = ["serde"] }
+bitflags = { version = "=2.13.0", features = ["serde"] }
 clap = { version = "=4.6.1" }
 cpal = { version = "=0.17.3" }
 crc = { version = "=3.4.0" }
