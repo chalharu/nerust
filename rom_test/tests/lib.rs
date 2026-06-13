@@ -1,9 +1,3 @@
-// Copyright (c) 2018 Mitsuharu Seki
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 use nerust_rom_test::manifest::{RomManifest, load_default_manifest};
 use nerust_rom_test::results::{CaseOutcome, ValidationOptions};
 use nerust_rom_test::runner::validate_case;
