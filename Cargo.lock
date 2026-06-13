@@ -3156,11 +3156,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_contract_audio"
+version = "0.1.0-dev"
+
+[[package]]
 name = "nerust_contract_controller_runtime"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core",
 ]
+
+[[package]]
+name = "nerust_contract_core"
+version = "0.1.0-dev"
+
+[[package]]
+name = "nerust_contract_device"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_contract_mirror"
@@ -3364,6 +3376,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_nes_device"
+version = "0.1.0-dev"
+
+[[package]]
 name = "nerust_persistence"
 version = "0.1.0-dev"
 dependencies = [
@@ -3494,6 +3510,10 @@ version = "0.1.0-dev"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "nerust_snes_device"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_sound_android"
