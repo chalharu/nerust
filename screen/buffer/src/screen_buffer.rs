@@ -1,10 +1,9 @@
-use super::allocate;
 use super::screen_buffer_unit::ScreenBufferUnit;
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_screen_video::{Screen, VideoPresentation};
+use nerust_screen_video::{FrameBuffer, PixelFormat, Screen, VideoPresentation};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -28,8 +27,8 @@ pub struct ScreenBuffer {
     filter: Option<Box<dyn NesFilter>>,
     dest: Option<ScreenBufferUnit>,
     display_buffer: Option<ScreenBufferUnit>,
-    src_buffer: Box<[u8]>,
-    src_buffer_next: Box<[u8]>,
+    back: FrameBuffer,
+    front: FrameBuffer,
     src_pos: usize,
 }
 
@@ -66,9 +65,21 @@ impl ScreenBuffer {
         video_presentation: VideoPresentation,
         console_video_assets: Option<ConsoleVideoAssets>,
     ) -> Self {
-        let src_buffer_size = src_size.height * src_size.width;
-        let src_buffer = allocate(src_buffer_size);
-        let src_buffer_next = allocate(src_buffer_size);
+        let palette = Box::new([0u32; 256]);
+        let mut back = FrameBuffer::with_capacity(
+            src_size.width,
+            src_size.height,
+            PixelFormat::PaletteIndex {
+                palette: palette.clone(),
+            },
+        );
+        let mut front = FrameBuffer::with_capacity(
+            src_size.width,
+            src_size.height,
+            PixelFormat::PaletteIndex { palette },
+        );
+        back.resize(src_size.width, src_size.height);
+        front.resize(src_size.width, src_size.height);
         let (filter, dest, display_buffer) = match publish_mode {
             PublishMode::FilteredRgba => {
                 let filter = filter_type.generate(src_size);
@@ -88,10 +99,10 @@ impl ScreenBuffer {
             console_video_assets,
             publish_mode,
             filter,
-            src_buffer,
-            src_buffer_next,
             dest,
             display_buffer,
+            back,
+            front,
             src_pos: 0,
         };
         result.clear();
@@ -105,36 +116,39 @@ impl ScreenBuffer {
                 .as_ref()
                 .expect("filtered buffers should exist for CPU screen buffers")
                 .byte_len(),
-            PublishMode::SourcePalette => self.src_buffer.len(),
+            PublishMode::SourcePalette => self.front.width() * self.front.height(),
         }
     }
 
-    pub fn copy_display_buffer(&self, dest: &mut [u8]) {
-        self.copy_frame_buffer(dest);
+    pub fn source_frame_len(&self) -> usize {
+        self.front.width() * self.front.height()
     }
 
-    pub fn copy_frame_buffer(&self, dest: &mut [u8]) {
+    pub fn copy_source_buffer(&self, dest: &mut [u8]) {
+        let pixel_bytes = self.front.width() * self.front.height();
+        assert_eq!(dest.len(), pixel_bytes, "source buffer size mismatch");
+        dest.copy_from_slice(&self.front.as_ref()[..pixel_bytes]);
+    }
+
+    /// Write the current displayable frame into `dest`.
+    /// For FilteredRgba mode this writes RGBA bytes (4 bytes/pixel).
+    /// For SourcePalette mode this writes palette indices (1 byte/pixel).
+    pub fn write_frame_into(&self, dest: &mut [u8]) {
         match self.publish_mode {
             PublishMode::FilteredRgba => self
                 .display_buffer
                 .as_ref()
                 .expect("filtered buffers should exist for CPU screen buffers")
                 .copy_to_slice(dest),
-            PublishMode::SourcePalette => self.copy_source_buffer(dest),
+            PublishMode::SourcePalette => {
+                let pixel_bytes = self.front.width() * self.front.height();
+                dest.copy_from_slice(&self.front.as_ref()[..pixel_bytes]);
+            }
         }
     }
 
-    pub fn source_frame_len(&self) -> usize {
-        self.src_buffer.len()
-    }
-
-    pub fn copy_source_buffer(&self, dest: &mut [u8]) {
-        assert_eq!(
-            dest.len(),
-            self.src_buffer.len(),
-            "source buffer size mismatch"
-        );
-        dest.copy_from_slice(&self.src_buffer);
+    pub fn front_frame(&self) -> &FrameBuffer {
+        &self.front
     }
 
     pub fn logical_size(&self) -> LogicalSize {
@@ -172,8 +186,9 @@ impl ScreenBuffer {
         if let Some(display_buffer) = self.display_buffer.as_mut() {
             display_buffer.clear();
         }
-        self.src_buffer.fill(BLACK_PALETTE_INDEX);
-        self.src_buffer_next.fill(BLACK_PALETTE_INDEX);
+        let pixel_bytes = self.front.width() * self.front.height();
+        self.front.as_mut()[..pixel_bytes].fill(BLACK_PALETTE_INDEX);
+        self.back.as_mut()[..pixel_bytes].fill(BLACK_PALETTE_INDEX);
         self.src_pos = 0;
     }
 
@@ -182,13 +197,14 @@ impl ScreenBuffer {
             self.publishes_palette_frame(),
             "source buffer restore is only supported for palette-published screen buffers"
         );
+        let pixel_bytes = self.front.width() * self.front.height();
         assert_eq!(
             source.len(),
-            self.src_buffer.len(),
+            pixel_bytes,
             "source buffer size mismatch during restore"
         );
-        self.src_buffer.copy_from_slice(source);
-        self.src_buffer_next.copy_from_slice(source);
+        self.front.as_mut()[..pixel_bytes].copy_from_slice(source);
+        self.back.as_mut()[..pixel_bytes].copy_from_slice(source);
         self.src_pos = 0;
     }
 }
@@ -198,7 +214,7 @@ impl Screen for ScreenBuffer {
         if let (Some(filter), Some(dest)) = (self.filter.as_mut(), self.dest.as_mut()) {
             filter.push(value, dest);
         }
-        self.src_buffer_next[self.src_pos] = value;
+        self.back.as_mut()[self.src_pos] = value;
         self.src_pos += 1;
     }
 
@@ -210,17 +226,18 @@ impl Screen for ScreenBuffer {
                 filter.push(value, dest);
             }
         }
-        self.src_buffer_next[self.src_pos..self.src_pos + count].fill(value);
-        self.src_pos += count;
+        let end = self.src_pos + count;
+        self.back.as_mut()[self.src_pos..end].fill(value);
+        self.src_pos = end;
     }
 
     fn render(&mut self) {
+        let pixel_count = self.back.width() * self.back.height();
         assert_eq!(
-            self.src_pos,
-            self.src_buffer_next.len(),
+            self.src_pos, pixel_count,
             "source frame size mismatch before publish"
         );
-        mem::swap(&mut self.src_buffer, &mut self.src_buffer_next);
+        mem::swap(&mut self.back, &mut self.front);
         self.src_pos = 0;
         if let (Some(dest), Some(display_buffer)) =
             (self.dest.as_mut(), self.display_buffer.as_mut())
@@ -242,7 +259,7 @@ impl Screen for ScreenBuffer {
 
 impl Hash for ScreenBuffer {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.src_buffer.hash(state);
+        self.front.as_ref().hash(state);
     }
 }
 
@@ -286,7 +303,7 @@ mod tests {
         screen.render();
 
         let mut frame = vec![0; screen.frame_len()];
-        screen.copy_frame_buffer(&mut frame);
+        screen.write_frame_into(&mut frame);
         assert_eq!(frame, (0..8).map(|value| value as u8).collect::<Vec<_>>());
         assert_eq!(
             screen.video_presentation().frame_format(),

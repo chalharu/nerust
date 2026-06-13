@@ -29,7 +29,7 @@ pub(crate) fn screen_hash(screen_buffer: &ScreenBuffer) -> u64 {
 pub(crate) fn encode_screenshot_png(screen_buffer: &ScreenBuffer) -> Result<Vec<u8>, RomTestError> {
     let logical_size = screen_buffer.logical_size();
     let mut buffer = vec![0_u8; screen_buffer.frame_len()];
-    screen_buffer.copy_display_buffer(&mut buffer);
+    screen_buffer.write_frame_into(&mut buffer);
     let mut rgba = Vec::with_capacity(buffer.len());
 
     for pixel in buffer.chunks_exact(4) {

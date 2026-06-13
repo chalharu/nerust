@@ -52,7 +52,7 @@ impl ConsoleRunner {
             .frame_buffer
             .write()
             .unwrap_or_else(|err| err.into_inner());
-        self.screen.copy_frame_buffer(frame_buffer.as_mut());
+        self.screen.write_frame_into(frame_buffer.as_mut());
     }
 
     fn publish_metrics(&self, loaded: bool) {
