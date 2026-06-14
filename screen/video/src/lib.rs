@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 
@@ -161,26 +159,6 @@ impl FrameBuffer {
 
     pub fn format(&self) -> &PixelFormat {
         &self.format
-    }
-
-    /// フレームを publish する。Vec の実データを Arc<[u8]> に移譲。
-    /// これ以後、data は空になる。次フレームまでに recycle() が必要。
-    pub fn publish(&mut self) -> Arc<[u8]> {
-        let cap = self.data.capacity();
-        Arc::from(std::mem::replace(&mut self.data, Vec::with_capacity(cap)).into_boxed_slice())
-    }
-
-    /// publish 後の空の Vec を再利用可能にする（capacity 維持、ゼロアロケーション）
-    pub fn recycle(&mut self, format: PixelFormat) {
-        debug_assert!(self.data.is_empty());
-        self.format = format;
-        self.data
-            .reserve(self.width * self.height * self.format.bytes_per_pixel());
-    }
-
-    /// 所有権を交換する（データコピーなし）
-    pub fn swap(&mut self, other: &mut Self) {
-        std::mem::swap(self, other);
     }
 }
 

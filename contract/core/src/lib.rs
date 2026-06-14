@@ -7,9 +7,10 @@ pub mod rom;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
 
-use nerust_screen_video::FrameBuffer;
+pub use nerust_screen_video::PixelFormat;
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -53,26 +54,24 @@ pub struct CoreCapabilities {
 
 #[derive(Clone)]
 pub enum GpuCommand {
-    Blit(Arc<FrameBuffer>),
-    PaletteDecode {
-        indices: Arc<FrameBuffer>,
-        palette_id: PaletteId,
-    },
-    UploadPalette {
-        id: PaletteId,
-        data: Arc<[u32; 256]>,
-    },
+    /// RGBA スロットをそのまま表示
+    Blit { slot: u32 },
+    /// PaletteIndex スロットを GPU の固定パレットでデコード
+    PaletteDecode { slot: u32 },
+    /// パレットデータを GPU にアップロード
+    UploadPalette { slot: u32, data: Box<[u32; 256]> },
+    /// テクスチャ更新
     UploadTexture {
-        id: TextureId,
-        data: Arc<[u8]>,
+        slot: u32,
+        data: Vec<u8>,
         width: u32,
         height: u32,
-        format: TextureFormat,
     },
+    /// 3D描画
     DrawMesh {
         vertices: Vec<Vertex>,
         indices: Vec<u16>,
-        textures: Vec<TextureId>,
+        textures: Vec<u32>,
     },
 }
 
@@ -103,12 +102,6 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
-
-// ---------------------------------------------------------------------------
-// PixelFormat (re-export from screen/video for convenience)
-// ---------------------------------------------------------------------------
-
-pub use nerust_screen_video::PixelFormat;
 
 // ---------------------------------------------------------------------------
 // Region
@@ -151,6 +144,9 @@ pub enum EmuCommand {
     Pause,
     Resume,
     Reset,
+    SaveState(Sender<Result<Vec<u8>, CoreError>>),
+    LoadState(Vec<u8>, Sender<Result<(), CoreError>>),
+    ApplyInputState(Vec<u8>),
     Quit,
 }
 
@@ -161,11 +157,18 @@ pub enum EmuCommand {
 pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self) -> Result<GpuCommandList, CoreError>;
+    /// 目標フレーム間隔（NTSC = ≈16.67ms, PAL = 20ms）
+    fn frame_interval(&self) -> Duration {
+        Duration::from_nanos(16_666_667)
+    }
+    /// フレームをレンダリングする。
+    /// frame_slot はレンダラから渡された書き込み可能バッファ。
+    fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
 
     // -- audio --
     fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
-
+    // -- input --
+    fn apply_input_state(&mut self, _bytes: &[u8]) {}
     // -- peripherals --
     fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);
     fn detach_device(&mut self, port: usize);

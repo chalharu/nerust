@@ -27,7 +27,7 @@ pub struct VideoFrameHandle {
     pub width: u32,
     pub height: u32,
     pub stride_bytes: usize,
-    bytes: Arc<[u8]>,
+    pub bytes: Arc<[u8]>,
 }
 
 impl VideoFrameHandle {

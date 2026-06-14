@@ -2,9 +2,6 @@ use std::collections::VecDeque;
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub const CLOCK_RATE: usize = 1_789_773;
-pub const TARGET_FPS: f32 = CLOCK_RATE as f32 * 3.0 / 89_341.5_f32;
-
 #[derive(Debug)]
 pub struct Timer {
     instants: VecDeque<Instant>,
@@ -14,10 +11,18 @@ pub struct Timer {
     fps: f32,
 }
 
+/// NTSC の標準フレーム間隔（≈16.67ms）
+pub const NTSC_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
+
 impl Timer {
+    /// デフォルト（NTSC ≈ 60fps）
     pub fn new() -> Self {
+        Self::new_with_interval(NTSC_FRAME_INTERVAL)
+    }
+
+    /// 任意のフレーム間隔
+    pub fn new_with_interval(frame_interval: Duration) -> Self {
         let instants = VecDeque::with_capacity(Self::CALC_FRAMES);
-        let frame_interval = Duration::from_nanos(Self::FRAME_WAIT_NANOS);
         let now = Instant::now();
         Self {
             instants,
@@ -29,9 +34,6 @@ impl Timer {
     }
 
     const CALC_FRAMES: usize = 64;
-    const FRAME_DOTS: f64 = 89341.5;
-    const VSYNC_RATE: f64 = CLOCK_RATE as f64 * 3.0 / Self::FRAME_DOTS;
-    const FRAME_WAIT_NANOS: u64 = (1.0 / Self::VSYNC_RATE * 1_000_000_000.0) as u64;
     const SPIN_WAIT_NANOS: u64 = 200_000;
     const MAX_CATCH_UP_FRAMES: u32 = 3;
 

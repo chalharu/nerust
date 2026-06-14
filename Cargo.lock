@@ -3179,6 +3179,7 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_contract_core",
+ "nerust_timer",
 ]
 
 [[package]]
@@ -3268,20 +3269,22 @@ dependencies = [
  "log",
  "nerust_console",
  "nerust_contract_core",
+ "nerust_contract_emuthread",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
+ "nerust_nes_console",
  "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",
+ "nerust_screen_physical",
  "nerust_sound_cpal",
  "nerust_sound_openal",
  "nerust_sound_traits",
- "nerust_timer",
 ]
 
 [[package]]
@@ -3315,6 +3318,20 @@ version = "0.1.0-dev"
 dependencies = [
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "nerust_nes_console"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_cartridge_data",
+ "nerust_contract_core",
+ "nerust_input_nes",
+ "nerust_nes_core",
+ "nerust_screen_buffer",
+ "nerust_screen_video",
+ "nerust_sound_traits",
 ]
 
 [[package]]

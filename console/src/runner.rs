@@ -7,7 +7,9 @@ use self::metrics::SharedConsoleMetrics;
 use data::ConsoleData;
 use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_timer::{TARGET_FPS, Timer};
+use nerust_timer::Timer;
+
+const TARGET_FPS: f32 = 60.0;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, RwLock};
 

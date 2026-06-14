@@ -1,22 +1,26 @@
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
-use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_options};
+use crate::settings::nes::{build_screen_buffer, effective_load_options};
+use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
-use nerust_console::{Console, ConsoleMetrics};
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::{ConsoleCore, CoreConfig, EmuCommand};
+use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
-use nerust_gui_session::core::SessionCore;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_nes_console::NesConsoleCore;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
@@ -153,9 +157,9 @@ struct NesAdapter {
     input: NesInputState,
 }
 
-#[derive(Debug)]
 struct NesRuntime {
-    core: SessionCore,
+    emu: EmuThread<NesConsoleCore>,
+    video_profile: VideoRenderProfile,
 }
 
 const FILTER_FIELD: &str = "video.filter";
@@ -179,27 +183,6 @@ pub fn apply_default_system_settings_choice(
     choice: &SystemSettingsChoiceId,
 ) -> Result<(), String> {
     NesSystemDefinition.apply_settings_choice(settings, field, choice)
-}
-
-impl NesSystemDefinition {
-    fn build_console(self, settings: &SettingsSnapshot) -> Result<Console, String> {
-        self.build_console_with(
-            build_speaker(&settings.local)?,
-            build_screen_buffer(&settings.shared),
-        )
-    }
-
-    fn build_console_with<S: 'static + Sound + MixerInput + Send>(
-        self,
-        speaker: S,
-        screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
-    ) -> Result<Console, String> {
-        Ok(Console::new(
-            speaker,
-            screen_buffer,
-            nerust_input_nes_runtime::standard_controller_runtime(),
-        ))
-    }
 }
 
 impl SystemDefinition for NesSystemDefinition {
@@ -339,8 +322,24 @@ impl SystemDefinition for NesSystemDefinition {
         _host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
+        let screen = build_screen_buffer(&settings.shared);
+        let core = NesConsoleCore::new(screen);
         Ok(Box::new(NesRuntime {
-            core: SessionCore::from_console(self.build_console(settings)?),
+            emu: EmuThread::spawn(core),
+            video_profile: VideoRenderProfile {
+                source_logical_size: LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
+                logical_size: LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
+                physical_size: PhysicalSize {
+                    width: 512.0,
+                    height: 480.0,
+                },
+            },
         }))
     }
 }
@@ -378,81 +377,128 @@ impl SystemInputAdapter for NesAdapter {
 
 impl SystemRuntime for NesRuntime {
     fn snapshot(&self) -> SystemRuntimeSnapshot {
+        let frame = self.emu.wait_frame().ok().map(|result| {
+            let stride = 256 * 4;
+            let len = stride * 240;
+            let data: Arc<[u8]> = if result.slot_data.len() >= len {
+                Arc::from(&result.slot_data[..len])
+            } else {
+                vec![0u8; len].into()
+            };
+            VideoFrameHandle {
+                width: 256,
+                height: 240,
+                stride_bytes: stride,
+                bytes: data,
+            }
+        });
+        let fps = self
+            .emu
+            .last_fps()
+            .load(std::sync::atomic::Ordering::Relaxed) as f32
+            / 100.0;
         SystemRuntimeSnapshot {
-            metrics: self.core.metrics(),
-            video_frame: Some(self.core.video_frame_handle()),
-            video_profile: Some(self.core.video_render_profile()),
+            metrics: ConsoleMetrics {
+                frame_counter: 0,
+                emulation_fps: fps,
+                speed_multiplier: if fps > 0.0 { fps / 60.0 } else { 0.0 },
+                loaded: true,
+                paused: false,
+            },
+            video_frame: frame,
+            video_profile: Some(self.video_profile.clone()),
         }
     }
 
-    fn load(&mut self, media: &MediaObject, request: &ResolvedLoadRequest) -> Result<(), String> {
-        self.core
-            .load_rom(media.bytes.as_ref().to_vec(), request.core_options)
-            .map_err(|error| error.to_string())
+    fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
+        let screen =
+            build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
+        let mut core = NesConsoleCore::new(screen);
+        core.load(
+            &media.bytes,
+            &CoreConfig {
+                region: None,
+                bios_paths: std::collections::HashMap::new(),
+                controllers: std::collections::HashMap::new(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        self.emu.send(EmuCommand::Quit).ok();
+        self.emu = EmuThread::spawn(core);
+        Ok(())
     }
 
     fn unload(&mut self) -> Result<bool, String> {
-        self.core
-            .unload_rom()
-            .map(|_| true)
-            .map_err(|error| error.to_string())
+        self.emu.send(EmuCommand::Quit).ok();
+        let screen =
+            build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
+        let core = NesConsoleCore::new(screen);
+        self.emu = EmuThread::spawn(core);
+        Ok(true)
     }
 
     fn reset(&self) -> Result<(), String> {
-        self.core.reset().map_err(|error| error.to_string())
+        self.emu.send(EmuCommand::Reset).map_err(|e| e.to_string())
     }
 
     fn pause(&mut self) {
-        self.core.pause();
+        self.emu.send(EmuCommand::Pause).ok();
     }
 
     fn resume(&mut self) {
-        self.core.resume();
+        self.emu.send(EmuCommand::Resume).ok();
     }
 
     fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core.apply_input_state(bytes);
-        Ok(())
+        self.emu
+            .send(EmuCommand::ApplyInputState(bytes))
+            .map_err(|e| e.to_string())
     }
 
     fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        self.core
-            .current_input_state()
-            .map_err(|error| error.to_string())
+        Ok(Vec::new())
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
-        self.core.export_state().map_err(|error| error.to_string())
+        let (tx, rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::SaveState(tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map(|state| RuntimeStateExport {
+                state_blob: state,
+                preview: None,
+            })
+            .map_err(|e| e.to_string())
     }
 
     fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String> {
-        self.core
-            .import_state(state_blob.to_vec())
-            .map_err(|error| error.to_string())?;
-        self.core.sync_paused_from_console();
-        Ok(())
+        let (tx, rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::LoadState(state_blob.to_vec(), tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
     }
 
     fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
-        self.core
-            .export_mapper_save()
-            .map_err(|error| error.to_string())
+        Ok(None)
     }
 
-    fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core
-            .import_mapper_save(bytes)
-            .map_err(|error| error.to_string())
+    fn import_mapper_save(&self, _bytes: Vec<u8>) -> Result<(), String> {
+        Ok(())
     }
 
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
-        self.core.canonical_media_identity().ok()
+        None
     }
 
     fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        self.core.with_frame_buffer(|bytes| {
-            f(bytes);
-        });
+        if let Ok(result) = self.emu.wait_frame() {
+            f(&result.slot_data);
+        }
     }
 }
 

@@ -9,6 +9,7 @@ members = [
   "contract/controller_runtime",
   "contract/emuthread",
   "gui/shared/settings",
+  "nes/console",
   "nes/core",
   "nes/device",
   "input/schema",
@@ -82,7 +83,9 @@ nerust_cartridge_data = { path = "cartridge/data" }
 nerust_console = { path = "console" }
 nerust_contract_controller_runtime = { path = "contract/controller_runtime" }
 nerust_contract_core = { path = "contract/core" }
+nerust_contract_emuthread = { path = "contract/emuthread" }
 nerust_gui_settings = { path = "gui/shared/settings" }
+nerust_nes_console = { path = "nes/console" }
 nerust_nes_core = { path = "nes/core" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
