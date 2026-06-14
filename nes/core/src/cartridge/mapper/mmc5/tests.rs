@@ -7,8 +7,8 @@ use crate::mapper::Mapper;
 use crate::ppu::Core as PpuCore;
 use crate::ppu_memory_access::PpuReadAccess;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_rom::RomFormat;
+use nerust_contract_core::mirror::MirrorMode;
+use nerust_contract_core::rom::RomFormat;
 
 fn test_data() -> CartridgeData {
     CartridgeData::new(CartridgeDataParts {

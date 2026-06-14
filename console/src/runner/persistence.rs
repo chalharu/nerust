@@ -1,6 +1,6 @@
 use super::ConsoleRunner;
 use crate::{ConsoleError, ConsoleReply, state};
-use nerust_contract_persistence::CanonicalMediaIdentity;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_nes_core::Core;
 
 impl ConsoleRunner {

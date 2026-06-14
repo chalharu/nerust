@@ -1,4 +1,5 @@
-use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_contract_core::options::CoreOptions;
+use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_schema::SystemId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,7 +64,8 @@ pub struct ResolvedLoadRequest {
 #[cfg(test)]
 mod tests {
     use super::{LoadRequest, MediaObject, SystemLoadOptions};
-    use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
+    use nerust_contract_core::options::CoreOptions;
+    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_input_schema::SystemId;
     use std::path::PathBuf;
 

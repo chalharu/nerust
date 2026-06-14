@@ -6,7 +6,8 @@ use crate::controller::{
     write_standard_controller_port,
 };
 use nerust_contract_controller_runtime::ControllerRuntime;
-use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_contract_core::options::CoreOptions;
+use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_nes::frame::Buttons;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;

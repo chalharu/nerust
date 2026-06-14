@@ -5,7 +5,7 @@ use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
 use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuReadAccess;
-use nerust_contract_mirror::MirrorMode;
+use nerust_contract_core::mirror::MirrorMode;
 use std::cmp;
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {

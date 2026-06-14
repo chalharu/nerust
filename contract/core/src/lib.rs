@@ -1,3 +1,10 @@
+pub mod audio;
+pub mod device;
+pub mod mirror;
+pub mod options;
+pub mod persistence;
+pub mod rom;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,46 +109,6 @@ pub struct Vertex {
 pub use nerust_screen_video::PixelFormat;
 
 // ---------------------------------------------------------------------------
-// AudioBackend (placeholder – will move to contract/audio in Phase 4)
-// ---------------------------------------------------------------------------
-
-pub trait AudioBackend: Send {
-    fn start(&mut self);
-    fn pause(&mut self);
-    fn sample_rate(&self) -> u32 {
-        48_000
-    }
-    fn push(&mut self, sample: f32);
-}
-
-// ---------------------------------------------------------------------------
-// Device / PortIo / DeviceKind (placeholder – will move to contract/device in Phase 3)
-// ---------------------------------------------------------------------------
-
-pub trait Device: Send {
-    fn kind(&self) -> DeviceKind;
-    fn cycle(&mut self, io: &mut PortIo);
-}
-
-pub struct PortIo {
-    pub device: DeviceKind,
-    pub input: Vec<u8>,
-    pub output: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceKind {
-    None,
-    NesPad,
-    NesZapper,
-    SnesPad,
-    SnesMouse,
-    GbLinkCable,
-    Ps1MemoryCard,
-    Ps1DualShock,
-}
-
-// ---------------------------------------------------------------------------
 // Region
 // ---------------------------------------------------------------------------
 
@@ -195,10 +162,10 @@ pub trait ConsoleCore: Send {
     fn render_frame(&mut self) -> Result<GpuCommandList, CoreError>;
 
     // -- audio --
-    fn audio_samples(&self, out: &mut dyn AudioBackend);
+    fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
 
     // -- peripherals --
-    fn attach_device(&mut self, port: usize, device: Box<dyn Device>);
+    fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);
     fn detach_device(&mut self, port: usize);
 
     // -- lifecycle --

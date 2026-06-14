@@ -7,7 +7,7 @@ use super::manifest::{
     RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
     load_default_manifest,
 };
-use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_core::options::Mmc3IrqVariant;
 use std::path::{Path, PathBuf};
 
 #[test]

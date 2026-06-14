@@ -6,8 +6,9 @@ mod time;
 use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
 use crate::slots::state_slot_path;
 use crate::time::unix_millis;
-use nerust_contract_persistence::PersistenceIdentity;
-use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_contract_core::persistence::PersistenceIdentity;
+use nerust_contract_core::rom::RomFormat;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_input_schema::SystemId;
 use std::env;
 use std::fs;
@@ -59,7 +60,7 @@ fn test_rom_identity() -> RomIdentity {
         format: RomFormat::INes,
         mapper_type: 4,
         sub_mapper_type: 0,
-        mirror_mode: nerust_contract_mirror::MirrorMode::Horizontal,
+        mirror_mode: nerust_contract_core::mirror::MirrorMode::Horizontal,
         has_battery: true,
         trainer_len: 0,
         prg_rom_len: 0x8000,

@@ -50,8 +50,8 @@ mod tests {
     use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_rom::RomFormat;
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::rom::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

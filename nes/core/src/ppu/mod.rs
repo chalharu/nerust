@@ -40,8 +40,8 @@ mod tests {
     use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_rom::RomFormat;
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::rom::RomFormat;
     use nerust_screen_video::Screen;
 
     #[derive(Default)]

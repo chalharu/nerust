@@ -248,9 +248,10 @@ mod tests {
     };
     use super::store::merge_with_defaults;
     use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_options::Mmc3IrqVariant;
-    use nerust_contract_rom::{RomFormat, RomIdentity};
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::options::Mmc3IrqVariant;
+    use nerust_contract_core::rom::RomFormat;
+    use nerust_contract_core::rom::RomIdentity;
     use nerust_gui_settings::app_state::{DesktopAppState, RememberedWindowSize};
     use nerust_gui_settings::input::{
         IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,

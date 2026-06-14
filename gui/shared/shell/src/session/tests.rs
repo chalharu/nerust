@@ -10,10 +10,11 @@ use crate::settings::defaults::seed::{
 };
 use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_options::Mmc3IrqVariant;
-use nerust_contract_persistence::CanonicalMediaIdentity;
-use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_contract_core::mirror::MirrorMode;
+use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::rom::RomFormat;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::core::SessionCore;
 use nerust_input_nes::codec::decode_input_state;

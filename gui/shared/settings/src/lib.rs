@@ -1,4 +1,4 @@
-use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_schema::SystemId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

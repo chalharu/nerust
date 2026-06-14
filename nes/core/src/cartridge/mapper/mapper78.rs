@@ -3,7 +3,7 @@ use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use nerust_contract_mirror::MirrorMode;
+use nerust_contract_core::mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Mapper78 {
@@ -101,8 +101,8 @@ mod tests {
     use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_rom::RomFormat;
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::rom::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

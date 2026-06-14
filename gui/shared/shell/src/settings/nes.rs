@@ -251,7 +251,7 @@ mod tests {
     };
     use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{default_local_settings, default_shared_settings};
-    use nerust_contract_options::Mmc3IrqVariant;
+    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_settings::{
         local::{AudioSettings, ScalingMode},
         nes::NesVideoFilter,
