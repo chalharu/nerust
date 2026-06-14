@@ -7,15 +7,13 @@ use super::store::{
 };
 use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot};
 use nerust_contract_rom::RomIdentity;
-use nerust_contract_settings::app_state::{
+use nerust_gui_settings::app_state::{
     DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
 };
-use nerust_contract_settings::local::{
+use nerust_gui_settings::local::{
     HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
 };
-use nerust_contract_settings::shared::{
-    DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings,
-};
+use nerust_gui_settings::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
 use nerust_input_schema::SystemId;
 use nerust_persistence::sidecar::SidecarPaths;
 use serde_yaml::Value;

@@ -3084,9 +3084,9 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_backend_wgpu",
- "nerust_contract_settings",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
  "nerust_screen_wgpu",
@@ -3213,17 +3213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_contract_settings"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_options",
- "nerust_input_schema",
- "serde",
- "serde_derive",
- "serde_yaml",
-]
-
-[[package]]
 name = "nerust_glwrap"
 version = "0.1.0-dev"
 dependencies = [
@@ -3246,9 +3235,9 @@ dependencies = [
  "nerust_backend_opengl",
  "nerust_console",
  "nerust_contract_options",
- "nerust_contract_settings",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
  "nerust_persistence",
@@ -3269,8 +3258,8 @@ dependencies = [
  "nerust_contract_options",
  "nerust_contract_persistence",
  "nerust_contract_rom",
- "nerust_contract_settings",
  "nerust_gui_session",
+ "nerust_gui_settings",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
  "nerust_persistence",
@@ -3297,6 +3286,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_gui_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_contract_options",
+ "nerust_input_schema",
+ "serde",
+ "serde_derive",
+ "serde_yaml",
+]
+
+[[package]]
 name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
@@ -3306,9 +3306,9 @@ dependencies = [
  "nerust_contract_options",
  "nerust_contract_persistence",
  "nerust_contract_rom",
- "nerust_contract_settings",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_gui_settings",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
@@ -3327,7 +3327,7 @@ name = "nerust_input_nes"
 version = "0.1.0-dev"
 dependencies = [
  "bitflags 2.13.0",
- "nerust_contract_settings",
+ "nerust_gui_settings",
  "nerust_input_schema",
  "rmp-serde",
  "serde",
@@ -3557,9 +3557,9 @@ dependencies = [
  "muda",
  "nerust_backend_wgpu",
  "nerust_contract_options",
- "nerust_contract_settings",
  "nerust_gui_runtime",
  "nerust_gui_session",
+ "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
  "nerust_persistence",

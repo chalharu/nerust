@@ -508,7 +508,7 @@ fn session_flushes_keyboard_input_into_controller_state() {
 
     assert_eq!(
         session
-            .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, true)
+            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
             .unwrap(),
         None
     );
@@ -536,15 +536,15 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 
     assert_eq!(
         session
-            .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::Space, true)
+            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
             .unwrap(),
         Some(KeyboardShortcut::Session(
-            nerust_contract_settings::input::ShortcutAction::TogglePause,
+            nerust_gui_settings::input::ShortcutAction::TogglePause,
         ))
     );
     assert_eq!(
         session
-            .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::Space, true)
+            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
             .unwrap(),
         None
     );
@@ -867,7 +867,7 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
 
     session
-        .handle_keyboard_key(nerust_contract_settings::input::KeyboardKey::KeyZ, true)
+        .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
         .unwrap();
 
     let plan = session.set_fullscreen_default(true).unwrap();

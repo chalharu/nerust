@@ -1,4 +1,4 @@
-use nerust_contract_settings::input::ShortcutAction;
+use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_schema::{
     AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor, SystemId,
 };
@@ -130,7 +130,7 @@ mod tests {
     fn shortcuts_remain_stable() {
         assert!(shortcut_descriptors().iter().any(|descriptor| matches!(
             descriptor.action,
-            nerust_contract_settings::input::ShortcutAction::ToggleFullscreen
+            nerust_gui_settings::input::ShortcutAction::ToggleFullscreen
         )));
     }
 }

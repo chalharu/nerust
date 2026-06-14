@@ -1,6 +1,6 @@
-use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_contract_settings::shared::DesktopSharedSettings;
 use nerust_gui_session::commands::SessionCommand;
+use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::shared::DesktopSharedSettings;
 
 pub fn shortcut_command_for_key(
     settings: &DesktopSharedSettings,
@@ -38,8 +38,8 @@ fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> 
 mod tests {
     use super::{shortcut_action_for_key, shortcut_command_for_key};
     use crate::settings::defaults::seed::default_shared_settings;
-    use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
     use nerust_gui_session::commands::SessionCommand;
+    use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 
     #[test]
     fn shortcuts_resolve_to_session_commands() {
