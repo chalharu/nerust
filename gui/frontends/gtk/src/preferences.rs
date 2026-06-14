@@ -1,12 +1,12 @@
 use crate::State;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_contract_settings::input::KeyboardKey;
-use nerust_contract_settings::language::AppLanguage;
-use nerust_contract_settings::local::ScalingMode;
-use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
+use nerust_gui_settings::input::KeyboardKey;
+use nerust_gui_settings::language::AppLanguage;
+use nerust_gui_settings::local::ScalingMode;
+use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::{
     SystemSettingsFieldKind, default_input_topology_descriptor, default_system_settings_page_model,
 };

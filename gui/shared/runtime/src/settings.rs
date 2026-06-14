@@ -1,6 +1,6 @@
-use nerust_contract_settings::app_state::DesktopAppState;
-use nerust_contract_settings::local::HostBackendLocalSettings;
-use nerust_contract_settings::shared::DesktopSharedSettings;
+use nerust_gui_settings::app_state::DesktopAppState;
+use nerust_gui_settings::local::HostBackendLocalSettings;
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -251,14 +251,14 @@ mod tests {
     use nerust_contract_mirror::MirrorMode;
     use nerust_contract_options::Mmc3IrqVariant;
     use nerust_contract_rom::{RomFormat, RomIdentity};
-    use nerust_contract_settings::app_state::{DesktopAppState, RememberedWindowSize};
-    use nerust_contract_settings::input::{
+    use nerust_gui_settings::app_state::{DesktopAppState, RememberedWindowSize};
+    use nerust_gui_settings::input::{
         IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
         ShortcutAction, ShortcutBinding, SystemInputSettings,
     };
-    use nerust_contract_settings::local::{HostBackendLocalSettings, ScalingMode};
-    use nerust_contract_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
-    use nerust_contract_settings::{
+    use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
+    use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
+    use nerust_gui_settings::{
         language::AppLanguage,
         nes::{NesSettings, NesVideoFilter},
     };
@@ -473,7 +473,7 @@ mod tests {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
-                    nerust_contract_settings::input::KeyboardProfile {
+                    nerust_gui_settings::input::KeyboardProfile {
                         bindings: vec![KeyboardBinding::new(
                             "nes.attachment.player1",
                             PersistedControlId::digital("nes.control.a"),
@@ -483,7 +483,7 @@ mod tests {
                 );
                 system
             })]),
-            shortcuts: nerust_contract_settings::input::ShortcutSettings {
+            shortcuts: nerust_gui_settings::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
                     key: Some(KeyboardKey::Space),
@@ -738,7 +738,7 @@ video:
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
-                    nerust_contract_settings::input::KeyboardProfile {
+                    nerust_gui_settings::input::KeyboardProfile {
                         bindings: vec![KeyboardBinding::new(
                             "nes.attachment.player1",
                             PersistedControlId::digital("nes.control.a"),
@@ -748,7 +748,7 @@ video:
                 );
                 system
             })]),
-            shortcuts: nerust_contract_settings::input::ShortcutSettings {
+            shortcuts: nerust_gui_settings::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
                     key: Some(KeyboardKey::Space),

@@ -1,13 +1,11 @@
 use super::manager::{LoadedSettingsDocument, SettingsStore};
 use super::{HostBackendIdentity, SettingsError, SettingsPaths};
 use directories::ProjectDirs;
-use nerust_contract_settings::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
-use nerust_contract_settings::local::{
+use nerust_gui_settings::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
+use nerust_gui_settings::local::{
     HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
 };
-use nerust_contract_settings::shared::{
-    DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings,
-};
+use nerust_gui_settings::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
 use serde_yaml::Value;
 use std::fs;
 use std::path::{Path, PathBuf};

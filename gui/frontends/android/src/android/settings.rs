@@ -7,9 +7,9 @@ use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::refs::Global;
 use jni::sys::jobject;
 use jni::{JavaVM, jni_sig, jni_str};
-use nerust_contract_settings::nes::{NesSettings, NesVideoFilter};
-use nerust_contract_settings::shared::SystemSettings;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
+use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_schema::SystemId;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -505,11 +505,11 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_contract_settings::app_state::DesktopAppState;
-    use nerust_contract_settings::local::HostBackendLocalSettings;
-    use nerust_contract_settings::nes::{NesSettings, NesVideoFilter};
-    use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
     use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::app_state::DesktopAppState;
+    use nerust_gui_settings::local::HostBackendLocalSettings;
+    use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
+    use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
     use nerust_input_schema::SystemId;
 
     fn default_snapshot() -> SettingsSnapshot {

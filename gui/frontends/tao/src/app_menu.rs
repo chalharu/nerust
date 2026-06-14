@@ -43,7 +43,7 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
-    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_settings::language::AppLanguage;
     use nerust_gui_shell::settings::i18n::{UiText, text};
     use std::sync::{Arc, RwLock};
     use tao::event_loop::EventLoopProxy;
@@ -360,7 +360,7 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::{StateSlotSummary, TaoWindow, UserEvent};
-    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
     pub(crate) struct AppMenu;

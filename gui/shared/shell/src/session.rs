@@ -13,9 +13,9 @@ use crate::settings::defaults::seed::{
 };
 use nerust_console::ConsoleMetrics;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
-use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
+use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
 use std::collections::BTreeSet;
