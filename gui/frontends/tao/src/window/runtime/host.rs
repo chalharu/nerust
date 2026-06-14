@@ -1,13 +1,13 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use crate::settings;
 use nerust_backend_wgpu::RenderResult;
-use nerust_contract_settings::app_state::RememberedWindowSize;
-use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_session::core::WindowSize;
+use nerust_gui_settings::app_state::RememberedWindowSize;
+use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
 use nerust_gui_shell::settings::i18n::{UiText, text};
@@ -700,7 +700,7 @@ mod tests {
         NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
         keycode_controller_input,
     };
-    use nerust_contract_settings::input::KeyboardKey;
+    use nerust_gui_settings::input::KeyboardKey;
     use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
 
     #[test]

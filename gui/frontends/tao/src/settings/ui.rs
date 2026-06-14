@@ -7,12 +7,12 @@ use iced::widget::{
     text_input,
 };
 use iced::{Element, Event, Font, Length, Subscription, Task, Theme};
-use nerust_contract_settings::input::KeyboardKey;
-use nerust_contract_settings::language::AppLanguage;
-use nerust_contract_settings::local::ScalingMode;
-use nerust_contract_settings::shared::StoragePolicy;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
+use nerust_gui_settings::input::KeyboardKey;
+use nerust_gui_settings::language::AppLanguage;
+use nerust_gui_settings::local::ScalingMode;
+use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsFieldModel, apply_default_system_settings_choice,
     default_input_topology_descriptor, default_system_settings_page_model,
@@ -851,7 +851,7 @@ mod tests {
     use iced::event::Status;
     use iced::keyboard::key::{Code, Physical};
     use iced::window;
-    use nerust_contract_settings::input::KeyboardKey;
+    use nerust_gui_settings::input::KeyboardKey;
 
     #[test]
     fn physical_key_mapping_matches_tao_bindings() {

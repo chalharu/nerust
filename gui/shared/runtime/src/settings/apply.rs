@@ -2,7 +2,7 @@ use super::{
     HostBackendLocalSettings, HostBackendProfile, SettingsApplyPlan, SettingsError,
     SettingsSnapshot,
 };
-use nerust_contract_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
+use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
 use std::path::Path;
 
 pub fn derive_apply_plan(

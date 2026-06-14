@@ -1,11 +1,11 @@
 use crate::load::SystemLoadOptions;
-use nerust_contract_settings::local::{AudioSettings, HostBackendLocalSettings};
-use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
-use nerust_contract_settings::{
+use nerust_gui_runtime::settings::{AudioBackendKind, HostBackendIdentity};
+use nerust_gui_settings::local::{AudioSettings, HostBackendLocalSettings};
+use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
+use nerust_gui_settings::{
     local::ScalingMode,
     nes::{NesSettings, NesVideoFilter},
 };
-use nerust_gui_runtime::settings::{AudioBackendKind, HostBackendIdentity};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 #[cfg(not(target_os = "android"))]
@@ -252,7 +252,7 @@ mod tests {
     use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{default_local_settings, default_shared_settings};
     use nerust_contract_options::Mmc3IrqVariant;
-    use nerust_contract_settings::{
+    use nerust_gui_settings::{
         local::{AudioSettings, ScalingMode},
         nes::NesVideoFilter,
         shared::SystemSettings,

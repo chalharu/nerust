@@ -1,4 +1,4 @@
-use nerust_contract_settings::input::KeyboardKey;
+use nerust_gui_settings::input::KeyboardKey;
 
 const EDITABLE_KEYS: &[KeyboardKey] = &[
     KeyboardKey::KeyA,
@@ -185,7 +185,7 @@ pub fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
 #[cfg(test)]
 mod tests {
     use super::keyboard_key_label;
-    use nerust_contract_settings::input::KeyboardKey;
+    use nerust_gui_settings::input::KeyboardKey;
 
     #[test]
     fn keyboard_key_labels_are_human_readable() {

@@ -1,4 +1,4 @@
-use nerust_contract_settings::language::AppLanguage;
+use nerust_gui_settings::language::AppLanguage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiText {

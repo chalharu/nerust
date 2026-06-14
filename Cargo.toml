@@ -13,7 +13,7 @@ members = [
   "contract/options",
   "contract/persistence",
   "contract/rom",
-  "contract/settings",
+  "gui/shared/settings",
   "nes/core",
   "nes/device",
   "input/schema",
@@ -90,7 +90,7 @@ nerust_contract_mirror = { path = "contract/mirror" }
 nerust_contract_options = { path = "contract/options" }
 nerust_contract_persistence = { path = "contract/persistence" }
 nerust_contract_rom = { path = "contract/rom" }
-nerust_contract_settings = { path = "contract/settings" }
+nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
