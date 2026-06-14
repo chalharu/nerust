@@ -2,7 +2,7 @@ mod mapper;
 use crate::cart_device::Cartridge;
 use crate::cartridge_error::CartridgeError;
 use crate::cartridge_rom::CartridgeData;
-use nerust_contract_options::CoreOptions;
+use nerust_contract_core::options::CoreOptions;
 
 pub(crate) fn try_from(data: CartridgeData) -> Result<Box<dyn Cartridge>, CartridgeError> {
     try_from_with_options(data, CoreOptions::default())

@@ -64,7 +64,7 @@ fn scan_state_slots_for_identity_filters_different_roms() {
     let matching_identity = test_rom_identity();
     let mismatched_identity = test_rom_identity_with_prg_rom_crc64(100);
     let header_corrected_identity =
-        test_rom_identity_with_format(nerust_contract_rom::RomFormat::Nes20);
+        test_rom_identity_with_format(nerust_contract_core::rom::RomFormat::Nes20);
 
     write_state_slot(
         &dir,

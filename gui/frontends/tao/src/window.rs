@@ -27,10 +27,10 @@ fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRe
 
 fn shell_mmc3_irq_variant(
     variant: WindowMmc3IrqVariant,
-) -> nerust_contract_options::Mmc3IrqVariant {
+) -> nerust_contract_core::options::Mmc3IrqVariant {
     match variant {
-        WindowMmc3IrqVariant::Sharp => nerust_contract_options::Mmc3IrqVariant::Sharp,
-        WindowMmc3IrqVariant::Nec => nerust_contract_options::Mmc3IrqVariant::Nec,
+        WindowMmc3IrqVariant::Sharp => nerust_contract_core::options::Mmc3IrqVariant::Sharp,
+        WindowMmc3IrqVariant::Nec => nerust_contract_core::options::Mmc3IrqVariant::Nec,
     }
 }
 
@@ -89,7 +89,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
-    use nerust_contract_options::Mmc3IrqVariant;
+    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
     use nerust_input_schema::SystemId;
 

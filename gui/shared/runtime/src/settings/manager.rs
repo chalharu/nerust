@@ -6,7 +6,7 @@ use super::store::{
     save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
 };
 use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot};
-use nerust_contract_rom::RomIdentity;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_settings::app_state::{
     DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
 };

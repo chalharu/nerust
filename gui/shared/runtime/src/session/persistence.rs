@@ -2,7 +2,7 @@ mod mapper_save;
 mod slots;
 
 use super::GuiSession;
-use nerust_contract_options::CoreOptions;
+use nerust_contract_core::options::CoreOptions;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
 use nerust_persistence::time::latest_saved_slot_id;

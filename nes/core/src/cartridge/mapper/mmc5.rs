@@ -816,11 +816,11 @@ impl Mapper for Mmc5 {
 
     fn initialize(&mut self) {
         self.set_mirror_mode(match self.data_ref().mirror_mode() {
-            nerust_contract_mirror::MirrorMode::Vertical => {
-                nerust_contract_mirror::MirrorMode::Vertical
+            nerust_contract_core::mirror::MirrorMode::Vertical => {
+                nerust_contract_core::mirror::MirrorMode::Vertical
             }
-            nerust_contract_mirror::MirrorMode::Horizontal => {
-                nerust_contract_mirror::MirrorMode::Horizontal
+            nerust_contract_core::mirror::MirrorMode::Horizontal => {
+                nerust_contract_core::mirror::MirrorMode::Horizontal
             }
             mode => mode,
         });

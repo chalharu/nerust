@@ -35,11 +35,12 @@ use self::persistence_codec::{
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_options::CoreOptions;
+use nerust_contract_core::mirror::MirrorMode;
+use nerust_contract_core::options::CoreOptions;
 #[cfg(test)]
-use nerust_contract_options::Mmc3IrqVariant;
-use nerust_contract_rom::{RomFormat, RomIdentity};
+use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_contract_core::rom::RomFormat;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
 

@@ -1,7 +1,7 @@
 mod ines;
 mod nes20;
 
-use nerust_contract_mirror::MirrorMode;
+use nerust_contract_core::mirror::MirrorMode;
 use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 
@@ -52,8 +52,8 @@ fn validate_mirror_mode(mirror_mode: u8) -> Result<MirrorMode, CartridgeParseErr
 #[cfg(test)]
 mod tests {
     use super::parse_cartridge_bytes;
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_rom::RomFormat;
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::rom::RomFormat;
 
     #[test]
     fn parses_ines_metadata() {

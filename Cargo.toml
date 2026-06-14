@@ -5,14 +5,8 @@ members = [
   "backend/wgpu",
   "cartridge/data",
   "console",
-  "contract/audio",
   "contract/core",
-  "contract/device",
   "contract/controller_runtime",
-  "contract/mirror",
-  "contract/options",
-  "contract/persistence",
-  "contract/rom",
   "gui/shared/settings",
   "nes/core",
   "nes/device",
@@ -86,10 +80,7 @@ muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
 nerust_console = { path = "console" }
 nerust_contract_controller_runtime = { path = "contract/controller_runtime" }
-nerust_contract_mirror = { path = "contract/mirror" }
-nerust_contract_options = { path = "contract/options" }
-nerust_contract_persistence = { path = "contract/persistence" }
-nerust_contract_rom = { path = "contract/rom" }
+nerust_contract_core = { path = "contract/core" }
 nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
