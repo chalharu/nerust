@@ -1,8 +1,8 @@
 use nerust_contract_controller_runtime::ControllerRuntime;
-use nerust_core::OpenBusReadResult;
-use nerust_core::controller::Controller;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
+use nerust_nes_core::OpenBusReadResult;
+use nerust_nes_core::controller::Controller;
 
 const STANDARD_CONTROLLER_MAX_INDEX: usize = 8;
 const CONTROLLER_STATE_SCHEMA_VERSION: u32 = 1;
@@ -241,9 +241,9 @@ mod tests {
         StandardController, StandardControllerSnapshot, apply_input_state, decode_controller_state,
         encode_controller_state, encode_input_state,
     };
-    use nerust_core::controller::Controller;
     use nerust_input_nes::codec::decode_input_state;
     use nerust_input_nes::frame::{Buttons, NesInputFrame};
+    use nerust_nes_core::controller::Controller;
 
     #[test]
     fn controller_state_round_trips() {

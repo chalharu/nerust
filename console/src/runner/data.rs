@@ -1,6 +1,6 @@
 use crate::ConsoleRequestResult;
 use nerust_contract_options::CoreOptions;
-use nerust_core::cartridge_rom::CartridgeData;
+use nerust_nes_core::cartridge_rom::CartridgeData;
 use std::sync::mpsc::Sender;
 
 pub(crate) enum ConsoleData {

@@ -1,4 +1,4 @@
-use nerust_core::controller::Controller;
+use nerust_nes_core::controller::Controller;
 
 pub trait ControllerRuntime: Controller + Send {
     fn reset_runtime(&mut self);
