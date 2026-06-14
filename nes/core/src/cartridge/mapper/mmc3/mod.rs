@@ -11,7 +11,7 @@ use self::txsrom::TxSrom;
 use crate::cart_device::Cartridge;
 use crate::cartridge_error::CartridgeError;
 use crate::cartridge_rom::CartridgeData;
-use nerust_contract_options::Mmc3IrqVariant;
+use nerust_contract_core::options::Mmc3IrqVariant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -65,8 +65,8 @@ mod tests {
     use crate::interrupt::{Interrupt, IrqSource};
     use crate::mapper::Mapper;
     use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-    use nerust_contract_mirror::MirrorMode;
-    use nerust_contract_rom::RomFormat;
+    use nerust_contract_core::mirror::MirrorMode;
+    use nerust_contract_core::rom::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

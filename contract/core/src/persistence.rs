@@ -1,5 +1,4 @@
-use nerust_contract_options::CoreOptions;
-use nerust_contract_rom::RomIdentity;
+use crate::{options::CoreOptions, rom::RomIdentity};
 use nerust_input_schema::SystemId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

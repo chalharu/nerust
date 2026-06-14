@@ -4,8 +4,8 @@ use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_op
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
-use nerust_contract_options::Mmc3IrqVariant;
-use nerust_contract_persistence::CanonicalMediaIdentity;
+use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
@@ -492,7 +492,7 @@ mod tests {
     use crate::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_contract_options::Mmc3IrqVariant;
+    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_input_nes::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,

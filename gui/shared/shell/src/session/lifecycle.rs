@@ -360,9 +360,11 @@ impl SessionHandle {
         clear_hidden_lifecycle_state_path(&path);
     }
 
-    pub fn persistence_identity(&self) -> Option<nerust_contract_persistence::PersistenceIdentity> {
+    pub fn persistence_identity(
+        &self,
+    ) -> Option<nerust_contract_core::persistence::PersistenceIdentity> {
         let media = self.runtime.canonical_media_identity()?;
-        Some(nerust_contract_persistence::PersistenceIdentity {
+        Some(nerust_contract_core::persistence::PersistenceIdentity {
             system_id: self.descriptor.system_id,
             media,
         })
@@ -466,10 +468,10 @@ impl SessionHandle {
     fn resolve_persistence_paths(
         &self,
         rom_path: Option<&Path>,
-        identity: nerust_contract_persistence::PersistenceIdentity,
+        identity: nerust_contract_core::persistence::PersistenceIdentity,
     ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
         match identity.media {
-            nerust_contract_persistence::CanonicalMediaIdentity::Rom(rom_identity) => self
+            nerust_contract_core::persistence::CanonicalMediaIdentity::Rom(rom_identity) => self
                 .settings
                 .resolve_persistence_paths_with_import(identity.system_id, rom_path, rom_identity)
                 .map_err(|error| {

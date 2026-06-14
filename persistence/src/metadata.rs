@@ -1,8 +1,9 @@
 use crate::error::PersistenceError;
 use crate::time::unix_millis;
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_persistence::{CanonicalMediaIdentity, PersistenceIdentity};
-use nerust_contract_rom::RomFormat;
+use nerust_contract_core::mirror::MirrorMode;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::persistence::PersistenceIdentity;
+use nerust_contract_core::rom::RomFormat;
 use nerust_input_schema::SystemId;
 use std::io::{Read, Seek};
 use std::time::SystemTime;

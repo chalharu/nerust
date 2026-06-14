@@ -7,7 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_contract_mirror.workspace = true
-nerust_contract_rom.workspace = true
+nerust_contract_core.workspace = true
 nerust_nes_core.workspace = true
 thiserror.workspace = true

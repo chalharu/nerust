@@ -49,7 +49,7 @@ impl GuiSession {
                     self.core
                         .canonical_media_identity()
                         .map(|identity| {
-                            nerust_contract_persistence::PersistenceIdentity::rom(
+                            nerust_contract_core::persistence::PersistenceIdentity::rom(
                                 self.system_id,
                                 identity.rom_identity(),
                             )
@@ -119,7 +119,7 @@ impl GuiSession {
             match self.core.canonical_media_identity() {
                 Ok(identity) => match scan_state_slots_for_identity(
                     &sidecars.states_dir,
-                    nerust_contract_persistence::PersistenceIdentity::rom(
+                    nerust_contract_core::persistence::PersistenceIdentity::rom(
                         self.system_id,
                         identity.rom_identity(),
                     ),
