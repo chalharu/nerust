@@ -1,5 +1,5 @@
 [package]
-name = "nerust_contract_settings"
+name = "nerust_gui_settings"
 version.workspace = true
 authors.workspace = true
 license.workspace = true

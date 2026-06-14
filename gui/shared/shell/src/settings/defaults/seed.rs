@@ -1,11 +1,11 @@
-use nerust_contract_settings::app_state::DesktopAppState;
-use nerust_contract_settings::input::{
+use nerust_gui_settings::app_state::DesktopAppState;
+use nerust_gui_settings::input::{
     IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardKey, PersistedControlId, ShortcutAction,
     ShortcutBinding,
 };
-use nerust_contract_settings::local::HostBackendLocalSettings;
-use nerust_contract_settings::nes::NesSettings;
-use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
+use nerust_gui_settings::local::HostBackendLocalSettings;
+use nerust_gui_settings::nes::NesSettings;
+use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_input_nes::topology::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
@@ -18,7 +18,7 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         systems: BTreeMap::from([(SystemId::Nes, SystemSettings::Nes(NesSettings::default()))]),
         ..Default::default()
     };
-    let mut nes_input = nerust_contract_settings::input::SystemInputSettings::default();
+    let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings = vec![
         default_control_binding(
             NES_ATTACHMENT_PLAYER_ONE.as_str(),
@@ -122,7 +122,7 @@ fn default_control_binding(
 #[cfg(test)]
 mod tests {
     use super::default_shared_settings;
-    use nerust_contract_settings::input::ShortcutAction;
+    use nerust_gui_settings::input::ShortcutAction;
     use nerust_input_nes::topology::FAMICOM_P2_CONTROL_MICROPHONE;
 
     #[test]

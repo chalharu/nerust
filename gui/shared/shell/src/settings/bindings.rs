@@ -2,8 +2,8 @@ pub mod descriptors;
 pub mod events;
 pub mod keys;
 
-use nerust_contract_settings::input::KeyboardKey;
-use nerust_contract_settings::shared::DesktopSharedSettings;
+use nerust_gui_settings::input::KeyboardKey;
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_schema::InputTopologyDescriptor;
 use std::collections::BTreeMap;
 
@@ -56,7 +56,7 @@ pub fn conflicting_keys(
 mod tests {
     use super::conflicting_keys;
     use crate::settings::defaults::seed::default_shared_settings;
-    use nerust_contract_settings::input::KeyboardKey;
+    use nerust_gui_settings::input::KeyboardKey;
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
@@ -69,7 +69,7 @@ mod tests {
             .find(|binding| {
                 matches!(
                     binding.action,
-                    nerust_contract_settings::input::ShortcutAction::TogglePause
+                    nerust_gui_settings::input::ShortcutAction::TogglePause
                 )
             })
             .unwrap()

@@ -1,7 +1,7 @@
 use crate::session::{KeyboardShortcut, SessionHandle};
 use crate::settings::bindings::events::controller::controller_event_for_key;
 use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
-use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_input_schema::DigitalInputEvent;
 
 impl SessionHandle {

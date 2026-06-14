@@ -1,5 +1,5 @@
-use nerust_contract_settings::input::KeyboardKey;
-use nerust_contract_settings::shared::DesktopSharedSettings;
+use nerust_gui_settings::input::KeyboardKey;
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 
 pub fn controller_event_for_key<F>(
@@ -34,7 +34,7 @@ where
 mod tests {
     use super::controller_event_for_key;
     use crate::settings::defaults::seed::default_shared_settings;
-    use nerust_contract_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
+    use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
     use nerust_input_nes::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A,
@@ -67,7 +67,7 @@ mod tests {
             .implicit_keyboard_profile_mut()
             .bindings
             .push(KeyboardBinding {
-                attachment: nerust_contract_settings::input::PersistedAttachmentId::new(
+                attachment: nerust_gui_settings::input::PersistedAttachmentId::new(
                     NES_ATTACHMENT_PLAYER_TWO.as_str(),
                 ),
                 control: PersistedControlId::digital(FAMICOM_P2_CONTROL_MICROPHONE.as_str()),

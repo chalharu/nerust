@@ -1,8 +1,8 @@
 use crate::settings::bindings::keys::keyboard_key_label;
-use nerust_contract_settings::input::{
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_schema::SystemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,8 +104,8 @@ mod tests {
     use crate::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_contract_settings::input::{KeyboardKey, ShortcutAction};
     use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
     use nerust_input_nes::topology::{NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A};
     use nerust_input_schema::SystemId;
 
