@@ -7,6 +7,7 @@ members = [
   "console",
   "contract/core",
   "contract/controller_runtime",
+  "contract/emuthread",
   "gui/shared/settings",
   "nes/core",
   "nes/device",
