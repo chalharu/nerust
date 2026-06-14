@@ -3171,6 +3171,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_contract_emuthread"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_contract_core",
+]
+
+[[package]]
 name = "nerust_glwrap"
 version = "0.1.0-dev"
 dependencies = [
