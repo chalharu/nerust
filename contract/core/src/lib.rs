@@ -51,6 +51,7 @@ pub struct CoreCapabilities {
 // GpuCommand
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub enum GpuCommand {
     Blit(Arc<FrameBuffer>),
     PaletteDecode {
@@ -75,6 +76,7 @@ pub enum GpuCommand {
     },
 }
 
+#[derive(Clone)]
 pub struct GpuCommandList {
     pub commands: Vec<GpuCommand>,
 }
