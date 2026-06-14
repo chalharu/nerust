@@ -1,5 +1,5 @@
 [package]
-name = "nerust_core"
+name = "nerust_nes_core"
 version.workspace = true
 authors.workspace = true
 license.workspace = true

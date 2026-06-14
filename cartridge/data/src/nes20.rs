@@ -1,7 +1,7 @@
 use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
 use nerust_contract_rom::RomFormat;
-use nerust_core::cartridge_data_parts::CartridgeDataParts;
-use nerust_core::cartridge_rom::CartridgeData;
+use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
+use nerust_nes_core::cartridge_rom::CartridgeData;
 
 pub(crate) fn read_nes20<I: Iterator<Item = u8>>(
     headers: &[u8],

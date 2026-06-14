@@ -2,8 +2,8 @@ mod ines;
 mod nes20;
 
 use nerust_contract_mirror::MirrorMode;
-use nerust_core::cartridge_data_parts::CartridgeDataParts;
-use nerust_core::cartridge_rom::CartridgeData;
+use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
+use nerust_nes_core::cartridge_rom::CartridgeData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CartridgeParseError {

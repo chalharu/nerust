@@ -41,8 +41,8 @@ struct TestControllerRuntime {
     state: StandardControllerState,
 }
 
-impl nerust_core::controller::Controller for TestControllerRuntime {
-    fn read(&mut self, address: usize) -> nerust_core::OpenBusReadResult {
+impl nerust_nes_core::controller::Controller for TestControllerRuntime {
+    fn read(&mut self, address: usize) -> nerust_nes_core::OpenBusReadResult {
         read_standard_controller_port(&mut self.state, address)
     }
 
@@ -85,9 +85,9 @@ struct OpaqueControllerRuntime {
     input_state: Vec<u8>,
 }
 
-impl nerust_core::controller::Controller for OpaqueControllerRuntime {
-    fn read(&mut self, _address: usize) -> nerust_core::OpenBusReadResult {
-        nerust_core::OpenBusReadResult::new(0, 0)
+impl nerust_nes_core::controller::Controller for OpaqueControllerRuntime {
+    fn read(&mut self, _address: usize) -> nerust_nes_core::OpenBusReadResult {
+        nerust_nes_core::OpenBusReadResult::new(0, 0)
     }
 
     fn write(&mut self, _value: u8) {}
