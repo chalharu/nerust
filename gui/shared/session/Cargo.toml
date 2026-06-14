@@ -8,8 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 nerust_console.workspace = true
-nerust_contract_options.workspace = true
-nerust_contract_persistence.workspace = true
+nerust_contract_core.workspace = true
 
 [dev-dependencies]
 nerust_input_nes_runtime.workspace = true

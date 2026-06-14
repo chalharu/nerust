@@ -9,8 +9,7 @@ rust-version.workspace = true
 [dependencies]
 log.workspace = true
 nerust_console.workspace = true
-nerust_contract_options.workspace = true
-nerust_contract_persistence.workspace = true
+nerust_contract_core.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
@@ -31,5 +30,4 @@ nerust_sound_openal.workspace = true
 nerust_sound_android.workspace = true
 
 [dev-dependencies]
-nerust_contract_mirror.workspace = true
-nerust_contract_rom.workspace = true
+nerust_contract_core.workspace = true

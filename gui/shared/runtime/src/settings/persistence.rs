@@ -1,7 +1,7 @@
 use super::{SettingsError, SettingsPaths};
 use crc::{CRC_32_ISO_HDLC, Crc};
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_rom::RomIdentity;
+use nerust_contract_core::mirror::MirrorMode;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_input_schema::SystemId;
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};

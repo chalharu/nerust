@@ -1,8 +1,8 @@
 use crate::ConsoleError;
 use crate::controller::{StandardControllerState, encode_standard_controller_state};
 use nerust_contract_controller_runtime::ControllerRuntime;
-use nerust_contract_options::CoreOptions;
-use nerust_contract_rom::RomIdentity;
+use nerust_contract_core::options::CoreOptions;
+use nerust_contract_core::rom::RomIdentity;
 use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;

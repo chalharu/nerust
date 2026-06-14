@@ -1,5 +1,5 @@
 use crate::ConsoleRequestResult;
-use nerust_contract_options::CoreOptions;
+use nerust_contract_core::options::CoreOptions;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 use std::sync::mpsc::Sender;
 

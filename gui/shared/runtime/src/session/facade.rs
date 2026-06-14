@@ -3,7 +3,7 @@ use super::persistence::PersistenceState;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::ConsoleVideo;
 use nerust_console::{ConsoleError, ConsoleMetrics};
-use nerust_contract_persistence::CanonicalMediaIdentity;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_session::core::{SessionCore, WindowSize};
 use nerust_gui_session::title::window_title;
 use nerust_persistence::model::StateSlotSummary;

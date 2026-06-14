@@ -1,8 +1,8 @@
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{ConsoleVideo, VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleError, ConsoleMetrics};
-use nerust_contract_options::CoreOptions;
-use nerust_contract_persistence::CanonicalMediaIdentity;
+use nerust_contract_core::options::CoreOptions;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {

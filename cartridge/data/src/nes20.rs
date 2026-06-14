@@ -1,5 +1,5 @@
 use super::{CartridgeParseError, cartridge_data, validate_mirror_mode};
-use nerust_contract_rom::RomFormat;
+use nerust_contract_core::rom::RomFormat;
 use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 

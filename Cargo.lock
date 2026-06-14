@@ -3122,8 +3122,7 @@ dependencies = [
 name = "nerust_cartridge_data"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_contract_mirror",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_nes_core",
  "thiserror 2.0.18",
 ]
@@ -3136,9 +3135,7 @@ dependencies = [
  "log",
  "nerust_cartridge_data",
  "nerust_contract_controller_runtime",
- "nerust_contract_options",
- "nerust_contract_persistence",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_input_nes",
  "nerust_nes_core",
  "nerust_screen_buffer",
@@ -3156,10 +3153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_contract_audio"
-version = "0.1.0-dev"
-
-[[package]]
 name = "nerust_contract_controller_runtime"
 version = "0.1.0-dev"
 dependencies = [
@@ -3170,46 +3163,11 @@ dependencies = [
 name = "nerust_contract_core"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_video",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nerust_contract_device"
-version = "0.1.0-dev"
-
-[[package]]
-name = "nerust_contract_mirror"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "nerust_contract_options"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "nerust_contract_persistence"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_options",
- "nerust_contract_rom",
  "nerust_input_schema",
-]
-
-[[package]]
-name = "nerust_contract_rom"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_mirror",
+ "nerust_screen_video",
  "serde",
  "serde_derive",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3234,7 +3192,7 @@ dependencies = [
  "log",
  "nerust_backend_opengl",
  "nerust_console",
- "nerust_contract_options",
+ "nerust_contract_core",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_settings",
@@ -3254,10 +3212,7 @@ dependencies = [
  "directories",
  "log",
  "nerust_console",
- "nerust_contract_mirror",
- "nerust_contract_options",
- "nerust_contract_persistence",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_input_nes_runtime",
@@ -3277,8 +3232,7 @@ name = "nerust_gui_session"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_console",
- "nerust_contract_options",
- "nerust_contract_persistence",
+ "nerust_contract_core",
  "nerust_input_nes_runtime",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -3289,7 +3243,7 @@ dependencies = [
 name = "nerust_gui_settings"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_contract_options",
+ "nerust_contract_core",
  "nerust_input_schema",
  "serde",
  "serde_derive",
@@ -3302,10 +3256,7 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_console",
- "nerust_contract_mirror",
- "nerust_contract_options",
- "nerust_contract_persistence",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_settings",
@@ -3363,9 +3314,7 @@ dependencies = [
  "crc",
  "hound",
  "log",
- "nerust_contract_mirror",
- "nerust_contract_options",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_screen_video",
  "nerust_serialize",
  "nerust_sound_traits",
@@ -3390,10 +3339,7 @@ dependencies = [
  "fs2",
  "libc",
  "log",
- "nerust_contract_mirror",
- "nerust_contract_options",
- "nerust_contract_persistence",
- "nerust_contract_rom",
+ "nerust_contract_core",
  "nerust_input_schema",
  "png",
  "rmp-serde",
@@ -3412,7 +3358,7 @@ dependencies = [
  "clap",
  "crc",
  "nerust_cartridge_data",
- "nerust_contract_options",
+ "nerust_contract_core",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
@@ -3556,7 +3502,7 @@ dependencies = [
  "log",
  "muda",
  "nerust_backend_wgpu",
- "nerust_contract_options",
+ "nerust_contract_core",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_settings",

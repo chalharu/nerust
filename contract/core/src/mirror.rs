@@ -9,7 +9,7 @@ pub enum MirrorMode {
 }
 
 impl MirrorMode {
-    pub fn try_from<'a>(mode: u8) -> Result<MirrorMode, &'a str> {
+    pub fn try_from(mode: u8) -> Result<MirrorMode, &'static str> {
         match mode {
             0 => Ok(MirrorMode::Horizontal),
             1 => Ok(MirrorMode::Vertical),

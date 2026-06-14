@@ -1,4 +1,4 @@
-use nerust_contract_mirror::MirrorMode;
+use crate::mirror::MirrorMode;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RomFormat {
