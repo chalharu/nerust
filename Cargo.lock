@@ -3163,8 +3163,6 @@ dependencies = [
 name = "nerust_contract_core"
 version = "0.1.0-dev"
 dependencies = [
- "alto",
- "cpal",
  "log",
  "nerust_input_schema",
  "nerust_screen_video",

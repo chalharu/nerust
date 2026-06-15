@@ -7,56 +7,49 @@ pub trait AudioBackend: Send {
     fn push(&mut self, sample: f32);
 }
 
-/// 音声バックエンドの種類
+/// Registry of audio backend factories.
 ///
-/// OS/環境に応じて `autoselect()` で最適なバックエンドを選択する。
-/// 実際のインスタンス生成は各バックエンド crate のコンストラクタで行う。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AudioBackendKind {
-    /// CPAL (クロスプラットフォーム、Tier 1)
-    Cpal,
-    /// OpenAL (デスクトップ、Tier 2)
-    OpenAl,
-    /// 無音出力 (Tier 3)
-    Null,
+/// Backends are registered with a priority (lower = tried first).
+/// `autoselect` tries each factory in priority order and returns
+/// the first successfully created backend, falling back to `NullAudio`.
+pub struct AudioBackendRegistry {
+    entries: Vec<BackendEntry>,
 }
 
-impl AudioBackendKind {
-    /// Tier 1 → Tier 2 → Tier 3 の順に初期化を試行し、
-    /// 最初に利用可能だったバックエンドを返す。
-    ///
-    /// 各 Tier は以下の優先順位で確認される:
-    ///   1. CPAL  (クロスプラットフォーム)
-    ///   2. OpenAL (デスクトップフォールバック)
-    ///   3. Null   (常に利用可能)
-    pub fn autoselect() -> Self {
-        // Tier 1: CPAL
-        #[cfg(feature = "cpal")]
-        {
-            use cpal::traits::HostTrait;
-            let host = cpal::default_host();
-            if host.default_output_device().is_some() {
-                log::info!("autoselect: selected CPAL audio backend (Tier 1)");
-                return AudioBackendKind::Cpal;
+struct BackendEntry {
+    priority: u8,
+    name: &'static str,
+    factory: fn(u32, u32) -> Option<Box<dyn AudioBackend>>,
+}
+
+impl AudioBackendRegistry {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn register(
+        &mut self,
+        priority: u8,
+        name: &'static str,
+        factory: fn(u32, u32) -> Option<Box<dyn AudioBackend>>,
+    ) {
+        self.entries.push(BackendEntry { priority, name, factory });
+    }
+
+    pub fn autoselect(&self, sample_rate: u32, latency_ms: u32) -> Box<dyn AudioBackend> {
+        let mut entries: Vec<&BackendEntry> = self.entries.iter().collect();
+        entries.sort_by_key(|e| e.priority);
+        for entry in entries {
+            if let Some(backend) = (entry.factory)(sample_rate, latency_ms) {
+                log::info!("autoselect: selected {}", entry.name);
+                return backend;
             }
         }
-
-        // Tier 2: OpenAL
-        #[cfg(feature = "openal")]
-        {
-            if alto::Alto::load_default().is_ok() {
-                log::info!("autoselect: selected OpenAL audio backend (Tier 2)");
-                return AudioBackendKind::OpenAl;
-            }
-        }
-
-        // Tier 3: Null (常に利用可能)
-        log::info!("autoselect: no audio device found, using Null backend (Tier 3)");
-        AudioBackendKind::Null
+        Box::new(NullAudio)
     }
 }
 
-/// 無音出力バックエンド (Tier 3)
+/// 無音出力バックエンド
 ///
 /// 常に利用可能で、テスト・CI・ヘッドレス動作に使用する。
 pub struct NullAudio;
