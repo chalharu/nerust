@@ -11,7 +11,7 @@ use nerust_screen_filter::FilterType;
 use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
-use nerust_sound_traits::MixerBridge;
+use nerust_sound_traits::{MixerBridge, Sound};
 const CLOCK_RATE: u64 = 1_789_773;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,7 +47,8 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge,
         ) {
             Ok(speaker) => {
                 log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
-                let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
+                let mut bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
+                bridge.start();
                 return Ok(bridge);
             }
             Err(e) => log::warn!("build_speaker: CPAL failed ({e})"),
@@ -63,13 +64,15 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge,
             spec.buffer_count,
         );
         log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
-        let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
+        let mut bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
+        bridge.start();
         return Ok(bridge);
     }
 
     // Tier 3: Silent (常に利用可能)
     log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
-    let bridge = MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, spec.gain);
+    let mut bridge = MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, spec.gain);
+    bridge.start();
     Ok(bridge)
 }
 
