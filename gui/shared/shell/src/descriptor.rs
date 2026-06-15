@@ -14,10 +14,10 @@ use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_console::NesConsoleCore;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -386,9 +386,18 @@ impl SystemRuntime for NesRuntime {
                 })
             });
         let profile = VideoRenderProfile {
-            source_logical_size: LogicalSize { width: 256, height: 240 },
-            logical_size: LogicalSize { width: 256, height: 240 },
-            physical_size: PhysicalSize { width: 512.0, height: 480.0 },
+            source_logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            physical_size: PhysicalSize {
+                width: 512.0,
+                height: 480.0,
+            },
         };
         let fps = self
             .emu
