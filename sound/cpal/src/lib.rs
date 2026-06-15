@@ -151,5 +151,7 @@ impl AudioBackend for CpalAudio {
 /// device or stream can be opened.
 pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
     let latency = u16::try_from(latency_ms).unwrap_or(u16::MAX);
-    CpalAudio::new(sample_rate, latency).ok().map(|a| Box::new(a) as Box<dyn AudioBackend>)
+    CpalAudio::new(sample_rate, latency)
+        .ok()
+        .map(|a| Box::new(a) as Box<dyn AudioBackend>)
 }
