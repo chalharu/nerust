@@ -36,6 +36,7 @@ impl AudioBackendKind {
             use cpal::traits::HostTrait;
             let host = cpal::default_host();
             if host.default_output_device().is_some() {
+                log::info!("autoselect: selected CPAL audio backend (Tier 1)");
                 return AudioBackendKind::Cpal;
             }
         }
@@ -44,11 +45,13 @@ impl AudioBackendKind {
         #[cfg(feature = "openal")]
         {
             if alto::Alto::load_default().is_ok() {
+                log::info!("autoselect: selected OpenAL audio backend (Tier 2)");
                 return AudioBackendKind::OpenAl;
             }
         }
 
         // Tier 3: Null (常に利用可能)
+        log::info!("autoselect: no audio device found, using Null backend (Tier 3)");
         AudioBackendKind::Null
     }
 }
