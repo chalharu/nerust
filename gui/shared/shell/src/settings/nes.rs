@@ -1,5 +1,5 @@
 use crate::load::SystemLoadOptions;
-use nerust_contract_core::audio::AudioBackendKind;
+use nerust_contract_core::audio::{AudioBackend, AudioBackendKind};
 use nerust_gui_settings::local::{AudioSettings, HostBackendLocalSettings};
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_gui_settings::{
@@ -188,18 +188,18 @@ fn nearest_power_of_two(value: usize) -> usize {
 impl Sound for HostedSpeaker {
     fn start(&mut self) {
         match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => speaker.start(),
+            HostedSpeakerInner::Cpal(speaker) => AudioBackend::start(speaker),
             #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => speaker.start(),
+            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::start(speaker),
             HostedSpeakerInner::Silent(speaker) => speaker.start(),
         }
     }
 
     fn pause(&mut self) {
         match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => speaker.pause(),
+            HostedSpeakerInner::Cpal(speaker) => AudioBackend::pause(speaker),
             #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => speaker.pause(),
+            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::pause(speaker),
             HostedSpeakerInner::Silent(speaker) => speaker.pause(),
         }
     }
@@ -208,18 +208,18 @@ impl Sound for HostedSpeaker {
 impl MixerInput for HostedSpeaker {
     fn push(&mut self, data: f32) {
         match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => speaker.push(data),
+            HostedSpeakerInner::Cpal(speaker) => AudioBackend::push(speaker, data),
             #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => speaker.push(data),
+            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::push(speaker, data),
             HostedSpeakerInner::Silent(speaker) => speaker.push(data),
         }
     }
 
     fn sample_rate(&self) -> u32 {
         match &self.inner {
-            HostedSpeakerInner::Cpal(speaker) => speaker.sample_rate(),
+            HostedSpeakerInner::Cpal(speaker) => AudioBackend::sample_rate(speaker),
             #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => speaker.sample_rate(),
+            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::sample_rate(speaker),
             HostedSpeakerInner::Silent(speaker) => speaker.sample_rate(),
         }
     }
