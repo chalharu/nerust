@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "android"))]
 use alto::*;
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
@@ -105,6 +106,7 @@ fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! 
     std::process::exit(1);
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Debug)]
 struct FadeBuffer {
     data_receiver: Receiver<f32>,

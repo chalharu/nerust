@@ -8,6 +8,7 @@ use nerust_gui_settings::{
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
+#[cfg(feature = "cpal")]
 use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
@@ -40,6 +41,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge,
     log::info!("build_speaker: autoselect returned {kind:?}");
 
     // Tier 1: CPAL (全プラットフォーム)
+    #[cfg(feature = "cpal")]
     if kind != AudioBackendKind::Null {
         match CpalAudio::new(
             u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
