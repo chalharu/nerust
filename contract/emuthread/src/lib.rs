@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
@@ -18,6 +18,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
     last_result: Arc<Mutex<Option<FrameResult>>>,
     last_fps: Arc<AtomicU32>,
+    frame_count: Arc<AtomicU64>,
     render_pending: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     _core: PhantomData<C>,
@@ -31,9 +32,11 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let last_fps = Arc::new(AtomicU32::new(0));
         let last_result: Arc<Mutex<Option<FrameResult>>> = Arc::new(Mutex::new(None));
         let render_pending = Arc::new(AtomicBool::new(false));
+        let frame_count = Arc::new(AtomicU64::new(0));
 
         let thread_result = Arc::clone(&last_result);
         let thread_fps = Arc::clone(&last_fps);
+        let thread_frames = Arc::clone(&frame_count);
         let thread_pending = Arc::clone(&render_pending);
         let thread = thread::spawn(move || {
             let mut timer = Timer::new_with_interval(frame_interval);
@@ -60,6 +63,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             }
                         };
                         *thread_result.lock().unwrap() = Some(result);
+                        thread_frames.fetch_add(1, Ordering::Relaxed);
                         thread_fps.store((timer.as_fps() * 100.0) as u32, Ordering::Relaxed);
                         timer.wait();
                     }
@@ -85,6 +89,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
             last_result,
             last_fps,
             render_pending,
+            frame_count,
             thread: Some(thread),
             _core: PhantomData,
         }
@@ -106,6 +111,10 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
 
     pub fn last_fps(&self) -> &AtomicU32 {
         &self.last_fps
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count.load(Ordering::Relaxed)
     }
 
     pub fn join(&mut self) {

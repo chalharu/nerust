@@ -406,7 +406,7 @@ impl SystemRuntime for NesRuntime {
             / 100.0;
         SystemRuntimeSnapshot {
             metrics: ConsoleMetrics {
-                frame_counter: 0,
+                frame_counter: self.emu.frame_count(),
                 emulation_fps: fps,
                 speed_multiplier: if fps > 0.0 { fps / 60.0 } else { 0.0 },
                 loaded: true,
