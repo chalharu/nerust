@@ -1,5 +1,5 @@
 use crate::load::SystemLoadOptions;
-use nerust_contract_core::audio::{AudioBackend, AudioBackendKind};
+use nerust_contract_core::audio::{AudioBackend, AudioBackendKind, NullAudio};
 use nerust_gui_settings::local::{AudioSettings, HostBackendLocalSettings};
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_gui_settings::{
@@ -31,22 +31,7 @@ enum HostedSpeakerInner {
     Cpal(CpalAudio),
     #[cfg(not(target_os = "android"))]
     OpenAl(OpenAl),
-    Silent(SilentSpeaker),
-}
-
-#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SilentSpeaker {
-    sample_rate: u32,
-}
-
-#[allow(dead_code)]
-impl SilentSpeaker {
-    fn new(sample_rate: u32) -> Self {
-        Self {
-            sample_rate: sample_rate.max(1),
-        }
-    }
+    Silent(NullAudio),
 }
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
@@ -101,9 +86,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
     // Tier 3: Silent (常に利用可能)
     log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
     Ok(HostedSpeaker {
-        inner: HostedSpeakerInner::Silent(SilentSpeaker::new(
-            u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
-        )),
+        inner: HostedSpeakerInner::Silent(NullAudio),
     })
 }
 
@@ -191,7 +174,7 @@ impl Sound for HostedSpeaker {
             HostedSpeakerInner::Cpal(speaker) => AudioBackend::start(speaker),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => AudioBackend::start(speaker),
-            HostedSpeakerInner::Silent(speaker) => speaker.start(),
+            HostedSpeakerInner::Silent(speaker) => AudioBackend::start(speaker),
         }
     }
 
@@ -200,7 +183,7 @@ impl Sound for HostedSpeaker {
             HostedSpeakerInner::Cpal(speaker) => AudioBackend::pause(speaker),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => AudioBackend::pause(speaker),
-            HostedSpeakerInner::Silent(speaker) => speaker.pause(),
+            HostedSpeakerInner::Silent(speaker) => AudioBackend::pause(speaker),
         }
     }
 }
@@ -211,7 +194,7 @@ impl MixerInput for HostedSpeaker {
             HostedSpeakerInner::Cpal(speaker) => AudioBackend::push(speaker, data),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => AudioBackend::push(speaker, data),
-            HostedSpeakerInner::Silent(speaker) => speaker.push(data),
+            HostedSpeakerInner::Silent(speaker) => AudioBackend::push(speaker, data),
         }
     }
 
@@ -220,39 +203,23 @@ impl MixerInput for HostedSpeaker {
             HostedSpeakerInner::Cpal(speaker) => AudioBackend::sample_rate(speaker),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => AudioBackend::sample_rate(speaker),
-            HostedSpeakerInner::Silent(speaker) => speaker.sample_rate(),
+            HostedSpeakerInner::Silent(speaker) => AudioBackend::sample_rate(speaker),
         }
-    }
-}
-
-impl Sound for SilentSpeaker {
-    fn start(&mut self) {}
-
-    fn pause(&mut self) {}
-}
-
-impl MixerInput for SilentSpeaker {
-    fn push(&mut self, _data: f32) {}
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        SilentSpeaker, audio_backend_spec, effective_load_options, filter_type, scaling_factor,
-    };
+    use super::{audio_backend_spec, effective_load_options, filter_type, scaling_factor};
     use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{default_local_settings, default_shared_settings};
+    use nerust_contract_core::audio::{AudioBackend, NullAudio};
     use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_settings::{
         local::{AudioSettings, ScalingMode},
         nes::NesVideoFilter,
         shared::SystemSettings,
     };
-    use nerust_sound_traits::{MixerInput, Sound};
 
     #[test]
     fn audio_latency_derivation_rounds_to_supported_buffers() {
@@ -280,14 +247,14 @@ mod tests {
     }
 
     #[test]
-    fn silent_speaker_reports_requested_sample_rate() {
-        let mut speaker = SilentSpeaker::new(48_000);
+    fn null_audio_reports_default_sample_rate() {
+        let mut speaker = NullAudio;
 
-        speaker.start();
-        speaker.push(0.5);
-        speaker.pause();
+        AudioBackend::start(&mut speaker);
+        AudioBackend::push(&mut speaker, 0.5);
+        AudioBackend::pause(&mut speaker);
 
-        assert_eq!(speaker.sample_rate(), 48_000);
+        assert_eq!(AudioBackend::sample_rate(&speaker), 48_000);
     }
 
     #[test]
