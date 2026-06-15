@@ -244,7 +244,7 @@ impl Controller for PadController {
                 if !self.strobe {
                     self.index1 += 1;
                 }
-                OpenBusReadResult::new(bit, 1)
+                OpenBusReadResult::new(bit, 7)
             }
             _ => {
                 let bit = if self.index2 < 8 {
