@@ -184,11 +184,11 @@ pub fn apply_default_system_settings_choice(
 impl NesSystemDefinition {
     fn build_console(
         self,
-        host: &RuntimeHostServices,
+        _host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Console, String> {
         self.build_console_with(
-            build_speaker(host.host_backend, &settings.local)?,
+            build_speaker(&settings.local)?,
             build_screen_buffer(&settings.shared),
         )
     }

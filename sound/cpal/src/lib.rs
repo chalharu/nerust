@@ -34,6 +34,8 @@ pub struct CpalAudio {
     data_sender: SyncSender<f32>,
     /// Desired playback state shared with the audio callback.
     playing: Arc<AtomicBool>,
+    /// Request that the callback discard any queued samples before resuming.
+    needs_clear: Arc<AtomicBool>,
     /// Effective source sample rate returned to the NES core.
     source_sample_rate: u32,
 }
@@ -60,6 +62,7 @@ impl CpalAudio {
 
         let channels = supported_config.channels();
         let playing = Arc::new(AtomicBool::new(false));
+        let needs_clear = Arc::new(AtomicBool::new(true));
 
         let source_sample_rate = output_rate
             .min(sample_rate.saturating_mul(OVERSAMPLE_FACTOR))
@@ -71,6 +74,7 @@ impl CpalAudio {
             usize::try_from((sample_rate / 10).max(1)).expect("queue capacity fits into usize");
         let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
         let callback_playing = playing.clone();
+        let callback_needs_clear = needs_clear.clone();
 
         let device_name = device
             .description()
@@ -85,6 +89,9 @@ impl CpalAudio {
             .build_output_stream(
                 &stream_config,
                 move |output: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+                    if callback_needs_clear.swap(false, Ordering::AcqRel) {
+                        while data_receiver.try_recv().is_ok() {}
+                    }
                     let active = callback_playing.load(Ordering::Acquire);
                     for frame in output.chunks_mut(channels as usize) {
                         let sample = if active {
@@ -106,6 +113,7 @@ impl CpalAudio {
             stream,
             data_sender,
             playing,
+            needs_clear,
             source_sample_rate,
         })
     }
@@ -113,6 +121,7 @@ impl CpalAudio {
 
 impl Sound for CpalAudio {
     fn start(&mut self) {
+        self.needs_clear.store(true, Ordering::Release);
         self.playing.store(true, Ordering::Release);
         if let Err(e) = self.stream.play() {
             log::error!("failed to start cpal audio stream: {e}");
@@ -121,6 +130,7 @@ impl Sound for CpalAudio {
 
     fn pause(&mut self) {
         self.playing.store(false, Ordering::Release);
+        self.needs_clear.store(true, Ordering::Release);
         if let Err(e) = self.stream.pause() {
             log::warn!("failed to pause cpal audio stream: {e}");
         }
