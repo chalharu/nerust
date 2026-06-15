@@ -3279,6 +3279,7 @@ dependencies = [
  "nerust_screen_filter",
  "nerust_screen_logical",
  "nerust_sound_android",
+ "nerust_sound_cpal",
  "nerust_sound_openal",
  "nerust_sound_traits",
  "nerust_timer",
