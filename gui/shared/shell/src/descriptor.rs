@@ -159,6 +159,7 @@ struct NesAdapter {
 
 struct NesRuntime {
     emu: EmuThread<NesConsoleCore>,
+    loaded: bool,
     video_profile: VideoRenderProfile,
 }
 
@@ -326,6 +327,7 @@ impl SystemDefinition for NesSystemDefinition {
         let core = NesConsoleCore::new(screen);
         Ok(Box::new(NesRuntime {
             emu: EmuThread::spawn(core),
+            loaded: false,
             video_profile: VideoRenderProfile {
                 source_logical_size: LogicalSize {
                     width: 256,
@@ -377,7 +379,9 @@ impl SystemInputAdapter for NesAdapter {
 
 impl SystemRuntime for NesRuntime {
     fn snapshot(&self) -> SystemRuntimeSnapshot {
-        self.emu.request_frame();
+        if self.loaded {
+            self.emu.request_frame();
+        }
         let frame = self.emu.last_result().map(|result| {
             let stride = 256 * 4;
             let len = stride * 240;
@@ -426,6 +430,7 @@ impl SystemRuntime for NesRuntime {
         .map_err(|e| e.to_string())?;
         self.emu.send(EmuCommand::Quit).ok();
         self.emu = EmuThread::spawn(core);
+        self.loaded = true;
         Ok(())
     }
 
@@ -435,6 +440,7 @@ impl SystemRuntime for NesRuntime {
             build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
         let core = NesConsoleCore::new(screen);
         self.emu = EmuThread::spawn(core);
+        self.loaded = false;
         Ok(true)
     }
 
