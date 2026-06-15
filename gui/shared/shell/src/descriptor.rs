@@ -377,7 +377,8 @@ impl SystemInputAdapter for NesAdapter {
 
 impl SystemRuntime for NesRuntime {
     fn snapshot(&self) -> SystemRuntimeSnapshot {
-        let frame = self.emu.wait_frame().ok().map(|result| {
+        self.emu.request_frame();
+        let frame = self.emu.last_result().map(|result| {
             let stride = 256 * 4;
             let len = stride * 240;
             let data: Arc<[u8]> = if result.slot_data.len() >= len {
@@ -493,12 +494,6 @@ impl SystemRuntime for NesRuntime {
 
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
         None
-    }
-
-    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        if let Ok(result) = self.emu.wait_frame() {
-            f(&result.slot_data);
-        }
     }
 }
 
