@@ -9,7 +9,6 @@ use nerust_gui_settings::{
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
-#[cfg(not(target_os = "android"))]
 use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
@@ -29,15 +28,10 @@ pub struct HostedSpeaker {
     inner: HostedSpeakerInner,
 }
 
-#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
 enum HostedSpeakerInner {
-    #[cfg(not(target_os = "android"))]
     Cpal(CpalAudio),
     #[cfg(not(target_os = "android"))]
     OpenAl(OpenAl),
-    #[cfg(target_os = "android")]
-    Android(nerust_sound_android::android::AndroidSound),
-    #[allow(dead_code)]
     Silent(SilentSpeaker),
 }
 
@@ -72,73 +66,48 @@ pub fn build_speaker(
 ) -> Result<HostedSpeaker, String> {
     let spec = audio_backend_spec(settings.audio.clone());
 
-    #[cfg(target_os = "android")]
-    {
-        let speaker = match nerust_sound_android::android::AndroidSound::with_gain(
-            spec.requested_sample_rate,
-            settings.audio.latency_ms,
-            CLOCK_RATE as i32,
-            spec.gain,
+    let kind = AudioBackendKind::autoselect();
+    log::info!("build_speaker: autoselect returned {kind:?}");
+
+    // Tier 1: CPAL (全プラットフォーム)
+    if kind != AudioBackendKind::Null {
+        match CpalAudio::new(
+            u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
+            CLOCK_RATE as u32,
         ) {
-            Ok(speaker) => HostedSpeakerInner::Android(speaker),
-            Err(error) => {
-                log::error!(
-                    "failed to initialize Android audio backend: {error}; continuing with muted audio"
-                );
-                HostedSpeakerInner::Silent(SilentSpeaker::new(
-                    u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
-                ))
+            Ok(speaker) => {
+                log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
+                return Ok(HostedSpeaker {
+                    inner: HostedSpeakerInner::Cpal(speaker),
+                });
             }
-        };
-        return Ok(HostedSpeaker { inner: speaker });
+            Err(e) => log::warn!("build_speaker: CPAL failed ({e})"),
+        }
     }
 
+    // Tier 2: OpenAL (デスクトップのみ)
     #[cfg(not(target_os = "android"))]
-    {
-        let kind = AudioBackendKind::autoselect();
-        log::info!("build_speaker: autoselect returned {kind:?}");
-
-        // Tier 1: CPAL
-        if kind == AudioBackendKind::Cpal || kind != AudioBackendKind::Null {
-            match CpalAudio::new(
-                u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
-                CLOCK_RATE as u32,
-            ) {
-                Ok(speaker) => {
-                    log::info!("build_speaker: selected CPAL audio backend");
-                    return Ok(HostedSpeaker {
-                        inner: HostedSpeakerInner::Cpal(speaker),
-                    });
-                }
-                Err(e) => {
-                    log::warn!("build_speaker: CPAL initialization failed ({e})");
-                }
-            }
-        }
-
-        // Tier 2: OpenAL
-        if kind == AudioBackendKind::OpenAl || kind != AudioBackendKind::Null {
-            let speaker = OpenAl::with_gain(
-                spec.requested_sample_rate,
-                CLOCK_RATE as i32,
-                spec.buffer_width,
-                spec.buffer_count,
-                spec.gain,
-            );
-            log::info!("build_speaker: selected OpenAL audio backend");
-            return Ok(HostedSpeaker {
-                inner: HostedSpeakerInner::OpenAl(speaker),
-            });
-        }
-
-        // Tier 3: Null (SilentSpeaker)
-        log::info!("build_speaker: no audio device available, using silent speaker");
-        Ok(HostedSpeaker {
-            inner: HostedSpeakerInner::Silent(SilentSpeaker::new(
-                u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
-            )),
-        })
+    if kind != AudioBackendKind::Null {
+        let speaker = OpenAl::with_gain(
+            spec.requested_sample_rate,
+            CLOCK_RATE as i32,
+            spec.buffer_width,
+            spec.buffer_count,
+            spec.gain,
+        );
+        log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
+        return Ok(HostedSpeaker {
+            inner: HostedSpeakerInner::OpenAl(speaker),
+        });
     }
+
+    // Tier 3: Silent (常に利用可能)
+    log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
+    Ok(HostedSpeaker {
+        inner: HostedSpeakerInner::Silent(SilentSpeaker::new(
+            u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
+        )),
+    })
 }
 
 pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
@@ -222,24 +191,18 @@ fn nearest_power_of_two(value: usize) -> usize {
 impl Sound for HostedSpeaker {
     fn start(&mut self) {
         match &mut self.inner {
-            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::Cpal(speaker) => speaker.start(),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.start(),
-            #[cfg(target_os = "android")]
-            HostedSpeakerInner::Android(speaker) => speaker.start(),
             HostedSpeakerInner::Silent(speaker) => speaker.start(),
         }
     }
 
     fn pause(&mut self) {
         match &mut self.inner {
-            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::Cpal(speaker) => speaker.pause(),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.pause(),
-            #[cfg(target_os = "android")]
-            HostedSpeakerInner::Android(speaker) => speaker.pause(),
             HostedSpeakerInner::Silent(speaker) => speaker.pause(),
         }
     }
@@ -248,24 +211,18 @@ impl Sound for HostedSpeaker {
 impl MixerInput for HostedSpeaker {
     fn push(&mut self, data: f32) {
         match &mut self.inner {
-            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::Cpal(speaker) => speaker.push(data),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.push(data),
-            #[cfg(target_os = "android")]
-            HostedSpeakerInner::Android(speaker) => speaker.push(data),
             HostedSpeakerInner::Silent(speaker) => speaker.push(data),
         }
     }
 
     fn sample_rate(&self) -> u32 {
         match &self.inner {
-            #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::Cpal(speaker) => speaker.sample_rate(),
             #[cfg(not(target_os = "android"))]
             HostedSpeakerInner::OpenAl(speaker) => speaker.sample_rate(),
-            #[cfg(target_os = "android")]
-            HostedSpeakerInner::Android(speaker) => speaker.sample_rate(),
             HostedSpeakerInner::Silent(speaker) => speaker.sample_rate(),
         }
     }
