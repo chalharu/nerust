@@ -1,7 +1,6 @@
 //! CPAL-based audio backend for desktop and mobile targets.
 //!
-//! `CpalAudio` wraps a CPAL output stream and implements the `AudioBackend` trait
-//! (and the legacy `MixerInput` / `Sound` traits for backwards compatibility).
+//! `CpalAudio` wraps a CPAL output stream and implements the [`AudioBackend`] trait.
 //!
 //! # Lifecycle
 //!
@@ -24,8 +23,7 @@ const OVERSAMPLE_FACTOR: u32 = 4;
 
 /// CPAL-based audio backend.
 ///
-/// Implements [`AudioBackend`], [`Sound`], and [`MixerInput`] so it can be used
-/// as a drop-in replacement for the OpenAL backend on any platform CPAL supports.
+/// Implements [`AudioBackend`] for use with any consumer that accepts the trait.
 pub struct CpalAudio {
     /// CPAL stream – must be kept alive for audio to continue playing.
     stream: cpal::Stream,
