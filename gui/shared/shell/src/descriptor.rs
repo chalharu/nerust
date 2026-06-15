@@ -4,6 +4,7 @@ use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_op
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
+use nerust_contract_core::input::InputCell;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
@@ -13,10 +14,9 @@ use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
-use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
-use nerust_contract_core::input::InputCell;
 use nerust_input_nes_runtime::nes_input_cell::NesInputCell;
 use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
+use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
@@ -208,13 +208,12 @@ impl NesSystemDefinition {
         speaker: S,
         screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
     ) -> Result<Console, String> {
-        let cell = self.input_cell.get_or_init(|| Arc::new(InputCell::new())).clone();
+        let cell = self
+            .input_cell
+            .get_or_init(|| Arc::new(InputCell::new()))
+            .clone();
         let device = NesPadDevice::new(cell);
-        Ok(Console::new(
-            speaker,
-            screen_buffer,
-            Box::new(device),
-        ))
+        Ok(Console::new(speaker, screen_buffer, Box::new(device)))
     }
 }
 
@@ -372,7 +371,8 @@ impl SystemInputAdapter for NesAdapter {
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
         let frame = self.input.current_frame();
-        self.cell.store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell
+            .store(frame.player_one.bits(), frame.player_two.bits());
     }
 
     fn clear(&mut self) {
@@ -383,7 +383,8 @@ impl SystemInputAdapter for NesAdapter {
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let frame = decode_input_state(bytes).map_err(|error| error.to_string())?;
         self.input.sync_from_frame(frame);
-        self.cell.store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell
+            .store(frame.player_one.bits(), frame.player_two.bits());
         Ok(())
     }
 

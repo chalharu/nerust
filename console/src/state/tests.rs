@@ -1,14 +1,13 @@
 use super::*;
 use crate::Console;
 use crate::controller::{
-    StandardControllerState, apply_standard_input_state, decode_standard_controller_state,
-    encode_standard_controller_state, encode_standard_input_state, read_standard_controller_port,
-    write_standard_controller_port,
+    StandardControllerState, decode_standard_controller_state, encode_standard_controller_state,
+    read_standard_controller_port, write_standard_controller_port,
 };
-use nerust_input_nes_runtime::ControllerState;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_nes::frame::Buttons;
+use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
