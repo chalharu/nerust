@@ -146,10 +146,13 @@ mod tests {
     }
 
     fn test_core() -> SessionCore {
+        use std::sync::Arc;
         SessionCore::from_console(Console::new(
             TestSpeaker,
             ScreenBuffer::new_nes_gpu_default(),
-            Box::new(nerust_input_nes_runtime::StandardController::new()),
+            Box::new(nerust_input_nes_runtime::nes_pad_device::NesPadDevice::new(
+                Arc::new(nerust_contract_core::input::InputCell::new()),
+            )),
         ))
     }
 
