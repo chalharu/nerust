@@ -74,3 +74,13 @@ impl MixerInput for MixerBridge {
         self.source_sample_rate
     }
 }
+
+impl Sound for MixerBridge {
+    fn start(&mut self) {
+        self.backend.start();
+    }
+
+    fn pause(&mut self) {
+        self.backend.pause();
+    }
+}
