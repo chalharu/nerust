@@ -1,6 +1,6 @@
 use crate::load::SystemLoadOptions;
-use nerust_contract_core::audio::{AudioBackendKind, NullAudio};
-use nerust_gui_settings::local::{AudioSettings, HostBackendLocalSettings};
+use nerust_contract_core::audio::AudioBackendRegistry;
+use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_gui_settings::{
     local::ScalingMode,
@@ -8,20 +8,8 @@ use nerust_gui_settings::{
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
-use nerust_sound_cpal::CpalAudio;
-#[cfg(not(target_os = "android"))]
-use nerust_sound_openal::OpenAl;
 use nerust_sound_traits::MixerBridge;
 use nerust_timer::CLOCK_RATE;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AudioBackendSpec {
-    pub requested_sample_rate: i32,
-    pub buffer_width: usize,
-    pub buffer_count: usize,
-    pub achieved_latency_ms: u32,
-    pub gain: f32,
-}
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new(
@@ -34,71 +22,19 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
 }
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
-    let spec = audio_backend_spec(settings.audio.clone());
-
-    let kind = AudioBackendKind::autoselect();
-    log::info!("build_speaker: autoselect returned {kind:?}");
-
-    // Tier 1: CPAL (全プラットフォーム)
-    if kind != AudioBackendKind::Null {
-        match CpalAudio::new(
-            u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
-            settings.audio.latency_ms,
-        ) {
-            Ok(speaker) => {
-                log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
-                let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
-                return Ok(bridge);
-            }
-            Err(e) => log::warn!("build_speaker: CPAL failed ({e})"),
-        }
-    }
-
-    // Tier 2: OpenAL (デスクトップのみ)
-    #[cfg(not(target_os = "android"))]
-    if kind != AudioBackendKind::Null {
-        let speaker = OpenAl::with_gain(
-            spec.requested_sample_rate,
-            spec.buffer_width,
-            spec.buffer_count,
-        );
-        log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
-        let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
-        return Ok(bridge);
-    }
-
-    // Tier 3: Silent (常に利用可能)
-    log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
-    let bridge = MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, spec.gain);
-    Ok(bridge)
-}
-
-pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
-    let requested_sample_rate = i32::try_from(settings.sample_rate).unwrap_or(48_000);
-    let target_total_frames =
-        ((u64::from(settings.sample_rate) * u64::from(settings.latency_ms)).div_ceil(1_000)).max(1);
-    let raw_buffer_width = (target_total_frames / 16).max(1);
-    let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
-    let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
-        .unwrap_or(32)
-        .clamp(4, 32);
-    let achieved_latency_ms = u32::try_from(
-        (u64::try_from(buffer_width * buffer_count).unwrap_or(0) * 1_000)
-            .div_ceil(u64::from(settings.sample_rate.max(1))),
-    )
-    .unwrap_or(u32::MAX);
-    let gain = if settings.muted {
+    let sample_rate = u32::try_from(settings.audio.sample_rate).unwrap_or(48_000);
+    let gain = if settings.audio.muted {
         0.0
     } else {
-        f32::from(settings.master_volume_percent.min(100)) / 100.0
+        f32::from(settings.audio.master_volume_percent.min(100)) / 100.0
     };
-    AudioBackendSpec {
-        requested_sample_rate,
-        buffer_width,
-        buffer_count,
-        achieved_latency_ms,
-        gain,
-    }
+
+    let mut registry = AudioBackendRegistry::new();
+    registry.register(0, "CPAL", nerust_sound_cpal::factory);
+    #[cfg(not(target_os = "android"))]
+    registry.register(1, "OpenAL", nerust_sound_openal::factory);
+    let backend = registry.autoselect(sample_rate, u32::from(settings.audio.latency_ms));
+    Ok(MixerBridge::new(backend, CLOCK_RATE as u32, gain))
 }
 
 pub fn effective_load_options(
@@ -138,56 +74,18 @@ pub fn scaling_factor(mode: ScalingMode) -> Option<u32> {
     }
 }
 
-fn nearest_power_of_two(value: usize) -> usize {
-    if value <= 1 {
-        return 1;
-    }
-    let lower = value.next_power_of_two() >> 1;
-    let upper = value.next_power_of_two();
-    if value - lower <= upper - value {
-        lower.max(1)
-    } else {
-        upper
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{audio_backend_spec, effective_load_options, filter_type, scaling_factor};
+    use super::{effective_load_options, filter_type, scaling_factor};
     use crate::load::SystemLoadOptions;
-    use crate::settings::defaults::seed::{default_local_settings, default_shared_settings};
+    use crate::settings::defaults::seed::default_shared_settings;
     use nerust_contract_core::audio::{AudioBackend, NullAudio};
     use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_settings::{
-        local::{AudioSettings, ScalingMode},
+        local::ScalingMode,
         nes::NesVideoFilter,
         shared::SystemSettings,
     };
-
-    #[test]
-    fn audio_latency_derivation_rounds_to_supported_buffers() {
-        let spec = audio_backend_spec(AudioSettings {
-            sample_rate: 48_000,
-            latency_ms: 50,
-            master_volume_percent: 100,
-            muted: false,
-        });
-
-        assert_eq!(spec.buffer_width, 128);
-        assert_eq!(spec.buffer_count, 19);
-        assert!(spec.achieved_latency_ms >= 50);
-        assert_eq!(spec.gain, 1.0);
-    }
-
-    #[test]
-    fn muted_audio_forces_zero_gain() {
-        let spec = audio_backend_spec(AudioSettings {
-            muted: true,
-            ..default_local_settings().audio
-        });
-
-        assert_eq!(spec.gain, 0.0);
-    }
 
     #[test]
     fn null_audio_reports_default_sample_rate() {
