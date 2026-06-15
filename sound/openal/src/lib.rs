@@ -536,8 +536,9 @@ fn nearest_power_of_two(value: usize) -> usize {
 /// Creates an [`OpenAl`] backend. Buffer parameters are derived from the
 /// requested sample rate and latency.
 pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
-    let target_total_frames =
-        (u64::from(sample_rate) * u64::from(latency_ms)).div_ceil(1_000).max(1);
+    let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+        .div_ceil(1_000)
+        .max(1);
     let raw_buffer_width = (target_total_frames / 16).max(1);
     let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
     let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
@@ -603,8 +604,9 @@ mod tests {
     fn compute_buffer_params_at_48khz_50ms() {
         let sample_rate: u32 = 48_000;
         let latency_ms: u32 = 50;
-        let target_total_frames =
-            (u64::from(sample_rate) * u64::from(latency_ms)).div_ceil(1_000).max(1);
+        let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+            .div_ceil(1_000)
+            .max(1);
         let raw_buffer_width = (target_total_frames / 16).max(1);
         let buffer_width = super::nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
         let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))

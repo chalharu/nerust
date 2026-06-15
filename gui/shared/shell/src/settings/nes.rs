@@ -85,11 +85,7 @@ mod tests {
     use crate::settings::defaults::seed::default_shared_settings;
     use nerust_contract_core::audio::{AudioBackend, NullAudio};
     use nerust_contract_core::options::Mmc3IrqVariant;
-    use nerust_gui_settings::{
-        local::ScalingMode,
-        nes::NesVideoFilter,
-        shared::SystemSettings,
-    };
+    use nerust_gui_settings::{local::ScalingMode, nes::NesVideoFilter, shared::SystemSettings};
 
     #[test]
     fn null_audio_reports_default_sample_rate() {
