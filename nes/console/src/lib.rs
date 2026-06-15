@@ -43,6 +43,10 @@ impl ConsoleCore for NesConsoleCore {
         }
     }
 
+    fn frame_slot_size(&self) -> usize {
+        self.screen.frame_len()
+    }
+
     fn apply_input_state(&mut self, bytes: &[u8]) {
         if let Ok(frame) = nerust_input_nes::codec::decode_input_state(bytes) {
             self.ctrl

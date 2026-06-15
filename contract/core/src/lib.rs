@@ -164,6 +164,10 @@ pub trait ConsoleCore: Send {
     /// フレームをレンダリングする。
     /// frame_slot はレンダラから渡された書き込み可能バッファ。
     fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
+    /// frame_slot のサイズ（バイト）。デフォルトは NES 256×240 RGBA。
+    fn frame_slot_size(&self) -> usize {
+        256 * 240 * 4
+    }
 
     // -- input --
     fn apply_input_state(&mut self, _bytes: &[u8]) {}

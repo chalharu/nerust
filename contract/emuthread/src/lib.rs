@@ -27,7 +27,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
 impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     pub fn spawn(mut core: C) -> Self {
         let frame_interval = core.frame_interval();
-        let slot_size = 256 * 240 * 4;
+        let slot_size = core.frame_slot_size();
         let (cmd_tx, cmd_rx) = mpsc::channel::<EmuCommand>();
         let last_fps = Arc::new(AtomicU32::new(0));
         let last_result: Arc<Mutex<Option<FrameResult>>> = Arc::new(Mutex::new(None));
