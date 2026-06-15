@@ -447,15 +447,10 @@ pub struct OpenAl {
 
 impl OpenAl {
     pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
-        Self::with_gain(sample_rate, buffer_width, buffer_count, 1.0)
+        Self::with_gain(sample_rate, buffer_width, buffer_count)
     }
 
-    pub fn with_gain(
-        sample_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-        _gain: f32,
-    ) -> Self {
+    pub fn with_gain(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
             match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
