@@ -3479,7 +3479,6 @@ dependencies = [
  "cpal",
  "log",
  "nerust_contract_core",
- "nerust_soundfilter",
 ]
 
 [[package]]
