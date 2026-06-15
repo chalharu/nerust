@@ -72,7 +72,8 @@ impl CpalAudio {
         let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
         let callback_playing = playing.clone();
 
-        let device_name = device.description()
+        let device_name = device
+            .description()
             .as_ref()
             .map(|d| d.to_string())
             .unwrap_or_else(|_| "<unknown>".to_string());
