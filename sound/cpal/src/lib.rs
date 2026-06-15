@@ -144,3 +144,14 @@ impl AudioBackend for CpalAudio {
         self.sample_rate
     }
 }
+
+/// Factory function for [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+///
+/// Attempts to create a [`CpalAudio`] instance. Returns `None` if no output
+/// device or stream can be opened.
+pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
+    let latency = u16::try_from(latency_ms).unwrap_or(u16::MAX);
+    CpalAudio::new(sample_rate, latency)
+        .ok()
+        .map(|a| Box::new(a) as Box<dyn AudioBackend>)
+}
