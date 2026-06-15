@@ -12,3 +12,11 @@ nerust_screen_video.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 thiserror.workspace = true
+
+# Optional: backend probing
+cpal = { workspace = true, optional = true }
+alto = { workspace = true, optional = true }
+
+[features]
+default = ["cpal", "openal"]
+openal = ["alto"]
