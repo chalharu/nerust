@@ -61,7 +61,6 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
             spec.requested_sample_rate,
             spec.buffer_width,
             spec.buffer_count,
-            spec.gain,
         );
         log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
         return Ok(HostedSpeaker(Box::new(speaker)));
