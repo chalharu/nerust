@@ -38,13 +38,14 @@ pub struct MixerBridge {
 }
 
 impl MixerBridge {
-    /// `output_rate` は NES CPU クロックレート、`sample_rate` はバックエンドの playback rate。
+    /// `output_rate` は NES CPU クロックレート。`sample_rate` は `backend.sample_rate()`
+    /// から自動取得する。
     pub fn new(
         backend: Box<dyn nerust_contract_core::audio::AudioBackend + Send>,
-        sample_rate: u32,
         output_rate: u32,
         gain: f32,
     ) -> Self {
+        let sample_rate = backend.sample_rate();
         let source_sample_rate = output_rate
             .min(sample_rate.saturating_mul(OVERSAMPLE_FACTOR))
             .max(sample_rate);
