@@ -8,6 +8,14 @@ pub struct InputCell<const N: usize> {
     inner: [AtomicU8; N],
 }
 
+impl<const N: usize> std::fmt::Debug for InputCell<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputCell")
+            .field("value", &self.load())
+            .finish()
+    }
+}
+
 impl<const N: usize> InputCell<N> {
     pub fn new() -> Self {
         Self {
