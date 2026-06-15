@@ -82,6 +82,9 @@ impl GLAreaExtend for GLArea {
     }
 
     fn resize(&self, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
         let state = self.state();
         let state = state.borrow();
         self.borrow().renderer.borrow_mut().resize(

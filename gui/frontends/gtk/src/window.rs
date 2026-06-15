@@ -420,6 +420,10 @@ impl WindowExtend for Window {
         }
 
         result.update_actions();
+        let ws = state.borrow().window_size();
+        let w = (ws.width as i32).clamp(256, 3840);
+        let h = (ws.height as i32).clamp(240, 2160);
+        window.set_default_size(w, h);
         window.present();
         result.sync_fullscreen_from_settings();
         let _ = glarea.grab_focus();
