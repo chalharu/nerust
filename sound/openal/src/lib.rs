@@ -1,4 +1,5 @@
 use alto::*;
+use nerust_contract_core::audio::AudioBackend;
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
@@ -517,6 +518,35 @@ impl nerust_contract_core::audio::AudioBackend for OpenAl {
     }
 }
 
+fn nearest_power_of_two(value: usize) -> usize {
+    if value <= 1 {
+        return 1;
+    }
+    let lower = value.next_power_of_two() >> 1;
+    let upper = value.next_power_of_two();
+    if value - lower <= upper - value {
+        lower.max(1)
+    } else {
+        upper
+    }
+}
+
+/// Factory function for [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+///
+/// Creates an [`OpenAl`] backend. Buffer parameters are derived from the
+/// requested sample rate and latency.
+pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
+    let target_total_frames =
+        (u64::from(sample_rate) * u64::from(latency_ms)).div_ceil(1_000).max(1);
+    let raw_buffer_width = (target_total_frames / 16).max(1);
+    let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
+    let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
+        .unwrap_or(32)
+        .clamp(4, 32);
+    let sr = sample_rate as i32;
+    Some(Box::new(OpenAl::with_gain(sr, buffer_width, buffer_count)) as Box<dyn AudioBackend>)
+}
+
 impl Drop for OpenAl {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
@@ -567,5 +597,27 @@ mod tests {
             macos_runtime_action(true, &DYLD_ENV_VARS),
             MacosRuntimeAction::Abort
         );
+    }
+
+    #[test]
+    fn compute_buffer_params_at_48khz_50ms() {
+        let sample_rate: u32 = 48_000;
+        let latency_ms: u32 = 50;
+        let target_total_frames =
+            (u64::from(sample_rate) * u64::from(latency_ms)).div_ceil(1_000).max(1);
+        let raw_buffer_width = (target_total_frames / 16).max(1);
+        let buffer_width = super::nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
+        let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
+            .unwrap_or(32)
+            .clamp(4, 32);
+        let achieved_latency_ms = u32::try_from(
+            (u64::try_from(buffer_width * buffer_count).unwrap_or(0) * 1_000)
+                .div_ceil(u64::from(sample_rate.max(1))),
+        )
+        .unwrap_or(u32::MAX);
+
+        assert_eq!(buffer_width, 128);
+        assert_eq!(buffer_count, 19);
+        assert!(achieved_latency_ms >= 50);
     }
 }
