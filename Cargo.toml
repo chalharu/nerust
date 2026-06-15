@@ -33,6 +33,7 @@ members = [
   "screen/wgpu",
   "screen/video",
   "serialize",
+  "sound/cpal",
   "sound/openal",
   "sound/filter",
   "sound/traits",
@@ -104,6 +105,7 @@ nerust_screen_rgb = { path = "screen/rgb" }
 nerust_screen_wgpu = { path = "screen/wgpu" }
 nerust_screen_video = { path = "screen/video" }
 nerust_serialize = { path = "serialize" }
+nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
 nerust_sound_android = { path = "sound/android" }
 nerust_sound_traits = { path = "sound/traits" }

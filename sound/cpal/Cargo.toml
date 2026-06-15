@@ -1,5 +1,5 @@
 [package]
-name = "nerust_sound_traits"
+name = "nerust_sound_cpal"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -7,4 +7,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+cpal.workspace = true
+log.workspace = true
 nerust_contract_core.workspace = true
+nerust_sound_traits.workspace = true
+nerust_soundfilter.workspace = true

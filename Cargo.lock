@@ -3480,12 +3480,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_sound_cpal"
+version = "0.1.0-dev"
+dependencies = [
+ "cpal",
+ "log",
+ "nerust_contract_core",
+ "nerust_sound_traits",
+ "nerust_soundfilter",
+]
+
+[[package]]
 name = "nerust_sound_openal"
 version = "0.1.0-dev"
 dependencies = [
  "alto",
  "libc",
  "log",
+ "nerust_contract_core",
  "nerust_sound_traits",
  "nerust_soundfilter",
 ]
@@ -3493,6 +3505,9 @@ dependencies = [
 [[package]]
 name = "nerust_sound_traits"
 version = "0.1.0-dev"
+dependencies = [
+ "nerust_contract_core",
+]
 
 [[package]]
 name = "nerust_soundfilter"
