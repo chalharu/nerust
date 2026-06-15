@@ -113,13 +113,22 @@ mod tests {
         let cell = Arc::new(InputCell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        cell.store(&[0x01, 0x00]); // P1=A pressed
+        // Verify the cell stores correctly
+        assert_eq!(cell.load(), [0, 0]);
+        cell.store(&[0x01, 0x00]);
+        assert_eq!(cell.load(), [0x01, 0x00]);
+
         device.write(1); // strobe=1 → latch
         device.write(0); // strobe=0 → enable shift
+        assert_eq!(device.buttons, [0x01, 0x00]);
 
-        assert_eq!(device.read(0).data & 1, 1);
-        assert_eq!(device.read(0).data & 1, 0); // next bit (no more buttons)
-        assert_eq!(device.read(0).data & 1, 1); // open bus after 8 bits
+        let result = device.read(0);
+        assert_eq!(result.data & 1, 1, "first bit (A) should be 1, got data={}", result.data);
+        assert_eq!(device.read(0).data & 1, 0, "second bit should be 0");
+        for i in 0..6 {
+            assert_eq!(device.read(0).data & 1, 0, "bit {} should be 0", i + 2);
+        }
+        assert_eq!(device.read(0).data & 1, 1, "open bus after 8 bits should be 1");
     }
 
     #[test]

@@ -77,17 +77,6 @@ impl SystemRuntime for TestRuntime {
         self.0.resume();
     }
 
-    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
-        self.0.apply_input_state(bytes);
-        Ok(())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        self.0
-            .current_input_state()
-            .map_err(|error| error.to_string())
-    }
-
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
         self.0.export_state().map_err(|error| error.to_string())
     }
@@ -146,15 +135,6 @@ struct MockRuntime {
 struct MockInputAdapter;
 
 impl SystemInputAdapter for MockInputAdapter {
-    fn digital_event_from_persisted(
-        &self,
-        _attachment: &str,
-        _control: &str,
-        _pressed: bool,
-    ) -> Option<DigitalInputEvent> {
-        None
-    }
-
     fn apply_event(&mut self, _event: DigitalInputEvent) {}
 
     fn clear(&mut self) {}
@@ -203,14 +183,6 @@ impl SystemRuntime for MockRuntime {
 
     fn resume(&mut self) {
         self.paused = false;
-    }
-
-    fn apply_input_state(&mut self, _bytes: Vec<u8>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
@@ -367,14 +339,6 @@ impl SystemRuntime for PersistenceRuntime {
         self.paused = false;
     }
 
-    fn apply_input_state(&mut self, _bytes: Vec<u8>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
-    }
-
     fn export_state(&self) -> Result<RuntimeStateExport, String> {
         Ok(RuntimeStateExport {
             state_blob: vec![1, 2, 3],
@@ -501,34 +465,6 @@ fn unique_temp_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("nerust-{label}-{}-{nonce}", std::process::id()));
     fs::create_dir_all(&path).expect("temp dir should create");
     path
-}
-
-#[test]
-fn session_flushes_keyboard_input_into_controller_state() {
-    let mut session = test_session();
-
-    assert_eq!(
-        session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
-            .unwrap(),
-        None
-    );
-
-    let frame = decode_input_state(
-        &session
-            .runtime
-            .current_input_state()
-            .expect("input state should export"),
-    )
-    .expect("input state should decode");
-    assert_eq!(
-        frame,
-        NesInputFrame {
-            player_one: Buttons::A,
-            player_two: Buttons::empty(),
-            microphone: false,
-        }
-    );
 }
 
 #[test]
@@ -888,21 +824,6 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
             .video
             .window
             .fullscreen_default
-    );
-    let frame = decode_input_state(
-        &session
-            .runtime
-            .current_input_state()
-            .expect("input state should export"),
-    )
-    .expect("input state should decode");
-    assert_eq!(
-        frame,
-        NesInputFrame {
-            player_one: Buttons::A,
-            player_two: Buttons::empty(),
-            microphone: false,
-        }
     );
 
     let second = session.set_fullscreen_default(true).unwrap();

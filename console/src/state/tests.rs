@@ -5,7 +5,7 @@ use crate::controller::{
     encode_standard_controller_state, encode_standard_input_state, read_standard_controller_port,
     write_standard_controller_port,
 };
-use nerust_contract_controller_runtime::ControllerRuntime;
+use nerust_input_nes_runtime::ControllerState;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_nes::frame::Buttons;
@@ -52,14 +52,9 @@ impl nerust_nes_core::controller::Controller for TestControllerRuntime {
     }
 }
 
-impl ControllerRuntime for TestControllerRuntime {
+impl ControllerState for TestControllerRuntime {
     fn reset_runtime(&mut self) {
         self.state = StandardControllerState::default();
-    }
-
-    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.state = apply_standard_input_state(self.state, bytes)?;
-        Ok(())
     }
 
     fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
@@ -73,10 +68,6 @@ impl ControllerRuntime for TestControllerRuntime {
 
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
         encode_standard_controller_state(self.state)
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        encode_standard_input_state(self.state)
     }
 }
 
@@ -94,15 +85,10 @@ impl nerust_nes_core::controller::Controller for OpaqueControllerRuntime {
     fn write(&mut self, _value: u8) {}
 }
 
-impl ControllerRuntime for OpaqueControllerRuntime {
+impl ControllerState for OpaqueControllerRuntime {
     fn reset_runtime(&mut self) {
         self.controller_state.clear();
         self.input_state.clear();
-    }
-
-    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.input_state = bytes.to_vec();
-        Ok(())
     }
 
     fn validate_controller_state(&self, _bytes: &[u8]) -> Result<(), String> {
@@ -116,10 +102,6 @@ impl ControllerRuntime for OpaqueControllerRuntime {
 
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
         Ok(self.controller_state.clone())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        Ok(self.input_state.clone())
     }
 }
 
@@ -164,7 +146,7 @@ fn test_console() -> Console {
     test_console_with_controller(Box::new(TestControllerRuntime::default()))
 }
 
-fn test_console_with_controller(controller: Box<dyn ControllerRuntime>) -> Console {
+fn test_console_with_controller(controller: Box<dyn ControllerState>) -> Console {
     Console::new(
         TestSpeaker::default(),
         ScreenBuffer::new_gpu(
@@ -187,7 +169,7 @@ fn loaded_console() -> Console {
     console
 }
 
-fn loaded_console_with_controller(controller: Box<dyn ControllerRuntime>) -> Console {
+fn loaded_console_with_controller(controller: Box<dyn ControllerState>) -> Console {
     let console = test_console_with_controller(controller);
     console
         .load(test_rom_bytes())
