@@ -46,10 +46,11 @@ impl CpalAudio {
     /// * `sample_rate` – playback rate requested by the core.
     /// * `output_rate` – the NES CPU clock rate (used as the pre-resampler
     ///   source rate cap).
+    /// * `latency_ms` – target latency in milliseconds.
     ///
     /// Returns `Err` (with a descriptive message) if no audio device or stream
     /// can be opened.
-    pub fn new(sample_rate: u32, output_rate: u32) -> Result<Self, String> {
+    pub fn new(sample_rate: u32, output_rate: u32, latency_ms: u16) -> Result<Self, String> {
         let host = cpal::default_host();
 
         let device = host
@@ -68,11 +69,21 @@ impl CpalAudio {
             .min(sample_rate.saturating_mul(OVERSAMPLE_FACTOR))
             .max(sample_rate);
 
+        let requested_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+            .div_ceil(1_000)
+            .max(1) as u32;
+        let queue_capacity = usize::try_from(requested_frames.max(sample_rate / 10))
+            .expect("queue capacity fits into usize");
+        let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
         let mut stream_config = supported_config.config();
         stream_config.sample_rate = sample_rate;
-        let queue_capacity =
-            usize::try_from((sample_rate / 10).max(1)).expect("queue capacity fits into usize");
-        let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
+        match supported_config.buffer_size() {
+            cpal::SupportedBufferSize::Range { min, max } => {
+                stream_config.buffer_size =
+                    cpal::BufferSize::Fixed(requested_frames.clamp(*min, *max));
+            }
+            cpal::SupportedBufferSize::Unknown => {}
+        }
         let callback_playing = playing.clone();
         let callback_needs_clear = needs_clear.clone();
 
