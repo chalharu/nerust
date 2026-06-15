@@ -27,7 +27,13 @@ impl<S: InputState<2>> NesPadDevice<S> {
 
 impl<S: InputState<2>> NesPadDevice<S> {
     fn export_inner(&self) -> [u8; 5] {
-        [self.buttons[0], self.buttons[1], self.index[0], self.index[1], self.strobe as u8]
+        [
+            self.buttons[0],
+            self.buttons[1],
+            self.index[0],
+            self.index[1],
+            self.strobe as u8,
+        ]
     }
 
     fn import_inner(&mut self, state: &[u8; 5]) {
@@ -52,7 +58,9 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
     }
 
     fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let arr: [u8; 5] = bytes.try_into().map_err(|_| "invalid controller state length")?;
+        let arr: [u8; 5] = bytes
+            .try_into()
+            .map_err(|_| "invalid controller state length")?;
         self.import_inner(&arr);
         Ok(())
     }
@@ -123,12 +131,21 @@ mod tests {
         assert_eq!(device.buttons, [0x01, 0x00]);
 
         let result = device.read(0);
-        assert_eq!(result.data & 1, 1, "first bit (A) should be 1, got data={}", result.data);
+        assert_eq!(
+            result.data & 1,
+            1,
+            "first bit (A) should be 1, got data={}",
+            result.data
+        );
         assert_eq!(device.read(0).data & 1, 0, "second bit should be 0");
         for i in 0..6 {
             assert_eq!(device.read(0).data & 1, 0, "bit {} should be 0", i + 2);
         }
-        assert_eq!(device.read(0).data & 1, 1, "open bus after 8 bits should be 1");
+        assert_eq!(
+            device.read(0).data & 1,
+            1,
+            "open bus after 8 bits should be 1"
+        );
     }
 
     #[test]
