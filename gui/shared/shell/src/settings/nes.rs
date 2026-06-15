@@ -1,6 +1,5 @@
 use crate::load::SystemLoadOptions;
 use nerust_contract_core::audio::AudioBackendKind;
-use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_settings::local::{AudioSettings, HostBackendLocalSettings};
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_gui_settings::{
@@ -60,10 +59,7 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     )
 }
 
-pub fn build_speaker(
-    _host_backend: HostBackendIdentity,
-    settings: &HostBackendLocalSettings,
-) -> Result<HostedSpeaker, String> {
+pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeaker, String> {
     let spec = audio_backend_spec(settings.audio.clone());
 
     let kind = AudioBackendKind::autoselect();
