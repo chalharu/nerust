@@ -112,9 +112,19 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn apply_input_state(&mut self, bytes: &[u8]) {
-        if let Ok(frame) = nerust_input_nes::codec::decode_input_state(bytes) {
-            self.ctrl
-                .set_buttons(frame.player_one.bits(), frame.player_two.bits());
+        match nerust_input_nes::codec::decode_input_state(bytes) {
+            Ok(frame) => {
+                log::info!(
+                    "input: p1={:02X} p2={:02X}",
+                    frame.player_one.bits(),
+                    frame.player_two.bits()
+                );
+                self.ctrl
+                    .set_buttons(frame.player_one.bits(), frame.player_two.bits());
+            }
+            Err(e) => {
+                log::warn!("input decode failed: {e}");
+            }
         }
     }
 
