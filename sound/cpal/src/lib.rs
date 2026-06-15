@@ -14,6 +14,8 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nerust_contract_core::audio::AudioBackend;
+use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
+use nerust_soundfilter::{Filter, NesFilter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -25,15 +27,13 @@ const OVERSAMPLE_FACTOR: u32 = 4;
 ///
 /// Implements [`AudioBackend`] for use with any consumer that accepts the trait.
 pub struct CpalAudio {
-    /// CPAL stream – must be kept alive for audio to continue playing.
     stream: cpal::Stream,
-    /// Sends f32 samples to the CPAL callback.
     data_sender: SyncSender<f32>,
-    /// Desired playback state shared with the audio callback.
     playing: Arc<AtomicBool>,
-    /// Request that the callback discard any queued samples before resuming.
     needs_clear: Arc<AtomicBool>,
-    /// Effective source sample rate returned to the NES core.
+    filter: NesFilter,
+    gain: f32,
+    resampler: SimpleDownSampler,
     source_sample_rate: u32,
 }
 
@@ -44,10 +44,16 @@ impl CpalAudio {
     /// * `output_rate` – the NES CPU clock rate (used as the pre-resampler
     ///   source rate cap).
     /// * `latency_ms` – target latency in milliseconds.
+    /// * `gain` – master volume; `1.0` is full volume, `0.0` is muted.
     ///
     /// Returns `Err` (with a descriptive message) if no audio device or stream
     /// can be opened.
-    pub fn new(sample_rate: u32, output_rate: u32, latency_ms: u16) -> Result<Self, String> {
+    pub fn new(
+        sample_rate: u32,
+        output_rate: u32,
+        latency_ms: u16,
+        gain: f32,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
 
         let device = host
@@ -65,6 +71,10 @@ impl CpalAudio {
         let source_sample_rate = output_rate
             .min(sample_rate.saturating_mul(OVERSAMPLE_FACTOR))
             .max(sample_rate);
+
+        let filter = NesFilter::new(sample_rate as f32);
+        let resampler =
+            SimpleDownSampler::new(f64::from(source_sample_rate), f64::from(sample_rate));
 
         let requested_frames = (u64::from(sample_rate) * u64::from(latency_ms))
             .div_ceil(1_000)
@@ -122,6 +132,9 @@ impl CpalAudio {
             data_sender,
             playing,
             needs_clear,
+            filter,
+            gain,
+            resampler,
             source_sample_rate,
         })
     }
@@ -145,10 +158,13 @@ impl AudioBackend for CpalAudio {
     }
 
     fn push(&mut self, data: f32) {
-        match self.data_sender.try_send(data) {
-            Ok(()) | Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                log::warn!("cpal audio: channel send failed (receiver dropped)");
+        if let Some(resampled) = self.resampler.step(data) {
+            let sample = self.filter.step((resampled * 2.0 - 1.0) * self.gain);
+            match self.data_sender.try_send(sample) {
+                Ok(()) | Err(TrySendError::Full(_)) => {}
+                Err(TrySendError::Disconnected(_)) => {
+                    log::warn!("cpal audio: channel send failed (receiver dropped)");
+                }
             }
         }
     }
