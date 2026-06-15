@@ -160,7 +160,6 @@ struct NesAdapter {
 struct NesRuntime {
     emu: EmuThread<NesConsoleCore>,
     loaded: bool,
-    video_profile: VideoRenderProfile,
 }
 
 const FILTER_FIELD: &str = "video.filter";
@@ -325,15 +324,9 @@ impl SystemDefinition for NesSystemDefinition {
     ) -> Result<Box<dyn SystemRuntime>, String> {
         let screen = build_screen_buffer(&settings.shared);
         let core = NesConsoleCore::new(screen);
-        let profile = VideoRenderProfile {
-            source_logical_size: LogicalSize { width: 256, height: 240 },
-            logical_size: LogicalSize { width: 256, height: 240 },
-            physical_size: PhysicalSize { width: 512.0, height: 480.0 },
-        };
         Ok(Box::new(NesRuntime {
             emu: EmuThread::spawn(core),
             loaded: false,
-            video_profile: profile,
         }))
     }
 }
@@ -401,6 +394,11 @@ impl SystemRuntime for NesRuntime {
                     bytes: Arc::from(&BLACK[..]),
                 })
             });
+        let profile = VideoRenderProfile {
+            source_logical_size: LogicalSize { width: 256, height: 240 },
+            logical_size: LogicalSize { width: 256, height: 240 },
+            physical_size: PhysicalSize { width: 512.0, height: 480.0 },
+        };
         let fps = self
             .emu
             .last_fps()
@@ -415,18 +413,13 @@ impl SystemRuntime for NesRuntime {
                 paused: false,
             },
             video_frame: frame,
-            video_profile: Some(self.video_profile.clone()),
+            video_profile: Some(profile),
         }
     }
 
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
         let shared = crate::settings::defaults::seed::default_shared_settings();
         let screen = build_screen_buffer(&shared);
-        self.video_profile = VideoRenderProfile {
-            source_logical_size: LogicalSize { width: 256, height: 240 },
-            logical_size: LogicalSize { width: 256, height: 240 },
-            physical_size: PhysicalSize { width: 512.0, height: 480.0 },
-        };
         let mut core = NesConsoleCore::new(screen);
         core.load(
             &media.bytes,
