@@ -105,12 +105,6 @@ pub trait SystemDefinition: Send + Sync {
 }
 
 pub trait SystemInputAdapter: Send {
-    fn digital_event_from_persisted(
-        &self,
-        attachment: &str,
-        control: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent>;
     fn apply_event(&mut self, event: DigitalInputEvent);
     fn clear(&mut self);
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String>;
@@ -346,17 +340,6 @@ impl SystemDefinition for NesSystemDefinition {
 }
 
 impl SystemInputAdapter for NesAdapter {
-    fn digital_event_from_persisted(
-        &self,
-        attachment: &str,
-        control: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent> {
-        nerust_input_nes::input::persisted::digital_event_from_persisted_ids(
-            attachment, control, pressed,
-        )
-    }
-
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
     }
