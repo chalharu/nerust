@@ -6,7 +6,6 @@ members = [
   "cartridge/data",
   "console",
   "contract/core",
- 
   "contract/emuthread",
   "gui/shared/settings",
   "nes/core",
