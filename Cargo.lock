@@ -3489,7 +3489,6 @@ dependencies = [
  "libc",
  "log",
  "nerust_contract_core",
- "nerust_sound_traits",
 ]
 
 [[package]]

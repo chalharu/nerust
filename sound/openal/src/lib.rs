@@ -1,5 +1,4 @@
 use alto::*;
-use nerust_sound_traits::{MixerInput, Sound};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
@@ -494,21 +493,19 @@ impl OpenAl {
     }
 }
 
-impl Sound for OpenAl {
+impl nerust_contract_core::audio::AudioBackend for OpenAl {
+    fn start(&mut self) {
+        if self.playing_sender.send(true).is_err() {
+            log::warn!("OpenAL channel (playing) send failed");
+        }
+    }
+
     fn pause(&mut self) {
         if self.playing_sender.send(false).is_err() {
             log::warn!("OpenAL channel (playing) send failed");
         }
     }
 
-    fn start(&mut self) {
-        if self.playing_sender.send(true).is_err() {
-            log::warn!("OpenAL channel (playing) send failed");
-        }
-    }
-}
-
-impl MixerInput for OpenAl {
     fn push(&mut self, data: f32) {
         if self.data_sender.send(data).is_err() {
             log::warn!("OpenAL channel (data) send failed");
@@ -517,24 +514,6 @@ impl MixerInput for OpenAl {
 
     fn sample_rate(&self) -> u32 {
         self.playback_sample_rate
-    }
-}
-
-impl nerust_contract_core::audio::AudioBackend for OpenAl {
-    fn start(&mut self) {
-        Sound::start(self);
-    }
-
-    fn pause(&mut self) {
-        Sound::pause(self);
-    }
-
-    fn push(&mut self, data: f32) {
-        MixerInput::push(self, data);
-    }
-
-    fn sample_rate(&self) -> u32 {
-        MixerInput::sample_rate(self)
     }
 }
 

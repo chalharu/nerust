@@ -11,4 +11,3 @@ alto.workspace = true
 libc.workspace = true
 log.workspace = true
 nerust_contract_core.workspace = true
-nerust_sound_traits.workspace = true
