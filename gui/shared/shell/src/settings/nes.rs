@@ -22,7 +22,11 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
 }
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
-    let sample_rate = u32::try_from(settings.audio.sample_rate).unwrap_or(48_000);
+    let sample_rate = if settings.audio.sample_rate > 0 {
+        settings.audio.sample_rate
+    } else {
+        48_000
+    };
     let gain = if settings.audio.muted {
         0.0
     } else {
