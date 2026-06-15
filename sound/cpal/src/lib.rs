@@ -74,7 +74,7 @@ impl CpalAudio {
 
         log::info!(
             "cpal audio: device='{}' sample_rate={} channels={}",
-            device.name().unwrap_or_else(|_| "<unknown>".into()),
+            device.description().unwrap_or_else(|_| "<unknown>".into()),
             sample_rate,
             channels,
         );
