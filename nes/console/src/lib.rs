@@ -3,7 +3,6 @@ use nerust_nes_core::Core;
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
 
-use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::device::Device;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::{
@@ -13,7 +12,6 @@ use nerust_contract_core::{
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_video::PixelFormat;
 use nerust_sound_traits::MixerInput;
-const APU_SAMPLE_CAPACITY: usize = 1024;
 const NES_PALETTE: [[u8; 4]; 64] = [
     [102, 102, 102, 0xFF],
     [0, 42, 136, 0xFF],
@@ -85,19 +83,19 @@ pub struct NesConsoleCore {
     core: Option<Core>,
     screen: ScreenBuffer,
     ctrl: PadController,
-    audio: AudioBuffer,
+    mixer: Box<dyn MixerInput + Send>,
 }
 
 // Core is not Send, but NesConsoleCore only runs inside EmuThread
 unsafe impl Send for NesConsoleCore {}
 
 impl NesConsoleCore {
-    pub fn new(screen: ScreenBuffer) -> Self {
+    pub fn new(screen: ScreenBuffer, mixer: Box<dyn MixerInput + Send>) -> Self {
         Self {
             core: None,
             screen,
             ctrl: PadController::new(),
-            audio: AudioBuffer::new(),
+            mixer,
         }
     }
 }
@@ -120,9 +118,7 @@ impl ConsoleCore for NesConsoleCore {
 
     fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError> {
         let core = self.core.as_mut().ok_or(CoreError::NoRomLoaded)?;
-        let mut audio_buf = AudioBuffer::new();
-        core.run_frame(&mut self.screen, &mut self.ctrl, &mut audio_buf);
-        self.audio = audio_buf;
+        core.run_frame(&mut self.screen, &mut self.ctrl, &mut *self.mixer);
         // screen.render() is called by PPU inside run_frame
 
         let src = self.screen.front_frame();
@@ -142,11 +138,9 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
-    fn audio_samples(&mut self, out: &mut dyn AudioBackend) {
-        for &s in &self.audio.0 {
-            out.push(s);
-        }
-        self.audio.0.clear();
+    fn audio_samples(&mut self, _out: &mut dyn AudioBackend) {
+        // Audio is output directly through self.mixer (MixerInput) during run_frame.
+        // This callback is part of the ConsoleCore protocol for future use.
     }
 
     fn attach_device(&mut self, _port: usize, _device: Box<dyn Device>) {}
@@ -259,23 +253,4 @@ impl Controller for PadController {
     }
 }
 
-// --- AudioBuffer: MixerInput wrapper ---
 
-struct AudioBuffer(Vec<f32>);
-
-impl AudioBuffer {
-    fn new() -> Self {
-        Self(Vec::with_capacity(APU_SAMPLE_CAPACITY))
-    }
-}
-
-impl MixerInput for AudioBuffer {
-    fn push(&mut self, data: f32) {
-        if self.0.len() < APU_SAMPLE_CAPACITY {
-            self.0.push(data);
-        }
-    }
-    fn sample_rate(&self) -> u32 {
-        48_000
-    }
-}
