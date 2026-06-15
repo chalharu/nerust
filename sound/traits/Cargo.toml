@@ -7,3 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nerust_contract_core.workspace = true
+nerust_soundfilter.workspace = true

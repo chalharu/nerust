@@ -1,7 +1,4 @@
 use alto::*;
-use nerust_sound_traits::{MixerInput, Sound};
-use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
-use nerust_soundfilter::{Filter, NesFilter};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
@@ -107,8 +104,6 @@ fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! 
     log::error!("failed to re-execute process without DYLD environment variables: {err}");
     std::process::exit(1);
 }
-
-const CORE_AUDIO_OVERSAMPLE: u32 = 4;
 
 #[derive(Debug)]
 struct FadeBuffer {
@@ -445,30 +440,16 @@ pub struct OpenAl {
     stop_sender: Sender<()>,
     playing_sender: Sender<bool>,
     data_sender: Sender<f32>,
-    filter: NesFilter,
-    gain: f32,
     thread: Option<JoinHandle<()>>,
-    source_sample_rate: u32,
-    resampler: SimpleDownSampler,
+    playback_sample_rate: u32,
 }
 
 impl OpenAl {
-    pub fn new(
-        sample_rate: i32,
-        output_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-    ) -> Self {
-        Self::with_gain(sample_rate, output_rate, buffer_width, buffer_count, 1.0)
+    pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
+        Self::with_gain(sample_rate, buffer_width, buffer_count)
     }
 
-    pub fn with_gain(
-        sample_rate: i32,
-        output_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-        gain: f32,
-    ) -> Self {
+    pub fn with_gain(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
             match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
@@ -480,12 +461,6 @@ impl OpenAl {
             };
         let playback_sample_rate_u32 = u32::try_from(playback_sample_rate)
             .expect("OpenAL playback sample_rate must be non-negative");
-        let requested_source_rate =
-            u32::try_from(output_rate).expect("OpenAL output_rate must be non-negative");
-        let source_sample_rate = requested_source_rate
-            .min(playback_sample_rate_u32.saturating_mul(CORE_AUDIO_OVERSAMPLE))
-            .max(playback_sample_rate_u32);
-        let filter = NesFilter::new(playback_sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
@@ -509,50 +484,36 @@ impl OpenAl {
         });
 
         Self {
-            filter,
-            gain,
             playing_sender,
             data_sender,
             stop_sender,
             thread: Some(thread),
-            source_sample_rate,
-            resampler: SimpleDownSampler::new(
-                f64::from(source_sample_rate),
-                f64::from(playback_sample_rate_u32),
-            ),
+            playback_sample_rate: playback_sample_rate_u32,
         }
     }
 }
 
-impl Sound for OpenAl {
+impl nerust_contract_core::audio::AudioBackend for OpenAl {
+    fn start(&mut self) {
+        if self.playing_sender.send(true).is_err() {
+            log::warn!("OpenAL channel (playing) send failed");
+        }
+    }
+
     fn pause(&mut self) {
         if self.playing_sender.send(false).is_err() {
             log::warn!("OpenAL channel (playing) send failed");
         }
     }
 
-    fn start(&mut self) {
-        if self.playing_sender.send(true).is_err() {
-            log::warn!("OpenAL channel (playing) send failed");
-        }
-    }
-}
-
-impl MixerInput for OpenAl {
-    // 0.0 ~ 1.0 => -1.0 ~ 1.0
     fn push(&mut self, data: f32) {
-        if let Some(resampled_data) = self.resampler.step(data)
-            && self
-                .data_sender
-                .send(self.filter.step((resampled_data * 2.0 - 1.0) * self.gain))
-                .is_err()
-        {
+        if self.data_sender.send(data).is_err() {
             log::warn!("OpenAL channel (data) send failed");
         }
     }
 
     fn sample_rate(&self) -> u32 {
-        self.source_sample_rate
+        self.playback_sample_rate
     }
 }
 
