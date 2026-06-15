@@ -10,7 +10,7 @@ use std::{
 #[cfg(unix)]
 static SIGNAL_HANDLER_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_env = "musl")))]
 const BACKTRACE_DEPTH: usize = 64;
 
 #[cfg(unix)]
@@ -160,7 +160,7 @@ fn instruction_pointer(_: *mut c_void) -> Option<usize> {
     None
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_env = "musl")))]
 fn dump_native_backtrace() {
     let mut frames = [ptr::null_mut(); BACKTRACE_DEPTH];
     let frame_count = unsafe { backtrace(frames.as_mut_ptr(), BACKTRACE_DEPTH as libc::c_int) };
@@ -172,6 +172,11 @@ fn dump_native_backtrace() {
     unsafe {
         backtrace_symbols_fd(frames.as_ptr(), frame_count, libc::STDERR_FILENO);
     }
+}
+
+#[cfg(all(unix, target_env = "musl"))]
+fn dump_native_backtrace() {
+    write_stderr(b"  <native backtrace unavailable>\n");
 }
 
 #[cfg(unix)]
@@ -229,7 +234,7 @@ impl fmt::Write for StackBuffer {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_env = "musl")))]
 unsafe extern "C" {
     fn backtrace(buffer: *mut *mut c_void, size: libc::c_int) -> libc::c_int;
     fn backtrace_symbols_fd(buffer: *const *mut c_void, size: libc::c_int, fd: libc::c_int);
