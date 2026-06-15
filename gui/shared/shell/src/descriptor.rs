@@ -373,21 +373,33 @@ impl SystemRuntime for NesRuntime {
         if self.loaded {
             self.emu.request_frame();
         }
-        let frame = self.emu.last_result().map(|result| {
-            let stride = 256 * 4;
-            let len = stride * 240;
-            let data: Arc<[u8]> = if result.slot_data.len() >= len {
-                Arc::from(&result.slot_data[..len])
-            } else {
-                vec![0u8; len].into()
-            };
-            VideoFrameHandle {
-                width: 256,
-                height: 240,
-                stride_bytes: stride,
-                bytes: data,
-            }
-        });
+        let frame = self
+            .emu
+            .last_result()
+            .map(|result| {
+                let stride = 256 * 4;
+                let len = stride * 240;
+                let data: Arc<[u8]> = if result.slot_data.len() >= len {
+                    Arc::from(&result.slot_data[..len])
+                } else {
+                    vec![0u8; len].into()
+                };
+                VideoFrameHandle {
+                    width: 256,
+                    height: 240,
+                    stride_bytes: stride,
+                    bytes: data,
+                }
+            })
+            .or_else(|| {
+                static BLACK: [u8; 256 * 240 * 4] = [0; 256 * 240 * 4];
+                Some(VideoFrameHandle {
+                    width: 256,
+                    height: 240,
+                    stride_bytes: 256 * 4,
+                    bytes: Arc::from(&BLACK[..]),
+                })
+            });
         let fps = self
             .emu
             .last_fps()
