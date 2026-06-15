@@ -6,30 +6,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
 
 impl ConsoleRunner {
-    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), ConsoleError> {
-        self.controller
-            .apply_input_state(bytes)
-            .map_err(ConsoleError::Core)
-    }
-
-    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), ConsoleError> {
-        self.controller
-            .apply_controller_state(bytes)
-            .map_err(ConsoleError::Core)
-    }
-
-    fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.controller
-            .current_controller_state()
-            .map_err(ConsoleError::Core)
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.controller
-            .current_input_state()
-            .map_err(ConsoleError::Core)
-    }
-
     fn reply(reply: Sender<ConsoleRequestResult>, result: Result<ConsoleReply, ConsoleError>) {
         if reply.send(result).is_err() {
             log::warn!("console reply send failed");
@@ -88,11 +64,6 @@ impl ConsoleRunner {
                             hasher.finish()
                         );
                     }
-                    ConsoleData::ApplyInputState { bytes } => {
-                        if let Err(error) = self.apply_input_state(&bytes) {
-                            log::error!("input state apply failed: {error}");
-                        }
-                    }
                     ConsoleData::Reset(reply) => {
                         let result = if let Some(core) = core.as_mut() {
                             core.reset();
@@ -101,12 +72,6 @@ impl ConsoleRunner {
                         } else {
                             Err(Self::core_not_loaded())
                         };
-                        Self::reply(reply, result);
-                    }
-                    ConsoleData::ApplyControllerState { bytes, reply } => {
-                        let result = self
-                            .apply_controller_state(&bytes)
-                            .map(|_| ConsoleReply::Unit);
                         Self::reply(reply, result);
                     }
                     ConsoleData::Unload(reply) => {
@@ -138,19 +103,6 @@ impl ConsoleRunner {
                     ConsoleData::ExportState(reply) => {
                         let result = self.export_state_reply(core.as_ref());
                         Self::reply(reply, result);
-                    }
-                    ConsoleData::CurrentControllerState(reply) => {
-                        Self::reply(
-                            reply,
-                            self.current_controller_state()
-                                .map(ConsoleReply::ControllerState),
-                        );
-                    }
-                    ConsoleData::CurrentInputState(reply) => {
-                        Self::reply(
-                            reply,
-                            self.current_input_state().map(ConsoleReply::InputState),
-                        );
                     }
                     ConsoleData::ImportState { bytes, reply } => {
                         let result = self.import_state_reply(core.as_mut(), &bytes);

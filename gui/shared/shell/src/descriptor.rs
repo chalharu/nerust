@@ -118,8 +118,6 @@ pub trait SystemRuntime: Send {
     fn reset(&self) -> Result<(), String>;
     fn pause(&mut self);
     fn resume(&mut self);
-    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String>;
-    fn current_input_state(&self) -> Result<Vec<u8>, String>;
     fn export_state(&self) -> Result<RuntimeStateExport, String>;
     fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String>;
     fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String>;
@@ -191,7 +189,7 @@ impl NesSystemDefinition {
         Ok(Console::new(
             speaker,
             screen_buffer,
-            nerust_input_nes_runtime::standard_controller_runtime(),
+            Box::new(nerust_input_nes_runtime::StandardController::new()),
         ))
     }
 }
@@ -391,17 +389,6 @@ impl SystemRuntime for NesRuntime {
 
     fn resume(&mut self) {
         self.core.resume();
-    }
-
-    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core.apply_input_state(bytes);
-        Ok(())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        self.core
-            .current_input_state()
-            .map_err(|error| error.to_string())
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {

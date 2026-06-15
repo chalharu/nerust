@@ -1,11 +1,22 @@
 pub mod nes_input_cell;
 pub mod nes_pad_device;
 
-use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
+
+/// NES パッドのセーブステート関連のトレイト。
+///
+/// `Controller` トレイトがランタイムの入力インタフェースを提供するのに対し、
+/// こちらはシフトレジスタ状態の保存/復元を担当する。
+/// Phase 7 で旧 Console が削除されるときに同時に削除される。
+pub trait ControllerState: Controller + Send {
+    fn reset_runtime(&mut self);
+    fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String>;
+    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String>;
+    fn current_controller_state(&self) -> Result<Vec<u8>, String>;
+}
 
 const STANDARD_CONTROLLER_MAX_INDEX: usize = 8;
 const CONTROLLER_STATE_SCHEMA_VERSION: u32 = 1;
@@ -206,14 +217,9 @@ impl Controller for StandardController {
     }
 }
 
-impl ControllerRuntime for StandardController {
+impl ControllerState for StandardController {
     fn reset_runtime(&mut self) {
         self.reset();
-    }
-
-    fn apply_input_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.import_snapshot(crate::apply_input_state(self.export_snapshot(), bytes)?);
-        Ok(())
     }
 
     fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
@@ -228,13 +234,9 @@ impl ControllerRuntime for StandardController {
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
         encode_controller_state(self.export_snapshot())
     }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        encode_input_state(self.export_snapshot())
-    }
 }
 
-pub fn standard_controller_runtime() -> Box<dyn ControllerRuntime> {
+pub fn standard_controller_runtime() -> Box<dyn ControllerState> {
     Box::new(StandardController::new())
 }
 

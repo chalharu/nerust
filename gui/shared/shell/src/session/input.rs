@@ -8,7 +8,7 @@ use nerust_input_schema::DigitalInputEvent;
 impl SessionHandle {
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) -> Result<(), String> {
         self.input_adapter.apply_event(event);
-        self.apply_current_input_state()
+        Ok(())
     }
 
     pub fn handle_keyboard_key(
@@ -51,26 +51,6 @@ impl SessionHandle {
     pub fn clear_input(&mut self) -> Result<(), String> {
         self.pressed_keys.clear();
         self.input_adapter.clear();
-        self.apply_current_input_state()
-    }
-
-    pub(super) fn apply_current_input_state(&mut self) -> Result<(), String> {
-        let bytes = self.input_adapter.runtime_state_bytes()?;
-        self.runtime.apply_input_state(bytes)
-    }
-
-    pub(super) fn sync_input_from_runtime(&mut self) {
-        match self.runtime.current_input_state() {
-            Ok(bytes) => {
-                if let Err(error) = self.input_adapter.sync_from_runtime_state(&bytes) {
-                    log::warn!("runtime input sync failed: {error}");
-                    self.input_adapter.clear();
-                }
-            }
-            Err(error) => {
-                log::warn!("runtime input state read failed: {error}");
-                self.input_adapter.clear();
-            }
-        }
+        Ok(())
     }
 }

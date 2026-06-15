@@ -3134,9 +3134,9 @@ dependencies = [
  "crc",
  "log",
  "nerust_cartridge_data",
- "nerust_contract_controller_runtime",
  "nerust_contract_core",
  "nerust_input_nes",
+ "nerust_input_nes_runtime",
  "nerust_nes_core",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -3150,13 +3150,6 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nerust_contract_controller_runtime"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_nes_core",
 ]
 
 [[package]]
@@ -3299,7 +3292,6 @@ name = "nerust_input_nes_runtime"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_contract_controller_runtime",
  "nerust_contract_core",
  "nerust_input_nes",
  "nerust_nes_core",
