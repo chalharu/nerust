@@ -459,6 +459,7 @@ impl SystemRuntime for NesRuntime {
     }
 
     fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        log::info!("NesRuntime::apply_input_state called with {} bytes", bytes.len());
         self.emu
             .send(EmuCommand::ApplyInputState(bytes))
             .map_err(|e| e.to_string())
