@@ -235,7 +235,7 @@ impl PadController {
 impl Controller for PadController {
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         match address {
-            0x4016 => {
+            0 => {
                 let bit = if self.index1 < 8 {
                     (self.buttons1 >> self.index1) & 1
                 } else {
