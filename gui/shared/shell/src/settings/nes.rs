@@ -12,7 +12,6 @@ use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
 use nerust_sound_traits::{MixerInput, Sound};
-use nerust_timer::CLOCK_RATE;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioBackendSpec {
@@ -60,7 +59,6 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
     if kind != AudioBackendKind::Null {
         let speaker = OpenAl::with_gain(
             spec.requested_sample_rate,
-            CLOCK_RATE as i32,
             spec.buffer_width,
             spec.buffer_count,
             spec.gain,

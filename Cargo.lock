@@ -3490,7 +3490,6 @@ dependencies = [
  "log",
  "nerust_contract_core",
  "nerust_sound_traits",
- "nerust_soundfilter",
 ]
 
 [[package]]
