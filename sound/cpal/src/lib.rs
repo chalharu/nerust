@@ -15,7 +15,6 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nerust_contract_core::audio::AudioBackend;
-use nerust_sound_traits::{MixerInput, Sound};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -130,7 +129,7 @@ impl CpalAudio {
     }
 }
 
-impl Sound for CpalAudio {
+impl AudioBackend for CpalAudio {
     fn start(&mut self) {
         self.needs_clear.store(true, Ordering::Release);
         self.playing.store(true, Ordering::Release);
@@ -146,9 +145,7 @@ impl Sound for CpalAudio {
             log::warn!("failed to pause cpal audio stream: {e}");
         }
     }
-}
 
-impl MixerInput for CpalAudio {
     fn push(&mut self, data: f32) {
         match self.data_sender.try_send(data) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
@@ -160,23 +157,5 @@ impl MixerInput for CpalAudio {
 
     fn sample_rate(&self) -> u32 {
         self.source_sample_rate
-    }
-}
-
-impl AudioBackend for CpalAudio {
-    fn start(&mut self) {
-        Sound::start(self);
-    }
-
-    fn pause(&mut self) {
-        Sound::pause(self);
-    }
-
-    fn push(&mut self, data: f32) {
-        MixerInput::push(self, data);
-    }
-
-    fn sample_rate(&self) -> u32 {
-        MixerInput::sample_rate(self)
     }
 }
