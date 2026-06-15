@@ -7,9 +7,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+alto.workspace = true
 libc.workspace = true
 log.workspace = true
 nerust_contract_core.workspace = true
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-alto.workspace = true
