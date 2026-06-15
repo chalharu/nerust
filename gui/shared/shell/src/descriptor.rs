@@ -324,24 +324,17 @@ impl SystemDefinition for NesSystemDefinition {
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
         let screen = build_screen_buffer(&settings.shared);
+        let vp = screen.video_presentation().clone();
+        let profile = VideoRenderProfile {
+            source_logical_size: vp.source_logical_size(),
+            logical_size: vp.logical_size(),
+            physical_size: vp.physical_size(),
+        };
         let core = NesConsoleCore::new(screen);
         Ok(Box::new(NesRuntime {
             emu: EmuThread::spawn(core),
             loaded: false,
-            video_profile: VideoRenderProfile {
-                source_logical_size: LogicalSize {
-                    width: 256,
-                    height: 240,
-                },
-                logical_size: LogicalSize {
-                    width: 256,
-                    height: 240,
-                },
-                physical_size: PhysicalSize {
-                    width: 512.0,
-                    height: 480.0,
-                },
-            },
+            video_profile: profile,
         }))
     }
 }
@@ -416,8 +409,14 @@ impl SystemRuntime for NesRuntime {
     }
 
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
-        let screen =
-            build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
+        let shared = crate::settings::defaults::seed::default_shared_settings();
+        let screen = build_screen_buffer(&shared);
+        let vp = screen.video_presentation().clone();
+        self.video_profile = VideoRenderProfile {
+            source_logical_size: vp.source_logical_size(),
+            logical_size: vp.logical_size(),
+            physical_size: vp.physical_size(),
+        };
         let mut core = NesConsoleCore::new(screen);
         core.load(
             &media.bytes,
