@@ -1,3 +1,6 @@
+pub mod nes_input_cell;
+pub mod nes_pad_device;
+
 use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
