@@ -142,11 +142,11 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
-    fn audio_samples(&self, _out: &mut dyn AudioBackend) {
-        // audio_samples takes &self, but AudioBuffer needs &mut for drain.
-        // For Phase 2c, audio_samples is called from EmuThread (same thread as render),
-        // so we work around the &self limitation by skipping drain on the &self path.
-        // In practice, audio is handled during render_frame via MixerInput.
+    fn audio_samples(&mut self, out: &mut dyn AudioBackend) {
+        for &s in &self.audio.0 {
+            out.push(s);
+        }
+        self.audio.0.clear();
     }
 
     fn attach_device(&mut self, _port: usize, _device: Box<dyn Device>) {}

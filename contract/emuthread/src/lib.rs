@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
 use nerust_timer::Timer;
 
@@ -25,7 +26,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
 }
 
 impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
-    pub fn spawn(mut core: C) -> Self {
+    pub fn spawn(mut core: C, mut audio: Box<dyn AudioBackend + Send>) -> Self {
         let frame_interval = core.frame_interval();
         let slot_size = 256 * 240 * 4;
         let (cmd_tx, cmd_rx) = mpsc::channel::<EmuCommand>();
@@ -63,6 +64,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             }
                         };
                         *thread_result.lock().unwrap() = Some(result);
+                        core.audio_samples(&mut *audio);
                         thread_frames.fetch_add(1, Ordering::Relaxed);
                         thread_fps.store((timer.as_fps() * 100.0) as u32, Ordering::Relaxed);
                         timer.wait();

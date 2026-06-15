@@ -4,6 +4,7 @@ use crate::settings::nes::{build_screen_buffer, effective_load_options};
 use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
+use nerust_contract_core::audio::{AudioBackend, NullAudio};
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{ConsoleCore, CoreConfig, EmuCommand};
@@ -324,8 +325,9 @@ impl SystemDefinition for NesSystemDefinition {
     ) -> Result<Box<dyn SystemRuntime>, String> {
         let screen = build_screen_buffer(&settings.shared);
         let core = NesConsoleCore::new(screen);
+        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
         Ok(Box::new(NesRuntime {
-            emu: EmuThread::spawn(core),
+            emu: EmuThread::spawn(core, audio),
             loaded: false,
         }))
     }
@@ -431,7 +433,8 @@ impl SystemRuntime for NesRuntime {
         )
         .map_err(|e| e.to_string())?;
         self.emu.send(EmuCommand::Quit).ok();
-        self.emu = EmuThread::spawn(core);
+        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
+        self.emu = EmuThread::spawn(core, audio);
         self.loaded = true;
         Ok(())
     }
@@ -441,7 +444,8 @@ impl SystemRuntime for NesRuntime {
         let screen =
             build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
         let core = NesConsoleCore::new(screen);
-        self.emu = EmuThread::spawn(core);
+        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
+        self.emu = EmuThread::spawn(core, audio);
         self.loaded = false;
         Ok(true)
     }

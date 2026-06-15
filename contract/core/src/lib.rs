@@ -166,7 +166,7 @@ pub trait ConsoleCore: Send {
     fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
 
     // -- audio --
-    fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
+    fn audio_samples(&mut self, out: &mut dyn audio::AudioBackend);
     // -- input --
     fn apply_input_state(&mut self, _bytes: &[u8]) {}
     // -- peripherals --
