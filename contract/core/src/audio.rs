@@ -22,9 +22,17 @@ struct BackendEntry {
     factory: fn(u32, u32) -> Option<Box<dyn AudioBackend>>,
 }
 
+impl Default for AudioBackendRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AudioBackendRegistry {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn register(
@@ -33,7 +41,11 @@ impl AudioBackendRegistry {
         name: &'static str,
         factory: fn(u32, u32) -> Option<Box<dyn AudioBackend>>,
     ) {
-        self.entries.push(BackendEntry { priority, name, factory });
+        self.entries.push(BackendEntry {
+            priority,
+            name,
+            factory,
+        });
     }
 
     pub fn autoselect(&self, sample_rate: u32, latency_ms: u32) -> Box<dyn AudioBackend> {
