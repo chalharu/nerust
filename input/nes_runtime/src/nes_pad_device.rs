@@ -1,5 +1,8 @@
-use crate::ControllerState;
+use crate::{
+    ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
+};
 use nerust_contract_core::input::InputState;
+use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
 
@@ -25,24 +28,6 @@ impl<S: InputState<2>> NesPadDevice<S> {
     }
 }
 
-impl<S: InputState<2>> NesPadDevice<S> {
-    fn export_inner(&self) -> [u8; 5] {
-        [
-            self.buttons[0],
-            self.buttons[1],
-            self.index[0],
-            self.index[1],
-            self.strobe as u8,
-        ]
-    }
-
-    fn import_inner(&mut self, state: &[u8; 5]) {
-        self.buttons = [state[0], state[1]];
-        self.index = [state[2], state[3]];
-        self.strobe = state[4] != 0;
-    }
-}
-
 impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
     fn reset_runtime(&mut self) {
         self.buttons = [0; 2];
@@ -51,22 +36,28 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
     }
 
     fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
-        if bytes.len() != 5 {
-            return Err("invalid controller state length".into());
-        }
-        Ok(())
+        decode_controller_state(bytes).map(|_| ())
     }
 
     fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let arr: [u8; 5] = bytes
-            .try_into()
-            .map_err(|_| "invalid controller state length")?;
-        self.import_inner(&arr);
+        let snapshot = decode_controller_state(bytes)?;
+        self.buttons = [snapshot.buttons[0].bits(), snapshot.buttons[1].bits()];
+        self.index = [snapshot.index1 as u8, snapshot.index2 as u8];
+        self.strobe = snapshot.strobe;
         Ok(())
     }
 
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
-        Ok(self.export_inner().to_vec())
+        encode_controller_state(StandardControllerSnapshot {
+            buttons: [
+                Buttons::from_bits_truncate(self.buttons[0]),
+                Buttons::from_bits_truncate(self.buttons[1]),
+            ],
+            microphone: false,
+            index1: self.index[0] as usize,
+            index2: self.index[1] as usize,
+            strobe: self.strobe,
+        })
     }
 }
 
