@@ -371,20 +371,26 @@ impl SystemInputAdapter for NesAdapter {
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
         let frame = self.input.current_frame();
-        self.cell
-            .store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
     }
 
     fn clear(&mut self) {
         let _ = self.input.clear_current_frame();
-        self.cell.store(0, 0);
+        self.cell.store(0, 0, false);
     }
 
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let frame = decode_input_state(bytes).map_err(|error| error.to_string())?;
         self.input.sync_from_frame(frame);
-        self.cell
-            .store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
         Ok(())
     }
 
