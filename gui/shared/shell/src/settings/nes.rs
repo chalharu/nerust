@@ -23,16 +23,7 @@ pub struct AudioBackendSpec {
     pub gain: f32,
 }
 
-pub struct HostedSpeaker {
-    inner: HostedSpeakerInner,
-}
-
-enum HostedSpeakerInner {
-    Cpal(CpalAudio),
-    #[cfg(not(target_os = "android"))]
-    OpenAl(OpenAl),
-    Silent(NullAudio),
-}
+pub struct HostedSpeaker(Box<dyn AudioBackend + Send>);
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new(
@@ -59,9 +50,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
         ) {
             Ok(speaker) => {
                 log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
-                return Ok(HostedSpeaker {
-                    inner: HostedSpeakerInner::Cpal(speaker),
-                });
+                return Ok(HostedSpeaker(Box::new(speaker)));
             }
             Err(e) => log::warn!("build_speaker: CPAL failed ({e})"),
         }
@@ -78,16 +67,12 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
             spec.gain,
         );
         log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
-        return Ok(HostedSpeaker {
-            inner: HostedSpeakerInner::OpenAl(speaker),
-        });
+        return Ok(HostedSpeaker(Box::new(speaker)));
     }
 
     // Tier 3: Silent (常に利用可能)
     log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
-    Ok(HostedSpeaker {
-        inner: HostedSpeakerInner::Silent(NullAudio),
-    })
+    Ok(HostedSpeaker(Box::new(NullAudio)))
 }
 
 pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
@@ -170,41 +155,21 @@ fn nearest_power_of_two(value: usize) -> usize {
 
 impl Sound for HostedSpeaker {
     fn start(&mut self) {
-        match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => AudioBackend::start(speaker),
-            #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::start(speaker),
-            HostedSpeakerInner::Silent(speaker) => AudioBackend::start(speaker),
-        }
+        AudioBackend::start(&mut *self.0)
     }
 
     fn pause(&mut self) {
-        match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => AudioBackend::pause(speaker),
-            #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::pause(speaker),
-            HostedSpeakerInner::Silent(speaker) => AudioBackend::pause(speaker),
-        }
+        AudioBackend::pause(&mut *self.0)
     }
 }
 
 impl MixerInput for HostedSpeaker {
     fn push(&mut self, data: f32) {
-        match &mut self.inner {
-            HostedSpeakerInner::Cpal(speaker) => AudioBackend::push(speaker, data),
-            #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::push(speaker, data),
-            HostedSpeakerInner::Silent(speaker) => AudioBackend::push(speaker, data),
-        }
+        AudioBackend::push(&mut *self.0, data)
     }
 
     fn sample_rate(&self) -> u32 {
-        match &self.inner {
-            HostedSpeakerInner::Cpal(speaker) => AudioBackend::sample_rate(speaker),
-            #[cfg(not(target_os = "android"))]
-            HostedSpeakerInner::OpenAl(speaker) => AudioBackend::sample_rate(speaker),
-            HostedSpeakerInner::Silent(speaker) => AudioBackend::sample_rate(speaker),
-        }
+        AudioBackend::sample_rate(&*self.0)
     }
 }
 
