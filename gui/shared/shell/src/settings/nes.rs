@@ -11,7 +11,7 @@ use nerust_screen_filter::FilterType;
 use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
-use nerust_sound_traits::{MixerBridge, MixerInput, Sound};
+use nerust_sound_traits::MixerBridge;
 use nerust_timer::CLOCK_RATE;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,8 +23,6 @@ pub struct AudioBackendSpec {
     pub gain: f32,
 }
 
-pub struct HostedSpeaker(MixerBridge);
-
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new(
         filter_type(settings),
@@ -35,7 +33,7 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     )
 }
 
-pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeaker, String> {
+pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
     let spec = audio_backend_spec(settings.audio.clone());
 
     let kind = AudioBackendKind::autoselect();
@@ -50,7 +48,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
             Ok(speaker) => {
                 log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
                 let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
-                return Ok(HostedSpeaker(bridge));
+                return Ok(bridge);
             }
             Err(e) => log::warn!("build_speaker: CPAL failed ({e})"),
         }
@@ -66,13 +64,13 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
         );
         log::info!("build_speaker: selected OpenAL audio backend (Tier 2)");
         let bridge = MixerBridge::new(Box::new(speaker), CLOCK_RATE as u32, spec.gain);
-        return Ok(HostedSpeaker(bridge));
+        return Ok(bridge);
     }
 
     // Tier 3: Silent (常に利用可能)
     log::info!("build_speaker: no audio device available, using silent speaker (Tier 3)");
     let bridge = MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, spec.gain);
-    Ok(HostedSpeaker(bridge))
+    Ok(bridge)
 }
 
 pub fn audio_backend_spec(settings: AudioSettings) -> AudioBackendSpec {
@@ -150,26 +148,6 @@ fn nearest_power_of_two(value: usize) -> usize {
         lower.max(1)
     } else {
         upper
-    }
-}
-
-impl Sound for HostedSpeaker {
-    fn start(&mut self) {
-        self.0.start()
-    }
-
-    fn pause(&mut self) {
-        self.0.pause()
-    }
-}
-
-impl MixerInput for HostedSpeaker {
-    fn push(&mut self, data: f32) {
-        self.0.push(data)
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.0.sample_rate()
     }
 }
 
