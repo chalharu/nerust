@@ -150,10 +150,6 @@ impl NesSystemDefinition {
             input_cell: OnceLock::new(),
         }
     }
-
-    fn input_cell(&self) -> &Arc<InputCell<2>> {
-        self.input_cell.get().expect("input_cell not initialized")
-    }
 }
 
 #[derive(Debug)]
