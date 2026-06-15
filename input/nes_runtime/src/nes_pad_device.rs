@@ -1,3 +1,4 @@
+use crate::ControllerState;
 use nerust_contract_core::input::InputState;
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
@@ -21,6 +22,43 @@ impl<S: InputState<2>> NesPadDevice<S> {
             index: [0; 2],
             strobe: false,
         }
+    }
+}
+
+impl<S: InputState<2>> NesPadDevice<S> {
+    fn export_inner(&self) -> [u8; 5] {
+        [self.buttons[0], self.buttons[1], self.index[0], self.index[1], self.strobe as u8]
+    }
+
+    fn import_inner(&mut self, state: &[u8; 5]) {
+        self.buttons = [state[0], state[1]];
+        self.index = [state[2], state[3]];
+        self.strobe = state[4] != 0;
+    }
+}
+
+impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
+    fn reset_runtime(&mut self) {
+        self.buttons = [0; 2];
+        self.index = [0; 2];
+        self.strobe = false;
+    }
+
+    fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() != 5 {
+            return Err("invalid controller state length".into());
+        }
+        Ok(())
+    }
+
+    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let arr: [u8; 5] = bytes.try_into().map_err(|_| "invalid controller state length")?;
+        self.import_inner(&arr);
+        Ok(())
+    }
+
+    fn current_controller_state(&self) -> Result<Vec<u8>, String> {
+        Ok(self.export_inner().to_vec())
     }
 }
 

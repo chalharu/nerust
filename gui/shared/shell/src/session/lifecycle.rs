@@ -139,7 +139,6 @@ impl SessionHandle {
         });
         self.configure_persistence_for_loaded_media(true);
         self.remember_last_successful_rom_directory(media.path.as_deref());
-        self.sync_input_from_runtime();
         Ok(())
     }
 
@@ -149,7 +148,6 @@ impl SessionHandle {
         if unloaded {
             self.loaded_media = None;
             self.persistence = Default::default();
-            self.sync_input_from_runtime();
         }
         Ok(unloaded)
     }
@@ -331,7 +329,6 @@ impl SessionHandle {
                     clear_hidden_lifecycle_state_path(&path);
                     false
                 } else {
-                    self.sync_input_from_runtime();
                     true
                 }
             }
@@ -425,7 +422,6 @@ impl SessionHandle {
 
         self.runtime = rebuilt_runtime;
         self.input_adapter = rebuilt_adapter;
-        self.sync_input_from_runtime();
         if was_loaded {
             self.configure_persistence_for_loaded_media(!restored_runtime_state);
             if was_paused {
@@ -680,7 +676,6 @@ impl SessionHandle {
                     false
                 } else {
                     self.persistence.active_slot_id = Some(slot_id);
-                    self.sync_input_from_runtime();
                     self.refresh_slots();
                     true
                 }
