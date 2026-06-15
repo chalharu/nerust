@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod device;
+pub mod input;
 pub mod mirror;
 pub mod options;
 pub mod persistence;
