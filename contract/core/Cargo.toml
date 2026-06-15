@@ -19,5 +19,5 @@ cpal = { workspace = true, optional = true }
 alto = { workspace = true, optional = true }
 
 [features]
-default = ["cpal", "openal"]
+default = []
 openal = ["alto"]
