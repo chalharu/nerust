@@ -72,11 +72,12 @@ impl CpalAudio {
         let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
         let callback_playing = playing.clone();
 
+        let device_name = device.description()
+            .as_ref()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
         log::info!(
-            "cpal audio: device='{}' sample_rate={} channels={}",
-            device.description().unwrap_or_else(|_| "<unknown>".into()),
-            sample_rate,
-            channels,
+            "cpal audio: device='{device_name}' sample_rate={sample_rate} channels={channels}",
         );
 
         let stream = device
