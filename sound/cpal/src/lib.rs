@@ -26,6 +26,7 @@ pub struct CpalAudio {
     data_sender: SyncSender<f32>,
     playing: Arc<AtomicBool>,
     needs_clear: Arc<AtomicBool>,
+    sample_rate: u32,
 }
 
 impl CpalAudio {
@@ -50,6 +51,7 @@ impl CpalAudio {
         let channels = supported_config.channels();
         let playing = Arc::new(AtomicBool::new(false));
         let needs_clear = Arc::new(AtomicBool::new(true));
+        let device_sample_rate = supported_config.sample_rate();
 
         let requested_frames = (u64::from(sample_rate) * u64::from(latency_ms))
             .div_ceil(1_000)
@@ -75,7 +77,7 @@ impl CpalAudio {
             .map(|d| d.to_string())
             .unwrap_or_else(|_| "<unknown>".to_string());
         log::info!(
-            "cpal audio: device='{device_name}' sample_rate={sample_rate} channels={channels}",
+            "cpal audio: device='{device_name}' requested_rate={sample_rate} device_rate={device_sample_rate} channels={channels}",
         );
 
         let stream = device
@@ -107,6 +109,7 @@ impl CpalAudio {
             data_sender,
             playing,
             needs_clear,
+            sample_rate,
         })
     }
 }
@@ -138,6 +141,6 @@ impl AudioBackend for CpalAudio {
     }
 
     fn sample_rate(&self) -> u32 {
-        48_000
+        self.sample_rate
     }
 }
