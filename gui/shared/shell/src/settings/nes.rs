@@ -70,6 +70,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<HostedSpeake
         match CpalAudio::new(
             u32::try_from(spec.requested_sample_rate).unwrap_or(48_000),
             CLOCK_RATE as u32,
+            settings.audio.latency_ms,
         ) {
             Ok(speaker) => {
                 log::info!("build_speaker: selected CPAL audio backend (Tier 1)");
