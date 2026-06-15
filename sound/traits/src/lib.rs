@@ -15,3 +15,22 @@ pub trait MixerInput {
         48_000
     }
 }
+
+/// `AudioBackend` → `MixerInput` アダプタ
+///
+/// Phase 4b で `run_frame` が `&mut dyn AudioBackend` を直接受け取るようになった時点で
+/// このアダプタは不要になり削除される。それまでは既存の `MixerInput` を要求する
+/// `run_frame` に `AudioBackend` を渡すための橋渡しとして使う。
+pub struct MixerBridge {
+    pub backend: Box<dyn nerust_contract_core::audio::AudioBackend + Send>,
+}
+
+impl MixerInput for MixerBridge {
+    fn push(&mut self, data: f32) {
+        self.backend.push(data);
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.backend.sample_rate()
+    }
+}

@@ -556,6 +556,24 @@ impl MixerInput for OpenAl {
     }
 }
 
+impl nerust_contract_core::audio::AudioBackend for OpenAl {
+    fn start(&mut self) {
+        Sound::start(self);
+    }
+
+    fn pause(&mut self) {
+        Sound::pause(self);
+    }
+
+    fn push(&mut self, data: f32) {
+        MixerInput::push(self, data);
+    }
+
+    fn sample_rate(&self) -> u32 {
+        MixerInput::sample_rate(self)
+    }
+}
+
 impl Drop for OpenAl {
     fn drop(&mut self) {
         if self.stop_sender.send(()).is_err() {
