@@ -22,16 +22,34 @@ pub enum AudioBackendKind {
 }
 
 impl AudioBackendKind {
-    /// 環境に応じて最適なバックエンドを自動選択する
+    /// Tier 1 → Tier 2 → Tier 3 の順に初期化を試行し、
+    /// 最初に利用可能だったバックエンドを返す。
+    ///
+    /// 各 Tier は以下の優先順位で確認される:
+    ///   1. CPAL  (クロスプラットフォーム)
+    ///   2. OpenAL (デスクトップフォールバック)
+    ///   3. Null   (常に利用可能)
     pub fn autoselect() -> Self {
-        #[cfg(target_os = "android")]
+        // Tier 1: CPAL
+        #[cfg(feature = "cpal")]
         {
-            AudioBackendKind::Cpal
+            use cpal::traits::HostTrait;
+            let host = cpal::default_host();
+            if host.default_output_device().is_some() {
+                return AudioBackendKind::Cpal;
+            }
         }
-        #[cfg(not(target_os = "android"))]
+
+        // Tier 2: OpenAL
+        #[cfg(feature = "openal")]
         {
-            AudioBackendKind::OpenAl
+            if alto::Alto::load_default().is_ok() {
+                return AudioBackendKind::OpenAl;
+            }
         }
+
+        // Tier 3: Null (常に利用可能)
+        AudioBackendKind::Null
     }
 }
 
