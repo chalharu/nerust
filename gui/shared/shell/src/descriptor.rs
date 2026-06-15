@@ -1,10 +1,11 @@
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
 use crate::settings::nes::{build_screen_buffer, effective_load_options};
+use nerust_sound_traits::MixerBridge;
 use nerust_console::ConsoleMetrics;
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
-use nerust_contract_core::audio::{AudioBackend, NullAudio};
+use nerust_contract_core::audio::NullAudio;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{ConsoleCore, CoreConfig, EmuCommand};
@@ -22,6 +23,7 @@ use nerust_screen_physical::PhysicalSize;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::mpsc;
+const CLOCK_RATE: u64 = 1_789_773;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
@@ -324,10 +326,10 @@ impl SystemDefinition for NesSystemDefinition {
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
         let screen = build_screen_buffer(&settings.shared);
-        let core = NesConsoleCore::new(screen);
-        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
+        let mixer = Box::new(MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, 0.0));
+        let core = NesConsoleCore::new(screen, mixer);
         Ok(Box::new(NesRuntime {
-            emu: EmuThread::spawn(core, audio),
+            emu: EmuThread::spawn(core),
             loaded: false,
         }))
     }
@@ -422,7 +424,8 @@ impl SystemRuntime for NesRuntime {
     fn load(&mut self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
         let shared = crate::settings::defaults::seed::default_shared_settings();
         let screen = build_screen_buffer(&shared);
-        let mut core = NesConsoleCore::new(screen);
+        let mixer = Box::new(MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, 0.0));
+        let mut core = NesConsoleCore::new(screen, mixer);
         core.load(
             &media.bytes,
             &CoreConfig {
@@ -433,8 +436,7 @@ impl SystemRuntime for NesRuntime {
         )
         .map_err(|e| e.to_string())?;
         self.emu.send(EmuCommand::Quit).ok();
-        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
-        self.emu = EmuThread::spawn(core, audio);
+        self.emu = EmuThread::spawn(core);
         self.loaded = true;
         Ok(())
     }
@@ -443,9 +445,9 @@ impl SystemRuntime for NesRuntime {
         self.emu.send(EmuCommand::Quit).ok();
         let screen =
             build_screen_buffer(&crate::settings::defaults::seed::default_shared_settings());
-        let core = NesConsoleCore::new(screen);
-        let audio: Box<dyn AudioBackend + Send> = Box::new(NullAudio);
-        self.emu = EmuThread::spawn(core, audio);
+        let mixer = Box::new(MixerBridge::new(Box::new(NullAudio), CLOCK_RATE as u32, 0.0));
+        let core = NesConsoleCore::new(screen, mixer);
+        self.emu = EmuThread::spawn(core);
         self.loaded = false;
         Ok(true)
     }

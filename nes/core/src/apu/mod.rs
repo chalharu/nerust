@@ -178,7 +178,7 @@ impl Core {
         self.step_timer(interrupt);
     }
 
-    pub(crate) fn step<M: MixerInput>(
+    pub(crate) fn step<M: MixerInput + ?Sized>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -197,7 +197,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn step_many<M: MixerInput>(
+    pub(crate) fn step_many<M: MixerInput + ?Sized>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -219,7 +219,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn step_many_batched<M: MixerInput>(
+    pub(crate) fn step_many_batched<M: MixerInput + ?Sized>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -287,7 +287,7 @@ impl Core {
             .min(self.dmc.cycles_until_next_dma_request(max_cycles))
     }
 
-    pub(crate) fn send_sample<M: MixerInput>(
+    pub(crate) fn send_sample<M: MixerInput + ?Sized>(
         &self,
         mixer: &mut M,
         expansion_audio_output: f32,
@@ -336,7 +336,7 @@ impl Core {
         self.triangle.step_timer();
     }
 
-    fn advance_no_frame_event<M: MixerInput>(
+    fn advance_no_frame_event<M: MixerInput + ?Sized>(
         &mut self,
         cycles: u64,
         interrupt: &mut Interrupt,
@@ -371,7 +371,7 @@ impl Core {
         self.triangle.step_timer_many(cycles);
     }
 
-    fn advance_sample_accumulator<M: MixerInput>(
+    fn advance_sample_accumulator<M: MixerInput + ?Sized>(
         &mut self,
         cycles: u64,
         mixer: &mut M,

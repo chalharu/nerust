@@ -297,7 +297,7 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<S: Screen, M: MixerInput>(
+    pub fn step<S: Screen, M: MixerInput + ?Sized>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
@@ -306,7 +306,7 @@ impl Core {
         self.step_cycle(screen, controller, mixer, mixer.sample_rate())
     }
 
-    pub fn run_frame<S: Screen, M: MixerInput>(
+    pub fn run_frame<S: Screen, M: MixerInput + ?Sized>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
@@ -352,7 +352,7 @@ impl Core {
     }
 
     #[inline(always)]
-    fn step_cycle<S: Screen, M: MixerInput>(
+    fn step_cycle<S: Screen, M: MixerInput + ?Sized>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
@@ -397,7 +397,7 @@ impl Core {
         }
     }
 
-    fn step_instruction_event<S: Screen, M: MixerInput>(
+    fn step_instruction_event<S: Screen, M: MixerInput + ?Sized>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
@@ -489,7 +489,7 @@ impl Core {
         Some((cpu_cycles, screen_updated))
     }
 
-    fn step_synchronized_mapper_and_apu<M: MixerInput>(
+    fn step_synchronized_mapper_and_apu<M: MixerInput + ?Sized>(
         &mut self,
         mixer: &mut M,
         mixer_sample_rate: u32,

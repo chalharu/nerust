@@ -12,7 +12,7 @@ use nerust_sound_cpal::CpalAudio;
 #[cfg(not(target_os = "android"))]
 use nerust_sound_openal::OpenAl;
 use nerust_sound_traits::MixerBridge;
-use nerust_timer::CLOCK_RATE;
+const CLOCK_RATE: u64 = 1_789_773;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioBackendSpec {

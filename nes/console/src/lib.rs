@@ -138,11 +138,6 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
-    fn audio_samples(&mut self, _out: &mut dyn AudioBackend) {
-        // Audio is output directly through self.mixer (MixerInput) during run_frame.
-        // This callback is part of the ConsoleCore protocol for future use.
-    }
-
     fn attach_device(&mut self, _port: usize, _device: Box<dyn Device>) {}
     fn detach_device(&mut self, _port: usize) {}
 

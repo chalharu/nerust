@@ -165,8 +165,6 @@ pub trait ConsoleCore: Send {
     /// frame_slot はレンダラから渡された書き込み可能バッファ。
     fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
 
-    // -- audio --
-    fn audio_samples(&mut self, out: &mut dyn audio::AudioBackend);
     // -- input --
     fn apply_input_state(&mut self, _bytes: &[u8]) {}
     // -- peripherals --
