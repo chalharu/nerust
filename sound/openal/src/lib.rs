@@ -1,4 +1,3 @@
-#[cfg(not(target_os = "android"))]
 use alto::*;
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
@@ -182,7 +181,6 @@ impl Iterator for FadeBuffer {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 struct OpenAlState {
     // alto: Option<Alto>,
     // dev: Option<OutputDevice>,
