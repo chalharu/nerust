@@ -102,7 +102,7 @@ impl OamDmaState {
     }
 }
 
-pub(crate) trait OamDmaStepState {
+pub(crate) trait OamDmaStepState: Send {
     fn next(
         &mut self,
         core: &mut Core,

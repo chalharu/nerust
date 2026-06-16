@@ -9,6 +9,7 @@ members = [
   "contract/emuthread",
   "gui/shared/settings",
   "nes/core",
+  "nes/console",
   "nes/device",
   "input/schema",
   "input/nes",

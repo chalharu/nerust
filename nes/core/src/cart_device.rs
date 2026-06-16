@@ -27,7 +27,7 @@ fn mirror_address(mode: MirrorMode, address: usize) -> usize {
 }
 
 #[typetag::serde(tag = "type")]
-pub(crate) trait Cartridge: Mapper {
+pub(crate) trait Cartridge: Mapper + Send {
     fn initialize(&mut self) {
         self.mapper_state_mut().has_battery =
             self.data_ref().has_battery() || self.battery_default();
