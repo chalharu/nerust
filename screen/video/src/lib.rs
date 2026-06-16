@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 
@@ -106,13 +104,8 @@ impl PixelFormat {
 
 /// フレームバッファ（事前確保・再利用）
 ///
-/// # メモリモデル
-///
-/// 1. ConsoleCore が out.resize(w, h, fmt) でバッファを準備
-/// 2. ConsoleCore が out.data にピクセルを書き込む
-/// 3. GUI が out.publish() で Arc<[u8]> を取得（データコピーなし）
-/// 4. publish() 後、ConsoleCore は out.recycle() で新しい Vec を得る
-///    （2回目以降は capacity が維持されゼロアロケーション）
+/// ConsoleCore が `resize(w, h)` で準備し、`as_mut()` でピクセルを書き込む。
+/// GUI は `as_ref()` で読み取る。単一 `Vec<u8>` でスレッド間共有は行わない。
 #[derive(Debug)]
 pub struct FrameBuffer {
     data: Vec<u8>,
@@ -161,26 +154,6 @@ impl FrameBuffer {
 
     pub fn format(&self) -> &PixelFormat {
         &self.format
-    }
-
-    /// フレームを publish する。Vec の実データを Arc<[u8]> に移譲。
-    /// これ以後、data は空になる。次フレームまでに recycle() が必要。
-    pub fn publish(&mut self) -> Arc<[u8]> {
-        let cap = self.data.capacity();
-        Arc::from(std::mem::replace(&mut self.data, Vec::with_capacity(cap)).into_boxed_slice())
-    }
-
-    /// publish 後の空の Vec を再利用可能にする（capacity 維持、ゼロアロケーション）
-    pub fn recycle(&mut self, format: PixelFormat) {
-        debug_assert!(self.data.is_empty());
-        self.format = format;
-        self.data
-            .reserve(self.width * self.height * self.format.bytes_per_pixel());
-    }
-
-    /// 所有権を交換する（データコピーなし）
-    pub fn swap(&mut self, other: &mut Self) {
-        std::mem::swap(self, other);
     }
 }
 
