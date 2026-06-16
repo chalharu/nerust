@@ -126,6 +126,9 @@ pub trait SystemRuntime: Send {
     fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String>;
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity>;
 
+    /// 最新フレームを表示バッファに引き取る。描画前に呼ぶこと。
+    fn swap_frame_buffer(&mut self) {}
+
     /// Provide access to the current frame buffer without allocating a per-frame copy.
     /// The closure is invoked while holding a read lock on the shared frame buffer.
     /// Implementations should call the closure synchronously and not retain the byte slice.
@@ -405,6 +408,10 @@ impl SystemRuntime for NesRuntime {
             video_frame: Some(self.core.video_frame_handle()),
             video_profile: Some(self.core.video_render_profile()),
         }
+    }
+
+    fn swap_frame_buffer(&mut self) {
+        self.core.swap_frame_buffer();
     }
 
     fn load(&mut self, media: &MediaObject, request: &ResolvedLoadRequest) -> Result<(), String> {

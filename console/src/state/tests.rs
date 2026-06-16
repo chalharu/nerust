@@ -195,12 +195,11 @@ fn console_state_fixture_import_restores_wrapper_state() {
     assert!(fixture.paused);
     assert_eq!(fixture.source_frame, vec![3, 5]);
 
-    let console = loaded_console();
+    let mut console = loaded_console();
     console
         .import_state(bytes)
         .expect("fixture console state should import");
     let exported = export_console_state(&console);
-
     assert_eq!(exported.schema_version, CONSOLE_STATE_SCHEMA_VERSION);
     assert_eq!(exported.frame_counter, fixture.frame_counter);
     assert_eq!(exported.paused, fixture.paused);
@@ -220,6 +219,7 @@ fn console_state_fixture_import_restores_wrapper_state() {
     assert_eq!(exported.source_frame, fixture.source_frame);
     assert_eq!(exported.rom_identity, fixture.rom_identity);
     assert_eq!(exported.options, fixture.options);
+    console.swap_frame_buffer();
     console.with_frame_buffer(|frame| assert_eq!(frame, fixture.source_frame));
 }
 
@@ -311,7 +311,7 @@ fn console_state_import_accepts_runtime_owned_controller_payloads() {
 
 #[test]
 fn console_state_import_restores_paused_frame_counter_controller_and_source_frame() {
-    let console = loaded_console();
+    let mut console = loaded_console();
     let export = console.export_state().expect("console state should export");
     let mut payload = decode_console_state(&export.state_blob);
     payload.frame_counter = 42;
@@ -345,6 +345,7 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
         }
     );
     assert_eq!(exported.source_frame, vec![11, 29]);
+    console.swap_frame_buffer();
     console.with_frame_buffer(|frame| assert_eq!(frame, &[11, 29]));
 }
 

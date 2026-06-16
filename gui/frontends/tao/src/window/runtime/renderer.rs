@@ -33,9 +33,10 @@ impl WgpuRenderer {
 
     pub(crate) fn render(
         &mut self,
-        session: &SessionHandle,
+        session: &mut SessionHandle,
         window_size: SurfaceSize,
     ) -> RenderResult {
+        session.swap_frame_buffer();
         let snapshot = session.snapshot();
         let frame = snapshot
             .video_frame
