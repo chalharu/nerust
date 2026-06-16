@@ -10,8 +10,6 @@ use nerust_nes_core::controller::Controller;
 ///
 /// `InputState` 経由で最新のボタン状態を取得し、シフトレジスタとして
 /// CPU の $4016/$4017 読み出しに応答する。
-/// P2 バイトの bit 2 (0x04) はファミコン P2 マイク状態を表す。
-const P2_MIC_BIT: u8 = 0x04;
 pub struct NesPadDevice<S: InputState<2>> {
     state: S,
     buttons: [u8; 2],
@@ -76,18 +74,11 @@ impl<S: InputState<2>> Controller for NesPadDevice<S> {
                 } else {
                     1
                 };
-                let mic = if self.buttons[1] & P2_MIC_BIT != 0 {
-                    0x04
-                } else {
-                    0
-                };
-                OpenBusReadResult::new(bit | mic, 7)
+                OpenBusReadResult::new(bit, 7)
             }
             _ => {
-                // Mask out the mic bit so it doesn't appear in the P2 shift register
-                let masked = self.buttons[1] & !P2_MIC_BIT;
                 let bit = if self.index[1] < 8 {
-                    let b = (masked >> self.index[1]) & 1;
+                    let b = (self.buttons[1] >> self.index[1]) & 1;
                     if !self.strobe {
                         self.index[1] += 1;
                     }
@@ -140,52 +131,6 @@ mod tests {
             1,
             "open bus after 8 bits should be 1"
         );
-    }
-
-    #[test]
-    fn microphone_encoded_in_p2_bit_2_appears_on_port_0() {
-        let cell = Arc::new(InputCell::<2>::new());
-        let mut device = NesPadDevice::new(cell.clone());
-
-        // P2 byte with mic bit (0x04) set
-        cell.store(&[0x00, 0x04]);
-        device.write(1);
-        device.write(0);
-
-        assert_eq!(
-            device.buttons[1] & P2_MIC_BIT,
-            P2_MIC_BIT,
-            "mic bit latched"
-        );
-        assert_eq!(device.read(0).data & 0x04, 0x04, "mic appears on port 0 D2");
-        // P2 shift register should NOT include mic bit (all 0 → open bus after 8)
-        for _ in 0..8 {
-            assert_eq!(device.read(1).data & 1, 0, "P2 bits should be 0");
-        }
-        assert_eq!(device.read(1).data & 1, 1, "open bus after 8 bits");
-    }
-
-    #[test]
-    fn microphone_does_not_appear_in_p2_shift_register() {
-        let cell = Arc::new(InputCell::<2>::new());
-        let mut device = NesPadDevice::new(cell.clone());
-
-        // P2: B (0x02) + mic (0x04)
-        cell.store(&[0x00, 0x02 | 0x04]);
-        device.write(1);
-        device.write(0);
-
-        // P2 shift: bit 0 = 0, bit 1 = 1 (B), mic bit should be masked
-        assert_eq!(device.read(1).data & 1, 0);
-        assert_eq!(device.read(1).data & 1, 1, "P2 B at bit 1");
-        for i in 0..6 {
-            assert_eq!(
-                device.read(1).data & 1,
-                0,
-                "extra bit {} should be 0",
-                i + 2
-            );
-        }
     }
 
     #[test]
