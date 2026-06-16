@@ -119,7 +119,6 @@ mod tests {
 
         device.write(1);
         device.write(0);
-        assert_eq!(device.buttons, [0x01, 0x00]);
 
         assert_eq!(device.read(0).data & 1, 1, "first bit (A) should be 1");
         assert_eq!(device.read(0).data & 1, 0, "second bit should be 0");

@@ -236,10 +236,6 @@ impl ControllerState for StandardController {
     }
 }
 
-pub fn standard_controller_runtime() -> Box<dyn ControllerState> {
-    Box::new(StandardController::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{

@@ -22,7 +22,7 @@ fn test_session() -> GuiSession {
     GuiSession::from_session_core(SessionCore::from_console(Console::new(
         TestSpeaker,
         ScreenBuffer::new_nes_gpu_default(),
-        nerust_input_nes_runtime::standard_controller_runtime(),
+        Box::new(nerust_input_nes_runtime::StandardController::new()),
     )))
 }
 
