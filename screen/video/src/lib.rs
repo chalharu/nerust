@@ -141,6 +141,13 @@ impl FrameBuffer {
         self.data.resize(self.stride * height, 0);
     }
 
+    /// データバッファを指定バイト数にリサイズする。
+    /// width/height/stride は更新せず、data のみを拡張する。
+    /// ScreenBuffer の出力サイズ (frame_len()) に合わせるために使用する。
+    pub fn resize_data(&mut self, len: usize) {
+        self.data.resize(len, 0);
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }
