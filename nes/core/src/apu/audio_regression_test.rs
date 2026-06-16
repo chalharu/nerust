@@ -5,9 +5,9 @@ use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_rom::CartridgeData;
 use crate::controller::Controller;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
-use nerust_contract_core::audio::AudioBackend;
 use nerust_screen_video::Screen;
 use std::io::Cursor;
 

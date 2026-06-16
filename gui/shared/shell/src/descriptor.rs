@@ -4,6 +4,7 @@ use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_op
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
@@ -16,7 +17,6 @@ use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_contract_core::audio::AudioBackend;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 

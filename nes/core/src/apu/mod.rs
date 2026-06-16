@@ -447,8 +447,6 @@ mod tests {
     use crate::interrupt::Interrupt;
     use nerust_contract_core::audio::AudioBackend;
 
-
-
     struct CapturingBackend {
         samples: Vec<f32>,
         sample_rate: u32,

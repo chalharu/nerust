@@ -1,9 +1,9 @@
 use super::error::RomTestError;
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
-use nerust_contract_core::audio::AudioBackend;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
