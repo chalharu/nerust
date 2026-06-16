@@ -19,7 +19,7 @@ nerust_screen_filter.workspace = true
 nerust_screen_logical.workspace = true
 nerust_screen_physical.workspace = true
 nerust_screen_video.workspace = true
-nerust_sound_traits.workspace = true
+
 nerust_timer.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
