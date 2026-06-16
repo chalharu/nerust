@@ -118,7 +118,7 @@ mod tests {
     use crate::frame::{Buttons, NesInputFrame};
     use crate::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
-        NES_CONTROL_A, NES_CONTROL_RIGHT, NES_CONTROL_SELECT,
+        NES_CONTROL_A, NES_CONTROL_RIGHT,
     };
     use nerust_input_schema::DigitalInputEvent;
 
