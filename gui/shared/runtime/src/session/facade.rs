@@ -73,22 +73,6 @@ impl GuiSession {
         self.core.resume();
     }
 
-    pub fn apply_controller_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.core.apply_controller_state(bytes)
-    }
-
-    pub fn apply_input_state(&mut self, bytes: Vec<u8>) {
-        self.core.apply_input_state(bytes);
-    }
-
-    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.core.current_controller_state()
-    }
-
-    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.core.current_input_state()
-    }
-
     pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
         self.core.export_state()
     }

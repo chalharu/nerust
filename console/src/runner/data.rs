@@ -11,14 +11,7 @@ pub(crate) enum ConsoleData {
     },
     Resume,
     Pause,
-    ApplyInputState {
-        bytes: Vec<u8>,
-    },
     Reset(Sender<ConsoleRequestResult>),
-    ApplyControllerState {
-        bytes: Vec<u8>,
-        reply: Sender<ConsoleRequestResult>,
-    },
     Unload(Sender<ConsoleRequestResult>),
     ExportMapperSave(Sender<ConsoleRequestResult>),
     ImportMapperSave {
@@ -27,8 +20,6 @@ pub(crate) enum ConsoleData {
     },
     CanonicalMediaIdentity(Sender<ConsoleRequestResult>),
     ExportState(Sender<ConsoleRequestResult>),
-    CurrentControllerState(Sender<ConsoleRequestResult>),
-    CurrentInputState(Sender<ConsoleRequestResult>),
     ImportState {
         bytes: Vec<u8>,
         reply: Sender<ConsoleRequestResult>,

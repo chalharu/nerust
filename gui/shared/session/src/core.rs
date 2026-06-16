@@ -88,22 +88,6 @@ impl SessionCore {
         self.paused = false;
     }
 
-    pub fn apply_controller_state(&mut self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.console.apply_controller_state(bytes)
-    }
-
-    pub fn apply_input_state(&mut self, bytes: Vec<u8>) {
-        self.console.apply_input_state(bytes);
-    }
-
-    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.console.current_controller_state()
-    }
-
-    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        self.console.current_input_state()
-    }
-
     pub fn load_rom(&mut self, data: Vec<u8>, options: CoreOptions) -> Result<(), ConsoleError> {
         self.console.load_with_options(data, options)?;
         self.loaded = true;
@@ -162,10 +146,15 @@ mod tests {
     }
 
     fn test_core() -> SessionCore {
+        use std::sync::Arc;
         SessionCore::from_console(Console::new(
             TestSpeaker,
             ScreenBuffer::new_nes_gpu_default(),
-            nerust_input_nes_runtime::standard_controller_runtime(),
+            Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
+                nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(Arc::new(
+                    nerust_input_nes_runtime::nes_input_cell::NesInputCell::new(),
+                )),
+            )),
         ))
     }
 

@@ -93,7 +93,7 @@ impl SessionHandle {
                 &settings_snapshot,
             )
             .expect("default runtime should build");
-        let mut result = Self {
+        Self {
             input_adapter: definition.create_input_adapter(&settings_snapshot),
             definition,
             descriptor,
@@ -104,9 +104,7 @@ impl SessionHandle {
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
             persistence: PersistenceState::default(),
-        };
-        result.sync_input_from_runtime();
-        result
+        }
     }
 
     pub fn from_runtime(
@@ -121,7 +119,7 @@ impl SessionHandle {
             default_app_state(),
         );
         let settings_snapshot = settings.snapshot().expect("ephemeral settings should read");
-        let mut result = Self {
+        Self {
             input_adapter: definition.create_input_adapter(&settings_snapshot),
             definition,
             descriptor,
@@ -132,9 +130,7 @@ impl SessionHandle {
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
             persistence: PersistenceState::default(),
-        };
-        result.sync_input_from_runtime();
-        result
+        }
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
