@@ -1,8 +1,8 @@
-use crate::{
-    ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
-};
 use nerust_contract_core::input::InputState;
 use nerust_input_nes::frame::Buttons;
+use nerust_input_nes_runtime::{
+    ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
+};
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
 
@@ -141,7 +141,7 @@ mod tests {
         let cell = Arc::new(Cell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        cell.store(&[0x00, 0x00, 1]); // mic active
+        cell.store(&[0x00, 0x00, 1]);
         device.write(1);
         device.write(0);
 
@@ -157,13 +157,11 @@ mod tests {
         let cell = Arc::new(Cell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        cell.store(&[0x00, 0x02, 1]); // P2 B + mic
+        cell.store(&[0x00, 0x02, 1]);
         device.write(1);
         device.write(0);
 
-        // Mic appears on port 0 D2
         assert_eq!(device.read(0).data & 0x04, 0x04);
-        // Port 1 should show B at bit 1, no mic interference
         assert_eq!(device.read(1).data & 1, 0);
         assert_eq!(device.read(1).data & 1, 1, "P2 B at bit 1");
     }

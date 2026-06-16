@@ -82,6 +82,7 @@ nerust_console = { path = "console" }
 nerust_contract_core = { path = "contract/core" }
 nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
+nerust_nes_device = { path = "nes/device" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
 nerust_gui_session = { path = "gui/shared/session" }
