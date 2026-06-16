@@ -21,7 +21,7 @@ use nerust_gui_session::core::SessionCore;
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_contract_core::audio::AudioBackend;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -30,14 +30,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Default)]
 struct TestSpeaker;
 
-impl Sound for TestSpeaker {
+impl AudioBackend for TestSpeaker {
     fn start(&mut self) {}
-
     fn pause(&mut self) {}
-}
-
-impl MixerInput for TestSpeaker {
-    fn push(&mut self, _data: f32) {}
+    fn push(&mut self, _sample: f32) {}
 }
 
 struct TestRuntime(SessionCore);
@@ -108,7 +104,7 @@ fn test_session() -> SessionHandle {
         HostBackendIdentity::gtk_opengl(),
         Box::new(TestRuntime(SessionCore::from_console(
             nerust_console::Console::new(
-                TestSpeaker,
+                Box::new(TestSpeaker),
                 ScreenBuffer::new_nes_gpu_default(),
                 Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
                     nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(

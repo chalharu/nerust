@@ -20,7 +20,7 @@ use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_contract_core::audio::AudioBackend;
 use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, RwLock};
@@ -141,8 +141,8 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
+    pub fn new_gpu(
+        speaker: Box<dyn AudioBackend>,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
@@ -154,16 +154,16 @@ impl Console {
         )
     }
 
-    pub fn new<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
+    pub fn new(
+        speaker: Box<dyn AudioBackend>,
         screen_buffer: ScreenBuffer,
         controller: Box<dyn ControllerState>,
     ) -> Self {
         Self::spawn(speaker, screen_buffer, controller)
     }
 
-    fn spawn<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
+    fn spawn(
+        speaker: Box<dyn AudioBackend>,
         screen: ScreenBuffer,
         controller: Box<dyn ControllerState>,
     ) -> Self {

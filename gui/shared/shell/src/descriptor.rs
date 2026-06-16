@@ -16,7 +16,7 @@ use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_contract_core::audio::AudioBackend;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
@@ -202,9 +202,9 @@ impl NesSystemDefinition {
         )
     }
 
-    fn build_console_with<S: 'static + Sound + MixerInput + Send>(
+    fn build_console_with(
         &self,
-        speaker: S,
+        speaker: Box<dyn AudioBackend>,
         screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
     ) -> Result<Console, String> {
         let cell = self

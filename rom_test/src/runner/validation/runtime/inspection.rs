@@ -1,19 +1,21 @@
 use super::ValidationRuntime;
 use crate::error::RomTestError;
 use crate::media::{encode_screenshot_png, screen_hash};
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
+
+
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn audio_sample_rate(&self) -> u32 {
-        self.mixer.sample_rate()
+        self.backend.sample_rate()
     }
 
     pub(in crate::runner::validation) fn audio_samples(&self) -> u64 {
-        self.mixer.samples()
+        self.backend.samples()
     }
 
     pub(in crate::runner::validation) fn audio_hash(&self) -> u64 {
-        self.mixer.checksum()
+        self.backend.checksum()
     }
 
     pub(in crate::runner::validation) fn screen_hash(&self) -> u64 {

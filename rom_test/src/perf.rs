@@ -10,7 +10,7 @@ use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::Screen;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -240,7 +240,7 @@ struct PerfRunner {
     screen: PerfScreen,
     controller: NesPadDevice<SharedNesInputCell>,
     cell: Arc<NesInputCell>,
-    mixer: PerfMixer,
+    backend: PerfBackend,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
@@ -267,7 +267,7 @@ impl PerfRunner {
             screen: PerfScreen::new(),
             controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
             cell,
-            mixer: PerfMixer::new(case.audio_sample_rate()),
+            backend: PerfBackend::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
@@ -289,7 +289,7 @@ impl CaseHarness for PerfRunner {
     fn run_frame(&mut self) -> u64 {
         let steps = self
             .core
-            .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
+            .run_frame(&mut self.screen, &mut self.controller, &mut self.backend);
         self.frame_counter += 1;
         steps
     }
@@ -342,19 +342,20 @@ struct PerfRunResult {
     final_marker: u64,
 }
 
-struct PerfMixer {
+struct PerfBackend {
     sample_rate: u32,
 }
 
-impl PerfMixer {
+impl PerfBackend {
     fn new(sample_rate: u32) -> Self {
         Self { sample_rate }
     }
 }
 
-impl MixerInput for PerfMixer {
-    fn push(&mut self, _data: f32) {}
-
+impl AudioBackend for PerfBackend {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
+    fn push(&mut self, _sample: f32) {}
     fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
