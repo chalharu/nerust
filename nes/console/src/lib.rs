@@ -11,6 +11,7 @@ use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_sound_traits::MixerInput;
@@ -87,7 +88,13 @@ impl NesConsoleCore {
         cell: Arc<NesInputCell>,
     ) -> Result<Self, CoreError> {
         let core = Core::new(rom).map_err(|e| CoreError::Core(e.to_string()))?;
-        let screen = ScreenBuffer::new_nes_gpu_default();
+        let screen = ScreenBuffer::new(
+            FilterType::None,
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        );
         let controller = NesPadDevice::new(SharedNesInputCell(cell));
         Ok(Self {
             core,

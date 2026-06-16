@@ -445,20 +445,30 @@ impl SystemRuntime for NesRuntime {
                 .unwrap_or(0),
             ..ConsoleMetrics::default()
         };
+        let mut video_frame = None;
+        if let Some(ref emu) = self.emu {
+            let mut frame_bytes: Option<Arc<[u8]>> = None;
+            emu.with_last_slot(|slot| {
+                frame_bytes = Some(Arc::from(slot.to_vec().into_boxed_slice()));
+            });
+            if let Some(bytes) = frame_bytes {
+                video_frame = Some(VideoFrameHandle::new(256, 240, 1024, bytes));
+            }
+        }
         SystemRuntimeSnapshot {
             metrics,
-            video_frame: None,
+            video_frame,
             video_profile: Some(VideoRenderProfile {
                 source_logical_size: nerust_screen_logical::LogicalSize {
                     width: 256,
                     height: 240,
                 },
                 logical_size: nerust_screen_logical::LogicalSize {
-                    width: 602,
+                    width: 256,
                     height: 240,
                 },
                 physical_size: nerust_screen_physical::PhysicalSize {
-                    width: 602.0,
+                    width: 256.0,
                     height: 240.0,
                 },
             }),

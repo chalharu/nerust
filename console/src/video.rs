@@ -31,6 +31,15 @@ pub struct VideoFrameHandle {
 }
 
 impl VideoFrameHandle {
+    pub fn new(width: u32, height: u32, stride_bytes: usize, bytes: Arc<[u8]>) -> Self {
+        Self {
+            width,
+            height,
+            stride_bytes,
+            bytes,
+        }
+    }
+
     pub fn bytes(&self) -> &[u8] {
         self.bytes.as_ref()
     }
@@ -53,7 +62,7 @@ pub struct ConsoleVideo {
 }
 
 impl ConsoleVideo {
-    pub(crate) fn new(
+    pub fn new(
         presentation: VideoPresentation,
         frame_buffer: Arc<RwLock<Box<[u8]>>>,
     ) -> Self {
