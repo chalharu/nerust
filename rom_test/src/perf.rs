@@ -6,13 +6,11 @@ use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_contract_core::input::InputCell;
 use nerust_input_nes::frame::Buttons;
-use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
+use nerust_input_nes_runtime::StandardController;
 use nerust_nes_core::Core;
 use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn run_cli() {
@@ -237,8 +235,7 @@ impl Aggregate {
 struct PerfRunner {
     core: Core,
     screen: PerfScreen,
-    controller: NesPadDevice<Arc<InputCell<2>>>,
-    cell: Arc<InputCell<2>>,
+    controller: StandardController,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
@@ -259,12 +256,10 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
-        let cell = Arc::new(InputCell::new());
         Ok(Self {
             core,
             screen: PerfScreen::new(),
-            controller: NesPadDevice::new(cell.clone()),
-            cell,
+            controller: StandardController::new(),
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
@@ -314,16 +309,19 @@ impl CaseHarness for PerfRunner {
         match pad {
             ControllerPad::Pad1 => {
                 self.pad1 = apply_button_state(self.pad1, buttons, state);
+                self.controller.set_pad1(self.pad1);
             }
             ControllerPad::Pad2 => {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
+                self.controller.set_pad2(self.pad2);
             }
         }
-        self.cell.store(&[self.pad1.bits(), self.pad2.bits()]);
         Ok(())
     }
 
-    fn on_microphone(&mut self, _state: PadState) -> Result<(), RomTestError> {
+    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
+        self.controller
+            .set_microphone(matches!(state, PadState::Pressed));
         Ok(())
     }
 }
