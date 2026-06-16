@@ -14,17 +14,15 @@ impl ValidationRuntime {
         match pad {
             ControllerPad::Pad1 => {
                 self.pad1 = apply_button_state(self.pad1, buttons, state);
-                self.controller.set_pad1(self.pad1);
             }
             ControllerPad::Pad2 => {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
-                self.controller.set_pad2(self.pad2);
             }
         }
+        self.cell.store(&[self.pad1.bits(), self.pad2.bits()]);
     }
 
     pub(in crate::runner::validation) fn set_microphone(&mut self, state: PadState) {
-        self.controller
-            .set_microphone(matches!(state, PadState::Pressed));
+        self.controller.set_mic(matches!(state, PadState::Pressed));
     }
 }

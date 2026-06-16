@@ -15,6 +15,7 @@ pub struct NesPadDevice<S: InputState<2>> {
     buttons: [u8; 2],
     index: [u8; 2],
     strobe: bool,
+    mic: bool,
 }
 
 impl<S: InputState<2>> NesPadDevice<S> {
@@ -24,7 +25,13 @@ impl<S: InputState<2>> NesPadDevice<S> {
             buttons: [0; 2],
             index: [0; 2],
             strobe: false,
+            mic: false,
         }
+    }
+
+    /// ファミコン P2 マイク状態を設定する。$4016 D2 に反映される。
+    pub fn set_mic(&mut self, on: bool) {
+        self.mic = on;
     }
 }
 
@@ -33,6 +40,7 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
         self.buttons = [0; 2];
         self.index = [0; 2];
         self.strobe = false;
+        self.mic = false;
     }
 
     fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
@@ -54,7 +62,7 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
                 Buttons::from_bits_truncate(s[0]),
                 Buttons::from_bits_truncate(s[1]),
             ],
-            microphone: false,
+            microphone: self.mic,
             index1: self.index[0] as usize,
             index2: self.index[1] as usize,
             strobe: self.strobe,
@@ -76,7 +84,8 @@ impl<S: InputState<2>> Controller for NesPadDevice<S> {
                 } else {
                     1
                 };
-                OpenBusReadResult::new(bit, 7)
+                let mic = if self.mic { 0x04 } else { 0 };
+                OpenBusReadResult::new(bit | mic, 7)
             }
             _ => {
                 let bit = if self.index[1] < 8 {

@@ -110,7 +110,9 @@ fn test_session() -> SessionHandle {
             nerust_console::Console::new(
                 TestSpeaker,
                 ScreenBuffer::new_nes_gpu_default(),
-                Box::new(nerust_input_nes_runtime::StandardController::new()),
+                Box::new(nerust_input_nes_runtime::nes_pad_device::NesPadDevice::new(
+                    std::sync::Arc::new(nerust_contract_core::input::InputCell::new()),
+                )),
             ),
         ))),
         default_system_definition(),
