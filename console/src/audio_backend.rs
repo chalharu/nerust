@@ -35,10 +35,7 @@ impl ConsoleAudioBackend {
         Self {
             inner,
             filter: NesFilter::new(device_rate as f32),
-            resampler: SimpleDownSampler::new(
-                f64::from(source_rate),
-                f64::from(device_rate),
-            ),
+            resampler: SimpleDownSampler::new(f64::from(source_rate), f64::from(device_rate)),
         }
     }
 }

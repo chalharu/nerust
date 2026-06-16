@@ -22,7 +22,7 @@ use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::interrupt::{Interrupt, IrqSource};
 use crate::persistence_error::PersistenceError;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
@@ -214,7 +214,7 @@ impl Core {
             self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
             if self.sample_accumulator >= CLOCK_RATE {
                 self.sample_accumulator -= CLOCK_RATE;
-            self.send_sample(backend, expansion_audio_output, expansion_audio_inverted);
+                self.send_sample(backend, expansion_audio_output, expansion_audio_inverted);
             }
         }
     }

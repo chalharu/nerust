@@ -35,11 +35,11 @@ use self::persistence_codec::{
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::options::CoreOptions;
 #[cfg(test)]
 use nerust_contract_core::options::Mmc3IrqVariant;
-use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::Screen;
@@ -1071,7 +1071,12 @@ mod scheduler_tests {
         }
 
         assert_eq!(scheduled_cycles, exact_cycles);
-        assert!(scheduled_backend.samples.iter().any(|sample| *sample != 0.0));
+        assert!(
+            scheduled_backend
+                .samples
+                .iter()
+                .any(|sample| *sample != 0.0)
+        );
         assert!(
             scheduled_backend
                 .samples

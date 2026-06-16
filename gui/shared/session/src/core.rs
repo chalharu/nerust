@@ -129,8 +129,8 @@ impl SessionCore {
 mod tests {
     use super::SessionCore;
     use nerust_console::Console;
-    use nerust_screen_buffer::screen_buffer::ScreenBuffer;
     use nerust_contract_core::audio::AudioBackend;
+    use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 
     #[derive(Default)]
     struct TestSpeaker;

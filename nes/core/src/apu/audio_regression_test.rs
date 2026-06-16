@@ -5,10 +5,10 @@ use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_rom::CartridgeData;
 use crate::controller::Controller;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
 use nerust_screen_video::Screen;
-use nerust_contract_core::audio::AudioBackend;
 use std::io::Cursor;
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;

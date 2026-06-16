@@ -11,6 +11,7 @@ use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
@@ -21,7 +22,6 @@ use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_contract_core::audio::AudioBackend;
 use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, RwLock};
@@ -196,7 +196,7 @@ impl Console {
                 metrics,
                 controller,
             );
-            state.run(audio_backend::ConsoleAudioBackend::new(speaker));
+            state.run(Box::new(audio_backend::ConsoleAudioBackend::new(speaker)));
         }));
 
         result
