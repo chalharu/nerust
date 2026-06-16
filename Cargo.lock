@@ -3323,6 +3323,7 @@ dependencies = [
  "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_sound_traits",
+ "nerust_soundfilter",
 ]
 
 [[package]]

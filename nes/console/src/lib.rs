@@ -12,31 +12,57 @@ use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::MixerInput;
+use nerust_soundfilter::Filter;
+use nerust_soundfilter::NesFilter;
+use nerust_soundfilter::resampler::Resampler;
+use nerust_soundfilter::resampler::SimpleDownSampler;
+
+const CLOCK_RATE: u32 = 1_789_773;
+const OVERSAMPLE_FACTOR: u32 = 4;
+
+fn oversampled_rate(device_rate: u32) -> u32 {
+    device_rate
+        .saturating_mul(OVERSAMPLE_FACTOR)
+        .min(CLOCK_RATE)
+        .max(device_rate)
+}
 
 /// Temporary adapter: converts `Box<dyn AudioBackend>` to `MixerInput`.
 ///
 /// Phase 7 で `run_frame` が `AudioBackend` 直受けになった時点で不要になる。
+/// それまでは、`MixerBridge` 相当のオーバーサンプリング + NesFilter + ダウンサンプリングを提供する。
 struct AudioBackendAdapter {
     backend: Box<dyn AudioBackend>,
+    source_rate: u32,
     gain: f32,
+    filter: NesFilter,
+    resampler: SimpleDownSampler,
 }
 
 impl AudioBackendAdapter {
     fn new(backend: Box<dyn AudioBackend>, gain: f32) -> Self {
+        let device_rate = backend.sample_rate();
+        let source_rate = oversampled_rate(device_rate);
         Self {
             backend,
+            source_rate,
             gain: gain.clamp(0.0, 1.0),
+            filter: NesFilter::new(device_rate as f32),
+            resampler: SimpleDownSampler::new(f64::from(source_rate), f64::from(device_rate)),
         }
     }
 }
 
 impl MixerInput for AudioBackendAdapter {
     fn push(&mut self, data: f32) {
-        self.backend.push((data * 2.0 - 1.0) * self.gain);
+        if let Some(resampled) = self.resampler.step(data) {
+            let sample = self.filter.step((resampled * 2.0 - 1.0) * self.gain);
+            self.backend.push(sample);
+        }
     }
 
     fn sample_rate(&self) -> u32 {
-        self.backend.sample_rate()
+        self.source_rate
     }
 }
 
@@ -178,7 +204,6 @@ mod tests {
         let mut slot2 = vec![0u8; slot_size];
         console.render_frame(&mut slot1).expect("frame 0");
         console.render_frame(&mut slot2).expect("frame 1");
-        // Deterministic: same ROM should produce same output for each frame
         assert_eq!(slot1, slot2, "frames should be deterministic");
     }
 
