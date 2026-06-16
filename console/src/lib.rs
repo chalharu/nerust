@@ -245,7 +245,7 @@ impl Console {
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.video.read_shared(f)
+        self.video.swap_and_read(f)
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
