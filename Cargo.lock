@@ -3219,6 +3219,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
+ "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -3236,6 +3237,7 @@ dependencies = [
  "nerust_console",
  "nerust_contract_core",
  "nerust_input_nes_runtime",
+ "nerust_nes_device",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_sound_traits",
@@ -3265,6 +3267,7 @@ dependencies = [
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
+ "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
@@ -3333,6 +3336,12 @@ dependencies = [
 [[package]]
 name = "nerust_nes_device"
 version = "0.1.0-dev"
+dependencies = [
+ "nerust_contract_core",
+ "nerust_input_nes",
+ "nerust_input_nes_runtime",
+ "nerust_nes_core",
+]
 
 [[package]]
 name = "nerust_persistence"
@@ -3364,6 +3373,7 @@ dependencies = [
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
+ "nerust_nes_device",
  "nerust_screen_buffer",
  "nerust_screen_filter",
  "nerust_screen_logical",

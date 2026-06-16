@@ -6,8 +6,8 @@ mod inspection;
 use crate::media::HashingMixer;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
 use nerust_nes_core::Core;
+use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use std::sync::Arc;
 

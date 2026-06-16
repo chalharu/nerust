@@ -12,6 +12,7 @@ nerust_contract_core.workspace = true
 
 [dev-dependencies]
 nerust_input_nes_runtime.workspace = true
+nerust_nes_device.workspace = true
 nerust_screen_buffer.workspace = true
 nerust_screen_filter.workspace = true
 nerust_sound_traits.workspace = true

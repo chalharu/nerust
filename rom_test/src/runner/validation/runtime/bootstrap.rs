@@ -5,8 +5,8 @@ use crate::media::{HashingMixer, validation_screen_buffer};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
 use nerust_nes_core::Core;
+use nerust_nes_device::nes_pad::NesPadDevice;
 use std::sync::Arc;
 
 impl ValidationRuntime {
