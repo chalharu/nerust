@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
@@ -33,6 +33,9 @@ pub struct ConsoleVideo {
     /// `swap_frame_buffer(&mut self)` で shared から最新フレームを引き取り、
     /// `with_frame_buffer(&self)` でロックなし読み取り。
     disp_fb: FrameBuffer,
+    /// 共有バッファに新しいフレームが書き込まれたかどうか。
+    /// GUI スレッドが各フレームの描画前に1回チェックする。
+    frame_buffer_updated: Arc<AtomicBool>,
 }
 
 impl ConsoleVideo {
@@ -40,11 +43,13 @@ impl ConsoleVideo {
         render_profile: VideoRenderProfile,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
+        frame_buffer_updated: Arc<AtomicBool>,
     ) -> Self {
         Self {
             render_profile,
             frame_buffer,
             disp_fb,
+            frame_buffer_updated,
         }
     }
 
@@ -55,8 +60,18 @@ impl ConsoleVideo {
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
     pub fn swap_frame_buffer(&mut self) {
-        let mut guard = self.frame_buffer.lock().unwrap();
-        std::mem::swap(&mut *guard, &mut self.disp_fb);
+        if self
+            .frame_buffer_updated
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let mut guard = self.frame_buffer.lock().unwrap();
+            if self
+                .frame_buffer_updated
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                std::mem::swap(&mut *guard, &mut self.disp_fb);
+            }
+        }
     }
 
     /// 表示バッファの内容をロックなしで読み取る。
@@ -91,7 +106,7 @@ mod tests {
                 height: 1.0,
             },
         };
-        ConsoleVideo::new(profile, shared, disp)
+        ConsoleVideo::new(profile, shared, disp, Arc::new(AtomicBool::new(false)))
     }
 
     #[test]
@@ -100,6 +115,9 @@ mod tests {
         {
             let mut guard = video.frame_buffer.lock().unwrap();
             guard.as_mut().fill(42);
+            video
+                .frame_buffer_updated
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 0);
