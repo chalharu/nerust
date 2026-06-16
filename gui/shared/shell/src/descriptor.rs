@@ -4,7 +4,6 @@ use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_op
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
-use nerust_contract_core::input::InputCell;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
@@ -14,7 +13,7 @@ use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
-use nerust_input_nes_runtime::nes_input_cell::NesInputCell;
+use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_sound_traits::{MixerInput, Sound};
@@ -141,7 +140,7 @@ pub trait SystemRuntime: Send {
 }
 
 struct NesSystemDefinition {
-    input_cell: OnceLock<Arc<InputCell<3>>>,
+    input_cell: OnceLock<Arc<NesInputCell>>,
 }
 
 impl NesSystemDefinition {
@@ -155,11 +154,11 @@ impl NesSystemDefinition {
 #[derive(Debug)]
 struct NesAdapter {
     input: NesInputState,
-    cell: NesInputCell,
+    cell: Arc<NesInputCell>,
 }
 
 impl NesAdapter {
-    fn new(cell: NesInputCell) -> Self {
+    fn new(cell: Arc<NesInputCell>) -> Self {
         Self {
             input: NesInputState::default(),
             cell,
@@ -210,9 +209,9 @@ impl NesSystemDefinition {
     ) -> Result<Console, String> {
         let cell = self
             .input_cell
-            .get_or_init(|| Arc::new(InputCell::<3>::new()))
+            .get_or_init(|| Arc::new(NesInputCell::new()))
             .clone();
-        let device = NesPadDevice::new(cell);
+        let device = NesPadDevice::new(SharedNesInputCell(cell));
         Ok(Console::new(speaker, screen_buffer, Box::new(device)))
     }
 }
@@ -349,11 +348,11 @@ impl SystemDefinition for NesSystemDefinition {
         // 通常は build_console が先に呼ばれて cell が初期化されているが、
         // テスト等で単独で呼ばれる場合もあるので、その時は新規作成する。
         let arc = self.input_cell.get().cloned().unwrap_or_else(|| {
-            let cell = Arc::new(InputCell::<3>::new());
+            let cell = Arc::new(NesInputCell::new());
             let _ = self.input_cell.set(cell.clone());
             cell
         });
-        Box::new(NesAdapter::new(NesInputCell::from_arc(arc)))
+        Box::new(NesAdapter::new(arc))
     }
 
     fn create_runtime(
