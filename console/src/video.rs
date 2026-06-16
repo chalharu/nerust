@@ -9,7 +9,7 @@ pub struct VideoFrameHandle {
     pub width: u32,
     pub height: u32,
     pub stride_bytes: usize,
-    bytes: Arc<[u8]>,
+    pub bytes: Arc<[u8]>,
 }
 
 impl VideoFrameHandle {
@@ -70,17 +70,6 @@ impl ConsoleVideo {
         let guard = self.frame_buffer.lock().unwrap();
         f(guard.as_ref())
     }
-
-    /// VideoFrameHandle を生成する。
-    pub fn frame_handle(&self) -> VideoFrameHandle {
-        let guard = self.frame_buffer.lock().unwrap();
-        VideoFrameHandle {
-            width: guard.width() as u32,
-            height: guard.height() as u32,
-            stride_bytes: guard.stride(),
-            bytes: Arc::from(guard.as_ref()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -125,18 +114,5 @@ mod tests {
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 42);
         });
-    }
-
-    #[test]
-    fn console_video_frame_handle_reads_shared() {
-        let video = make_test_video();
-        {
-            let mut guard = video.frame_buffer.lock().unwrap();
-            guard.as_mut().fill(99);
-        }
-        let handle = video.frame_handle();
-        assert_eq!(handle.bytes()[0], 99);
-        assert_eq!(handle.width, 4);
-        assert_eq!(handle.stride_bytes, 256);
     }
 }
