@@ -48,10 +48,11 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
     }
 
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
+        let s = self.state.sample();
         encode_controller_state(StandardControllerSnapshot {
             buttons: [
-                Buttons::from_bits_truncate(self.buttons[0]),
-                Buttons::from_bits_truncate(self.buttons[1]),
+                Buttons::from_bits_truncate(s[0]),
+                Buttons::from_bits_truncate(s[1]),
             ],
             microphone: false,
             index1: self.index[0] as usize,
@@ -63,10 +64,11 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
 
 impl<S: InputState<2>> Controller for NesPadDevice<S> {
     fn read(&mut self, address: usize) -> OpenBusReadResult {
+        let buttons = self.state.sample();
         match address {
             0 => {
                 let bit = if self.index[0] < 8 {
-                    let b = (self.buttons[0] >> self.index[0]) & 1;
+                    let b = (buttons[0] >> self.index[0]) & 1;
                     if !self.strobe {
                         self.index[0] += 1;
                     }
@@ -78,7 +80,7 @@ impl<S: InputState<2>> Controller for NesPadDevice<S> {
             }
             _ => {
                 let bit = if self.index[1] < 8 {
-                    let b = (self.buttons[1] >> self.index[1]) & 1;
+                    let b = (buttons[1] >> self.index[1]) & 1;
                     if !self.strobe {
                         self.index[1] += 1;
                     }
@@ -94,8 +96,6 @@ impl<S: InputState<2>> Controller for NesPadDevice<S> {
     fn write(&mut self, value: u8) {
         self.strobe = value & 1 == 1;
         if self.strobe {
-            let s = self.state.sample();
-            self.buttons = [s[0], s[1]];
             self.index = [0, 0];
         }
     }
