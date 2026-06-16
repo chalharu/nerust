@@ -71,3 +71,40 @@ impl AudioBackend for NullAudio {
     fn pause(&mut self) {}
     fn push(&mut self, _sample: f32) {}
 }
+
+/// 音量調整 + レンジ変換ラッパー
+///
+/// APU 出力 (0.0〜1.0) を AudioBackend 期待範囲 (-1.0〜1.0) に変換し、
+/// ユーザー設定の音量を適用する。
+/// フィルタ/リサンプラは持たない（ConsoleAudioBackend が担当）。
+pub struct VolumeBackend {
+    inner: Box<dyn AudioBackend>,
+    volume: f32,
+}
+
+impl VolumeBackend {
+    pub fn new(inner: Box<dyn AudioBackend>, volume: f32) -> Self {
+        Self {
+            inner,
+            volume: volume.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl AudioBackend for VolumeBackend {
+    fn start(&mut self) {
+        self.inner.start();
+    }
+
+    fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    fn push(&mut self, sample: f32) {
+        self.inner.push((sample * 2.0 - 1.0) * self.volume);
+    }
+}
