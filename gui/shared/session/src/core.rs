@@ -47,7 +47,15 @@ impl SessionCore {
     }
 
     pub fn video_frame_handle(&self) -> VideoFrameHandle {
-        self.console.video().frame_handle()
+        use std::sync::Arc;
+        let profile = self.console.video().render_profile();
+        let logical_w = profile.logical_size.width;
+        self.console.with_frame_buffer(|bytes| VideoFrameHandle {
+            width: logical_w as u32,
+            height: profile.logical_size.height as u32,
+            stride_bytes: logical_w * 4,
+            bytes: Arc::from(bytes),
+        })
     }
 
     pub fn video_render_profile(&self) -> VideoRenderProfile {
