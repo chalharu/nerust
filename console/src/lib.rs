@@ -184,17 +184,18 @@ impl Console {
         } else {
             PixelFormat::Rgba
         };
-        let mut shared_fb = FrameBuffer::with_capacity(
-            presentation.source_logical_size().width,
-            presentation.source_logical_size().height,
-            pixel_format.clone(),
-        );
-        shared_fb.resize(
-            presentation.source_logical_size().width,
-            presentation.source_logical_size().height,
-        );
+        let src_w = presentation.source_logical_size().width;
+        let src_h = presentation.source_logical_size().height;
+
+        let mut shared_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        shared_fb.resize(src_w, src_h);
         shared_fb.resize_data(frame_len);
         let shared = Arc::new(Mutex::new(shared_fb));
+
+        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        disp_fb.resize(src_w, src_h);
+        disp_fb.resize_data(frame_len);
+
         let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
@@ -204,20 +205,19 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo::new(render_profile, shared.clone()),
+            video: ConsoleVideo::new(render_profile, shared.clone(), disp_fb),
             metrics: metrics.clone(),
         };
 
+        // 初期フレームを共有バッファに書き込む
+        {
+            let mut guard = shared.lock().unwrap();
+            screen.write_frame_into(guard.as_mut());
+        }
+
         result.thread = Some(thread::spawn(move || {
-            let mut backing = FrameBuffer::with_capacity(
-                presentation.source_logical_size().width,
-                presentation.source_logical_size().height,
-                pixel_format,
-            );
-            backing.resize(
-                presentation.source_logical_size().width,
-                presentation.source_logical_size().height,
-            );
+            let mut backing = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
+            backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
                 data_recv, stop_recv, screen, shared, backing, metrics, controller,
@@ -245,7 +245,7 @@ impl Console {
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.video.with_frame_buffer(f)
+        self.video.read_shared(f)
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
