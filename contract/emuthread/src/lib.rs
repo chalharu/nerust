@@ -4,6 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
+use nerust_contract_core::timer::FrameTimer;
 use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
 
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
@@ -16,7 +17,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
 }
 
 impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
-    pub fn spawn(mut core: C) -> Self {
+    pub fn spawn(mut core: C, timer: FrameTimer) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count = Arc::new(AtomicU64::new(0));
@@ -28,6 +29,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let thread = thread::spawn(move || {
             let slot_size = core.frame_slot_size();
             let mut frame_slot = vec![0u8; slot_size];
+            let mut local_frame = 0u64;
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
@@ -35,11 +37,16 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             Ok(list) => {
                                 *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
                                 rp.store(false, Ordering::Release);
-                                fc.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(e) => {
                                 log::error!("render_frame failed: {e}");
                             }
+                        }
+                        local_frame += 1;
+                        fc.store(local_frame, Ordering::Relaxed);
+                        // 次フレームの期待時刻まで待つ（遅れている場合は即座に進む）
+                        if let Some(dur) = timer.remaining_until(local_frame) {
+                            thread::sleep(dur);
                         }
                     }
                     Ok(EmuCommand::Pause) => core.set_paused(true),

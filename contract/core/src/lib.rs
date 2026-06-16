@@ -5,6 +5,7 @@ pub mod mirror;
 pub mod options;
 pub mod persistence;
 pub mod rom;
+pub mod timer;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
