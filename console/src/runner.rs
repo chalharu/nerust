@@ -28,6 +28,7 @@ pub(super) struct ConsoleRunner {
 }
 
 impl ConsoleRunner {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
