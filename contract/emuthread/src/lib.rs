@@ -21,10 +21,12 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
 
         let cmds = Arc::clone(&last_cmds);
         let thread = thread::spawn(move || {
+            let slot_size = core.frame_slot_size();
+            let mut frame_slot = vec![0u8; slot_size];
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
-                        match core.render_frame() {
+                        match core.render_frame(&mut frame_slot) {
                             Ok(list) => {
                                 *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
                             }

@@ -8,9 +8,6 @@ pub mod rom;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use nerust_screen_video::FrameBuffer;
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -54,55 +51,18 @@ pub struct CoreCapabilities {
 
 #[derive(Clone)]
 pub enum GpuCommand {
-    Blit(Arc<FrameBuffer>),
-    PaletteDecode {
-        indices: Arc<FrameBuffer>,
-        palette_id: PaletteId,
-    },
-    UploadPalette {
-        id: PaletteId,
-        data: Arc<[u32; 256]>,
-    },
-    UploadTexture {
-        id: TextureId,
-        data: Arc<[u8]>,
-        width: u32,
-        height: u32,
-        format: TextureFormat,
-    },
-    DrawMesh {
-        vertices: Vec<Vertex>,
-        indices: Vec<u16>,
-        textures: Vec<TextureId>,
-    },
+    /// 指定したスロット番号のフレームバッファを画面に表示する
+    Blit { slot: u32 },
+    /// 指定したスロット番号のパレットインデックスフレームを
+    /// RGBA にデコードして表示する
+    PaletteDecode { slot: u32 },
+    /// 指定したスロット番号にパレットデータをアップロードする
+    UploadPalette { slot: u32 },
 }
 
 #[derive(Clone)]
 pub struct GpuCommandList {
     pub commands: Vec<GpuCommand>,
-}
-
-// ---------------------------------------------------------------------------
-// GPU resource identifiers (forward declarations)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PaletteId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TextureId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextureFormat {
-    Rgba8,
-    // future: Bgra8, R8, Rg8, …
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Vertex {
-    pub position: [f32; 3],
-    pub uv: [f32; 2],
-    pub color: [f32; 4],
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +122,8 @@ pub enum EmuCommand {
 pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self) -> Result<GpuCommandList, CoreError>;
+    fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
+    fn frame_slot_size(&self) -> usize;
 
     // -- audio --
     fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
@@ -193,5 +154,31 @@ pub trait ConsoleCore: Send {
     }
     fn rewind_restore(&mut self, _buf: &[u8]) {
         panic!("rewind not supported")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_command_round_trips_slot_number() {
+        let cmd = GpuCommand::Blit { slot: 42 };
+        match cmd {
+            GpuCommand::Blit { slot } => assert_eq!(slot, 42),
+            _ => panic!("expected Blit"),
+        }
+    }
+
+    #[test]
+    fn gpu_command_list_holds_commands() {
+        let list = GpuCommandList {
+            commands: vec![
+                GpuCommand::Blit { slot: 0 },
+                GpuCommand::PaletteDecode { slot: 1 },
+                GpuCommand::UploadPalette { slot: 2 },
+            ],
+        };
+        assert_eq!(list.commands.len(), 3);
     }
 }
