@@ -10,7 +10,7 @@ use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
-    last_slot: Arc<RwLock<Option<Vec<u8>>>>,
+    last_slot: Arc<RwLock<Vec<u8>>>,
     frame_count: Arc<AtomicU64>,
     render_pending: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -21,7 +21,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     pub fn spawn(mut core: C, timer: FrameTimer) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
-        let last_slot: Arc<RwLock<Option<Vec<u8>>>> = Arc::new(RwLock::new(None));
+        let last_slot: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(Vec::new()));
         let frame_count = Arc::new(AtomicU64::new(0));
         let render_pending = Arc::new(AtomicBool::new(false));
 
@@ -32,6 +32,8 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let thread = thread::spawn(move || {
             let slot_size = core.frame_slot_size();
             let mut frame_slot = vec![0u8; slot_size];
+            // 共有バッファを同じサイズに初期化（以降は swap でポインタ交換のみ）
+            *slot.write().unwrap_or_else(|e| e.into_inner()) = vec![0u8; slot_size];
             let mut local_frame = 0u64;
             loop {
                 match cmd_rx.recv() {
@@ -39,8 +41,11 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         match core.render_frame(&mut frame_slot) {
                             Ok(list) => {
                                 *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
-                                *slot.write().unwrap_or_else(|e| e.into_inner()) =
-                                    Some(frame_slot.clone());
+                                // ポインタ交換: frame_slot が新しいフレーム、
+                                // shared が古いフレームになる（ゼロコピー）
+                                let mut guard =
+                                    slot.write().unwrap_or_else(|e| e.into_inner());
+                                std::mem::swap(&mut *guard, &mut frame_slot);
                                 rp.store(false, Ordering::Release);
                             }
                             Err(e) => {
@@ -90,9 +95,9 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     }
 
     pub fn with_last_slot(&self, f: impl FnOnce(&[u8])) {
-        if let Ok(slot) = self.last_slot.read() {
-            if let Some(ref data) = *slot {
-                f(data);
+        if let Ok(guard) = self.last_slot.read() {
+            if !guard.is_empty() {
+                f(&guard);
             }
         }
     }
