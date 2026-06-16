@@ -141,7 +141,7 @@ pub trait SystemRuntime: Send {
 }
 
 struct NesSystemDefinition {
-    input_cell: OnceLock<Arc<InputCell<2>>>,
+    input_cell: OnceLock<Arc<InputCell<3>>>,
 }
 
 impl NesSystemDefinition {
@@ -210,7 +210,7 @@ impl NesSystemDefinition {
     ) -> Result<Console, String> {
         let cell = self
             .input_cell
-            .get_or_init(|| Arc::new(InputCell::new()))
+            .get_or_init(|| Arc::new(InputCell::<3>::new()))
             .clone();
         let device = NesPadDevice::new(cell);
         Ok(Console::new(speaker, screen_buffer, Box::new(device)))
@@ -349,7 +349,7 @@ impl SystemDefinition for NesSystemDefinition {
         // 通常は build_console が先に呼ばれて cell が初期化されているが、
         // テスト等で単独で呼ばれる場合もあるので、その時は新規作成する。
         let arc = self.input_cell.get().cloned().unwrap_or_else(|| {
-            let cell = Arc::new(InputCell::new());
+            let cell = Arc::new(InputCell::<3>::new());
             let _ = self.input_cell.set(cell.clone());
             cell
         });
@@ -371,20 +371,26 @@ impl SystemInputAdapter for NesAdapter {
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
         let frame = self.input.current_frame();
-        self.cell
-            .store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
     }
 
     fn clear(&mut self) {
         let _ = self.input.clear_current_frame();
-        self.cell.store(0, 0);
+        self.cell.store(0, 0, false);
     }
 
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let frame = decode_input_state(bytes).map_err(|error| error.to_string())?;
         self.input.sync_from_frame(frame);
-        self.cell
-            .store(frame.player_one.bits(), frame.player_two.bits());
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
         Ok(())
     }
 

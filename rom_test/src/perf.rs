@@ -234,15 +234,18 @@ impl Aggregate {
     }
 }
 
+type Cell3 = InputCell<3>;
+
 struct PerfRunner {
     core: Core,
     screen: PerfScreen,
-    controller: NesPadDevice<Arc<InputCell<2>>>,
-    cell: Arc<InputCell<2>>,
+    controller: NesPadDevice<Arc<Cell3>>,
+    cell: Arc<Cell3>,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
+    mic: bool,
 }
 
 impl PerfRunner {
@@ -259,7 +262,7 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
-        let cell = Arc::new(InputCell::new());
+        let cell = Arc::new(Cell3::new());
         Ok(Self {
             core,
             screen: PerfScreen::new(),
@@ -269,6 +272,7 @@ impl PerfRunner {
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
+            mic: false,
         })
     }
 
@@ -319,12 +323,15 @@ impl CaseHarness for PerfRunner {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.cell.store(&[self.pad1.bits(), self.pad2.bits()]);
+        self.cell
+            .store(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
-        self.controller.set_mic(matches!(state, PadState::Pressed));
+        self.mic = matches!(state, PadState::Pressed);
+        self.cell
+            .store(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 }

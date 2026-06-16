@@ -11,13 +11,16 @@ use nerust_nes_core::Core;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use std::sync::Arc;
 
+type Cell3 = InputCell<3>;
+
 pub(super) struct ValidationRuntime {
     screen_buffer: ScreenBuffer,
     core: Core,
     mixer: HashingMixer,
-    controller: NesPadDevice<Arc<InputCell<2>>>,
-    cell: Arc<InputCell<2>>,
+    controller: NesPadDevice<Arc<Cell3>>,
+    cell: Arc<Cell3>,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
+    mic: bool,
 }

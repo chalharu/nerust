@@ -8,39 +8,31 @@ use nerust_nes_core::controller::Controller;
 
 /// NES パッドの Device 実装。
 ///
-/// `InputState` 経由で最新のボタン状態を取得し、シフトレジスタとして
-/// CPU の $4016/$4017 読み出しに応答する。
-pub struct NesPadDevice<S: InputState<2>> {
+/// `InputState<3>` 経由で `[p1, p2, mic]` を取得し、シフトレジスタとして
+/// CPU の $4016/$4017 読み出しに応答する。mic は $4016 D2 に現れる。
+pub struct NesPadDevice<S: InputState<3>> {
     state: S,
     buttons: [u8; 2],
     index: [u8; 2],
     strobe: bool,
-    mic: bool,
 }
 
-impl<S: InputState<2>> NesPadDevice<S> {
+impl<S: InputState<3>> NesPadDevice<S> {
     pub fn new(state: S) -> Self {
         Self {
             state,
             buttons: [0; 2],
             index: [0; 2],
             strobe: false,
-            mic: false,
         }
-    }
-
-    /// ファミコン P2 マイク状態を設定する。$4016 D2 に反映される。
-    pub fn set_mic(&mut self, on: bool) {
-        self.mic = on;
     }
 }
 
-impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
+impl<S: InputState<3> + Send + 'static> ControllerState for NesPadDevice<S> {
     fn reset_runtime(&mut self) {
         self.buttons = [0; 2];
         self.index = [0; 2];
         self.strobe = false;
-        self.mic = false;
     }
 
     fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
@@ -62,7 +54,7 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
                 Buttons::from_bits_truncate(s[0]),
                 Buttons::from_bits_truncate(s[1]),
             ],
-            microphone: self.mic,
+            microphone: s[2] != 0,
             index1: self.index[0] as usize,
             index2: self.index[1] as usize,
             strobe: self.strobe,
@@ -70,9 +62,10 @@ impl<S: InputState<2> + Send + 'static> ControllerState for NesPadDevice<S> {
     }
 }
 
-impl<S: InputState<2>> Controller for NesPadDevice<S> {
+impl<S: InputState<3>> Controller for NesPadDevice<S> {
     fn read(&mut self, address: usize) -> OpenBusReadResult {
-        let buttons = self.state.sample();
+        let s = self.state.sample();
+        let buttons = [s[0], s[1]];
         match address {
             0 => {
                 let bit = if self.index[0] < 8 {
@@ -84,7 +77,7 @@ impl<S: InputState<2>> Controller for NesPadDevice<S> {
                 } else {
                     1
                 };
-                let mic = if self.mic { 0x04 } else { 0 };
+                let mic = if s[2] != 0 { 0x04 } else { 0 };
                 OpenBusReadResult::new(bit | mic, 7)
             }
             _ => {
@@ -117,14 +110,16 @@ mod tests {
 
     use nerust_contract_core::input::InputCell;
 
+    type Cell = InputCell<3>;
+
     #[test]
     fn strobe_latches_current_state() {
-        let cell = Arc::new(InputCell::<2>::new());
+        let cell = Arc::new(Cell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        assert_eq!(cell.load(), [0, 0]);
-        cell.store(&[0x01, 0x00]);
-        assert_eq!(cell.load(), [0x01, 0x00]);
+        assert_eq!(cell.load(), [0, 0, 0]);
+        cell.store(&[0x01, 0x00, 0]);
+        assert_eq!(cell.load(), [0x01, 0x00, 0]);
 
         device.write(1);
         device.write(0);
@@ -142,11 +137,43 @@ mod tests {
     }
 
     #[test]
-    fn updated_state_after_strobe() {
-        let cell = Arc::new(InputCell::<2>::new());
+    fn microphone_appears_on_port_0_d2() {
+        let cell = Arc::new(Cell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        cell.store(&[0x80, 0x00]);
+        cell.store(&[0x00, 0x00, 1]); // mic active
+        device.write(1);
+        device.write(0);
+
+        assert_eq!(
+            device.read(0).data & 0x04,
+            0x04,
+            "mic bit (D2) should be set"
+        );
+    }
+
+    #[test]
+    fn microphone_does_not_affect_p2_shift_register() {
+        let cell = Arc::new(Cell::new());
+        let mut device = NesPadDevice::new(cell.clone());
+
+        cell.store(&[0x00, 0x02, 1]); // P2 B + mic
+        device.write(1);
+        device.write(0);
+
+        // Mic appears on port 0 D2
+        assert_eq!(device.read(0).data & 0x04, 0x04);
+        // Port 1 should show B at bit 1, no mic interference
+        assert_eq!(device.read(1).data & 1, 0);
+        assert_eq!(device.read(1).data & 1, 1, "P2 B at bit 1");
+    }
+
+    #[test]
+    fn updated_state_after_strobe() {
+        let cell = Arc::new(Cell::new());
+        let mut device = NesPadDevice::new(cell.clone());
+
+        cell.store(&[0x80, 0x00, 0]);
         device.write(1);
         device.write(0);
 
@@ -155,16 +182,16 @@ mod tests {
         }
         assert_eq!(device.read(0).data & 1, 1, "bit 7 (Up) should be 1");
 
-        cell.store(&[0x01, 0x00]);
+        cell.store(&[0x01, 0x00, 0]);
         assert_eq!(device.read(0).data & 1, 1, "open bus after 8 bits");
     }
 
     #[test]
     fn second_player_reads_from_port_1() {
-        let cell = Arc::new(InputCell::<2>::new());
+        let cell = Arc::new(Cell::new());
         let mut device = NesPadDevice::new(cell.clone());
 
-        cell.store(&[0x00, 0x02]);
+        cell.store(&[0x00, 0x02, 0]);
         device.write(1);
         device.write(0);
 
