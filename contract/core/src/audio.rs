@@ -71,3 +71,40 @@ impl AudioBackend for NullAudio {
     fn pause(&mut self) {}
     fn push(&mut self, _sample: f32) {}
 }
+
+/// 音量調整ラッパー
+///
+/// Phase 4b で MixerBridge 削除に伴い、gain 適用を AudioBackend レイヤーで提供する。
+/// Phase 2c でフィルタ/リサンプラが再導入されるまでの暫定対応。
+pub struct VolumeBackend {
+    inner: Box<dyn AudioBackend>,
+    volume: f32,
+}
+
+impl VolumeBackend {
+    pub fn new(inner: Box<dyn AudioBackend>, volume: f32) -> Self {
+        Self {
+            inner,
+            volume: volume.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl AudioBackend for VolumeBackend {
+    fn start(&mut self) {
+        self.inner.start();
+    }
+
+    fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    fn push(&mut self, sample: f32) {
+        // Convert from 0.0-1.0 (APU output range) to -1.0-1.0 * volume
+        self.inner.push((sample * 2.0 - 1.0) * self.volume);
+    }
+}
