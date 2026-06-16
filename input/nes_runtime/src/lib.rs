@@ -3,7 +3,6 @@ pub mod nes_pad_device;
 
 use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
 use nerust_input_nes::frame::{Buttons, NesInputFrame};
-use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
 
 /// NES パッドのセーブステート関連のトレイト。
@@ -37,15 +36,6 @@ struct ControllerStatePayload {
     microphone: bool,
     index1: u64,
     index2: u64,
-    strobe: bool,
-}
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
-pub struct StandardController {
-    buttons: [Buttons; 2],
-    microphone: bool,
-    index1: usize,
-    index2: usize,
     strobe: bool,
 }
 
@@ -118,133 +108,14 @@ pub fn apply_input_state(
     Ok(snapshot_with_input_frame(snapshot, frame))
 }
 
-impl StandardController {
-    pub fn new() -> Self {
-        Self {
-            buttons: [Buttons::empty(); 2],
-            microphone: false,
-            index1: 0,
-            index2: 0,
-            strobe: false,
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.buttons = [Buttons::empty(); 2];
-        self.microphone = false;
-        self.index1 = 0;
-        self.index2 = 0;
-        self.strobe = false;
-    }
-
-    pub fn export_snapshot(&self) -> StandardControllerSnapshot {
-        StandardControllerSnapshot {
-            buttons: self.buttons,
-            microphone: self.microphone,
-            index1: self.index1,
-            index2: self.index2,
-            strobe: self.strobe,
-        }
-    }
-
-    pub fn import_snapshot(&mut self, snapshot: StandardControllerSnapshot) {
-        self.buttons = snapshot.buttons;
-        self.microphone = snapshot.microphone;
-        self.index1 = snapshot.index1;
-        self.index2 = snapshot.index2;
-        self.strobe = snapshot.strobe;
-    }
-
-    pub fn set_pad1(&mut self, buttons: Buttons) {
-        self.buttons[0] = buttons;
-    }
-
-    pub fn set_pad2(&mut self, buttons: Buttons) {
-        self.buttons[1] = buttons;
-    }
-
-    pub fn set_microphone(&mut self, microphone: bool) {
-        self.microphone = microphone;
-    }
-}
-
-impl Default for StandardController {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Controller for StandardController {
-    fn read(&mut self, address: usize) -> OpenBusReadResult {
-        match address {
-            0 => OpenBusReadResult::new(
-                if self.index1 < 8 {
-                    let result = self.buttons[0].bits() >> self.index1;
-                    if !self.strobe {
-                        self.index1 += 1;
-                    }
-                    result & 1
-                } else {
-                    1
-                } | (if self.microphone { 0x04 } else { 0 }),
-                7,
-            ),
-            1 => OpenBusReadResult::new(
-                if self.index2 < 8 {
-                    let result = self.buttons[1].bits() >> self.index2;
-                    if !self.strobe {
-                        self.index2 += 1;
-                    }
-                    result & 1
-                } else {
-                    1
-                },
-                0x1F,
-            ),
-            _ => {
-                log::error!("unhandled controller read at address: 0x{:04X}", address);
-                OpenBusReadResult::new(0, 0)
-            }
-        }
-    }
-
-    fn write(&mut self, value: u8) {
-        self.strobe = value & 1 == 1;
-        if self.strobe {
-            self.index1 = 0;
-            self.index2 = 0;
-        }
-    }
-}
-
-impl ControllerState for StandardController {
-    fn reset_runtime(&mut self) {
-        self.reset();
-    }
-
-    fn validate_controller_state(&self, bytes: &[u8]) -> Result<(), String> {
-        decode_controller_state(bytes).map(|_| ())
-    }
-
-    fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.import_snapshot(decode_controller_state(bytes)?);
-        Ok(())
-    }
-
-    fn current_controller_state(&self) -> Result<Vec<u8>, String> {
-        encode_controller_state(self.export_snapshot())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        StandardController, StandardControllerSnapshot, apply_input_state, decode_controller_state,
+        StandardControllerSnapshot, apply_input_state, decode_controller_state,
         encode_controller_state, encode_input_state,
     };
     use nerust_input_nes::codec::decode_input_state;
     use nerust_input_nes::frame::{Buttons, NesInputFrame};
-    use nerust_nes_core::controller::Controller;
 
     #[test]
     fn controller_state_round_trips() {
@@ -315,71 +186,6 @@ mod tests {
                 index1: 3,
                 index2: 5,
                 strobe: true,
-            }
-        );
-    }
-
-    #[test]
-    fn standard_controller_returns_one_after_eight_bits() {
-        let mut controller = StandardController::new();
-        controller.import_snapshot(StandardControllerSnapshot {
-            buttons: [Buttons::A, Buttons::empty()],
-            microphone: false,
-            index1: 0,
-            index2: 0,
-            strobe: false,
-        });
-
-        controller.write(1);
-        controller.write(0);
-
-        for _ in 0..8 {
-            let _ = controller.read(0);
-        }
-
-        assert_eq!(controller.read(0).data & 1, 1);
-        assert_eq!(controller.read(0).data & 1, 1);
-    }
-
-    #[test]
-    fn standard_controller_reports_microphone_on_port_zero_d2() {
-        let mut controller = StandardController::new();
-
-        controller.import_snapshot(StandardControllerSnapshot {
-            buttons: [Buttons::empty(), Buttons::empty()],
-            microphone: true,
-            index1: 0,
-            index2: 0,
-            strobe: false,
-        });
-        assert_eq!(controller.read(0).data & 0x04, 0x04);
-
-        controller.import_snapshot(StandardControllerSnapshot {
-            buttons: [Buttons::empty(), Buttons::empty()],
-            microphone: false,
-            index1: 0,
-            index2: 0,
-            strobe: false,
-        });
-        assert_eq!(controller.read(0).data & 0x04, 0x00);
-    }
-
-    #[test]
-    fn setter_helpers_update_runtime_state() {
-        let mut controller = StandardController::new();
-
-        controller.set_pad1(Buttons::A | Buttons::START);
-        controller.set_pad2(Buttons::LEFT);
-        controller.set_microphone(true);
-
-        assert_eq!(
-            controller.export_snapshot(),
-            StandardControllerSnapshot {
-                buttons: [Buttons::A | Buttons::START, Buttons::LEFT],
-                microphone: true,
-                index1: 0,
-                index2: 0,
-                strobe: false,
             }
         );
     }
