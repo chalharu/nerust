@@ -448,7 +448,20 @@ impl SystemRuntime for NesRuntime {
         SystemRuntimeSnapshot {
             metrics,
             video_frame: None,
-            video_profile: None,
+            video_profile: Some(VideoRenderProfile {
+                source_logical_size: nerust_screen_logical::LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
+                logical_size: nerust_screen_logical::LogicalSize {
+                    width: 602,
+                    height: 240,
+                },
+                physical_size: nerust_screen_physical::PhysicalSize {
+                    width: 602.0,
+                    height: 240.0,
+                },
+            }),
         }
     }
 

@@ -11,6 +11,8 @@ use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_logical::LogicalSize;
+use nerust_screen_physical::PhysicalSize;
 use nerust_sound_traits::MixerInput;
 use nerust_soundfilter::Filter;
 use nerust_soundfilter::NesFilter;
@@ -93,6 +95,18 @@ impl NesConsoleCore {
             controller,
             adapter: AudioBackendAdapter::new(backend, gain),
         })
+    }
+
+    pub fn source_logical_size(&self) -> LogicalSize {
+        self.screen.source_logical_size()
+    }
+
+    pub fn logical_size(&self) -> LogicalSize {
+        self.screen.logical_size()
+    }
+
+    pub fn physical_size(&self) -> PhysicalSize {
+        self.screen.physical_size()
     }
 }
 
