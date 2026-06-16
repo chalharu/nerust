@@ -39,10 +39,10 @@ use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::options::CoreOptions;
 #[cfg(test)]
 use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::Screen;
-use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
@@ -297,23 +297,24 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<S: Screen, M: MixerInput>(
+    pub fn step<S: Screen>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
     ) -> bool {
-        self.step_cycle(screen, controller, mixer, mixer.sample_rate())
+        let sample_rate = backend.sample_rate();
+        self.step_cycle(screen, controller, backend, sample_rate)
     }
 
-    pub fn run_frame<S: Screen, M: MixerInput>(
+    pub fn run_frame<S: Screen>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
     ) -> u64 {
         let mut cycles = 0;
-        let mixer_sample_rate = mixer.sample_rate();
+        let mixer_sample_rate = backend.sample_rate();
         let apu_batch_mode = self.apu_batch_mode(mixer_sample_rate);
         let mut scheduler_enabled = true;
         let mut scheduler_misses = 0;
@@ -323,7 +324,7 @@ impl Core {
                 if let Some((elapsed_cycles, screen_updated)) = self.step_instruction_event(
                     screen,
                     controller,
-                    mixer,
+                    backend,
                     mixer_sample_rate,
                     apu_batch_mode,
                 ) {
@@ -345,18 +346,18 @@ impl Core {
             }
 
             cycles += 1;
-            if self.step_cycle(screen, controller, mixer, mixer_sample_rate) {
+            if self.step_cycle(screen, controller, backend, mixer_sample_rate) {
                 return cycles;
             }
         }
     }
 
     #[inline(always)]
-    fn step_cycle<S: Screen, M: MixerInput>(
+    fn step_cycle<S: Screen>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
     ) -> bool {
         // 1CPUサイクルにつき、APUは1、PPUはNTSC=>3,PAL=>3.2となる
@@ -377,7 +378,7 @@ impl Core {
         self.cartridge.step(self.cpu.interrupt_mut());
         self.apu.step(
             &mut self.cpu,
-            mixer,
+            backend,
             mixer_sample_rate,
             self.cartridge.expansion_audio_output(),
             self.cartridge.expansion_audio_inverted(),
@@ -397,11 +398,11 @@ impl Core {
         }
     }
 
-    fn step_instruction_event<S: Screen, M: MixerInput>(
+    fn step_instruction_event<S: Screen>(
         &mut self,
         screen: &mut S,
         controller: &mut dyn Controller,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         apu_batch_mode: ApuBatchMode,
     ) -> Option<(u64, bool)> {
@@ -462,7 +463,7 @@ impl Core {
                     .step_cpu_cycles(cpu_cycles, self.cpu.interrupt_mut());
                 self.apu.step_many(
                     &mut self.cpu,
-                    mixer,
+                    backend,
                     mixer_sample_rate,
                     self.cartridge.expansion_audio_output(),
                     self.cartridge.expansion_audio_inverted(),
@@ -474,7 +475,7 @@ impl Core {
                     .step_cpu_cycles(cpu_cycles, self.cpu.interrupt_mut());
                 self.apu.step_many_batched(
                     &mut self.cpu,
-                    mixer,
+                    backend,
                     mixer_sample_rate,
                     self.cartridge.expansion_audio_output(),
                     self.cartridge.expansion_audio_inverted(),
@@ -482,16 +483,16 @@ impl Core {
                 );
             }
             ApuBatchMode::SynchronizedExpansionAudio => {
-                self.step_synchronized_mapper_and_apu(mixer, mixer_sample_rate, cpu_cycles);
+                self.step_synchronized_mapper_and_apu(backend, mixer_sample_rate, cpu_cycles);
             }
         }
 
         Some((cpu_cycles, screen_updated))
     }
 
-    fn step_synchronized_mapper_and_apu<M: MixerInput>(
+    fn step_synchronized_mapper_and_apu(
         &mut self,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         cpu_cycles: u64,
     ) {
@@ -505,7 +506,7 @@ impl Core {
                 .step_cpu_cycles(segment, self.cpu.interrupt_mut());
             self.apu.step_many(
                 &mut self.cpu,
-                mixer,
+                backend,
                 mixer_sample_rate,
                 self.cartridge.expansion_audio_output(),
                 self.cartridge.expansion_audio_inverted(),
@@ -763,22 +764,24 @@ mod scheduler_tests {
     }
 
     #[derive(Default)]
-    struct CountingMixer {
+    struct CountingBackend {
         samples: usize,
     }
 
-    impl MixerInput for CountingMixer {
-        fn push(&mut self, _data: f32) {
+    impl AudioBackend for CountingBackend {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
+        fn push(&mut self, _sample: f32) {
             self.samples += 1;
         }
     }
 
-    struct RecordingMixer {
+    struct RecordingBackend {
         samples: Vec<f32>,
         sample_rate: u32,
     }
 
-    impl Default for RecordingMixer {
+    impl Default for RecordingBackend {
         fn default() -> Self {
             Self {
                 samples: Vec::new(),
@@ -787,11 +790,12 @@ mod scheduler_tests {
         }
     }
 
-    impl MixerInput for RecordingMixer {
-        fn push(&mut self, data: f32) {
-            self.samples.push(data);
+    impl AudioBackend for RecordingBackend {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
+        fn push(&mut self, sample: f32) {
+            self.samples.push(sample);
         }
-
         fn sample_rate(&self) -> u32 {
             self.sample_rate
         }
@@ -804,23 +808,23 @@ mod scheduler_tests {
         let mut exact_screen = NullScreen;
         let mut scheduled_controller = NullController;
         let mut exact_controller = NullController;
-        let mut scheduled_mixer = CountingMixer::default();
-        let mut exact_mixer = CountingMixer::default();
+        let mut scheduled_backend = CountingBackend::default();
+        let mut exact_backend = CountingBackend::default();
 
         let scheduled_cycles = scheduled.run_frame(
             &mut scheduled_screen,
             &mut scheduled_controller,
-            &mut scheduled_mixer,
+            &mut scheduled_backend,
         );
 
         let mut exact_cycles = 0;
-        let exact_sample_rate = exact_mixer.sample_rate();
+        let exact_sample_rate = exact_backend.sample_rate();
         loop {
             exact_cycles += 1;
             if exact.step_cycle(
                 &mut exact_screen,
                 &mut exact_controller,
-                &mut exact_mixer,
+                &mut exact_backend,
                 exact_sample_rate,
             ) {
                 break;
@@ -828,7 +832,7 @@ mod scheduler_tests {
         }
 
         assert_eq!(scheduled_cycles, exact_cycles);
-        assert_eq!(scheduled_mixer.samples, exact_mixer.samples);
+        assert_eq!(scheduled_backend.samples, exact_backend.samples);
         assert_eq!(
             scheduled
                 .export_machine_state()
@@ -843,10 +847,10 @@ mod scheduler_tests {
         core: &mut Core,
         screen: &mut NullScreen,
         controller: &mut NullController,
-        mixer: &mut CountingMixer,
+        backend: &mut CountingBackend,
         limit: usize,
     ) -> u64 {
-        let sample_rate = mixer.sample_rate();
+        let sample_rate = backend.sample_rate();
         for cycles in 0..limit {
             if core
                 .cpu
@@ -855,7 +859,7 @@ mod scheduler_tests {
             {
                 return cycles as u64;
             }
-            core.step_cycle(screen, controller, mixer, sample_rate);
+            core.step_cycle(screen, controller, backend, sample_rate);
         }
         panic!("CPU should reach a schedulable instruction boundary");
     }
@@ -864,11 +868,11 @@ mod scheduler_tests {
         core: &mut Core,
         screen: &mut NullScreen,
         controller: &mut NullController,
-        mixer: &mut CountingMixer,
+        backend: &mut CountingBackend,
         sample_rate: u32,
     ) -> Option<(u64, bool)> {
         let apu_batch_mode = core.apu_batch_mode(sample_rate);
-        core.step_instruction_event(screen, controller, mixer, sample_rate, apu_batch_mode)
+        core.step_instruction_event(screen, controller, backend, sample_rate, apu_batch_mode)
     }
 
     #[test]
@@ -1040,18 +1044,18 @@ mod scheduler_tests {
         let mut exact_screen = NullScreen;
         let mut scheduled_controller = NullController;
         let mut exact_controller = NullController;
-        let mut scheduled_mixer = RecordingMixer::default();
-        let mut exact_mixer = RecordingMixer::default();
+        let mut scheduled_backend = RecordingBackend::default();
+        let mut exact_backend = RecordingBackend::default();
 
         let mut scheduled_cycles = 0;
         for _ in 0..3 {
             scheduled_cycles += scheduled.run_frame(
                 &mut scheduled_screen,
                 &mut scheduled_controller,
-                &mut scheduled_mixer,
+                &mut scheduled_backend,
             );
         }
-        let exact_sample_rate = exact_mixer.sample_rate();
+        let exact_sample_rate = exact_backend.sample_rate();
         let mut exact_cycles = 0;
         let mut exact_frames = 0;
         while exact_frames < 3 {
@@ -1059,7 +1063,7 @@ mod scheduler_tests {
             if exact.step_cycle(
                 &mut exact_screen,
                 &mut exact_controller,
-                &mut exact_mixer,
+                &mut exact_backend,
                 exact_sample_rate,
             ) {
                 exact_frames += 1;
@@ -1067,14 +1071,14 @@ mod scheduler_tests {
         }
 
         assert_eq!(scheduled_cycles, exact_cycles);
-        assert!(scheduled_mixer.samples.iter().any(|sample| *sample != 0.0));
+        assert!(scheduled_backend.samples.iter().any(|sample| *sample != 0.0));
         assert!(
-            scheduled_mixer
+            scheduled_backend
                 .samples
                 .windows(2)
                 .any(|window| window[0] != window[1])
         );
-        assert_eq!(scheduled_mixer.samples, exact_mixer.samples);
+        assert_eq!(scheduled_backend.samples, exact_backend.samples);
         assert_eq!(
             scheduled
                 .export_machine_state()
@@ -1091,8 +1095,8 @@ mod scheduler_tests {
             Core::new(nrom_program_test_data(&[0xA9, 0x01])).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
         for _ in 0..16 {
             if core
@@ -1104,13 +1108,13 @@ mod scheduler_tests {
                     &mut core,
                     &mut screen,
                     &mut controller,
-                    &mut mixer,
+                    &mut backend,
                     sample_rate,
                 );
                 assert!(advanced.is_some());
                 return;
             }
-            core.step_cycle(&mut screen, &mut controller, &mut mixer, sample_rate);
+            core.step_cycle(&mut screen, &mut controller, &mut backend, sample_rate);
         }
 
         panic!("CPU should reach a schedulable instruction boundary after reset");
@@ -1122,10 +1126,10 @@ mod scheduler_tests {
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
-        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 32);
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut backend, 32);
         core.cpu.interrupt_mut().dmc_dma_request = Some(DmcDmaKind::Load);
 
         assert!(
@@ -1133,7 +1137,7 @@ mod scheduler_tests {
                 &mut core,
                 &mut screen,
                 &mut controller,
-                &mut mixer,
+                &mut backend,
                 sample_rate
             )
             .is_none()
@@ -1149,16 +1153,16 @@ mod scheduler_tests {
         .expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
-        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 16);
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut backend, 16);
         assert!(
             step_instruction_event_for_test(
                 &mut core,
                 &mut screen,
                 &mut controller,
-                &mut mixer,
+                &mut backend,
                 sample_rate
             )
             .is_some()
@@ -1179,16 +1183,16 @@ mod scheduler_tests {
         .expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
-        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 16);
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut backend, 16);
         assert!(
             step_instruction_event_for_test(
                 &mut core,
                 &mut screen,
                 &mut controller,
-                &mut mixer,
+                &mut backend,
                 sample_rate
             )
             .is_some()
@@ -1206,8 +1210,8 @@ mod scheduler_tests {
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
         for _ in 0..30_000 {
             if let Some(max_cpu_cycles) = core
@@ -1221,7 +1225,7 @@ mod scheduler_tests {
                             &mut core,
                             &mut screen,
                             &mut controller,
-                            &mut mixer,
+                            &mut backend,
                             sample_rate
                         )
                         .is_none()
@@ -1229,7 +1233,7 @@ mod scheduler_tests {
                     return;
                 }
             }
-            core.step_cycle(&mut screen, &mut controller, &mut mixer, sample_rate);
+            core.step_cycle(&mut screen, &mut controller, &mut backend, sample_rate);
         }
 
         panic!("PPU scheduler event should become close enough to force fallback");
@@ -1241,8 +1245,8 @@ mod scheduler_tests {
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
         for _ in 0..30_000 {
             if let Some(max_cpu_cycles) = core
@@ -1258,14 +1262,14 @@ mod scheduler_tests {
                         &mut core,
                         &mut screen,
                         &mut controller,
-                        &mut mixer,
+                        &mut backend,
                         sample_rate
                     )
                     .is_none()
                 );
                 return;
             }
-            core.step_cycle(&mut screen, &mut controller, &mut mixer, sample_rate);
+            core.step_cycle(&mut screen, &mut controller, &mut backend, sample_rate);
         }
 
         panic!("APU IRQ event should become close enough to force fallback");
@@ -1283,10 +1287,10 @@ mod scheduler_tests {
         .expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
-        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut mixer, 32);
+        advance_to_fast_path_candidate(&mut core, &mut screen, &mut controller, &mut backend, 32);
 
         let mut interrupt = Interrupt::new();
         core.cartridge.write(0x8000, 0x0E, &mut interrupt);
@@ -1302,7 +1306,7 @@ mod scheduler_tests {
                 &mut core,
                 &mut screen,
                 &mut controller,
-                &mut mixer,
+                &mut backend,
                 sample_rate
             )
             .is_none()
@@ -1315,15 +1319,15 @@ mod scheduler_tests {
             .expect("core should construct");
         let mut screen = NullScreen;
         let mut controller = NullController;
-        let mut mixer = CountingMixer::default();
-        let sample_rate = mixer.sample_rate();
+        let mut backend = CountingBackend::default();
+        let sample_rate = backend.sample_rate();
 
         assert!(
             step_instruction_event_for_test(
                 &mut core,
                 &mut screen,
                 &mut controller,
-                &mut mixer,
+                &mut backend,
                 sample_rate
             )
             .is_none()

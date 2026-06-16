@@ -178,10 +178,10 @@ impl Core {
         self.step_timer(interrupt);
     }
 
-    pub(crate) fn step<M: MixerInput>(
+    pub(crate) fn step(
         &mut self,
         cpu: &mut Cpu,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
@@ -193,14 +193,14 @@ impl Core {
         self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
         if self.sample_accumulator >= CLOCK_RATE {
             self.sample_accumulator -= CLOCK_RATE;
-            self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
+            self.send_sample(backend, expansion_audio_output, expansion_audio_inverted);
         }
     }
 
-    pub(crate) fn step_many<M: MixerInput>(
+    pub(crate) fn step_many(
         &mut self,
         cpu: &mut Cpu,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
@@ -214,15 +214,15 @@ impl Core {
             self.sample_accumulator += u64::from(mixer_sample_rate).min(CLOCK_RATE);
             if self.sample_accumulator >= CLOCK_RATE {
                 self.sample_accumulator -= CLOCK_RATE;
-                self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
+            self.send_sample(backend, expansion_audio_output, expansion_audio_inverted);
             }
         }
     }
 
-    pub(crate) fn step_many_batched<M: MixerInput>(
+    pub(crate) fn step_many_batched(
         &mut self,
         cpu: &mut Cpu,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
@@ -235,7 +235,7 @@ impl Core {
             if next_frame == 1 || next_dmc_dma == 1 {
                 self.step(
                     cpu,
-                    mixer,
+                    backend,
                     mixer_sample_rate,
                     expansion_audio_output,
                     expansion_audio_inverted,
@@ -251,7 +251,7 @@ impl Core {
             self.advance_no_frame_event(
                 segment,
                 cpu.interrupt_mut(),
-                mixer,
+                backend,
                 mixer_sample_rate,
                 expansion_audio_output,
                 expansion_audio_inverted,
@@ -287,16 +287,13 @@ impl Core {
             .min(self.dmc.cycles_until_next_dma_request(max_cycles))
     }
 
-    pub(crate) fn send_sample<M: MixerInput>(
+    pub(crate) fn send_sample(
         &self,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
     ) {
-        mixer.push(self.output(expansion_audio_output, expansion_audio_inverted));
-        // let output = self.output();
-        // let filtered = self.filter.step(output);
-        // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
+        backend.push(self.output(expansion_audio_output, expansion_audio_inverted));
     }
 
     pub(crate) fn output(
@@ -336,11 +333,11 @@ impl Core {
         self.triangle.step_timer();
     }
 
-    fn advance_no_frame_event<M: MixerInput>(
+    fn advance_no_frame_event(
         &mut self,
         cycles: u64,
         interrupt: &mut Interrupt,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
@@ -353,7 +350,7 @@ impl Core {
         self.advance_timers(cycles, interrupt);
         self.advance_sample_accumulator(
             cycles,
-            mixer,
+            backend,
             mixer_sample_rate,
             expansion_audio_output,
             expansion_audio_inverted,
@@ -371,10 +368,10 @@ impl Core {
         self.triangle.step_timer_many(cycles);
     }
 
-    fn advance_sample_accumulator<M: MixerInput>(
+    fn advance_sample_accumulator(
         &mut self,
         cycles: u64,
-        mixer: &mut M,
+        backend: &mut dyn AudioBackend,
         mixer_sample_rate: u32,
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
@@ -391,7 +388,7 @@ impl Core {
         debug_assert!(total < CLOCK_RATE * 2);
         self.sample_accumulator = total % CLOCK_RATE;
         if total >= CLOCK_RATE {
-            self.send_sample(mixer, expansion_audio_output, expansion_audio_inverted);
+            self.send_sample(backend, expansion_audio_output, expansion_audio_inverted);
         }
     }
 
@@ -448,14 +445,14 @@ mod tests {
     use super::Core;
     use crate::cpu::Core as Cpu;
     use crate::interrupt::Interrupt;
-    use nerust_sound_traits::MixerInput;
+    use nerust_contract_core::audio::AudioBackend;
 
-    struct CapturingMixer {
+    struct CapturingBackend {
         samples: Vec<f32>,
         sample_rate: u32,
     }
 
-    impl CapturingMixer {
+    impl CapturingBackend {
         fn new(sample_rate: u32) -> Self {
             Self {
                 samples: Vec::new(),
@@ -464,13 +461,15 @@ mod tests {
         }
     }
 
-    impl Default for CapturingMixer {
+    impl Default for CapturingBackend {
         fn default() -> Self {
             Self::new(44_100)
         }
     }
 
-    impl MixerInput for CapturingMixer {
+    impl AudioBackend for CapturingBackend {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, data: f32) {
             self.samples.push(data);
         }
@@ -523,23 +522,23 @@ mod tests {
         let mut batched_cpu = Cpu::new();
         *exact_cpu.interrupt_mut() = interrupt;
         *batched_cpu.interrupt_mut() = interrupt;
-        let mut exact_mixer = CapturingMixer::default();
-        let mut batched_mixer = CapturingMixer::default();
-        let sample_rate = exact_mixer.sample_rate();
+        let mut exact_backend = CapturingBackend::default();
+        let mut batched_backend = CapturingBackend::default();
+        let sample_rate = exact_backend.sample_rate();
 
         for _ in 0..40_000 {
-            exact.step(&mut exact_cpu, &mut exact_mixer, sample_rate, 0.0, false);
+            exact.step(&mut exact_cpu, &mut exact_backend, sample_rate, 0.0, false);
         }
         batched.step_many_batched(
             &mut batched_cpu,
-            &mut batched_mixer,
+            &mut batched_backend,
             sample_rate,
             0.0,
             false,
             40_000,
         );
 
-        assert_eq!(batched_mixer.samples, exact_mixer.samples);
+        assert_eq!(batched_backend.samples, exact_backend.samples);
         assert_eq!(format!("{:?}", batched), format!("{:?}", exact));
         assert_eq!(
             format!("{:?}", batched_cpu.interrupt_ref()),
@@ -555,24 +554,24 @@ mod tests {
         let mut many_cpu = Cpu::new();
         *exact_cpu.interrupt_mut() = interrupt;
         *many_cpu.interrupt_mut() = interrupt;
-        let mut exact_mixer = CapturingMixer::new(192_000);
-        let mut many_mixer = CapturingMixer::new(192_000);
-        let sample_rate = exact_mixer.sample_rate();
+        let mut exact_backend = CapturingBackend::new(192_000);
+        let mut many_backend = CapturingBackend::new(192_000);
+        let sample_rate = exact_backend.sample_rate();
 
         assert!(Core::should_step_many_exact(sample_rate));
         for _ in 0..40_000 {
-            exact.step(&mut exact_cpu, &mut exact_mixer, sample_rate, 0.0, false);
+            exact.step(&mut exact_cpu, &mut exact_backend, sample_rate, 0.0, false);
         }
         many.step_many(
             &mut many_cpu,
-            &mut many_mixer,
+            &mut many_backend,
             sample_rate,
             0.0,
             false,
             40_000,
         );
 
-        assert_eq!(many_mixer.samples, exact_mixer.samples);
+        assert_eq!(many_backend.samples, exact_backend.samples);
         assert_eq!(format!("{:?}", many), format!("{:?}", exact));
         assert_eq!(
             format!("{:?}", many_cpu.interrupt_ref()),

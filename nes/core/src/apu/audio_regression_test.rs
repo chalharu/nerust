@@ -8,7 +8,7 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
 use nerust_screen_video::Screen;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 use std::io::Cursor;
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;
@@ -48,12 +48,12 @@ impl Controller for NullController {
 }
 
 #[derive(Debug, Clone)]
-struct CapturingMixer {
+struct CapturingBackend {
     sample_rate: u32,
     samples: Vec<f32>,
 }
 
-impl CapturingMixer {
+impl CapturingBackend {
     fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
@@ -78,11 +78,12 @@ impl CapturingMixer {
     }
 }
 
-impl MixerInput for CapturingMixer {
+impl AudioBackend for CapturingBackend {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, data: f32) {
         self.samples.push(data);
     }
-
     fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
@@ -291,16 +292,16 @@ fn run_rom_until_silence(
 
     let mut screen = NullScreen;
     let mut controller = NullController;
-    let mut mixer = CapturingMixer::new(sample_rate);
+    let mut backend = CapturingBackend::new(sample_rate);
 
     for _ in 0..max_frames {
-        core.run_frame(&mut screen, &mut controller, &mut mixer);
-        if mixer.has_activity() && mixer.tail_is_silent(silence_tail_seconds) {
+        core.run_frame(&mut screen, &mut controller, &mut backend);
+        if backend.has_activity() && backend.tail_is_silent(silence_tail_seconds) {
             break;
         }
     }
 
-    decode_wav(&encode_wav(&mixer.samples, sample_rate))
+    decode_wav(&encode_wav(&backend.samples, sample_rate))
 }
 
 fn four_step_half_tick_cycles(index: usize) -> u64 {
