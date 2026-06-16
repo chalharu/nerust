@@ -367,30 +367,27 @@ impl SystemDefinition for NesSystemDefinition {
     }
 }
 
+/// P2 バイトの bit 2 はファミコン P2 マイク状態を表す。
+const P2_MIC_BIT: u8 = 0x04;
+
 impl SystemInputAdapter for NesAdapter {
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
         let frame = self.input.current_frame();
-        self.cell.store(
-            frame.player_one.bits(),
-            frame.player_two.bits(),
-            frame.microphone,
-        );
+        let p2 = frame.player_two.bits() | if frame.microphone { P2_MIC_BIT } else { 0 };
+        self.cell.store(frame.player_one.bits(), p2);
     }
 
     fn clear(&mut self) {
         let _ = self.input.clear_current_frame();
-        self.cell.store(0, 0, false);
+        self.cell.store(0, 0);
     }
 
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let frame = decode_input_state(bytes).map_err(|error| error.to_string())?;
         self.input.sync_from_frame(frame);
-        self.cell.store(
-            frame.player_one.bits(),
-            frame.player_two.bits(),
-            frame.microphone,
-        );
+        let p2 = frame.player_two.bits() | if frame.microphone { P2_MIC_BIT } else { 0 };
+        self.cell.store(frame.player_one.bits(), p2);
         Ok(())
     }
 
