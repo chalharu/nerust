@@ -23,6 +23,6 @@ impl ValidationRuntime {
     }
 
     pub(in crate::runner::validation) fn set_microphone(&mut self, _state: PadState) {
-        // NesPadDevice does not support microphone; ignored.
+        // Microphone is part of P2 buttons; handled via apply_standard_controller.
     }
 }

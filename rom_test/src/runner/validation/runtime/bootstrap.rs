@@ -38,6 +38,7 @@ impl ValidationRuntime {
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
+            mic: false,
         })
     }
 }
