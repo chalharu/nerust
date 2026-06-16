@@ -13,7 +13,6 @@ pub struct NesInputState {
     held: NesInputFrame,
     dirty_player_one: bool,
     dirty_player_two: bool,
-    dirty_microphone: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +43,11 @@ impl NesInputState {
                 self.dirty_player_two = true;
             }
             NesDigitalTarget::Microphone => {
-                self.held.microphone = matches!(event.state, DigitalInputState::Pressed);
-                self.dirty_microphone = true;
+                // ファミコン P2 マイク。P2 の SELECT ビット位置 (0x04) として扱う。
+                let flag = Buttons::SELECT;
+                self.held.player_two =
+                    Self::apply_button_state(self.held.player_two, flag, event.state);
+                self.dirty_player_two = true;
             }
         }
     }
@@ -57,9 +59,6 @@ impl NesInputState {
         if self.dirty_player_two {
             self.held.player_two = Buttons::empty();
         }
-        if self.dirty_microphone {
-            self.held.microphone = false;
-        }
         self.held
     }
 
@@ -67,7 +66,6 @@ impl NesInputState {
         self.held = frame;
         self.dirty_player_one = false;
         self.dirty_player_two = false;
-        self.dirty_microphone = false;
     }
 
     pub fn current_frame(&self) -> NesInputFrame {
@@ -175,24 +173,19 @@ mod tests {
     }
 
     #[test]
-    fn nes_input_state_maps_microphone_without_accepting_select_on_player_two() {
+    fn microphone_maps_to_player_two_select_bit() {
         let mut input = NesInputState::new();
 
         input.handle_input(DigitalInputEvent::pressed(
             NES_ATTACHMENT_PLAYER_TWO,
             FAMICOM_P2_CONTROL_MICROPHONE,
         ));
-        input.handle_input(DigitalInputEvent::pressed(
-            NES_ATTACHMENT_PLAYER_TWO,
-            NES_CONTROL_SELECT,
-        ));
 
-        assert_eq!(
-            input.current_frame(),
-            NesInputFrame {
-                microphone: true,
-                ..NesInputFrame::default()
-            }
+        let frame = input.current_frame();
+        assert!(
+            frame.player_two.contains(Buttons::SELECT),
+            "mic should set P2 SELECT bit"
         );
+        assert!(!frame.microphone, "mic field is deprecated");
     }
 }
