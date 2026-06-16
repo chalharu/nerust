@@ -23,6 +23,7 @@ use nerust_screen_physical::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::Hasher;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -192,6 +193,8 @@ impl Console {
         shared_fb.resize_data(frame_len);
         let shared = Arc::new(Mutex::new(shared_fb));
 
+        let frame_buffer_updated = Arc::new(AtomicBool::new(false));
+
         let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         disp_fb.resize(src_w, src_h);
         disp_fb.resize_data(frame_len);
@@ -205,7 +208,12 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo::new(render_profile, shared.clone(), disp_fb),
+            video: ConsoleVideo::new(
+                render_profile,
+                shared.clone(),
+                disp_fb,
+                frame_buffer_updated.clone(),
+            ),
             metrics: metrics.clone(),
         };
 
@@ -220,7 +228,14 @@ impl Console {
             backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, screen, shared, backing, metrics, controller,
+                data_recv,
+                stop_recv,
+                screen,
+                shared,
+                frame_buffer_updated,
+                backing,
+                metrics,
+                controller,
             );
             state.run(speaker);
         }));
