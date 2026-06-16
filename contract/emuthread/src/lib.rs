@@ -5,7 +5,6 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
 use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
-use nerust_timer::Timer;
 
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
@@ -29,7 +28,6 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let thread = thread::spawn(move || {
             let slot_size = core.frame_slot_size();
             let mut frame_slot = vec![0u8; slot_size];
-            let mut timer = Timer::new();
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
@@ -43,7 +41,6 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                                 log::error!("render_frame failed: {e}");
                             }
                         }
-                        timer.wait();
                     }
                     Ok(EmuCommand::Pause) => core.set_paused(true),
                     Ok(EmuCommand::Resume) => core.set_paused(false),

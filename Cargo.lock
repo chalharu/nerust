@@ -3170,7 +3170,6 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_contract_core",
- "nerust_timer",
 ]
 
 [[package]]
