@@ -3,7 +3,7 @@ use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 use png::{BitDepth, ColorType, Encoder};
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -101,7 +101,9 @@ impl HashingMixer {
     }
 }
 
-impl MixerInput for HashingMixer {
+impl AudioBackend for HashingMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, data: f32) {
         self.samples += 1;
         self.checksum ^= u64::from(data.to_bits());

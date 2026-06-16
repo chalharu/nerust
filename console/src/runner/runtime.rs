@@ -1,7 +1,7 @@
 use super::{ConsoleData, ConsoleRunner};
 use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_nes_core::Core;
-use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
 
@@ -16,13 +16,13 @@ impl ConsoleRunner {
         ConsoleError::NoRomLoaded
     }
 
-    pub(crate) fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
+    pub(crate) fn run(&mut self, mut speaker: Box<dyn AudioBackend>) {
         let mut core: Option<Core> = None;
         while self.stop_receiver.try_recv().is_err() {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.screen, self.controller.as_mut(), &mut speaker);
+                core.run_frame(&mut self.screen, self.controller.as_mut(), speaker.as_mut());
                 self.frame_counter += 1;
                 self.publish_frame();
             }

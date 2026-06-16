@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub(super) struct ValidationRuntime {
     screen_buffer: ScreenBuffer,
     core: Core,
-    mixer: HashingMixer,
+    backend: HashingMixer,
     controller: NesPadDevice<SharedNesInputCell>,
     cell: Arc<NesInputCell>,
     frame_counter: u64,

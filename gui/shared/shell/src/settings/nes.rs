@@ -1,5 +1,5 @@
 use crate::load::SystemLoadOptions;
-use nerust_contract_core::audio::AudioBackendRegistry;
+use nerust_contract_core::audio::{AudioBackend, AudioBackendRegistry, VolumeBackend};
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use nerust_gui_settings::{
@@ -8,8 +8,6 @@ use nerust_gui_settings::{
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
-use nerust_sound_traits::MixerBridge;
-use nerust_timer::CLOCK_RATE;
 
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new(
@@ -21,7 +19,7 @@ pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     )
 }
 
-pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
+pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<Box<dyn AudioBackend>, String> {
     let sample_rate = if settings.audio.sample_rate > 0 {
         settings.audio.sample_rate
     } else {
@@ -38,7 +36,7 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge,
     #[cfg(not(target_os = "android"))]
     registry.register(1, "OpenAL", nerust_sound_openal::factory);
     let backend = registry.autoselect(sample_rate, u32::from(settings.audio.latency_ms));
-    Ok(MixerBridge::new(backend, CLOCK_RATE as u32, gain))
+    Ok(Box::new(VolumeBackend::new(backend, gain)))
 }
 
 pub fn effective_load_options(

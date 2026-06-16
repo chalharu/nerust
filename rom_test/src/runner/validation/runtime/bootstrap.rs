@@ -33,7 +33,7 @@ impl ValidationRuntime {
             core,
             controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
             cell,
-            mixer: HashingMixer::new(case.audio_sample_rate()),
+            backend: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),

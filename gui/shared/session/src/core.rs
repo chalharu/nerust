@@ -130,25 +130,21 @@ mod tests {
     use super::SessionCore;
     use nerust_console::Console;
     use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-    use nerust_sound_traits::{MixerInput, Sound};
+    use nerust_contract_core::audio::AudioBackend;
 
     #[derive(Default)]
     struct TestSpeaker;
 
-    impl Sound for TestSpeaker {
+    impl AudioBackend for TestSpeaker {
         fn start(&mut self) {}
-
         fn pause(&mut self) {}
-    }
-
-    impl MixerInput for TestSpeaker {
-        fn push(&mut self, _data: f32) {}
+        fn push(&mut self, _sample: f32) {}
     }
 
     fn test_core() -> SessionCore {
         use std::sync::Arc;
         SessionCore::from_console(Console::new(
-            TestSpeaker,
+            Box::new(TestSpeaker),
             ScreenBuffer::new_nes_gpu_default(),
             Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
                 nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(Arc::new(

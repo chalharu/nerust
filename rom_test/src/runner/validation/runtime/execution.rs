@@ -5,7 +5,7 @@ impl ValidationRuntime {
         let steps = self.core.run_frame(
             &mut self.screen_buffer,
             &mut self.controller,
-            &mut self.mixer,
+            &mut self.backend,
         );
         self.frame_counter += 1;
         steps

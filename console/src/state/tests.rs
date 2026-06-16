@@ -11,7 +11,7 @@ use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_contract_core::audio::AudioBackend;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ struct TestSpeaker {
     events: Arc<Mutex<Vec<&'static str>>>,
 }
 
-impl Sound for TestSpeaker {
+impl AudioBackend for TestSpeaker {
     fn start(&mut self) {
         self.events.lock().unwrap().push("start");
     }
@@ -30,10 +30,8 @@ impl Sound for TestSpeaker {
     fn pause(&mut self) {
         self.events.lock().unwrap().push("pause");
     }
-}
 
-impl MixerInput for TestSpeaker {
-    fn push(&mut self, _data: f32) {}
+    fn push(&mut self, _sample: f32) {}
 }
 
 #[derive(Debug, Default)]
@@ -147,7 +145,7 @@ fn test_console() -> Console {
 
 fn test_console_with_controller(controller: Box<dyn ControllerState>) -> Console {
     Console::new(
-        TestSpeaker::default(),
+        Box::new(TestSpeaker::default()),
         ScreenBuffer::new_gpu(
             FilterType::None,
             LogicalSize {
