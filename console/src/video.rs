@@ -64,12 +64,6 @@ impl ConsoleVideo {
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         f(self.disp_fb.as_ref())
     }
-
-    /// 共有バッファの内容を直接読み取る（ロックあり）。
-    pub fn read_shared<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        let guard = self.frame_buffer.lock().unwrap();
-        f(guard.as_ref())
-    }
 }
 
 #[cfg(test)]

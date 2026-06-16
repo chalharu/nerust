@@ -58,6 +58,10 @@ impl SessionCore {
         })
     }
 
+    pub fn swap_frame_buffer(&mut self) {
+        self.console.swap_frame_buffer();
+    }
+
     pub fn video_render_profile(&self) -> VideoRenderProfile {
         self.console.video().render_profile()
     }
