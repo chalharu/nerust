@@ -29,9 +29,10 @@ pub struct VideoRenderProfile {
 pub struct ConsoleVideo {
     render_profile: VideoRenderProfile,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
-    /// 表示バッファ。`swap_frame_buffer()` で shared から最新フレームを引き取る。
-    /// `with_frame_buffer()` はこのバッファを読む（shared と別の Mutex）。
-    disp_fb: Mutex<FrameBuffer>,
+    /// 表示バッファ（GUI スレッドローカル）。
+    /// `swap_frame_buffer(&mut self)` で shared から最新フレームを引き取り、
+    /// `with_frame_buffer(&self)` でロックなし読み取り。
+    disp_fb: FrameBuffer,
 }
 
 impl ConsoleVideo {
@@ -43,7 +44,7 @@ impl ConsoleVideo {
         Self {
             render_profile,
             frame_buffer,
-            disp_fb: Mutex::new(disp_fb),
+            disp_fb,
         }
     }
 
@@ -51,31 +52,23 @@ impl ConsoleVideo {
         self.render_profile
     }
 
-    /// 共有バッファから表示バッファに最新フレームを引き取る（`&self` で呼び出し可能）。
+    /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
-    pub fn swap_frame_buffer(&self) {
+    pub fn swap_frame_buffer(&mut self) {
         let mut guard = self.frame_buffer.lock().unwrap();
-        let mut disp = self.disp_fb.lock().unwrap();
-        std::mem::swap(&mut *guard, &mut *disp);
+        std::mem::swap(&mut *guard, &mut self.disp_fb);
     }
 
-    /// 表示バッファの内容を読み取る（disp_fb の Mutex をロック）。
-    /// shared とは別の Mutex なので Console スレッドとの競合は無視できる。
+    /// 表示バッファの内容をロックなしで読み取る。
+    /// `swap_frame_buffer()` の後に呼ぶこと。
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        let disp = self.disp_fb.lock().unwrap();
-        f(disp.as_ref())
+        f(self.disp_fb.as_ref())
     }
 
-    /// 共有バッファの内容を直接読み取る。セーブステート等 `swap` 不要な場合に使用。
+    /// 共有バッファの内容を直接読み取る（ロックあり）。
     pub fn read_shared<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         let guard = self.frame_buffer.lock().unwrap();
         f(guard.as_ref())
-    }
-
-    /// swap + 読み取りを一度に行う。
-    pub fn swap_and_read<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.swap_frame_buffer();
-        self.with_frame_buffer(f)
     }
 
     /// VideoFrameHandle を生成する。
@@ -120,31 +113,17 @@ mod tests {
 
     #[test]
     fn console_video_swap_brings_new_data() {
-        let video = make_test_video();
+        let mut video = make_test_video();
         {
             let mut guard = video.frame_buffer.lock().unwrap();
             guard.as_mut().fill(42);
         }
-        // Before swap: disp_fb is empty (zeros)
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 0);
         });
-        // swap_frame_buffer takes &self now
         video.swap_frame_buffer();
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 42);
-        });
-    }
-
-    #[test]
-    fn console_video_swap_and_read_combines_both() {
-        let video = make_test_video();
-        {
-            let mut guard = video.frame_buffer.lock().unwrap();
-            guard.as_mut().fill(77);
-        }
-        video.swap_and_read(|bytes| {
-            assert_eq!(bytes[0], 77);
         });
     }
 
