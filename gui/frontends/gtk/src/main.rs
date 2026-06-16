@@ -43,6 +43,10 @@ impl State {
         self.session.snapshot()
     }
 
+    pub(crate) fn swap_frame_buffer(&mut self) {
+        self.session.swap_frame_buffer();
+    }
+
     pub(crate) fn system_settings_page_model(&self) -> SystemSettingsPageModel {
         self.session.system_settings_page_model()
     }
