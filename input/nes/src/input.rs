@@ -13,6 +13,7 @@ pub struct NesInputState {
     held: NesInputFrame,
     dirty_player_one: bool,
     dirty_player_two: bool,
+    dirty_microphone: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +44,8 @@ impl NesInputState {
                 self.dirty_player_two = true;
             }
             NesDigitalTarget::Microphone => {
-                // ファミコン P2 マイク。P2 の SELECT ビット位置 (0x04) として扱う。
-                let flag = Buttons::SELECT;
-                self.held.player_two =
-                    Self::apply_button_state(self.held.player_two, flag, event.state);
-                self.dirty_player_two = true;
+                self.held.microphone = matches!(event.state, DigitalInputState::Pressed);
+                self.dirty_microphone = true;
             }
         }
     }
@@ -59,6 +57,9 @@ impl NesInputState {
         if self.dirty_player_two {
             self.held.player_two = Buttons::empty();
         }
+        if self.dirty_microphone {
+            self.held.microphone = false;
+        }
         self.held
     }
 
@@ -66,6 +67,7 @@ impl NesInputState {
         self.held = frame;
         self.dirty_player_one = false;
         self.dirty_player_two = false;
+        self.dirty_microphone = false;
     }
 
     pub fn current_frame(&self) -> NesInputFrame {
@@ -173,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn microphone_maps_to_player_two_select_bit() {
+    fn microphone_maps_to_microphone_field() {
         let mut input = NesInputState::new();
 
         input.handle_input(DigitalInputEvent::pressed(
@@ -182,10 +184,10 @@ mod tests {
         ));
 
         let frame = input.current_frame();
+        assert!(frame.microphone, "mic should set microphone field");
         assert!(
-            frame.player_two.contains(Buttons::SELECT),
-            "mic should set P2 SELECT bit"
+            !frame.player_two.contains(Buttons::SELECT),
+            "mic should not affect P2"
         );
-        assert!(!frame.microphone, "mic field is deprecated");
     }
 }
