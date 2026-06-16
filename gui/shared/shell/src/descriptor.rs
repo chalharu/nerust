@@ -13,10 +13,12 @@ use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
+use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
+use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
@@ -105,12 +107,6 @@ pub trait SystemDefinition: Send + Sync {
 }
 
 pub trait SystemInputAdapter: Send {
-    fn digital_event_from_persisted(
-        &self,
-        attachment: &str,
-        control: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent>;
     fn apply_event(&mut self, event: DigitalInputEvent);
     fn clear(&mut self);
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String>;
@@ -124,8 +120,6 @@ pub trait SystemRuntime: Send {
     fn reset(&self) -> Result<(), String>;
     fn pause(&mut self);
     fn resume(&mut self);
-    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String>;
-    fn current_input_state(&self) -> Result<Vec<u8>, String>;
     fn export_state(&self) -> Result<RuntimeStateExport, String>;
     fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String>;
     fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String>;
@@ -145,12 +139,31 @@ pub trait SystemRuntime: Send {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct NesSystemDefinition;
+struct NesSystemDefinition {
+    input_cell: OnceLock<Arc<NesInputCell>>,
+}
 
-#[derive(Debug, Default)]
+impl NesSystemDefinition {
+    fn new() -> Self {
+        Self {
+            input_cell: OnceLock::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct NesAdapter {
     input: NesInputState,
+    cell: Arc<NesInputCell>,
+}
+
+impl NesAdapter {
+    fn new(cell: Arc<NesInputCell>) -> Self {
+        Self {
+            input: NesInputState::default(),
+            cell,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -162,15 +175,15 @@ const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
 
 pub fn default_system_definition() -> Box<dyn SystemDefinition> {
-    Box::new(NesSystemDefinition)
+    Box::new(NesSystemDefinition::new())
 }
 
 pub fn default_input_topology_descriptor() -> InputTopologyDescriptor {
-    NesSystemDefinition.descriptor().input_topology
+    NesSystemDefinition::new().descriptor().input_topology
 }
 
 pub fn default_system_settings_page_model(settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-    NesSystemDefinition.settings_page(settings)
+    NesSystemDefinition::new().settings_page(settings)
 }
 
 pub fn apply_default_system_settings_choice(
@@ -178,11 +191,11 @@ pub fn apply_default_system_settings_choice(
     field: &SystemSettingsFieldId,
     choice: &SystemSettingsChoiceId,
 ) -> Result<(), String> {
-    NesSystemDefinition.apply_settings_choice(settings, field, choice)
+    NesSystemDefinition::new().apply_settings_choice(settings, field, choice)
 }
 
 impl NesSystemDefinition {
-    fn build_console(self, settings: &SettingsSnapshot) -> Result<Console, String> {
+    fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
         self.build_console_with(
             build_speaker(&settings.local)?,
             build_screen_buffer(&settings.shared),
@@ -190,15 +203,16 @@ impl NesSystemDefinition {
     }
 
     fn build_console_with<S: 'static + Sound + MixerInput + Send>(
-        self,
+        &self,
         speaker: S,
         screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
     ) -> Result<Console, String> {
-        Ok(Console::new(
-            speaker,
-            screen_buffer,
-            nerust_input_nes_runtime::standard_controller_runtime(),
-        ))
+        let cell = self
+            .input_cell
+            .get_or_init(|| Arc::new(NesInputCell::new()))
+            .clone();
+        let device = NesPadDevice::new(SharedNesInputCell(cell));
+        Ok(Console::new(speaker, screen_buffer, Box::new(device)))
     }
 }
 
@@ -331,7 +345,14 @@ impl SystemDefinition for NesSystemDefinition {
     }
 
     fn create_input_adapter(&self, _settings: &SettingsSnapshot) -> Box<dyn SystemInputAdapter> {
-        Box::new(NesAdapter::default())
+        // 通常は build_console が先に呼ばれて cell が初期化されているが、
+        // テスト等で単独で呼ばれる場合もあるので、その時は新規作成する。
+        let arc = self.input_cell.get().cloned().unwrap_or_else(|| {
+            let cell = Arc::new(NesInputCell::new());
+            let _ = self.input_cell.set(cell.clone());
+            cell
+        });
+        Box::new(NesAdapter::new(arc))
     }
 
     fn create_runtime(
@@ -346,28 +367,29 @@ impl SystemDefinition for NesSystemDefinition {
 }
 
 impl SystemInputAdapter for NesAdapter {
-    fn digital_event_from_persisted(
-        &self,
-        attachment: &str,
-        control: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent> {
-        nerust_input_nes::input::persisted::digital_event_from_persisted_ids(
-            attachment, control, pressed,
-        )
-    }
-
     fn apply_event(&mut self, event: DigitalInputEvent) {
         self.input.handle_input(event);
+        let frame = self.input.current_frame();
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
     }
 
     fn clear(&mut self) {
         let _ = self.input.clear_current_frame();
+        self.cell.store(0, 0, false);
     }
 
     fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let frame = decode_input_state(bytes).map_err(|error| error.to_string())?;
         self.input.sync_from_frame(frame);
+        self.cell.store(
+            frame.player_one.bits(),
+            frame.player_two.bits(),
+            frame.microphone,
+        );
         Ok(())
     }
 
@@ -408,17 +430,6 @@ impl SystemRuntime for NesRuntime {
 
     fn resume(&mut self) {
         self.core.resume();
-    }
-
-    fn apply_input_state(&mut self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core.apply_input_state(bytes);
-        Ok(())
-    }
-
-    fn current_input_state(&self) -> Result<Vec<u8>, String> {
-        self.core
-            .current_input_state()
-            .map_err(|error| error.to_string())
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {

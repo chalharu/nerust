@@ -6,7 +6,6 @@ members = [
   "cartridge/data",
   "console",
   "contract/core",
-  "contract/controller_runtime",
   "contract/emuthread",
   "gui/shared/settings",
   "nes/core",
@@ -80,10 +79,10 @@ log = { version = "=0.4.32", default-features = false }
 muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
 nerust_console = { path = "console" }
-nerust_contract_controller_runtime = { path = "contract/controller_runtime" }
 nerust_contract_core = { path = "contract/core" }
 nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
+nerust_nes_device = { path = "nes/device" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
 nerust_gui_session = { path = "gui/shared/session" }

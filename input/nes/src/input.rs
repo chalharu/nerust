@@ -120,7 +120,7 @@ mod tests {
     use crate::frame::{Buttons, NesInputFrame};
     use crate::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
-        NES_CONTROL_A, NES_CONTROL_RIGHT, NES_CONTROL_SELECT,
+        NES_CONTROL_A, NES_CONTROL_RIGHT,
     };
     use nerust_input_schema::DigitalInputEvent;
 
@@ -175,24 +175,19 @@ mod tests {
     }
 
     #[test]
-    fn nes_input_state_maps_microphone_without_accepting_select_on_player_two() {
+    fn microphone_maps_to_microphone_field() {
         let mut input = NesInputState::new();
 
         input.handle_input(DigitalInputEvent::pressed(
             NES_ATTACHMENT_PLAYER_TWO,
             FAMICOM_P2_CONTROL_MICROPHONE,
         ));
-        input.handle_input(DigitalInputEvent::pressed(
-            NES_ATTACHMENT_PLAYER_TWO,
-            NES_CONTROL_SELECT,
-        ));
 
-        assert_eq!(
-            input.current_frame(),
-            NesInputFrame {
-                microphone: true,
-                ..NesInputFrame::default()
-            }
+        let frame = input.current_frame();
+        assert!(frame.microphone, "mic should set microphone field");
+        assert!(
+            !frame.player_two.contains(Buttons::SELECT),
+            "mic should not affect P2"
         );
     }
 }

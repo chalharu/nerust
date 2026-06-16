@@ -7,10 +7,11 @@ use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_input_nes::frame::Buttons;
-use nerust_input_nes_runtime::StandardController;
 use nerust_nes_core::Core;
+use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::Screen;
 use nerust_sound_traits::MixerInput;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn run_cli() {
@@ -232,14 +233,18 @@ impl Aggregate {
     }
 }
 
+use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
+
 struct PerfRunner {
     core: Core,
     screen: PerfScreen,
-    controller: StandardController,
+    controller: NesPadDevice<SharedNesInputCell>,
+    cell: Arc<NesInputCell>,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
+    mic: bool,
 }
 
 impl PerfRunner {
@@ -256,14 +261,17 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
+        let cell = Arc::new(NesInputCell::new());
         Ok(Self {
             core,
             screen: PerfScreen::new(),
-            controller: StandardController::new(),
+            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
+            cell,
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
+            mic: false,
         })
     }
 
@@ -309,19 +317,20 @@ impl CaseHarness for PerfRunner {
         match pad {
             ControllerPad::Pad1 => {
                 self.pad1 = apply_button_state(self.pad1, buttons, state);
-                self.controller.set_pad1(self.pad1);
             }
             ControllerPad::Pad2 => {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
-                self.controller.set_pad2(self.pad2);
             }
         }
+        self.cell
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
-        self.controller
-            .set_microphone(matches!(state, PadState::Pressed));
+        self.mic = matches!(state, PadState::Pressed);
+        self.cell
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 }

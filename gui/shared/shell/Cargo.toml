@@ -15,6 +15,7 @@ nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
 nerust_input_nes.workspace = true
 nerust_input_nes_runtime.workspace = true
+nerust_nes_device.workspace = true
 nerust_input_schema.workspace = true
 nerust_persistence.workspace = true
 nerust_screen_buffer.workspace = true

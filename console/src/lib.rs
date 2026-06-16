@@ -10,10 +10,10 @@ use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_contract_controller_runtime::ControllerRuntime;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_input_nes_runtime::ControllerState;
 use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
@@ -126,8 +126,6 @@ enum ConsoleReply {
     MapperSave(Option<Vec<u8>>),
     CanonicalMediaIdentity(CanonicalMediaIdentity),
     StateExport(RuntimeStateExport),
-    ControllerState(Vec<u8>),
-    InputState(Vec<u8>),
 }
 
 type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
@@ -147,7 +145,7 @@ impl Console {
         speaker: S,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
-        controller: Box<dyn ControllerRuntime>,
+        controller: Box<dyn ControllerState>,
     ) -> Self {
         Self::new(
             speaker,
@@ -159,7 +157,7 @@ impl Console {
     pub fn new<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         screen_buffer: ScreenBuffer,
-        controller: Box<dyn ControllerRuntime>,
+        controller: Box<dyn ControllerState>,
     ) -> Self {
         Self::spawn(speaker, screen_buffer, controller)
     }
@@ -167,7 +165,7 @@ impl Console {
     fn spawn<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         screen: ScreenBuffer,
-        controller: Box<dyn ControllerRuntime>,
+        controller: Box<dyn ControllerState>,
     ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
@@ -239,21 +237,6 @@ impl Console {
         }
     }
 
-    pub fn apply_input_state(&self, bytes: Vec<u8>) {
-        if self
-            .data_sender
-            .send(ConsoleData::ApplyInputState { bytes })
-            .is_err()
-        {
-            log::warn!("Core input state send failed");
-        }
-    }
-
-    pub fn apply_controller_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.send_request(|reply| ConsoleData::ApplyControllerState { bytes, reply })?;
-        Ok(())
-    }
-
     pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
         self.load_with_options(data, CoreOptions::default())
     }
@@ -320,24 +303,6 @@ impl Console {
             ConsoleReply::CanonicalMediaIdentity(identity) => Ok(identity),
             _ => Err(ConsoleError::Core(
                 "unexpected canonical media identity reply".into(),
-            )),
-        }
-    }
-
-    pub fn current_controller_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        match self.send_request(ConsoleData::CurrentControllerState)? {
-            ConsoleReply::ControllerState(bytes) => Ok(bytes),
-            _ => Err(ConsoleError::Core(
-                "unexpected current controller state reply".into(),
-            )),
-        }
-    }
-
-    pub fn current_input_state(&self) -> Result<Vec<u8>, ConsoleError> {
-        match self.send_request(ConsoleData::CurrentInputState)? {
-            ConsoleReply::InputState(bytes) => Ok(bytes),
-            _ => Err(ConsoleError::Core(
-                "unexpected current input state reply".into(),
             )),
         }
     }

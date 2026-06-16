@@ -7,3 +7,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nerust_contract_core.workspace = true
+nerust_input_nes.workspace = true
+nerust_input_nes_runtime.workspace = true
+nerust_nes_core.workspace = true
