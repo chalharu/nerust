@@ -82,10 +82,10 @@ impl NesConsoleCore {
         rom: CartridgeData,
         backend: Box<dyn AudioBackend>,
         gain: f32,
+        cell: Arc<NesInputCell>,
     ) -> Result<Self, CoreError> {
         let core = Core::new(rom).map_err(|e| CoreError::Core(e.to_string()))?;
         let screen = ScreenBuffer::new_nes_gpu_default();
-        let cell = Arc::new(NesInputCell::new());
         let controller = NesPadDevice::new(SharedNesInputCell(cell));
         Ok(Self {
             core,
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn nes_console_core_constructs_with_null_audio() {
         let backend = Box::new(NullAudio);
-        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0)
+        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0, Arc::new(NesInputCell::new()))
             .expect("NesConsoleCore should construct");
         let slot_size = console.frame_slot_size();
         assert!(slot_size > 0);
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn nes_console_core_produces_deterministic_frames() {
         let backend = Box::new(NullAudio);
-        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0)
+        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0, Arc::new(NesInputCell::new()))
             .expect("NesConsoleCore should construct");
         let slot_size = console.frame_slot_size();
         let mut slot1 = vec![0u8; slot_size];
@@ -210,13 +210,13 @@ mod tests {
     #[test]
     fn nes_console_core_save_state_round_trips() {
         let backend = Box::new(NullAudio);
-        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0)
+        let mut console = NesConsoleCore::new(nrom_test_data(), backend, 1.0, Arc::new(NesInputCell::new()))
             .expect("NesConsoleCore should construct");
         let slot_size = console.frame_slot_size();
         let mut slot = vec![0u8; slot_size];
         console.render_frame(&mut slot).expect("render before save");
         let state = console.save_state().expect("save state");
-        let mut restored = NesConsoleCore::new(nrom_test_data(), Box::new(NullAudio), 1.0)
+        let mut restored = NesConsoleCore::new(nrom_test_data(), Box::new(NullAudio), 1.0, Arc::new(NesInputCell::new()))
             .expect("restored NesConsoleCore should construct");
         restored.load_state(&state).expect("load state");
         let mut restored_slot = vec![0u8; slot_size];

@@ -4,10 +4,14 @@ use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_op
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
+use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::rom::RomFormat;
+use nerust_contract_core::timer::FrameTimer;
+use nerust_contract_core::EmuCommand;
+use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
-use nerust_gui_session::core::SessionCore;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
@@ -15,10 +19,14 @@ use nerust_input_nes::input::NesInputState;
 use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
+use nerust_nes_console::NesConsoleCore;
+use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
+use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
@@ -166,9 +174,10 @@ impl NesAdapter {
     }
 }
 
-#[derive(Debug)]
 struct NesRuntime {
-    core: SessionCore,
+    emu: Option<EmuThread<NesConsoleCore>>,
+    #[allow(dead_code)]
+    cell: Arc<NesInputCell>,
 }
 
 const FILTER_FIELD: &str = "video.filter";
@@ -194,6 +203,8 @@ pub fn apply_default_system_settings_choice(
     NesSystemDefinition::new().apply_settings_choice(settings, field, choice)
 }
 
+/// Note: The old Console path is kept for reference until Phase 7.
+#[allow(dead_code)]
 impl NesSystemDefinition {
     fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
         self.build_console_with(
@@ -360,11 +371,37 @@ impl SystemDefinition for NesSystemDefinition {
         _host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
+        let cell = self
+            .input_cell
+            .get_or_init(|| Arc::new(NesInputCell::new()))
+            .clone();
+        let mixer = build_speaker(&settings.local)?;
+        let backend = mixer.backend;
+        let dummy = CartridgeData::new(CartridgeDataParts {
+            format: RomFormat::INes,
+            prog_rom: vec![0; 0x8000],
+            char_rom: vec![0; 0x2000],
+            pram_length: 0,
+            save_pram_length: 0,
+            vram_length: 0,
+            save_vram_length: 0,
+            mapper_type: 0,
+            mirror_mode: MirrorMode::Horizontal,
+            has_battery: false,
+            sub_mapper_type: 0,
+            trainer: Vec::new(),
+        })
+        .map_err(|e| format!("failed to create dummy ROM: {e}"))?;
+        let core = NesConsoleCore::new(dummy, backend, 1.0, cell.clone())
+            .map_err(|e| e.to_string())?;
+        let timer = FrameTimer::new(Duration::from_secs_f64(1.0 / 60.0));
         Ok(Box::new(NesRuntime {
-            core: SessionCore::from_console(self.build_console(settings)?),
+            emu: Some(EmuThread::spawn(core, timer)),
+            cell,
         }))
     }
 }
+
 
 impl SystemInputAdapter for NesAdapter {
     fn apply_event(&mut self, event: DigitalInputEvent) {
@@ -400,70 +437,75 @@ impl SystemInputAdapter for NesAdapter {
 
 impl SystemRuntime for NesRuntime {
     fn snapshot(&self) -> SystemRuntimeSnapshot {
+        let metrics = ConsoleMetrics {
+            frame_counter: self
+                .emu
+                .as_ref()
+                .map(|e| e.frame_count())
+                .unwrap_or(0),
+            ..ConsoleMetrics::default()
+        };
         SystemRuntimeSnapshot {
-            metrics: self.core.metrics(),
-            video_frame: Some(self.core.video_frame_handle()),
-            video_profile: Some(self.core.video_render_profile()),
+            metrics,
+            video_frame: None,
+            video_profile: None,
         }
     }
 
     fn load(&mut self, media: &MediaObject, request: &ResolvedLoadRequest) -> Result<(), String> {
-        self.core
-            .load_rom(media.bytes.as_ref().to_vec(), request.core_options)
-            .map_err(|error| error.to_string())
+        let _ = (media, request);
+        Err("hot-load not supported in new path".into())
     }
 
     fn unload(&mut self) -> Result<bool, String> {
-        self.core
-            .unload_rom()
-            .map(|_| true)
-            .map_err(|error| error.to_string())
+        self.emu.take();
+        Ok(true)
     }
 
     fn reset(&self) -> Result<(), String> {
-        self.core.reset().map_err(|error| error.to_string())
-    }
-
-    fn pause(&mut self) {
-        self.core.pause();
-    }
-
-    fn resume(&mut self) {
-        self.core.resume();
-    }
-
-    fn export_state(&self) -> Result<RuntimeStateExport, String> {
-        self.core.export_state().map_err(|error| error.to_string())
-    }
-
-    fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String> {
-        self.core
-            .import_state(state_blob.to_vec())
-            .map_err(|error| error.to_string())?;
-        self.core.sync_paused_from_console();
+        if let Some(ref emu) = self.emu {
+            emu.send(EmuCommand::Reset)
+                .map_err(|_| "reset send failed".to_string())?;
+        }
         Ok(())
     }
 
-    fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
-        self.core
-            .export_mapper_save()
-            .map_err(|error| error.to_string())
+    fn pause(&mut self) {
+        if let Some(ref emu) = self.emu {
+            let _ = emu.send(EmuCommand::Pause);
+        }
     }
 
-    fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core
-            .import_mapper_save(bytes)
-            .map_err(|error| error.to_string())
+    fn resume(&mut self) {
+        if let Some(ref emu) = self.emu {
+            let _ = emu.send(EmuCommand::Resume);
+        }
+    }
+
+    fn export_state(&self) -> Result<RuntimeStateExport, String> {
+        Err("export_state not supported in new path".into())
+    }
+
+    fn import_state(&mut self, _state_blob: &[u8]) -> Result<(), String> {
+        Err("import_state not supported in new path".into())
+    }
+
+    fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+
+    fn import_mapper_save(&self, _bytes: Vec<u8>) -> Result<(), String> {
+        Err("import_mapper_save not supported in new path".into())
     }
 
     fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
-        self.core.canonical_media_identity().ok()
+        None
     }
 
     fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        self.core.with_frame_buffer(|bytes| {
-            f(bytes);
-        });
+        if let Some(ref emu) = self.emu {
+            emu.with_last_slot(|slot| f(slot));
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
+    last_slot: Arc<RwLock<Option<Vec<u8>>>>,
     frame_count: Arc<AtomicU64>,
     render_pending: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -20,10 +21,12 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     pub fn spawn(mut core: C, timer: FrameTimer) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
+        let last_slot: Arc<RwLock<Option<Vec<u8>>>> = Arc::new(RwLock::new(None));
         let frame_count = Arc::new(AtomicU64::new(0));
         let render_pending = Arc::new(AtomicBool::new(false));
 
         let cmds = Arc::clone(&last_cmds);
+        let slot = Arc::clone(&last_slot);
         let fc = Arc::clone(&frame_count);
         let rp = Arc::clone(&render_pending);
         let thread = thread::spawn(move || {
@@ -36,6 +39,8 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         match core.render_frame(&mut frame_slot) {
                             Ok(list) => {
                                 *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
+                                *slot.write().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(frame_slot.clone());
                                 rp.store(false, Ordering::Release);
                             }
                             Err(e) => {
@@ -44,7 +49,6 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         }
                         local_frame += 1;
                         fc.store(local_frame, Ordering::Relaxed);
-                        // 次フレームの期待時刻まで待つ（遅れている場合は即座に進む）
                         if let Some(dur) = timer.remaining_until(local_frame) {
                             thread::sleep(dur);
                         }
@@ -60,6 +64,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         Self {
             cmd_tx,
             last_cmds,
+            last_slot,
             frame_count,
             render_pending,
             thread: Some(thread),
@@ -82,6 +87,14 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn with_last_slot(&self, f: impl FnOnce(&[u8])) {
+        if let Ok(slot) = self.last_slot.read() {
+            if let Some(ref data) = *slot {
+                f(data);
+            }
+        }
     }
 
     pub fn frame_count(&self) -> u64 {
