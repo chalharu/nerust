@@ -6,7 +6,6 @@ use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_contract_core::input::InputCell;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::nes_pad_device::NesPadDevice;
 use nerust_nes_core::Core;
@@ -234,13 +233,13 @@ impl Aggregate {
     }
 }
 
-type Cell3 = InputCell<3>;
+use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 
 struct PerfRunner {
     core: Core,
     screen: PerfScreen,
-    controller: NesPadDevice<Arc<Cell3>>,
-    cell: Arc<Cell3>,
+    controller: NesPadDevice<SharedNesInputCell>,
+    cell: Arc<NesInputCell>,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
@@ -262,11 +261,11 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
-        let cell = Arc::new(Cell3::new());
+        let cell = Arc::new(NesInputCell::new());
         Ok(Self {
             core,
             screen: PerfScreen::new(),
-            controller: NesPadDevice::new(cell.clone()),
+            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
             cell,
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
@@ -324,14 +323,14 @@ impl CaseHarness for PerfRunner {
             }
         }
         self.cell
-            .store(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
         self.mic = matches!(state, PadState::Pressed);
         self.cell
-            .store(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 }

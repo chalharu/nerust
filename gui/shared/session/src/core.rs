@@ -151,7 +151,9 @@ mod tests {
             TestSpeaker,
             ScreenBuffer::new_nes_gpu_default(),
             Box::new(nerust_input_nes_runtime::nes_pad_device::NesPadDevice::new(
-                Arc::new(nerust_contract_core::input::InputCell::new()),
+                nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(Arc::new(
+                    nerust_input_nes_runtime::nes_input_cell::NesInputCell::new(),
+                )),
             )),
         ))
     }
