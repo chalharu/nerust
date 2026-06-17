@@ -92,34 +92,24 @@ impl GlView {
         self.logical_width = frame_size.width as i32;
         self.logical_height = frame_size.height as i32;
 
-        let bpp: usize = if self.is_palette_format { 1 } else { 4 };
+        let bpp: usize = 4; // 常に RGBA
         let shader = compile_shader_program(self.is_palette_format);
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
 
-        // frame texture
+        // frame texture (常に RGBA。palette は赤チャネルに index を格納)
         let mut tex_names = [0; 1];
         gen_textures(1, tex_names.as_mut_ptr()).unwrap();
         self.frame_texture = tex_names[0];
-        let internal_fmt = if self.is_palette_format {
-            gl::R8 as GLint
-        } else {
-            gl::RGBA as GLint
-        };
-        let data_fmt = if self.is_palette_format {
-            gl::RED
-        } else {
-            gl::RGBA
-        };
         configure_frame_texture(
             0,
             self.frame_texture,
             frame_size.width,
             frame_size.height,
-            internal_fmt,
-            data_fmt,
+            gl::RGBA as GLint,
+            gl::RGBA,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
@@ -259,23 +249,31 @@ impl GlView {
 
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
-        let (fmt, typ) = if self.is_palette_format {
-            (gl::RED, gl::UNSIGNED_BYTE)
+        if self.is_palette_format {
+            // palette index (1bpp) → RGBA (4bpp) に複製。GL_RED/R8 の互換性問題を回避
+            let pixel_count = (self.logical_width * self.logical_height) as usize;
+            let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for &index in src {
+                rgba.push(index);
+                rgba.push(index);
+                rgba.push(index);
+                rgba.push(255);
+            }
+            tex_sub_image_2d(
+                gl::TEXTURE_2D, 0, 0, 0,
+                self.logical_width, self.logical_height,
+                gl::RGBA, gl::UNSIGNED_BYTE,
+                rgba.as_ptr() as *const c_void,
+            ).unwrap();
         } else {
-            (gl::RGBA, gl::UNSIGNED_BYTE)
-        };
-        tex_sub_image_2d(
-            gl::TEXTURE_2D,
-            0,
-            0,
-            0,
-            self.logical_width,
-            self.logical_height,
-            fmt,
-            typ,
-            screen_ptr as *const c_void,
-        )
-        .unwrap();
+            tex_sub_image_2d(
+                gl::TEXTURE_2D, 0, 0, 0,
+                self.logical_width, self.logical_height,
+                gl::RGBA, gl::UNSIGNED_BYTE,
+                screen_ptr as *const c_void,
+            ).unwrap();
+        }
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
 
