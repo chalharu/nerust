@@ -146,6 +146,10 @@ impl SessionHandle {
         }
     }
 
+    pub fn swap_frame_buffer(&mut self) {
+        self.runtime.swap_frame_buffer();
+    }
+
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         &self.settings_snapshot
     }

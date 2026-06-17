@@ -72,6 +72,10 @@ impl HostState {
         &self.session
     }
 
+    pub(crate) fn session_mut(&mut self) -> &mut SessionHandle {
+        &mut self.session
+    }
+
     pub(crate) fn window(&self) -> Option<&Arc<TaoWindow>> {
         self.window.as_ref()
     }

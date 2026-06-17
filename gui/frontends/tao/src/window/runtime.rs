@@ -119,7 +119,7 @@ impl WindowRuntime {
             return;
         };
 
-        let result = renderer.render(self.host.session(), window_size);
+        let result = renderer.render(self.host.session_mut(), window_size);
         self.host.on_render_result(result);
     }
 

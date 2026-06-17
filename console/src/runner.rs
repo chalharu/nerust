@@ -7,52 +7,59 @@ use self::metrics::SharedConsoleMetrics;
 use data::ConsoleData;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_video::FrameBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 pub(super) struct ConsoleRunner {
     timer: Timer,
     controller: Box<dyn ControllerState>,
     paused: bool,
     frame_counter: u64,
-
+    frame_buffer_updated: Arc<AtomicBool>,
     stop_receiver: Receiver<()>,
     data_receiver: Receiver<ConsoleData>,
     screen: ScreenBuffer,
-    frame_buffer: Arc<RwLock<Box<[u8]>>>,
+    frame_buffer: Arc<Mutex<FrameBuffer>>,
+    screen_backing: FrameBuffer,
     metrics: SharedConsoleMetrics,
 }
 
 impl ConsoleRunner {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
         screen: ScreenBuffer,
-        frame_buffer: Arc<RwLock<Box<[u8]>>>,
+        frame_buffer: Arc<Mutex<FrameBuffer>>,
+        frame_buffer_updated: Arc<AtomicBool>,
+        screen_backing: FrameBuffer,
         metrics: SharedConsoleMetrics,
         controller: Box<dyn ControllerState>,
     ) -> Self {
         Self {
             data_receiver,
             stop_receiver,
-
+            frame_buffer_updated,
             timer: Timer::new(),
             controller,
             paused: true,
             frame_counter: 0,
             screen,
             frame_buffer,
+            screen_backing,
             metrics,
         }
     }
 
-    fn publish_frame(&self) {
-        let mut frame_buffer = self
-            .frame_buffer
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        self.screen.write_frame_into(frame_buffer.as_mut());
+    fn publish_frame(&mut self) {
+        self.screen.write_frame_into(self.screen_backing.as_mut());
+        let mut guard = self.frame_buffer.lock().unwrap();
+        std::mem::swap(&mut *guard, &mut self.screen_backing);
+        self.frame_buffer_updated
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     fn publish_metrics(&self, loaded: bool) {
