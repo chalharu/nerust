@@ -136,8 +136,21 @@ impl GlView {
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
-            // ダミー NTSC texture (usampler2D が未バインドだと GL_INVALID_OPERATION)
+            // NTSC texture
+            let ntsc_size = render_profile.logical_size;
+            if let Some(ntsc_data) = render_profile
+                .console_video_assets
+                .as_ref()
+                .and_then(|a| a.packed_ntsc_rgba8())
             {
+                self.ntsc_enabled = true;
+                let mut ntsc_names = [0; 1];
+                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
+                self.ntsc_texture = ntsc_names[0];
+                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
+                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+            } else {
+                // ダミー (usampler2D 未バインド防止)
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
@@ -151,8 +164,14 @@ impl GlView {
 
             uniform_2f(
                 shader.get_uniform("source_size"),
-                frame_size.width as f32,
-                frame_size.height as f32,
+                render_profile.source_logical_size.width as f32,
+                render_profile.source_logical_size.height as f32,
+            )
+            .unwrap();
+            uniform_2f(
+                shader.get_uniform("output_size"),
+                ntsc_size.width as f32,
+                ntsc_size.height as f32,
             )
             .unwrap();
             uniform_1i(shader.get_uniform("ntsc_enabled"), self.ntsc_enabled as i32).unwrap();
