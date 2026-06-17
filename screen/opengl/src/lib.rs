@@ -241,25 +241,23 @@ impl GlView {
 
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
-        log::info!("on_update: palette={} size={}x{}", self.is_palette_format, self.logical_width, self.logical_height);
         if self.is_palette_format {
-            // palette index (1bpp) → RGBA (4bpp) に複製して tex_image_2d で全再定義
+            // palette index (1bpp) → RGBA (4bpp) に複製して tex_sub_image_2d
             let pixel_count = (self.logical_width * self.logical_height) as usize;
             let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
-            log::info!("palette: first pixel index={}", src[0]);
-            let mut rgba = Vec::with_capacity(pixel_count * 4);
-            for &index in src {
-                rgba.push(index);
-                rgba.push(index);
-                rgba.push(index);
-                rgba.push(255);
+            let mut rgba = vec![0u8; pixel_count * 4];
+            for (i, &index) in src.iter().enumerate() {
+                let base = i * 4;
+                rgba[base] = index;
+                rgba[base + 1] = index;
+                rgba[base + 2] = index;
+                rgba[base + 3] = 255;
             }
-            tex_image_2d(
-                gl::TEXTURE_2D, 0,
-                gl::RGBA as GLint,
+            tex_sub_image_2d(
+                gl::TEXTURE_2D, 0, 0, 0,
                 self.logical_width, self.logical_height,
-                0, gl::RGBA, gl::UNSIGNED_BYTE,
-                rgba.as_ptr() as *const _,
+                gl::RGBA, gl::UNSIGNED_BYTE,
+                rgba.as_ptr() as *const c_void,
             ).unwrap();
         } else {
             tex_sub_image_2d(
