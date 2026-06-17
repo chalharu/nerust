@@ -28,10 +28,12 @@ impl FrameChannelConsole {
         Self { cmd_tx, ack }
     }
 
-    /// Renderer の ACK を確認し、新しいフレームとコマンドを送信する。
-    /// ACK 未着またはチャネル Full の場合は何も送信せず false（フレームスキップ）。
+    /// Renderer の ACK を確認し、コマンドを送信する。
+    /// Blit を含む場合のみ ACK 確認を行い、ACK 未着またはチャネル Full なら
+    /// false（フレームスキップ）。Blit を含まないコマンドは常に送信する。
     pub fn try_send_frame(&self, cmds: GpuCommandList) -> bool {
-        if !self.ack.swap(false, Ordering::Acquire) {
+        let needs_ack = cmds.commands.iter().any(|c| matches!(c, crate::GpuCommand::Blit { .. }));
+        if needs_ack && !self.ack.swap(false, Ordering::Acquire) {
             return false;
         }
         match self.cmd_tx.try_send(EmuToRenderer::FrameReady(cmds)) {
