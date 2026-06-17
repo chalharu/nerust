@@ -37,9 +37,10 @@ impl WgpuRenderer {
 
     pub(crate) fn render(
         &mut self,
-        session: &SessionHandle,
+        session: &mut SessionHandle,
         window_size: SurfaceSize,
     ) -> RenderResult {
+        session.swap_frame_buffer();
         let mut result: Option<RenderResult> = None;
         session.with_frame_buffer(&mut |bytes| {
             result = Some(self.backend.render(bytes, window_size));

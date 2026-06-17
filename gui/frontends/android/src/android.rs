@@ -668,7 +668,7 @@ impl AndroidFrontend {
         };
         let size = window.inner_size();
         match renderer.render(
-            &self.session,
+            &mut self.session,
             nerust_screen_wgpu::surface::SurfaceSize::new(size.width, size.height),
         ) {
             RenderResult::Presented => {
