@@ -39,11 +39,12 @@ impl GlBackend {
         self.view.use_vao(value);
     }
 
-    /// Allocate GPU resources for the given RGBA render profile.
+    /// Allocate GPU resources for the given render profile.
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
         self.view.on_load(render_profile)?;
         let logical_size = render_profile.logical_size;
-        self.expected_frame_len = logical_size.width * logical_size.height * 4;
+        let bpp = render_profile.frame_format.bytes_per_pixel();
+        self.expected_frame_len = logical_size.width * logical_size.height * bpp;
         Ok(())
     }
 

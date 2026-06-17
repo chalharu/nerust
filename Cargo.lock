@@ -3240,6 +3240,7 @@ dependencies = [
  "nerust_nes_device",
  "nerust_screen_buffer",
  "nerust_screen_filter",
+ "nerust_screen_video",
  "nerust_sound_traits",
 ]
 
