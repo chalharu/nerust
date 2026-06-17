@@ -1,6 +1,6 @@
 uniform sampler2D frame_texture;
 uniform sampler2D palette_texture;
-uniform usampler2D ntsc_texture;
+uniform sampler2D ntsc_texture;
 uniform vec2 source_size;
 uniform vec2 output_size;
 uniform bool ntsc_enabled;
@@ -41,7 +41,10 @@ int ntsc_source_offset(int sample, int tap) {
 }
 
 uint ntsc_entry(uint color_index, int row) {
-    return texelFetch(ntsc_texture, ivec2(int(color_index), row), 0).r;
+    // RGBA8 から u32 を復元 (R32UI 回避のため)
+    vec4 rgba = texelFetch(ntsc_texture, ivec2(int(color_index), row), 0);
+    uvec4 bytes = uvec4(round(rgba * 255.0));
+    return (bytes.r << 24u) | (bytes.g << 16u) | (bytes.b << 8u) | bytes.a;
 }
 
 uint clamp_impl(uint io) {
