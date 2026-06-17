@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod channel;
 pub mod device;
 pub mod input;
 pub mod mirror;
@@ -8,9 +9,6 @@ pub mod rom;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use nerust_screen_video::FrameBuffer;
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -54,55 +52,14 @@ pub struct CoreCapabilities {
 
 #[derive(Clone)]
 pub enum GpuCommand {
-    Blit(Arc<FrameBuffer>),
-    PaletteDecode {
-        indices: Arc<FrameBuffer>,
-        palette_id: PaletteId,
-    },
-    UploadPalette {
-        id: PaletteId,
-        data: Arc<[u32; 256]>,
-    },
-    UploadTexture {
-        id: TextureId,
-        data: Arc<[u8]>,
-        width: u32,
-        height: u32,
-        format: TextureFormat,
-    },
-    DrawMesh {
-        vertices: Vec<Vertex>,
-        indices: Vec<u16>,
-        textures: Vec<TextureId>,
-    },
+    Blit { slot: u32 },
+    PaletteDecode { slot: u32 },
+    UploadPalette { slot: u32 },
 }
 
 #[derive(Clone)]
 pub struct GpuCommandList {
     pub commands: Vec<GpuCommand>,
-}
-
-// ---------------------------------------------------------------------------
-// GPU resource identifiers (forward declarations)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PaletteId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TextureId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextureFormat {
-    Rgba8,
-    // future: Bgra8, R8, Rg8, …
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Vertex {
-    pub position: [f32; 3],
-    pub uv: [f32; 2],
-    pub color: [f32; 4],
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +119,8 @@ pub enum EmuCommand {
 pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self) -> Result<GpuCommandList, CoreError>;
+    fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
+    fn frame_slot_size(&self) -> usize;
 
     // -- audio --
     fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
