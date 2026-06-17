@@ -135,27 +135,12 @@ impl GlView {
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
             // NTSC texture (一時的に無効化。R32UI texture の互換性問題は別途対応)
-            // ダミー NTSC texture: usampler2D が未バインドだと glDrawArrays が InvalidOperation
-            // R32UI 非対応環境があるため RGBA8 ダミーで代用 (ntsc_enabled=false で未使用)
-            {
-                let mut dummy_tex = [0; 1];
-                gen_textures(1, dummy_tex.as_mut_ptr()).unwrap();
-                self.ntsc_texture = dummy_tex[0];
-                let dummy_data = vec![0u8; 64 * 42 * 4];
-                configure_frame_texture(
-                    2, self.ntsc_texture, 64, 42,
-                    gl::RGBA as GLint, gl::RGBA, &dummy_data,
-                );
-                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
-            }
-
             uniform_2f(
                 shader.get_uniform("source_size"),
                 frame_size.width as f32,
                 frame_size.height as f32,
             )
             .unwrap();
-            uniform_1i(shader.get_uniform("ntsc_enabled"), self.ntsc_enabled as i32).unwrap();
         }
 
         let vertex_data: [VertexData; 4] = [
