@@ -27,8 +27,6 @@ struct FilterUniforms {
     output_height: u32,
 }
 
-const BLACK_RGBA8_TEXEL: [u8; 4] = [0, 0, 0, 0xFF];
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(super) enum FramePipelineKind {
     DirectColor,
@@ -125,31 +123,20 @@ impl Renderer {
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let (palette_rgba8, palette_size) = match assets {
-            Some(assets) => (
-                assets.palette_rgba8(),
-                Extent3d {
-                    width: PALETTE_TEXTURE_WIDTH,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            ),
-            None => (
-                BLACK_RGBA8_TEXEL.as_slice(),
-                Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            ),
-        };
+        // Palette texture は常に PALETTE_TEXTURE_WIDTH × 1 で作成。
+        // 初期値はゼロ。初回フレームの UploadPalette コマンドで上書きされる。
+        const PALETTE_ZERO: [u8; 256] = [0u8; 256];
         let palette_texture = create_texture_from_bytes(
             &device,
             &queue,
             "nerust_palette_texture",
             TextureFormat::Rgba8Uint,
-            palette_size,
-            palette_rgba8,
+            Extent3d {
+                width: PALETTE_TEXTURE_WIDTH,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            &PALETTE_ZERO,
         );
         let (ntsc_data, ntsc_size) =
             encode_ntsc_texture(assets.and_then(|assets| assets.packed_ntsc_rgba8()));
