@@ -233,14 +233,41 @@ fn validate_console_state_target(
 }
 
 fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
-    let logical_size = screen.logical_size();
-    let mut rgba = vec![0; screen.frame_len()];
-    screen.write_frame_into(&mut rgba);
-    Some(PreviewFrame {
-        width: logical_size.width as u32,
-        height: logical_size.height as u32,
-        rgba,
-    })
+    if screen.publishes_palette_frame() {
+        let source_size = screen.source_logical_size();
+        let pixel_count = source_size.width * source_size.height;
+        // PaletteIndex → RGBA 変換 (thumbnail は RGBA を期待)
+        let palette_rgba8 = screen
+            .console_video_assets()
+            .map(|a| a.palette_rgba8())
+            .unwrap_or(&[0u8; 256]);
+        let mut src = vec![0u8; pixel_count];
+        screen.write_frame_into(&mut src);
+        let mut rgba = Vec::with_capacity(pixel_count * 4);
+        for &index in &src {
+            let i = usize::from(index.min(63)) * 4;
+            rgba.push(palette_rgba8[i]);
+            rgba.push(palette_rgba8[i + 1]);
+            rgba.push(palette_rgba8[i + 2]);
+            rgba.push(palette_rgba8[i + 3]);
+        }
+        Some(PreviewFrame {
+            width: source_size.width as u32,
+            height: source_size.height as u32,
+            rgba,
+        })
+    } else {
+        let frame_len = screen.frame_len();
+        let mut rgba = vec![0; frame_len];
+        screen.write_frame_into(&mut rgba);
+        // RGBA mode の width/height は frame data に合わせる
+        let display_size = screen.logical_size();
+        Some(PreviewFrame {
+            width: display_size.width as u32,
+            height: display_size.height as u32,
+            rgba,
+        })
+    }
 }
 
 pub(crate) fn build_state_export(
