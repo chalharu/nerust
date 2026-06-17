@@ -104,9 +104,12 @@ impl GlView {
         gen_textures(1, tex_names.as_mut_ptr()).unwrap();
         self.frame_texture = tex_names[0];
         configure_frame_texture(
-            0, self.frame_texture,
-            frame_size.width, frame_size.height,
-            gl::RGBA as GLint, gl::RGBA,
+            0,
+            self.frame_texture,
+            frame_size.width,
+            frame_size.height,
+            gl::RGBA as GLint,
+            gl::RGBA,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
@@ -142,7 +145,13 @@ impl GlView {
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
-                configure_ntsc_texture(2, self.ntsc_texture, 64, nerust_screen_filter::NTSC_TEXTURE_HEIGHT as usize, ntsc_data);
+                configure_ntsc_texture(
+                    2,
+                    self.ntsc_texture,
+                    64,
+                    nerust_screen_filter::NTSC_TEXTURE_HEIGHT as usize,
+                    ntsc_data,
+                );
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
             } else {
                 // ダミー (sampler2D 未バインド防止)
@@ -152,8 +161,13 @@ impl GlView {
                 let ntsc_height = nerust_screen_filter::NTSC_TEXTURE_HEIGHT as usize;
                 let dummy = vec![0u8; 64 * ntsc_height * 4];
                 configure_frame_texture(
-                    2, self.ntsc_texture, 64, ntsc_height,
-                    gl::RGBA as GLint, gl::RGBA, &dummy,
+                    2,
+                    self.ntsc_texture,
+                    64,
+                    ntsc_height,
+                    gl::RGBA as GLint,
+                    gl::RGBA,
+                    &dummy,
                 );
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
             }
@@ -244,6 +258,7 @@ impl GlView {
         Ok(())
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_update(&self, screen_ptr: *const u8) {
         self.shader.as_ref().unwrap().use_program();
 
@@ -258,7 +273,7 @@ impl GlView {
             // frame texture (palette index → RGBA に拡張)
             active_texture(gl::TEXTURE0).unwrap();
             let pixel_count = (self.logical_width * self.logical_height) as usize;
-            let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
+            let src = unsafe { std::slice::from_raw_parts(screen_ptr, pixel_count) };
             let mut rgba = vec![0u8; pixel_count * 4];
             for (i, &idx) in src.iter().enumerate() {
                 let base = i * 4;
@@ -268,12 +283,17 @@ impl GlView {
                 rgba[base + 3] = 255;
             }
             tex_image_2d(
-                gl::TEXTURE_2D, 0,
+                gl::TEXTURE_2D,
+                0,
                 gl::RGBA as GLint,
-                self.logical_width, self.logical_height,
-                0, gl::RGBA, gl::UNSIGNED_BYTE,
-                rgba.as_ptr() as *const c_void,
-            ).unwrap();
+                self.logical_width,
+                self.logical_height,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                rgba.as_ptr() as *const _,
+            )
+            .unwrap();
         }
 
         if self.use_vao {
@@ -286,11 +306,17 @@ impl GlView {
 
         if !self.is_palette_format {
             tex_sub_image_2d(
-                gl::TEXTURE_2D, 0, 0, 0,
-                self.logical_width, self.logical_height,
-                gl::RGBA, gl::UNSIGNED_BYTE,
-                screen_ptr as *const c_void,
-            ).unwrap();
+                gl::TEXTURE_2D,
+                0,
+                0,
+                0,
+                self.logical_width,
+                self.logical_height,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                screen_ptr as *const _,
+            )
+            .unwrap();
         }
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
@@ -325,6 +351,9 @@ impl GlView {
         }
         if self.palette_texture != 0 {
             ids.push(self.palette_texture);
+        }
+        if self.ntsc_texture != 0 {
+            ids.push(self.ntsc_texture);
         }
         if !ids.is_empty() {
             delete_textures(ids.len() as i32, ids.as_ptr()).unwrap();
@@ -363,10 +392,14 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
     tex_image_2d(
-        gl::TEXTURE_2D, 0,
+        gl::TEXTURE_2D,
+        0,
         gl::RGBA as GLint,
-        width as i32, actual_height as i32,
-        0, gl::RGBA, gl::UNSIGNED_BYTE,
+        width as i32,
+        actual_height as i32,
+        0,
+        gl::RGBA,
+        gl::UNSIGNED_BYTE,
         rgba.as_ptr() as *const _,
     )
     .unwrap();
