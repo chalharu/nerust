@@ -150,7 +150,7 @@ impl GlView {
                 configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
             } else {
-                // ダミー (usampler2D 未バインド防止)
+                // ダミー (sampler2D 未バインド防止)
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
@@ -332,13 +332,17 @@ impl Default for GlView {
     }
 }
 
-/// 64×42 NTSC kernel texture (R32UI)。packed_ntsc_rgba8 は big-endian u32 なので
-/// native (little-endian) に変換してアップロードする。
+/// 64×42 NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 なので
+/// u32 → RGBA8 に変換して sampler2D で読み取れるようにする。
+/// (R32UI + usampler2D は macOS で正しく動作しない)
 fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, be_data: &[u8]) {
-    let mut le_data = Vec::with_capacity(be_data.len());
+    let mut rgba = Vec::with_capacity(be_data.len() * 2); // u32 → 4 bytes, same size
     for chunk in be_data.chunks_exact(4) {
         let be = u32::from_be_bytes(chunk.try_into().unwrap());
-        le_data.extend_from_slice(&be.to_le_bytes());
+        rgba.push(((be >> 24) & 0xff) as u8);
+        rgba.push(((be >> 16) & 0xff) as u8);
+        rgba.push(((be >> 8) & 0xff) as u8);
+        rgba.push((be & 0xff) as u8);
     }
     active_texture(gl::TEXTURE0 + unit).unwrap();
     bind_texture(gl::TEXTURE_2D, texture).unwrap();
@@ -349,13 +353,13 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
     tex_image_2d(
         gl::TEXTURE_2D,
         0,
-        gl::R32UI as GLint,
+        gl::RGBA as GLint,
         width as i32,
         height as i32,
         0,
-        gl::RED_INTEGER,
-        gl::UNSIGNED_INT,
-        le_data.as_ptr() as *const _,
+        gl::RGBA,
+        gl::UNSIGNED_BYTE,
+        rgba.as_ptr() as *const _,
     )
     .unwrap();
 }
