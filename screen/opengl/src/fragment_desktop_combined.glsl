@@ -65,9 +65,6 @@ vec3 rgb_out_impl(uint raw) {
 void main(void) {
     if (ntsc_enabled) {
         ivec2 out_pos = ivec2(floor(vuv * output_size));
-        // #debug: palette lookup (skip NTSC decode) to isolate coordinate issue
-        frag_color = vec4(palette_color(palette_index(ivec2(floor(vuv * source_size)))), 1.0);
-        return;
         int chunk = out_pos.x / 7;
         int sample = out_pos.x - chunk * 7;
         int base = chunk * 3;
