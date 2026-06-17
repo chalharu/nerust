@@ -238,14 +238,16 @@ impl GlView {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         if self.is_palette_format {
-            // palette index (1bpp) → GL_R8 texture に glTexImage2D で全再定義
+            // TEXTURE0 (frame_texture) に切り替えてからアップロード
             unsafe {
+                gl::ActiveTexture(gl::TEXTURE0);
                 gl::TexImage2D(
                     gl::TEXTURE_2D, 0, gl::R8 as GLint,
                     self.logical_width, self.logical_height,
                     0, gl::RED, gl::UNSIGNED_BYTE,
                     screen_ptr as *const _,
                 );
+                gl::ActiveTexture(gl::TEXTURE1);
             }
             // glGetError のチェックは draw 前にまとめて行う
         } else {
