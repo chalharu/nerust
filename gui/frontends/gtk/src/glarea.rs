@@ -120,6 +120,10 @@ fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc
             renderer.borrow_mut().realize(gl_area, &state);
         }
     }
+    // swap は成功しても失敗しても snapshot は試行する
+    if let Ok(mut state) = state.try_borrow_mut() {
+        state.swap_frame_buffer();
+    }
     if let Ok(state) = state.try_borrow()
         && let Some(frame) = state.snapshot().video_frame
     {

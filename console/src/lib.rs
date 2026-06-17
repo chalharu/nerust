@@ -20,10 +20,12 @@ use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_filter::FilterType;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::{FrameBuffer, PixelFormat};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::Hasher;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 use thiserror::Error;
@@ -170,9 +172,33 @@ impl Console {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
         let frame_len = screen.frame_len();
-        let mut frame_buffer = vec![0; frame_len].into_boxed_slice();
-        screen.write_frame_into(&mut frame_buffer);
-        let frame_buffer = Arc::new(RwLock::new(frame_buffer));
+        let presentation = screen.video_presentation().clone();
+        let render_profile = video::VideoRenderProfile {
+            source_logical_size: presentation.source_logical_size(),
+            logical_size: presentation.logical_size(),
+            physical_size: presentation.physical_size(),
+        };
+        let pixel_format = if screen.publishes_palette_frame() {
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            }
+        } else {
+            PixelFormat::Rgba
+        };
+        let src_w = presentation.source_logical_size().width;
+        let src_h = presentation.source_logical_size().height;
+
+        let mut shared_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        shared_fb.resize(src_w, src_h);
+        shared_fb.resize_data(frame_len);
+        let shared = Arc::new(Mutex::new(shared_fb));
+
+        let frame_buffer_updated = Arc::new(AtomicBool::new(false));
+
+        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        disp_fb.resize(src_w, src_h);
+        disp_fb.resize_data(frame_len);
+
         let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
@@ -182,16 +208,32 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo::new(screen.video_presentation().clone(), frame_buffer.clone()),
+            video: ConsoleVideo::new(
+                render_profile,
+                shared.clone(),
+                disp_fb,
+                frame_buffer_updated.clone(),
+            ),
             metrics: metrics.clone(),
         };
 
+        // 初期フレームを共有バッファに書き込む
+        {
+            let mut guard = shared.lock().unwrap();
+            screen.write_frame_into(guard.as_mut());
+        }
+
         result.thread = Some(thread::spawn(move || {
+            let mut backing = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
+            backing.resize(src_w, src_h);
+            backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
                 data_recv,
                 stop_recv,
                 screen,
-                frame_buffer,
+                shared,
+                frame_buffer_updated,
+                backing,
                 metrics,
                 controller,
             );
@@ -219,6 +261,10 @@ impl Console {
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         self.video.with_frame_buffer(f)
+    }
+
+    pub fn swap_frame_buffer(&mut self) {
+        self.video.swap_frame_buffer();
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
