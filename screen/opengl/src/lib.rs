@@ -38,12 +38,86 @@ void main(void) {
 const PALETTE_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
 uniform sampler2D palette_texture;
+uniform usampler2D ntsc_texture;
+uniform vec2 source_size;
+uniform bool ntsc_enabled;
 in vec2 vuv;
 out vec4 frag_color;
 
+uint palette_index(ivec2 pos) {
+    if (pos.x < 0 || pos.y < 0 || pos.x >= int(source_size.x) || pos.y >= int(source_size.y)) {
+        return 15u;
+    }
+    return uint(round(texelFetch(frame_texture, pos, 0).r * 255.0));
+}
+
+vec3 palette_color(uint index) {
+    return texelFetch(palette_texture, ivec2(int(index), 0), 0).rgb;
+}
+
+// ---- NTSC decode (translated from wgpu ntsc_decode.wgsl) ----
+
+#define NTSC_ENTRY_STRIDE 42
+
+int ntsc_row_offset(int sample, int tap) {
+    if (tap == 0) return sample;
+    if (tap == 1) return (sample < 2) ? sample + 19 : sample + 12;
+    if (tap == 2) return (sample < 4) ? sample + 31 : sample + 24;
+    if (tap == 3) return sample + 7;
+    if (tap == 4) return (sample < 2) ? sample + 26 : sample + 19;
+    return (sample < 4) ? sample + 38 : sample + 31;
+}
+
+int ntsc_source_offset(int sample, int tap) {
+    if (tap == 0) return 1;
+    if (tap == 1) return (sample < 2) ? -1 : 2;
+    if (tap == 2) return (sample < 4) ? 0 : 3;
+    if (tap == 3) return -2;
+    if (tap == 4) return (sample < 2) ? -4 : -1;
+    return (sample < 4) ? -3 : 0;
+}
+
+uint ntsc_entry(uint color_index, int row) {
+    return texelFetch(ntsc_texture, ivec2(int(color_index), row), 0).r;
+}
+
+uint clamp_impl(uint io) {
+    uint sub = (io >> 9u) & 0x300c03u;
+    uint clamp_val = 0x20280a02u - sub;
+    return (io | clamp_val) & (clamp_val - sub);
+}
+
+vec3 rgb_out_impl(uint raw) {
+    uint rgb = ((raw >> 5u) & 0x00ff0000u) | ((raw >> 3u) & 0x0000ff00u) | ((raw >> 1u) & 0x000000ffu);
+    return vec3(
+        float((rgb >> 16u) & 0xffu),
+        float((rgb >> 8u) & 0xffu),
+        float(rgb & 0xffu)
+    ) / 255.0;
+}
+
 void main(void) {
-    float index = texture(frame_texture, vuv).r;
-    frag_color = texture(palette_texture, vec2(index, 0.5));
+    ivec2 output = ivec2(gl_FragCoord.xy);
+
+    if (ntsc_enabled) {
+        int chunk = output.x / 7;
+        int sample = output.x - chunk * 7;
+        int base = chunk * 3;
+        int phase_row = (output.y % 3) * NTSC_ENTRY_STRIDE;
+
+        uint sum =
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 0), output.y)), phase_row + ntsc_row_offset(sample, 0)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 1), output.y)), phase_row + ntsc_row_offset(sample, 1)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 2), output.y)), phase_row + ntsc_row_offset(sample, 2)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 3), output.y)), phase_row + ntsc_row_offset(sample, 3)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 4), output.y)), phase_row + ntsc_row_offset(sample, 4)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 5), output.y)), phase_row + ntsc_row_offset(sample, 5));
+
+        frag_color = vec4(rgb_out_impl(clamp_impl(sum)), 1.0);
+    } else {
+        uint idx = palette_index(ivec2(output.x, int(source_size.y) - 1 - output.y));
+        frag_color = vec4(palette_color(idx), 1.0);
+    }
 }
 "#;
 
@@ -55,7 +129,9 @@ fn allocate(size: usize) -> Box<[u8]> {
 pub struct GlView {
     frame_texture: u32,
     palette_texture: u32,
+    ntsc_texture: u32,
     is_palette_format: bool,
+    ntsc_enabled: bool,
     shader: Option<Shader>,
     use_vao: bool,
     vba: Option<VertexArray>,
@@ -69,7 +145,9 @@ impl GlView {
         Self {
             frame_texture: 0,
             palette_texture: 0,
+            ntsc_texture: 0,
             is_palette_format: false,
+            ntsc_enabled: false,
             shader: None,
             use_vao: false,
             vba: None,
@@ -144,6 +222,28 @@ impl GlView {
                 palette_rgba8,
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
+
+            // NTSC texture
+            if let Some(ntsc_data) = render_profile
+                .console_video_assets
+                .as_ref()
+                .and_then(|a| a.packed_ntsc_rgba8())
+            {
+                self.ntsc_enabled = true;
+                let mut ntsc_names = [0; 1];
+                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
+                self.ntsc_texture = ntsc_names[0];
+                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
+                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+            }
+
+            uniform_2f(
+                shader.get_uniform("source_size"),
+                frame_size.width as f32,
+                frame_size.height as f32,
+            )
+            .unwrap();
+            uniform_1i(shader.get_uniform("ntsc_enabled"), self.ntsc_enabled as i32).unwrap();
         }
 
         let vertex_data: [VertexData; 4] = [
@@ -299,6 +399,34 @@ impl Default for GlView {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 64×42 NTSC kernel texture (R32UI)。packed_ntsc_rgba8 は big-endian u32 なので
+/// native (little-endian) に変換してアップロードする。
+fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, be_data: &[u8]) {
+    let mut le_data = Vec::with_capacity(be_data.len());
+    for chunk in be_data.chunks_exact(4) {
+        let be = u32::from_be_bytes(chunk.try_into().unwrap());
+        le_data.extend_from_slice(&be.to_le_bytes());
+    }
+    active_texture(gl::TEXTURE0 + unit).unwrap();
+    bind_texture(gl::TEXTURE_2D, texture).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
+    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
+    tex_image_2d(
+        gl::TEXTURE_2D,
+        0,
+        gl::R32UI as GLint,
+        width as i32,
+        height as i32,
+        0,
+        gl::RED_INTEGER,
+        gl::UNSIGNED_INT,
+        le_data.as_ptr() as *const _,
+    )
+    .unwrap();
 }
 
 fn configure_frame_texture(
