@@ -134,18 +134,13 @@ impl GlView {
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
-            // NTSC texture
-            if let Some(ntsc_data) = render_profile
+            // NTSC texture (一時的に無効化。R32UI texture の互換性問題は別途対応)
+            if let Some(_ntsc_data) = render_profile
                 .console_video_assets
                 .as_ref()
                 .and_then(|a| a.packed_ntsc_rgba8())
             {
-                self.ntsc_enabled = true;
-                let mut ntsc_names = [0; 1];
-                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
-                self.ntsc_texture = ntsc_names[0];
-                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
-                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+                // ntsc_enabled は false のまま (Palette pipeline で代用。R32UI 別途対応)
             }
 
             uniform_2f(
