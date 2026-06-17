@@ -365,8 +365,7 @@ impl SystemDefinition for NesSystemDefinition {
     ) -> Result<Box<dyn SystemRuntime>, String> {
         use nerust_gui_runtime::settings::HostBackendIdentity;
         let use_gpu = host.host_backend == HostBackendIdentity::tao_wgpu()
-            || host.host_backend == HostBackendIdentity::android_wgpu()
-            || host.host_backend == HostBackendIdentity::gtk_opengl();
+            || host.host_backend == HostBackendIdentity::android_wgpu();
         Ok(Box::new(NesRuntime {
             core: SessionCore::from_console(self.build_console(settings, use_gpu)?),
         }))

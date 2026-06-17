@@ -14,14 +14,6 @@ use nerust_timer::CLOCK_RATE;
 pub fn build_screen_buffer(settings: &DesktopSharedSettings, use_gpu: bool) -> ScreenBuffer {
     let filter = filter_type(settings);
     if use_gpu {
-        ScreenBuffer::new_gpu(
-            filter,
-            nerust_screen_logical::LogicalSize {
-                width: 256,
-                height: 240,
-            },
-        )
-    } else {
         ScreenBuffer::new(
             filter,
             nerust_screen_logical::LogicalSize {
