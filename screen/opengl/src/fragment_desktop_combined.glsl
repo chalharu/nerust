@@ -2,6 +2,7 @@ uniform sampler2D frame_texture;
 uniform sampler2D palette_texture;
 uniform usampler2D ntsc_texture;
 uniform vec2 source_size;
+uniform vec2 output_size;
 uniform bool ntsc_enabled;
 in vec2 vuv;
 out vec4 frag_color;
@@ -59,9 +60,8 @@ vec3 rgb_out_impl(uint raw) {
 }
 
 void main(void) {
-    ivec2 out_pos = ivec2(floor(vuv * source_size));
-
     if (ntsc_enabled) {
+        ivec2 out_pos = ivec2(floor(vuv * output_size));
         int chunk = out_pos.x / 7;
         int sample = out_pos.x - chunk * 7;
         int base = chunk * 3;
@@ -73,11 +73,12 @@ void main(void) {
             ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 2), out_pos.y)), phase_row + ntsc_row_offset(sample, 2)) +
             ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 3), out_pos.y)), phase_row + ntsc_row_offset(sample, 3)) +
             ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 4), out_pos.y)), phase_row + ntsc_row_offset(sample, 4)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 5), out_pos.y)), phase_row + ntsc_row_offset(sample, 5));
+                ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 5), out_pos.y)), phase_row + ntsc_row_offset(sample, 5));
 
         frag_color = vec4(rgb_out_impl(clamp_impl(sum)), 1.0);
     } else {
-        uint idx = palette_index(out_pos);
+        ivec2 pos = ivec2(floor(vuv * source_size));
+        uint idx = palette_index(pos);
         frag_color = vec4(palette_color(idx), 1.0);
     }
 }
