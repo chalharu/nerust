@@ -58,11 +58,6 @@ impl ConsoleRunner {
 
     fn publish_frame(&mut self) {
         self.screen.write_frame_into(self.screen_backing.as_mut());
-        let d = self.screen_backing.as_ref();
-        log::info!("publish_frame: first={} len={} format={:?} sample={:?}",
-            d.first().copied().unwrap_or(0), d.len(),
-            self.screen.publishes_palette_frame(),
-            &d[..10.min(d.len())]);
         if self.channel.try_send_frame(GpuCommandList {
             commands: vec![GpuCommand::Blit { slot: 0 }],
         }) {
