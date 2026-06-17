@@ -1,68 +1,6 @@
-#![allow(dead_code)]
-
-use super::SettingsBridge;
+use super::{ChildToParentMessage, ParentToChildMessage, read_message, write_message};
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use serde::de::DeserializeOwned;
-use serde_derive::{Deserialize, Serialize};
-use std::io::{self, BufRead, Read, Write};
-
-const MAX_HEADER_BYTES: usize = 16;
-const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(super) enum ParentToChildMessage {
-    Init(SettingsSnapshot),
-    ApplyResult(Result<(), String>),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(super) enum ChildToParentMessage {
-    Apply(SettingsSnapshot),
-}
-
-fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> Result<Option<T>, String> {
-    let mut length_line = Vec::new();
-    let read = reader
-        .take((MAX_HEADER_BYTES + 1) as u64)
-        .read_until(b'\n', &mut length_line)
-        .map_err(|error| format!("settings bridge read failed: {error}"))?;
-    if read == 0 {
-        return Ok(None);
-    }
-    if !length_line.ends_with(b"\n") || length_line.len() > MAX_HEADER_BYTES {
-        return Err("settings bridge length header exceeded the supported limit".into());
-    }
-    let payload_len = std::str::from_utf8(&length_line)
-        .map_err(|error| format!("settings bridge length was not UTF-8: {error}"))?
-        .trim()
-        .parse::<usize>()
-        .map_err(|error| format!("settings bridge length parse failed: {error}"))?;
-    if payload_len > MAX_MESSAGE_BYTES {
-        return Err(format!(
-            "settings bridge payload exceeded the supported limit ({payload_len} > {MAX_MESSAGE_BYTES})"
-        ));
-    }
-    let mut payload = vec![0_u8; payload_len];
-    reader
-        .read_exact(&mut payload)
-        .map_err(|error| format!("settings bridge payload read failed: {error}"))?;
-    rmp_serde::from_slice(&payload)
-        .map(Some)
-        .map_err(|error| format!("settings bridge decode failed: {error}"))
-}
-
-fn write_message<W: Write, T: serde::Serialize>(writer: &mut W, message: &T) -> Result<(), String> {
-    let payload = rmp_serde::to_vec_named(message)
-        .map_err(|error| format!("settings bridge encode failed: {error}"))?;
-    writeln!(writer, "{}", payload.len())
-        .map_err(|error| format!("settings bridge length write failed: {error}"))?;
-    writer
-        .write_all(&payload)
-        .map_err(|error| format!("settings bridge payload write failed: {error}"))?;
-    writer
-        .flush()
-        .map_err(|error| format!("settings bridge flush failed: {error}"))
-}
+use std::io::{self, BufRead, Write};
 
 pub(super) struct SettingsChildBridge<R, W> {
     reader: R,
@@ -84,8 +22,8 @@ impl SettingsChildBridge<io::BufReader<io::Stdin>, io::BufWriter<io::Stdout>> {
     }
 }
 
-impl<R: BufRead + Send, W: Write + Send> SettingsBridge for SettingsChildBridge<R, W> {
-    fn apply_settings(&mut self, snapshot: &SettingsSnapshot) -> Result<(), String> {
+impl<R: BufRead, W: Write> SettingsChildBridge<R, W> {
+    pub(super) fn apply_settings(&mut self, snapshot: &SettingsSnapshot) -> Result<(), String> {
         write_message(
             &mut self.writer,
             &ChildToParentMessage::Apply(snapshot.clone()),
@@ -106,7 +44,6 @@ mod tests {
         ChildToParentMessage, ParentToChildMessage, SettingsChildBridge, read_message,
         write_message,
     };
-    use crate::settings::SettingsBridge;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,

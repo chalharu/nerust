@@ -1,4 +1,4 @@
-use super::SettingsBridge;
+use super::bridge::SettingsChildBridge;
 use iced::alignment::Alignment;
 use iced::event::{self, Status};
 use iced::keyboard::key::{Code, Physical};
@@ -84,7 +84,14 @@ enum Message {
 }
 
 struct SettingsApp {
-    bridge: Arc<Mutex<dyn SettingsBridge>>,
+    bridge: Arc<
+        Mutex<
+            SettingsChildBridge<
+                std::io::BufReader<std::io::Stdin>,
+                std::io::BufWriter<std::io::Stdout>,
+            >,
+        >,
+    >,
     draft: SettingsSnapshot,
     page: SettingsPage,
     input_section: InputPageSection,
@@ -96,8 +103,12 @@ struct SettingsApp {
 
 pub(super) fn run(
     snapshot: SettingsSnapshot,
-    bridge: Arc<Mutex<dyn SettingsBridge>>,
+    bridge: SettingsChildBridge<
+        std::io::BufReader<std::io::Stdin>,
+        std::io::BufWriter<std::io::Stdout>,
+    >,
 ) -> Result<(), String> {
+    let bridge = Arc::new(Mutex::new(bridge));
     iced::application(
         move || SettingsApp::new(snapshot.clone(), bridge.clone()),
         update,
@@ -294,7 +305,17 @@ fn view(state: &SettingsApp) -> Element<'_, Message> {
 }
 
 impl SettingsApp {
-    fn new(snapshot: SettingsSnapshot, bridge: Arc<Mutex<dyn SettingsBridge>>) -> Self {
+    fn new(
+        snapshot: SettingsSnapshot,
+        bridge: Arc<
+            Mutex<
+                SettingsChildBridge<
+                    std::io::BufReader<std::io::Stdin>,
+                    std::io::BufWriter<std::io::Stdout>,
+                >,
+            >,
+        >,
+    ) -> Self {
         let storage_directory_input = snapshot
             .shared
             .persistence
