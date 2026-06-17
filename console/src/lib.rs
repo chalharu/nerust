@@ -177,6 +177,8 @@ impl Console {
             source_logical_size: presentation.source_logical_size(),
             logical_size: presentation.logical_size(),
             physical_size: presentation.physical_size(),
+            frame_format: presentation.frame_format(),
+            console_video_assets: screen.console_video_assets().cloned(),
         };
         let pixel_format = if screen.publishes_palette_frame() {
             PixelFormat::PaletteIndex {
