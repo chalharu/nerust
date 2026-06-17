@@ -142,16 +142,17 @@ impl GlView {
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
-                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
+                configure_ntsc_texture(2, self.ntsc_texture, 64, nerust_screen_filter::NTSC_TEXTURE_HEIGHT as usize, ntsc_data);
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
             } else {
                 // ダミー (sampler2D 未バインド防止)
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
-                let dummy = vec![0u8; 64 * 42 * 4];
+                let ntsc_height = nerust_screen_filter::NTSC_TEXTURE_HEIGHT as usize;
+                let dummy = vec![0u8; 64 * ntsc_height * 4];
                 configure_frame_texture(
-                    2, self.ntsc_texture, 64, 42,
+                    2, self.ntsc_texture, 64, ntsc_height,
                     gl::RGBA as GLint, gl::RGBA, &dummy,
                 );
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
@@ -337,17 +338,23 @@ impl Default for GlView {
     }
 }
 
-/// 64×42 NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 なので
-/// u32 → RGBA8 に変換して sampler2D で読み取れるようにする。
-/// (R32UI + usampler2D は macOS で正しく動作しない)
+/// NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 を RGBA8 に変換。
+/// 実際の kernel entry stride を data 長から計算して texture 高さとする。
+/// (固定 NTSC_TEXTURE_HEIGHT=42 では不足。ntsc_entry が phase_row+offset > 41 を読むため)
 fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, be_data: &[u8]) {
-    let mut rgba = Vec::with_capacity(be_data.len() * 2); // u32 → 4 bytes, same size
-    for chunk in be_data.chunks_exact(4) {
-        let be = u32::from_be_bytes(chunk.try_into().unwrap());
-        rgba.push(((be >> 24) & 0xff) as u8);
-        rgba.push(((be >> 16) & 0xff) as u8);
-        rgba.push(((be >> 8) & 0xff) as u8);
-        rgba.push((be & 0xff) as u8);
+    // be_data は PALETTE_TEXTURE_WIDTH × entry_stride × 4 bytes
+    let entry_count = be_data.len() / (width * 4);
+    let actual_height = entry_count.max(height);
+    let mut rgba = Vec::with_capacity(width * actual_height * 4);
+    for row in 0..actual_height {
+        for col in 0..width {
+            let base = (row * width + col) * 4;
+            if base + 4 <= be_data.len() {
+                rgba.extend_from_slice(&be_data[base..base + 4]);
+            } else {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
     }
     active_texture(gl::TEXTURE0 + unit).unwrap();
     bind_texture(gl::TEXTURE_2D, texture).unwrap();
@@ -356,14 +363,10 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
     tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
     tex_image_2d(
-        gl::TEXTURE_2D,
-        0,
+        gl::TEXTURE_2D, 0,
         gl::RGBA as GLint,
-        width as i32,
-        height as i32,
-        0,
-        gl::RGBA,
-        gl::UNSIGNED_BYTE,
+        width as i32, actual_height as i32,
+        0, gl::RGBA, gl::UNSIGNED_BYTE,
         rgba.as_ptr() as *const _,
     )
     .unwrap();
