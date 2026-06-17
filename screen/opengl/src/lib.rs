@@ -136,17 +136,16 @@ impl GlView {
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
-            // NTSC texture
-            if let Some(ntsc_data) = render_profile
-                .console_video_assets
-                .as_ref()
-                .and_then(|a| a.packed_ntsc_rgba8())
+            // ダミー NTSC texture (usampler2D が未バインドだと GL_INVALID_OPERATION)
             {
-                self.ntsc_enabled = true;
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
-                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
+                let dummy = vec![0u8; 64 * 42 * 4];
+                configure_frame_texture(
+                    2, self.ntsc_texture, 64, 42,
+                    gl::RGBA as GLint, gl::RGBA, &dummy,
+                );
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
             }
 
@@ -239,10 +238,8 @@ impl GlView {
         if self.is_palette_format {
             active_texture(gl::TEXTURE1).unwrap();
             bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
-            if self.ntsc_enabled {
-                active_texture(gl::TEXTURE2).unwrap();
-                bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
-            }
+            active_texture(gl::TEXTURE2).unwrap();
+            bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
             // frame texture を unit 0 でアップロード
             active_texture(gl::TEXTURE0).unwrap();
             tex_image_2d(
