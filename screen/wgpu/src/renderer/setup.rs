@@ -5,7 +5,7 @@ use crate::{
     upload::FrameUploadLayout,
 };
 use nerust_screen_filter::presentation::ConsoleVideoAssets;
-use nerust_screen_filter::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{
@@ -544,6 +544,9 @@ pub(super) fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]
         );
     };
 
+    // texture 高さは実データ長から計算する (固定定数ではなく entry_stride 変更に追従)
+    let width = NTSC_TEXTURE_WIDTH;
+    let height = texture.len() / (width as usize * 4);
     let mut packed = Vec::with_capacity(texture.len());
     let mut chunks = texture.chunks_exact(4);
     assert!(
@@ -564,8 +567,8 @@ pub(super) fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]
     (
         packed.into_boxed_slice(),
         Extent3d {
-            width: NTSC_TEXTURE_WIDTH,
-            height: NTSC_TEXTURE_HEIGHT,
+            width,
+            height: height as u32,
             depth_or_array_layers: 1,
         },
     )
