@@ -1,6 +1,7 @@
 use nerust_gui_settings::app_state::DesktopAppState;
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::shared::DesktopSharedSettings;
+use serde_yaml::Value;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -8,6 +9,17 @@ pub mod apply;
 pub mod manager;
 pub mod persistence;
 mod store;
+
+#[derive(Debug)]
+pub(super) enum SettingsStore {
+    FileBacked(SettingsPaths),
+    Ephemeral,
+}
+
+pub(super) struct LoadedSettingsDocument<T> {
+    pub(super) settings: T,
+    pub(super) raw: Value,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
