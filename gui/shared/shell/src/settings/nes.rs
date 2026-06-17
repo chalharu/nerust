@@ -11,14 +11,25 @@ use nerust_screen_filter::FilterType;
 use nerust_sound_traits::MixerBridge;
 use nerust_timer::CLOCK_RATE;
 
-pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
-    ScreenBuffer::new(
-        filter_type(settings),
-        nerust_screen_logical::LogicalSize {
-            width: 256,
-            height: 240,
-        },
-    )
+pub fn build_screen_buffer(settings: &DesktopSharedSettings, use_gpu: bool) -> ScreenBuffer {
+    let filter = filter_type(settings);
+    if use_gpu && !matches!(filter, nerust_screen_filter::FilterType::None) {
+        ScreenBuffer::new_gpu(
+            filter,
+            nerust_screen_logical::LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        )
+    } else {
+        ScreenBuffer::new(
+            filter,
+            nerust_screen_logical::LogicalSize {
+                width: 256,
+                height: 240,
+            },
+        )
+    }
 }
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
