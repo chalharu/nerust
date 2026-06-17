@@ -1,5 +1,6 @@
 use nerust_console::video::VideoRenderProfile;
 use nerust_screen_opengl::GlView;
+use nerust_screen_video::VideoFrameFormat;
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.
@@ -42,9 +43,13 @@ impl GlBackend {
     /// Allocate GPU resources for the given render profile.
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
         self.view.on_load(render_profile)?;
-        let logical_size = render_profile.logical_size;
+        let frame_size = match render_profile.frame_format {
+            VideoFrameFormat::Rgba => render_profile.logical_size,
+            // Palette モードでは frame data は source_logical_size の 1bpp データ
+            VideoFrameFormat::Palette => render_profile.source_logical_size,
+        };
         let bpp = render_profile.frame_format.bytes_per_pixel();
-        self.expected_frame_len = logical_size.width * logical_size.height * bpp;
+        self.expected_frame_len = frame_size.width * frame_size.height * bpp;
         Ok(())
     }
 
