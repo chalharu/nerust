@@ -97,25 +97,25 @@ vec3 rgb_out_impl(uint raw) {
 }
 
 void main(void) {
-    ivec2 output = ivec2(gl_FragCoord.xy);
+    ivec2 out_pos = ivec2(gl_FragCoord.xy);
 
     if (ntsc_enabled) {
-        int chunk = output.x / 7;
-        int sample = output.x - chunk * 7;
+        int chunk = out_pos.x / 7;
+        int sample = out_pos.x - chunk * 7;
         int base = chunk * 3;
-        int phase_row = (output.y % 3) * NTSC_ENTRY_STRIDE;
+        int phase_row = (out_pos.y % 3) * NTSC_ENTRY_STRIDE;
 
         uint sum =
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 0), output.y)), phase_row + ntsc_row_offset(sample, 0)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 1), output.y)), phase_row + ntsc_row_offset(sample, 1)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 2), output.y)), phase_row + ntsc_row_offset(sample, 2)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 3), output.y)), phase_row + ntsc_row_offset(sample, 3)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 4), output.y)), phase_row + ntsc_row_offset(sample, 4)) +
-            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 5), output.y)), phase_row + ntsc_row_offset(sample, 5));
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 0), out_pos.y)), phase_row + ntsc_row_offset(sample, 0)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 1), out_pos.y)), phase_row + ntsc_row_offset(sample, 1)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 2), out_pos.y)), phase_row + ntsc_row_offset(sample, 2)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 3), out_pos.y)), phase_row + ntsc_row_offset(sample, 3)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 4), out_pos.y)), phase_row + ntsc_row_offset(sample, 4)) +
+            ntsc_entry(palette_index(ivec2(base + ntsc_source_offset(sample, 5), out_pos.y)), phase_row + ntsc_row_offset(sample, 5));
 
         frag_color = vec4(rgb_out_impl(clamp_impl(sum)), 1.0);
     } else {
-        uint idx = palette_index(ivec2(output.x, int(source_size.y) - 1 - output.y));
+        uint idx = palette_index(ivec2(out_pos.x, int(source_size.y) - 1 - out_pos.y));
         frag_color = vec4(palette_color(idx), 1.0);
     }
 }
