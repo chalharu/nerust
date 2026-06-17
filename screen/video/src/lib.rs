@@ -163,6 +163,21 @@ impl FrameBuffer {
     pub fn format(&self) -> &PixelFormat {
         &self.format
     }
+
+    /// PaletteIndex 形式の場合、パレットテーブルへの参照を返す。
+    pub fn palette(&self) -> Option<&[u32; 256]> {
+        match &self.format {
+            PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
+            PixelFormat::Rgba => None,
+        }
+    }
+
+    pub fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
+        match &mut self.format {
+            PixelFormat::PaletteIndex { palette } => Some(palette.as_mut()),
+            PixelFormat::Rgba => None,
+        }
+    }
 }
 
 impl AsRef<[u8]> for FrameBuffer {

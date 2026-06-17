@@ -180,7 +180,7 @@ impl Console {
         };
         let pixel_format = if screen.publishes_palette_frame() {
             PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
+                palette: Box::new(nerust_screen_filter::palette_rgba32()),
             }
         } else {
             PixelFormat::Rgba
@@ -217,8 +217,16 @@ impl Console {
             let mut guard = shared.lock().unwrap();
             screen.write_frame_into(guard.as_mut());
         }
+        let initial_cmds = if screen.publishes_palette_frame() {
+            vec![
+                nerust_contract_core::GpuCommand::Blit { slot: 0 },
+                nerust_contract_core::GpuCommand::UploadPalette { slot: 0 },
+            ]
+        } else {
+            vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }]
+        };
         console_ch.try_send_frame(nerust_contract_core::GpuCommandList {
-            commands: vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }],
+            commands: initial_cmds,
         });
 
         result.thread = Some(thread::spawn(move || {

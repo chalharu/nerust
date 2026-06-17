@@ -10,6 +10,17 @@ pub const NTSC_TEXTURE_WIDTH: u32 = nes_ntsc::SHADER_COLOR_COUNT as u32;
 pub const NTSC_TEXTURE_HEIGHT: u32 =
     (nes_ntsc::SHADER_PHASE_COUNT * nes_ntsc::SHADER_PHASE_ENTRY_COUNT) as u32;
 
+/// NES パレットエントリを RGBA u32 (0xRRGGBBAA) として 256 エントリ返す。
+/// 最初の 64 エントリが実際の NES カラーで、残りはゼロ埋め。
+pub fn palette_rgba32() -> [u32; 256] {
+    let mut result = [0u32; 256];
+    for (i, &entry) in filters::rgb::PALETTE.iter().enumerate() {
+        let rgb = RGB::from(entry);
+        result[i] = u32::from_be_bytes([rgb.red, rgb.green, rgb.blue, u8::MAX]);
+    }
+    result
+}
+
 pub trait NesFilter: Send {
     fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
 

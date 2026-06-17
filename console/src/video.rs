@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use nerust_contract_core::GpuCommand;
 use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
@@ -36,6 +37,8 @@ pub struct ConsoleVideo {
     disp_fb: FrameBuffer,
     /// Renderer 側のチャネルハンドル。コマンド受信と ACK 送信を行う。
     renderer_channel: FrameChannelRenderer,
+    /// `swap_frame_buffer()` で `UploadPalette` を受信した場合に true にセット。
+    palette_updated: bool,
 }
 
 impl ConsoleVideo {
@@ -50,6 +53,7 @@ impl ConsoleVideo {
             frame_buffer,
             disp_fb,
             renderer_channel,
+            palette_updated: false,
         }
     }
 
@@ -59,12 +63,22 @@ impl ConsoleVideo {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
+    /// `UploadPalette` を受信した場合、`palette_updated()` が true を返す。
     pub fn swap_frame_buffer(&mut self) {
-        if let Some(EmuToRenderer::FrameReady(_cmds)) = self.renderer_channel.try_recv_cmd() {
+        if let Some(EmuToRenderer::FrameReady(cmds)) = self.renderer_channel.try_recv_cmd() {
+            self.palette_updated = cmds
+                .commands
+                .iter()
+                .any(|c| matches!(c, GpuCommand::UploadPalette { .. }));
             let mut guard = self.frame_buffer.lock().unwrap();
             std::mem::swap(&mut *guard, &mut self.disp_fb);
             self.renderer_channel.send_ack();
         }
+    }
+
+    /// 最後の `swap_frame_buffer()` で `UploadPalette` を受信した場合に true。
+    pub fn palette_updated(&self) -> bool {
+        self.palette_updated
     }
 
     /// 表示バッファの内容をロックなしで読み取る。

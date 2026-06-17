@@ -65,7 +65,7 @@ impl ScreenBuffer {
         video_presentation: VideoPresentation,
         console_video_assets: Option<ConsoleVideoAssets>,
     ) -> Self {
-        let palette = Box::new([0u32; 256]);
+        let palette = Box::new(nerust_screen_filter::palette_rgba32());
         let mut back = FrameBuffer::with_capacity(
             src_size.width,
             src_size.height,
