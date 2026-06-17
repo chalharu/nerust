@@ -82,8 +82,13 @@ impl GlView {
     }
 
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
-        let frame_size = render_profile.logical_size;
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
+        // Palette モードでは frame data は source_logical_size、RGBA では logical_size
+        let frame_size = if self.is_palette_format {
+            render_profile.source_logical_size
+        } else {
+            render_profile.logical_size
+        };
         self.logical_width = frame_size.width as i32;
         self.logical_height = frame_size.height as i32;
 
