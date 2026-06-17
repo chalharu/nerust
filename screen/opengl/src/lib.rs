@@ -270,30 +270,15 @@ impl GlView {
             bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
             active_texture(gl::TEXTURE2).unwrap();
             bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
-            // frame texture (palette index → RGBA に拡張)
+            // frame texture (palette index を R8 texture に直接 upload)
             active_texture(gl::TEXTURE0).unwrap();
-            let pixel_count = (self.logical_width * self.logical_height) as usize;
-            let src = unsafe { std::slice::from_raw_parts(screen_ptr, pixel_count) };
-            let mut rgba = vec![0u8; pixel_count * 4];
-            for (i, &idx) in src.iter().enumerate() {
-                let base = i * 4;
-                rgba[base] = idx;
-                rgba[base + 1] = 0;
-                rgba[base + 2] = 0;
-                rgba[base + 3] = 255;
-            }
             tex_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as GLint,
-                self.logical_width,
-                self.logical_height,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                rgba.as_ptr() as *const _,
-            )
-            .unwrap();
+                gl::TEXTURE_2D, 0,
+                gl::R8 as GLint,
+                self.logical_width, self.logical_height,
+                0, gl::RED, gl::UNSIGNED_BYTE,
+                screen_ptr as *const _,
+            ).unwrap();
         }
 
         if self.use_vao {
