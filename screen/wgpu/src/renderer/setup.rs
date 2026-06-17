@@ -500,16 +500,10 @@ fn frame_pipeline_kind(
 ) -> Result<FramePipelineKind, String> {
     match presentation.frame_format() {
         VideoFrameFormat::Rgba => Ok(FramePipelineKind::DirectColor),
-        VideoFrameFormat::Palette => {
-            let Some(assets) = assets else {
-                return Err("palette video presentations require console video assets".into());
-            };
-            Ok(if assets.packed_ntsc_rgba8().is_some() {
-                FramePipelineKind::Ntsc
-            } else {
-                FramePipelineKind::Palette
-            })
-        }
+        VideoFrameFormat::Palette => Ok(match assets.and_then(|a| a.packed_ntsc_rgba8()) {
+            Some(_) => FramePipelineKind::Ntsc,
+            None => FramePipelineKind::Palette,
+        }),
     }
 }
 

@@ -1,5 +1,5 @@
 use nerust_console::video::VideoRenderProfile;
-use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
+use nerust_screen_video::{VideoFrameSpec, VideoPresentation};
 use nerust_screen_wgpu::renderer::{
     DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,
 };
@@ -100,7 +100,7 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
         let presentation = VideoPresentation::new(VideoFrameSpec::new(
-            VideoFrameFormat::Rgba,
+            render_profile.frame_format,
             render_profile.source_logical_size,
             render_profile.logical_size,
             render_profile.physical_size,
@@ -111,7 +111,7 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
             &render_surface,
             surface_size,
             &presentation,
-            None,
+            render_profile.console_video_assets.as_ref(),
             device_limit_profile,
             presentation_options,
         ))?;
