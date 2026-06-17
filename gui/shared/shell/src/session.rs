@@ -161,4 +161,12 @@ impl SessionHandle {
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
         self.runtime.with_frame_buffer(f);
     }
+
+    pub fn palette_updated(&self) -> bool {
+        self.runtime.palette_updated()
+    }
+
+    pub fn with_palette_rgba8(&self, f: &mut dyn FnMut(&[u8])) {
+        self.runtime.with_palette_rgba8(f);
+    }
 }

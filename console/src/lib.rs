@@ -262,6 +262,14 @@ impl Console {
         self.video.with_frame_buffer(f)
     }
 
+    pub fn with_palette_rgba8<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
+        self.video.with_palette_rgba8(f)
+    }
+
+    pub fn palette_updated(&self) -> bool {
+        self.video.palette_updated()
+    }
+
     pub fn swap_frame_buffer(&mut self) {
         self.video.swap_frame_buffer();
     }

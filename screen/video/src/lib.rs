@@ -178,6 +178,24 @@ impl FrameBuffer {
             PixelFormat::Rgba => None,
         }
     }
+
+    /// PaletteIndex 形式の場合、パレットを RGBA8 バイト列 (1024 バイト) に変換して返す。
+    /// GPU テクスチャへのアップロード用 (Rgba8Uint)。
+    pub fn palette_as_rgba8(&self) -> Option<[u8; 1024]> {
+        match &self.format {
+            PixelFormat::PaletteIndex { palette } => {
+                let mut bytes = [0u8; 1024];
+                for (i, &entry) in palette.iter().enumerate() {
+                    bytes[i * 4] = (entry >> 24) as u8;
+                    bytes[i * 4 + 1] = (entry >> 16) as u8;
+                    bytes[i * 4 + 2] = (entry >> 8) as u8;
+                    bytes[i * 4 + 3] = entry as u8;
+                }
+                Some(bytes)
+            }
+            PixelFormat::Rgba => None,
+        }
+    }
 }
 
 impl AsRef<[u8]> for FrameBuffer {

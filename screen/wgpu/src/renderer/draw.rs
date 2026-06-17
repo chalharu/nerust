@@ -10,6 +10,8 @@ use wgpu::{
     TexelCopyBufferLayout, TexelCopyTextureInfo, TextureViewDescriptor,
 };
 
+const PALETTE_TEXTURE_WIDTH: u32 = 64;
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(super) struct Viewport {
     pub(super) x: f32,
@@ -106,6 +108,31 @@ impl Renderer {
             Extent3d {
                 width: self.frame_logical_size.width as u32,
                 height: self.frame_logical_size.height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// RGBA8 パレットデータ (PALETTE_TEXTURE_WIDTH * 4 バイト) を GPU の
+    /// palette_texture に直接書き込む。WGPU の write_texture は即時実行される。
+    pub fn update_palette_texture(&self, palette_rgba8: &[u8]) {
+        assert_eq!(palette_rgba8.len(), PALETTE_TEXTURE_WIDTH as usize * 4);
+        self.queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &self.palette_texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            palette_rgba8,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(PALETTE_TEXTURE_WIDTH * 4),
+                rows_per_image: Some(1),
+            },
+            Extent3d {
+                width: PALETTE_TEXTURE_WIDTH,
+                height: 1,
                 depth_or_array_layers: 1,
             },
         );

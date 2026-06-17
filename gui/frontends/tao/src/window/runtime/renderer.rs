@@ -37,6 +37,11 @@ impl WgpuRenderer {
         window_size: SurfaceSize,
     ) -> RenderResult {
         session.swap_frame_buffer();
+        if session.palette_updated() {
+            session.with_palette_rgba8(|rgba| {
+                self.backend.update_palette_texture(rgba);
+            });
+        }
         let snapshot = session.snapshot();
         let frame = snapshot
             .video_frame

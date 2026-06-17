@@ -140,6 +140,16 @@ pub trait SystemRuntime: Send {
             f(frame.bytes());
         }
     }
+
+    /// 前回の `swap_frame_buffer()` で `UploadPalette` を受信した場合に true。
+    fn palette_updated(&self) -> bool {
+        false
+    }
+
+    /// PaletteIndex 形式のパレットを RGBA8 バイト列として読み取る。
+    /// `palette_updated()` が true の場合にのみ意味がある。
+    /// デフォルト実装は何もしない (RGBA専用ランタイム向け)。
+    fn with_palette_rgba8(&self, _f: &mut dyn FnMut(&[u8])) {}
 }
 
 struct NesSystemDefinition {
@@ -471,6 +481,14 @@ impl SystemRuntime for NesRuntime {
         self.core.with_frame_buffer(|bytes| {
             f(bytes);
         });
+    }
+
+    fn palette_updated(&self) -> bool {
+        self.core.palette_updated()
+    }
+
+    fn with_palette_rgba8(&self, f: &mut dyn FnMut(&[u8])) {
+        self.core.with_palette_rgba8(|rgba| f(rgba));
     }
 }
 

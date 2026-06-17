@@ -86,6 +86,16 @@ impl ConsoleVideo {
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         f(self.disp_fb.as_ref())
     }
+
+    /// 表示バッファのパレットを RGBA8 バイト列として読み取る。
+    /// `swap_frame_buffer()` の後、`palette_updated()` が true の場合にのみ呼ぶこと。
+    pub fn with_palette_rgba8<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
+        let rgba = self
+            .disp_fb
+            .palette_as_rgba8()
+            .expect("with_palette_rgba8 called on non-palette frame buffer");
+        f(&rgba)
+    }
 }
 
 #[cfg(test)]

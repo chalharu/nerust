@@ -69,7 +69,7 @@ pub struct Renderer {
     queue: Queue,
     config: SurfaceConfiguration,
     frame_texture: Texture,
-    _palette_texture: Texture,
+    palette_texture: Texture,
     _ntsc_texture: Texture,
     _srgb_lut_texture: Texture,
     frame_upload_buffer: Buffer,

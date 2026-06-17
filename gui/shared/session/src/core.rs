@@ -62,6 +62,14 @@ impl SessionCore {
         self.console.swap_frame_buffer();
     }
 
+    pub fn palette_updated(&self) -> bool {
+        self.console.palette_updated()
+    }
+
+    pub fn with_palette_rgba8<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
+        self.console.with_palette_rgba8(f)
+    }
+
     pub fn video_render_profile(&self) -> VideoRenderProfile {
         self.console.video().render_profile()
     }

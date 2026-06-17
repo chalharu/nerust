@@ -168,6 +168,14 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
         }
     }
 
+    /// Upload (or update) the palette texture used for PaletteDecode rendering.
+    ///
+    /// `palette_rgba8` must be PALETTE_TEXTURE_WIDTH × 4 bytes (64 RGBA texels).
+    /// This is a no-op for the `DirectColor` pipeline (the data is simply ignored).
+    pub fn update_palette_texture(&mut self, palette_rgba8: &[u8]) {
+        self.renderer.update_palette_texture(palette_rgba8);
+    }
+
     /// Reconfigure the wgpu surface for a new window size.
     ///
     /// Call this after a resize event, before the next [`render`](Self::render).

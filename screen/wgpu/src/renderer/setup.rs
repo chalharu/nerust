@@ -299,7 +299,7 @@ impl Renderer {
             queue,
             config,
             frame_texture,
-            _palette_texture: palette_texture,
+            palette_texture,
             _ntsc_texture: ntsc_texture,
             _srgb_lut_texture: srgb_lut_texture,
             frame_upload_buffer,
