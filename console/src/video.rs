@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
+use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
-use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoFrameHandle {
@@ -19,11 +20,13 @@ impl VideoFrameHandle {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct VideoRenderProfile {
     pub source_logical_size: LogicalSize,
     pub logical_size: LogicalSize,
     pub physical_size: PhysicalSize,
+    pub frame_format: VideoFrameFormat,
+    pub console_video_assets: Option<ConsoleVideoAssets>,
 }
 
 #[derive(Debug)]
@@ -54,7 +57,7 @@ impl ConsoleVideo {
     }
 
     pub fn render_profile(&self) -> VideoRenderProfile {
-        self.render_profile
+        self.render_profile.clone()
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
@@ -80,7 +83,7 @@ mod tests {
     use nerust_contract_core::GpuCommand;
     use nerust_contract_core::GpuCommandList;
     use nerust_contract_core::channel::frame_channel;
-    use nerust_screen_video::{FrameBuffer, PixelFormat};
+    use nerust_screen_video::{FrameBuffer, PixelFormat, VideoFrameFormat};
 
     fn make_test_video() -> (
         ConsoleVideo,
@@ -105,6 +108,8 @@ mod tests {
                 width: 4.0,
                 height: 1.0,
             },
+            frame_format: VideoFrameFormat::Rgba,
+            console_video_assets: None,
         };
         (
             ConsoleVideo::new(profile, shared, disp, renderer_ch),

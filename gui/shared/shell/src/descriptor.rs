@@ -198,10 +198,10 @@ pub fn apply_default_system_settings_choice(
 }
 
 impl NesSystemDefinition {
-    fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
+    fn build_console(&self, settings: &SettingsSnapshot, use_gpu: bool) -> Result<Console, String> {
         self.build_console_with(
             build_speaker(&settings.local)?,
-            build_screen_buffer(&settings.shared),
+            build_screen_buffer(&settings.shared, use_gpu),
         )
     }
 
@@ -360,11 +360,14 @@ impl SystemDefinition for NesSystemDefinition {
 
     fn create_runtime(
         &self,
-        _host: &RuntimeHostServices,
+        host: &RuntimeHostServices,
         settings: &SettingsSnapshot,
     ) -> Result<Box<dyn SystemRuntime>, String> {
+        use nerust_gui_runtime::settings::HostBackendIdentity;
+        let use_gpu = host.host_backend == HostBackendIdentity::tao_wgpu()
+            || host.host_backend == HostBackendIdentity::android_wgpu();
         Ok(Box::new(NesRuntime {
-            core: SessionCore::from_console(self.build_console(settings)?),
+            core: SessionCore::from_console(self.build_console(settings, use_gpu)?),
         }))
     }
 }
