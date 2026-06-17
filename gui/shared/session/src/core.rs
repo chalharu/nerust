@@ -50,10 +50,11 @@ impl SessionCore {
         use std::sync::Arc;
         let profile = self.console.video().render_profile();
         let logical_w = profile.logical_size.width;
+        let bpp = profile.frame_format.bytes_per_pixel();
         self.console.with_frame_buffer(|bytes| VideoFrameHandle {
             width: logical_w as u32,
             height: profile.logical_size.height as u32,
-            stride_bytes: logical_w * 4,
+            stride_bytes: logical_w * bpp,
             bytes: Arc::from(bytes),
         })
     }

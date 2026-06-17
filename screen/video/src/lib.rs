@@ -7,6 +7,15 @@ pub enum VideoFrameFormat {
     Palette,
 }
 
+impl VideoFrameFormat {
+    pub fn bytes_per_pixel(&self) -> usize {
+        match self {
+            VideoFrameFormat::Rgba => 4,
+            VideoFrameFormat::Palette => 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VideoFrameSpec {
     frame_format: VideoFrameFormat,
