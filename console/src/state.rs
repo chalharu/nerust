@@ -233,9 +233,9 @@ fn validate_console_state_target(
 }
 
 fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
-    let logical_size = screen.logical_size();
-    let pixel_count = logical_size.width * logical_size.height;
     if screen.publishes_palette_frame() {
+        let source_size = screen.source_logical_size();
+        let pixel_count = source_size.width * source_size.height;
         // PaletteIndex → RGBA 変換 (thumbnail は RGBA を期待)
         let palette_rgba8 = screen
             .console_video_assets()
@@ -252,16 +252,19 @@ fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
             rgba.push(palette_rgba8[i + 3]);
         }
         Some(PreviewFrame {
-            width: logical_size.width as u32,
-            height: logical_size.height as u32,
+            width: source_size.width as u32,
+            height: source_size.height as u32,
             rgba,
         })
     } else {
-        let mut rgba = vec![0; pixel_count * 4];
+        let frame_len = screen.frame_len();
+        let mut rgba = vec![0; frame_len];
         screen.write_frame_into(&mut rgba);
+        // RGBA mode の width/height は frame data に合わせる
+        let display_size = screen.logical_size();
         Some(PreviewFrame {
-            width: logical_size.width as u32,
-            height: logical_size.height as u32,
+            width: display_size.width as u32,
+            height: display_size.height as u32,
             rgba,
         })
     }
