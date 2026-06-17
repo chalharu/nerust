@@ -77,12 +77,15 @@ impl ConsoleVideo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_contract_core::channel::frame_channel;
     use nerust_contract_core::GpuCommand;
     use nerust_contract_core::GpuCommandList;
+    use nerust_contract_core::channel::frame_channel;
     use nerust_screen_video::{FrameBuffer, PixelFormat};
 
-    fn make_test_video() -> (ConsoleVideo, nerust_contract_core::channel::FrameChannelConsole) {
+    fn make_test_video() -> (
+        ConsoleVideo,
+        nerust_contract_core::channel::FrameChannelConsole,
+    ) {
         let mut shared = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         shared.resize(4, 1);
         let mut disp = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
@@ -90,11 +93,23 @@ mod tests {
         let shared = Arc::new(Mutex::new(shared));
         let (console_ch, renderer_ch) = frame_channel(4);
         let profile = VideoRenderProfile {
-            source_logical_size: LogicalSize { width: 4, height: 1 },
-            logical_size: LogicalSize { width: 4, height: 1 },
-            physical_size: PhysicalSize { width: 4.0, height: 1.0 },
+            source_logical_size: LogicalSize {
+                width: 4,
+                height: 1,
+            },
+            logical_size: LogicalSize {
+                width: 4,
+                height: 1,
+            },
+            physical_size: PhysicalSize {
+                width: 4.0,
+                height: 1.0,
+            },
         };
-        (ConsoleVideo::new(profile, shared, disp, renderer_ch), console_ch)
+        (
+            ConsoleVideo::new(profile, shared, disp, renderer_ch),
+            console_ch,
+        )
     }
 
     #[test]
@@ -105,10 +120,9 @@ mod tests {
             let mut guard = video.frame_buffer.lock().unwrap();
             guard.as_mut().fill(42);
         }
-        console_ch
-            .try_send_frame(GpuCommandList {
-                commands: vec![GpuCommand::Blit { slot: 0 }],
-            });
+        console_ch.try_send_frame(GpuCommandList {
+            commands: vec![GpuCommand::Blit { slot: 0 }],
+        });
         // Before swap: disp_fb is empty (zeros)
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 0);

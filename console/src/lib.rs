@@ -226,14 +226,7 @@ impl Console {
             backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv,
-                stop_recv,
-                screen,
-                shared,
-                console_ch,
-                backing,
-                metrics,
-                controller,
+                data_recv, stop_recv, screen, shared, console_ch, backing, metrics, controller,
             );
             state.run(speaker);
         }));

@@ -1,8 +1,8 @@
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
 
 use crate::GpuCommandList;
 
@@ -19,7 +19,8 @@ pub struct FrameChannelConsole {
 
 impl fmt::Debug for FrameChannelConsole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FrameChannelConsole").finish_non_exhaustive()
+        f.debug_struct("FrameChannelConsole")
+            .finish_non_exhaustive()
     }
 }
 
@@ -32,7 +33,10 @@ impl FrameChannelConsole {
     /// Blit を含む場合のみ ACK 確認を行い、ACK 未着またはチャネル Full なら
     /// false（フレームスキップ）。Blit を含まないコマンドは常に送信する。
     pub fn try_send_frame(&self, cmds: GpuCommandList) -> bool {
-        let needs_ack = cmds.commands.iter().any(|c| matches!(c, crate::GpuCommand::Blit { .. }));
+        let needs_ack = cmds
+            .commands
+            .iter()
+            .any(|c| matches!(c, crate::GpuCommand::Blit { .. }));
         if needs_ack && !self.ack.swap(false, Ordering::Acquire) {
             return false;
         }
@@ -51,7 +55,8 @@ pub struct FrameChannelRenderer {
 
 impl fmt::Debug for FrameChannelRenderer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FrameChannelRenderer").finish_non_exhaustive()
+        f.debug_struct("FrameChannelRenderer")
+            .finish_non_exhaustive()
     }
 }
 

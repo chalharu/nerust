@@ -5,9 +5,9 @@ mod runtime;
 
 use self::metrics::SharedConsoleMetrics;
 use data::ConsoleData;
-use nerust_contract_core::channel::FrameChannelConsole;
-use nerust_contract_core::GpuCommandList;
 use nerust_contract_core::GpuCommand;
+use nerust_contract_core::GpuCommandList;
+use nerust_contract_core::channel::FrameChannelConsole;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_video::FrameBuffer;
