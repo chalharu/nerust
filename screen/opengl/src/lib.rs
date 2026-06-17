@@ -92,26 +92,21 @@ impl GlView {
         self.logical_width = frame_size.width as i32;
         self.logical_height = frame_size.height as i32;
 
-        let bpp: usize = if self.is_palette_format { 1 } else { 4 };
+        let bpp: usize = 4; // 常に RGBA8
         let shader = compile_shader_program(self.is_palette_format);
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
 
-        // frame texture (palette 時は R8+GL_RED、RGBA 時は RGBA)
+        // frame texture (常に RGBA8。palette は赤チャネルに index を格納)
         let mut tex_names = [0; 1];
         gen_textures(1, tex_names.as_mut_ptr()).unwrap();
         self.frame_texture = tex_names[0];
-        let (internal_fmt, data_fmt) = if self.is_palette_format {
-            (gl::R8 as GLint, gl::RED)
-        } else {
-            (gl::RGBA as GLint, gl::RGBA)
-        };
         configure_frame_texture(
             0, self.frame_texture,
             frame_size.width, frame_size.height,
-            internal_fmt, data_fmt,
+            gl::RGBA as GLint, gl::RGBA,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
@@ -259,14 +254,24 @@ impl GlView {
             bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
             active_texture(gl::TEXTURE2).unwrap();
             bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
-            // frame texture を unit 0 でアップロード
+            // frame texture (palette index → RGBA に拡張)
             active_texture(gl::TEXTURE0).unwrap();
+            let pixel_count = (self.logical_width * self.logical_height) as usize;
+            let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
+            let mut rgba = vec![0u8; pixel_count * 4];
+            for (i, &idx) in src.iter().enumerate() {
+                let base = i * 4;
+                rgba[base] = idx;
+                rgba[base + 1] = 0;
+                rgba[base + 2] = 0;
+                rgba[base + 3] = 255;
+            }
             tex_image_2d(
                 gl::TEXTURE_2D, 0,
-                gl::R8 as GLint,
+                gl::RGBA as GLint,
                 self.logical_width, self.logical_height,
-                0, gl::RED, gl::UNSIGNED_BYTE,
-                screen_ptr as *const c_void,
+                0, gl::RGBA, gl::UNSIGNED_BYTE,
+                rgba.as_ptr() as *const c_void,
             ).unwrap();
         }
 
