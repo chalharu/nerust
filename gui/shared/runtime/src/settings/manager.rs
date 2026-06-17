@@ -5,7 +5,7 @@ use super::store::{
     normalize_loaded_settings, normalize_local_settings, normalize_shared_settings,
     save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
 };
-use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot};
+use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
 use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_settings::app_state::{
     DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
@@ -35,18 +35,6 @@ struct SettingsState {
     local_document: Value,
     app_state_document: Value,
     store: SettingsStore,
-}
-
-#[derive(Debug)]
-pub(super) enum SettingsStore {
-    FileBacked(SettingsPaths),
-    Ephemeral,
-}
-
-#[derive(Debug)]
-pub(super) struct LoadedSettingsDocument<T> {
-    pub(super) settings: T,
-    pub(super) raw: Value,
 }
 
 impl SettingsManager {
