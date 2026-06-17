@@ -10,6 +10,7 @@ use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_contract_core::channel::frame_channel;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
@@ -23,7 +24,6 @@ use nerust_screen_physical::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::Hasher;
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -193,7 +193,7 @@ impl Console {
         shared_fb.resize_data(frame_len);
         let shared = Arc::new(Mutex::new(shared_fb));
 
-        let frame_buffer_updated = Arc::new(AtomicBool::new(false));
+        let (console_ch, renderer_ch) = frame_channel(4);
 
         let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         disp_fb.resize(src_w, src_h);
@@ -208,34 +208,25 @@ impl Console {
             data_sender,
             stop_sender,
             thread: None,
-            video: ConsoleVideo::new(
-                render_profile,
-                shared.clone(),
-                disp_fb,
-                frame_buffer_updated.clone(),
-            ),
+            video: ConsoleVideo::new(render_profile, shared.clone(), disp_fb, renderer_ch),
             metrics: metrics.clone(),
         };
 
-        // 初期フレームを共有バッファに書き込む
+        // 初期フレームを共有バッファに書き込み、チャネルに送信
         {
             let mut guard = shared.lock().unwrap();
             screen.write_frame_into(guard.as_mut());
         }
+        console_ch.try_send_frame(nerust_contract_core::GpuCommandList {
+            commands: vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }],
+        });
 
         result.thread = Some(thread::spawn(move || {
             let mut backing = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
             backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv,
-                stop_recv,
-                screen,
-                shared,
-                frame_buffer_updated,
-                backing,
-                metrics,
-                controller,
+                data_recv, stop_recv, screen, shared, console_ch, backing, metrics, controller,
             );
             state.run(speaker);
         }));

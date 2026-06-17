@@ -1,5 +1,6 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::{Arc, Mutex};
 
+use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_screen_video::FrameBuffer;
@@ -33,9 +34,8 @@ pub struct ConsoleVideo {
     /// `swap_frame_buffer(&mut self)` で shared から最新フレームを引き取り、
     /// `with_frame_buffer(&self)` でロックなし読み取り。
     disp_fb: FrameBuffer,
-    /// 共有バッファに新しいフレームが書き込まれたかどうか。
-    /// GUI スレッドが各フレームの描画前に1回チェックする。
-    frame_buffer_updated: Arc<AtomicBool>,
+    /// Renderer 側のチャネルハンドル。コマンド受信と ACK 送信を行う。
+    renderer_channel: FrameChannelRenderer,
 }
 
 impl ConsoleVideo {
@@ -43,13 +43,13 @@ impl ConsoleVideo {
         render_profile: VideoRenderProfile,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
-        frame_buffer_updated: Arc<AtomicBool>,
+        renderer_channel: FrameChannelRenderer,
     ) -> Self {
         Self {
             render_profile,
             frame_buffer,
             disp_fb,
-            frame_buffer_updated,
+            renderer_channel,
         }
     }
 
@@ -60,17 +60,10 @@ impl ConsoleVideo {
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
     pub fn swap_frame_buffer(&mut self) {
-        if self
-            .frame_buffer_updated
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if let Some(EmuToRenderer::FrameReady(_cmds)) = self.renderer_channel.try_recv_cmd() {
             let mut guard = self.frame_buffer.lock().unwrap();
-            if self
-                .frame_buffer_updated
-                .swap(false, std::sync::atomic::Ordering::AcqRel)
-            {
-                std::mem::swap(&mut *guard, &mut self.disp_fb);
-            }
+            std::mem::swap(&mut *guard, &mut self.disp_fb);
+            self.renderer_channel.send_ack();
         }
     }
 
@@ -84,14 +77,21 @@ impl ConsoleVideo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_contract_core::GpuCommand;
+    use nerust_contract_core::GpuCommandList;
+    use nerust_contract_core::channel::frame_channel;
     use nerust_screen_video::{FrameBuffer, PixelFormat};
 
-    fn make_test_video() -> ConsoleVideo {
+    fn make_test_video() -> (
+        ConsoleVideo,
+        nerust_contract_core::channel::FrameChannelConsole,
+    ) {
         let mut shared = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         shared.resize(4, 1);
         let mut disp = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         disp.resize(4, 1);
         let shared = Arc::new(Mutex::new(shared));
+        let (console_ch, renderer_ch) = frame_channel(4);
         let profile = VideoRenderProfile {
             source_logical_size: LogicalSize {
                 width: 4,
@@ -106,22 +106,28 @@ mod tests {
                 height: 1.0,
             },
         };
-        ConsoleVideo::new(profile, shared, disp, Arc::new(AtomicBool::new(false)))
+        (
+            ConsoleVideo::new(profile, shared, disp, renderer_ch),
+            console_ch,
+        )
     }
 
     #[test]
     fn console_video_swap_brings_new_data() {
-        let mut video = make_test_video();
+        let (mut video, console_ch) = make_test_video();
+        // Simulate publish_frame: write data to shared, send command
         {
             let mut guard = video.frame_buffer.lock().unwrap();
             guard.as_mut().fill(42);
-            video
-                .frame_buffer_updated
-                .store(true, std::sync::atomic::Ordering::Release);
         }
+        console_ch.try_send_frame(GpuCommandList {
+            commands: vec![GpuCommand::Blit { slot: 0 }],
+        });
+        // Before swap: disp_fb is empty (zeros)
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 0);
         });
+        // After swap: disp_fb has the data
         video.swap_frame_buffer();
         video.with_frame_buffer(|bytes| {
             assert_eq!(bytes[0], 42);

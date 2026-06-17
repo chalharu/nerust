@@ -196,6 +196,8 @@ fn console_state_fixture_import_restores_wrapper_state() {
     assert_eq!(fixture.source_frame, vec![3, 5]);
 
     let mut console = loaded_console();
+    // 初期フレームのコマンドを消費し、ACK を復帰させる
+    console.swap_frame_buffer();
     console
         .import_state(bytes)
         .expect("fixture console state should import");
@@ -327,6 +329,8 @@ fn console_state_import_restores_paused_frame_counter_controller_and_source_fram
     payload.source_frame = vec![11, 29];
     let bytes = rmp_serde::to_vec_named(&payload).expect("payload should encode");
 
+    // 初期フレームのコマンドを消費し、ACK を復帰させる
+    console.swap_frame_buffer();
     console
         .import_state(bytes)
         .expect("console state should import");
