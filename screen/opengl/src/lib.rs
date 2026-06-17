@@ -136,13 +136,27 @@ impl GlView {
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
-            // NTSC texture (一時的に無効化。R32UI texture の互換性問題は別途対応)
+            // NTSC texture
+            if let Some(ntsc_data) = render_profile
+                .console_video_assets
+                .as_ref()
+                .and_then(|a| a.packed_ntsc_rgba8())
+            {
+                self.ntsc_enabled = true;
+                let mut ntsc_names = [0; 1];
+                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
+                self.ntsc_texture = ntsc_names[0];
+                configure_ntsc_texture(2, self.ntsc_texture, 64, 42, ntsc_data);
+                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+            }
+
             uniform_2f(
                 shader.get_uniform("source_size"),
                 frame_size.width as f32,
                 frame_size.height as f32,
             )
             .unwrap();
+            uniform_1i(shader.get_uniform("ntsc_enabled"), self.ntsc_enabled as i32).unwrap();
         }
 
         let vertex_data: [VertexData; 4] = [
@@ -219,14 +233,25 @@ impl GlView {
     pub fn on_update(&self, screen_ptr: *const u8) {
         self.shader.as_ref().unwrap().use_program();
 
+        active_texture(gl::TEXTURE0).unwrap();
+        bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
+
         if self.is_palette_format {
-            active_texture(gl::TEXTURE0).unwrap();
-            bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
             active_texture(gl::TEXTURE1).unwrap();
             bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
-        } else {
+            if self.ntsc_enabled {
+                active_texture(gl::TEXTURE2).unwrap();
+                bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
+            }
+            // frame texture を unit 0 でアップロード
             active_texture(gl::TEXTURE0).unwrap();
-            bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
+            tex_image_2d(
+                gl::TEXTURE_2D, 0,
+                gl::R8 as GLint,
+                self.logical_width, self.logical_height,
+                0, gl::RED, gl::UNSIGNED_BYTE,
+                screen_ptr as *const c_void,
+            ).unwrap();
         }
 
         if self.use_vao {
@@ -237,32 +262,13 @@ impl GlView {
 
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
-        if self.is_palette_format {
-            // TEXTURE0 (frame_texture) に切り替えてからアップロード
-            unsafe {
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::TexImage2D(
-                    gl::TEXTURE_2D, 0, gl::R8 as GLint,
-                    self.logical_width, self.logical_height,
-                    0, gl::RED, gl::UNSIGNED_BYTE,
-                    screen_ptr as *const _,
-                );
-                gl::ActiveTexture(gl::TEXTURE1);
-            }
-            // glGetError のチェックは draw 前にまとめて行う
-        } else {
+        if !self.is_palette_format {
             tex_sub_image_2d(
                 gl::TEXTURE_2D, 0, 0, 0,
                 self.logical_width, self.logical_height,
                 gl::RGBA, gl::UNSIGNED_BYTE,
                 screen_ptr as *const c_void,
             ).unwrap();
-        }
-        // GL error check (accumulated from all above calls)
-        let mut err = unsafe { gl::GetError() };
-        while err != gl::NO_ERROR {
-            log::warn!("GL error before draw: {:04x}", err);
-            err = unsafe { gl::GetError() };
         }
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
