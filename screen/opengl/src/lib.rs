@@ -92,24 +92,26 @@ impl GlView {
         self.logical_width = frame_size.width as i32;
         self.logical_height = frame_size.height as i32;
 
-        let bpp: usize = 4; // 常に RGBA
+        let bpp: usize = if self.is_palette_format { 1 } else { 4 };
         let shader = compile_shader_program(self.is_palette_format);
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
 
-        // frame texture (常に RGBA。palette は赤チャネルに index を格納)
+        // frame texture (palette 時は R8+GL_RED、RGBA 時は RGBA)
         let mut tex_names = [0; 1];
         gen_textures(1, tex_names.as_mut_ptr()).unwrap();
         self.frame_texture = tex_names[0];
+        let (internal_fmt, data_fmt) = if self.is_palette_format {
+            (gl::R8 as GLint, gl::RED)
+        } else {
+            (gl::RGBA as GLint, gl::RGBA)
+        };
         configure_frame_texture(
-            0,
-            self.frame_texture,
-            frame_size.width,
-            frame_size.height,
-            gl::RGBA as GLint,
-            gl::RGBA,
+            0, self.frame_texture,
+            frame_size.width, frame_size.height,
+            internal_fmt, data_fmt,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
@@ -236,24 +238,13 @@ impl GlView {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         if self.is_palette_format {
-            // palette index (1bpp) → RGBA (4bpp) に複製して glTexImage2D
-            // (glTexSubImage2D が macOS で InvalidValue になるため full 再定義)
-            let pixel_count = (self.logical_width * self.logical_height) as usize;
-            let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
-            let mut rgba = vec![0u8; pixel_count * 4];
-            for (i, &index) in src.iter().enumerate() {
-                let base = i * 4;
-                rgba[base] = index;
-                rgba[base + 1] = index;
-                rgba[base + 2] = index;
-                rgba[base + 3] = 255;
-            }
+            // palette index (1bpp) → GL_R8 texture に glTexImage2D で全再定義
             unsafe {
                 gl::TexImage2D(
-                    gl::TEXTURE_2D, 0, gl::RGBA as GLint,
+                    gl::TEXTURE_2D, 0, gl::R8 as GLint,
                     self.logical_width, self.logical_height,
-                    0, gl::RGBA, gl::UNSIGNED_BYTE,
-                    rgba.as_ptr() as *const _,
+                    0, gl::RED, gl::UNSIGNED_BYTE,
+                    screen_ptr as *const _,
                 );
             }
             // glGetError のチェックは draw 前にまとめて行う
