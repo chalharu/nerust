@@ -92,14 +92,19 @@ impl GlView {
         self.logical_width = frame_size.width as i32;
         self.logical_height = frame_size.height as i32;
 
-        let bpp: usize = 4; // 常に RGBA8
+        let bpp: usize = if self.is_palette_format { 1 } else { 4 };
         let shader = compile_shader_program(self.is_palette_format);
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
         pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
 
-        // frame texture (常に RGBA8。palette は赤チャネルに index を格納)
+        // frame texture (palette 時は R8、RGBA 時は RGBA)
+        let (internal_fmt, data_fmt) = if self.is_palette_format {
+            (gl::R8 as GLint, gl::RED)
+        } else {
+            (gl::RGBA as GLint, gl::RGBA)
+        };
         let mut tex_names = [0; 1];
         gen_textures(1, tex_names.as_mut_ptr()).unwrap();
         self.frame_texture = tex_names[0];
@@ -108,8 +113,8 @@ impl GlView {
             self.frame_texture,
             frame_size.width,
             frame_size.height,
-            gl::RGBA as GLint,
-            gl::RGBA,
+            internal_fmt,
+            data_fmt,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
@@ -270,15 +275,20 @@ impl GlView {
             bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
             active_texture(gl::TEXTURE2).unwrap();
             bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
-            // frame texture (palette index を R8 texture に直接 upload)
+            // frame texture (palette index を R8 → GL_RED で upload)
             active_texture(gl::TEXTURE0).unwrap();
-            tex_image_2d(
-                gl::TEXTURE_2D, 0,
-                gl::R8 as GLint,
-                self.logical_width, self.logical_height,
-                0, gl::RED, gl::UNSIGNED_BYTE,
+            tex_sub_image_2d(
+                gl::TEXTURE_2D,
+                0,
+                0,
+                0,
+                self.logical_width,
+                self.logical_height,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
                 screen_ptr as *const _,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         if self.use_vao {
