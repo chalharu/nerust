@@ -106,6 +106,7 @@ pub(crate) fn spawn_settings_helper(
         .arg(format!("--{HELPER_FLAG}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .env("RUST_LOG", "error")
         .spawn()
         .map_err(|error| format!("failed to spawn settings helper: {error}"))?;
     let child_stdout = child
