@@ -83,6 +83,12 @@ impl GlView {
 
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
+        log::info!("on_load: palette={} src={}x{} logical={}x{}",
+            self.is_palette_format,
+            render_profile.source_logical_size.width,
+            render_profile.source_logical_size.height,
+            render_profile.logical_size.width,
+            render_profile.logical_size.height);
         // Palette モードでは frame data は source_logical_size、RGBA では logical_size
         let frame_size = if self.is_palette_format {
             render_profile.source_logical_size
@@ -235,10 +241,12 @@ impl GlView {
 
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
+        log::info!("on_update: palette={} size={}x{}", self.is_palette_format, self.logical_width, self.logical_height);
         if self.is_palette_format {
             // palette index (1bpp) → RGBA (4bpp) に複製して tex_image_2d で全再定義
             let pixel_count = (self.logical_width * self.logical_height) as usize;
             let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
+            log::info!("palette: first pixel index={}", src[0]);
             let mut rgba = Vec::with_capacity(pixel_count * 4);
             for &index in src {
                 rgba.push(index);
