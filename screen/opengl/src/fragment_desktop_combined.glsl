@@ -17,7 +17,6 @@ vec3 palette_color(uint index) {
 
 void main(void) {
     ivec2 out_pos = ivec2(floor(vuv * source_size));
-    out_pos.y = int(source_size.y) - 1 - out_pos.y;
     uint idx = palette_index(out_pos);
     frag_color = vec4(palette_color(idx), 1.0);
 }
