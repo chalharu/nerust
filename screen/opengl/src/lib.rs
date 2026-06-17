@@ -83,12 +83,6 @@ impl GlView {
 
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
-        log::info!("on_load: palette={} src={}x{} logical={}x{}",
-            self.is_palette_format,
-            render_profile.source_logical_size.width,
-            render_profile.source_logical_size.height,
-            render_profile.logical_size.width,
-            render_profile.logical_size.height);
         // Palette モードでは frame data は source_logical_size、RGBA では logical_size
         let frame_size = if self.is_palette_format {
             render_profile.source_logical_size
@@ -242,7 +236,8 @@ impl GlView {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         if self.is_palette_format {
-            // palette index (1bpp) → RGBA (4bpp) に複製して tex_sub_image_2d
+            // palette index (1bpp) → RGBA (4bpp) に複製して glTexImage2D
+            // (glTexSubImage2D が macOS で InvalidValue になるため full 再定義)
             let pixel_count = (self.logical_width * self.logical_height) as usize;
             let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
             let mut rgba = vec![0u8; pixel_count * 4];
@@ -253,12 +248,15 @@ impl GlView {
                 rgba[base + 2] = index;
                 rgba[base + 3] = 255;
             }
-            tex_sub_image_2d(
-                gl::TEXTURE_2D, 0, 0, 0,
-                self.logical_width, self.logical_height,
-                gl::RGBA, gl::UNSIGNED_BYTE,
-                rgba.as_ptr() as *const c_void,
-            ).unwrap();
+            unsafe {
+                gl::TexImage2D(
+                    gl::TEXTURE_2D, 0, gl::RGBA as GLint,
+                    self.logical_width, self.logical_height,
+                    0, gl::RGBA, gl::UNSIGNED_BYTE,
+                    rgba.as_ptr() as *const _,
+                );
+            }
+            // glGetError のチェックは draw 前にまとめて行う
         } else {
             tex_sub_image_2d(
                 gl::TEXTURE_2D, 0, 0, 0,
@@ -266,6 +264,12 @@ impl GlView {
                 gl::RGBA, gl::UNSIGNED_BYTE,
                 screen_ptr as *const c_void,
             ).unwrap();
+        }
+        // GL error check (accumulated from all above calls)
+        let mut err = unsafe { gl::GetError() };
+        while err != gl::NO_ERROR {
+            log::warn!("GL error before draw: {:04x}", err);
+            err = unsafe { gl::GetError() };
         }
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
