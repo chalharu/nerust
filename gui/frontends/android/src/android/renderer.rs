@@ -42,7 +42,7 @@ impl WgpuRenderer {
     ) -> RenderResult {
         session.swap_frame_buffer();
         if session.palette_updated() {
-            session.with_palette_rgba8(|rgba| {
+            session.with_palette_rgba8(&mut |rgba| {
                 self.backend.update_palette_texture(rgba);
             });
         }
