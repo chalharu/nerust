@@ -250,7 +250,7 @@ impl GlView {
         clear(gl::COLOR_BUFFER_BIT).unwrap();
 
         if self.is_palette_format {
-            // palette index (1bpp) → RGBA (4bpp) に複製。GL_RED/R8 の互換性問題を回避
+            // palette index (1bpp) → RGBA (4bpp) に複製して tex_image_2d で全再定義
             let pixel_count = (self.logical_width * self.logical_height) as usize;
             let src = unsafe { std::slice::from_raw_parts(screen_ptr as *const u8, pixel_count) };
             let mut rgba = Vec::with_capacity(pixel_count * 4);
@@ -260,11 +260,12 @@ impl GlView {
                 rgba.push(index);
                 rgba.push(255);
             }
-            tex_sub_image_2d(
-                gl::TEXTURE_2D, 0, 0, 0,
+            tex_image_2d(
+                gl::TEXTURE_2D, 0,
+                gl::RGBA as GLint,
                 self.logical_width, self.logical_height,
-                gl::RGBA, gl::UNSIGNED_BYTE,
-                rgba.as_ptr() as *const c_void,
+                0, gl::RGBA, gl::UNSIGNED_BYTE,
+                rgba.as_ptr() as *const _,
             ).unwrap();
         } else {
             tex_sub_image_2d(
