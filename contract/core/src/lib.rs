@@ -153,3 +153,29 @@ pub trait ConsoleCore: Send {
         panic!("rewind not supported")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_command_round_trips_slot_number() {
+        let cmd = GpuCommand::Blit { slot: 42 };
+        match cmd {
+            GpuCommand::Blit { slot } => assert_eq!(slot, 42),
+            _ => panic!("expected Blit"),
+        }
+    }
+
+    #[test]
+    fn gpu_command_list_holds_commands() {
+        let list = GpuCommandList {
+            commands: vec![
+                GpuCommand::Blit { slot: 0 },
+                GpuCommand::PaletteDecode { slot: 1 },
+                GpuCommand::UploadPalette { slot: 2 },
+            ],
+        };
+        assert_eq!(list.commands.len(), 3);
+    }
+}
