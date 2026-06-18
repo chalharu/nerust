@@ -3,6 +3,7 @@ use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_session::core::WindowSize;
 use nerust_gui_shell::settings::nes::scaling_factor;
+use nerust_screen_video::FrameBuffer;
 use shared_library::dynamic_library::DynamicLibrary;
 use std::ptr;
 
@@ -80,7 +81,7 @@ impl GtkGlRenderer {
         }
     }
 
-    pub(crate) fn render(&self, frame_buffer: &[u8]) {
+    pub(crate) fn render(&self, frame_buffer: &FrameBuffer) {
         if let Some(view) = self.view.as_ref() {
             view.on_update(frame_buffer);
         }

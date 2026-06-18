@@ -173,16 +173,31 @@ impl Console {
         let (stop_sender, stop_recv) = channel();
         let frame_len = screen.frame_len();
         let presentation = screen.video_presentation().clone();
+        let ntsc_packed_rgba8 = screen
+            .console_video_assets()
+            .and_then(|a| a.packed_ntsc_rgba8())
+            .map(|data| data.to_vec().into_boxed_slice());
         let render_profile = video::VideoRenderProfile {
             source_logical_size: presentation.source_logical_size(),
             logical_size: presentation.logical_size(),
             physical_size: presentation.physical_size(),
             frame_format: presentation.frame_format(),
-            console_video_assets: screen.console_video_assets().cloned(),
+            ntsc_packed_rgba8,
         };
         let pixel_format = if screen.publishes_palette_frame() {
+            let mut palette = [0u32; 256];
+            if let Some(assets) = screen.console_video_assets() {
+                let rgba8 = assets.palette_rgba8(); // &[u8], 先頭64色分の RGBA8 (256 bytes)
+                for (i, entry) in palette.iter_mut().enumerate().take(64) {
+                    let pos = i * 4;
+                    *entry = u32::from(rgba8[pos]) << 24  // R
+                        | u32::from(rgba8[pos + 1]) << 16 // G
+                        | u32::from(rgba8[pos + 2]) << 8  // B
+                        | u32::from(rgba8[pos + 3]); // A
+                }
+            }
             PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
+                palette: Box::new(palette),
             }
         } else {
             PixelFormat::Rgba
@@ -256,8 +271,15 @@ impl Console {
         self.video.with_frame_buffer(f)
     }
 
-    pub fn swap_frame_buffer(&mut self) {
-        self.video.swap_frame_buffer();
+    /// 共有バッファから表示バッファに最新フレームを引き取る。
+    /// 新しいフレームがあった場合は `true`。
+    pub fn swap_frame_buffer(&mut self) -> bool {
+        self.video.swap_frame_buffer()
+    }
+
+    /// 表示バッファへの参照を返す。
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        self.video.frame_buffer()
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
