@@ -18,6 +18,7 @@ use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
+use nerust_screen_video::FrameBuffer;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -45,6 +46,10 @@ impl State {
 
     pub(crate) fn swap_frame_buffer(&mut self) {
         self.session.swap_frame_buffer();
+    }
+
+    pub(crate) fn frame_buffer(&self) -> &FrameBuffer {
+        self.session.frame_buffer()
     }
 
     pub(crate) fn system_settings_page_model(&self) -> SystemSettingsPageModel {

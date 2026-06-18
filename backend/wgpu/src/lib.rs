@@ -1,5 +1,5 @@
 use nerust_console::video::VideoRenderProfile;
-use nerust_screen_video::{VideoFrameSpec, VideoPresentation};
+use nerust_screen_video::{FrameBuffer, VideoFrameSpec, VideoPresentation};
 use nerust_screen_wgpu::renderer::{
     DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,
 };
@@ -111,7 +111,7 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
             &render_surface,
             surface_size,
             &presentation,
-            render_profile.console_video_assets.as_ref(),
+            render_profile.ntsc_packed_rgba8.as_deref(),
             device_limit_profile,
             presentation_options,
         ))?;
@@ -129,11 +129,15 @@ impl<T: RenderSurfaceTarget> WgpuBackend<T> {
     /// recreation on loss is handled internally; shells see
     /// [`RenderResult::Skipped`] for successful recovery and
     /// [`RenderResult::Error`] when recreation itself fails.
-    pub fn render(&mut self, frame_buffer: &[u8], window_size: SurfaceSize) -> RenderResult {
+    pub fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) -> RenderResult {
+        // PaletteIndex 形式の場合、palette texture を FrameBuffer から同期する
+        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
+            self.renderer.update_palette_texture(&palette_rgba8);
+        }
         let surface_size = self.render_surface.surface_size(window_size);
-        let outcome = self
-            .renderer
-            .render(&self.render_surface, surface_size, frame_buffer);
+        let outcome =
+            self.renderer
+                .render(&self.render_surface, surface_size, frame_buffer.as_ref());
         match outcome {
             Ok(RenderOutcome::Presented) => {
                 self.last_render_error = None;

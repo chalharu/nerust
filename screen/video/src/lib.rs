@@ -172,6 +172,36 @@ impl FrameBuffer {
     pub fn format(&self) -> &PixelFormat {
         &self.format
     }
+
+    /// PaletteIndex 形式の場合、パレットテーブルへの参照を返す。
+    pub fn palette(&self) -> Option<&[u32; 256]> {
+        match &self.format {
+            PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
+            PixelFormat::Rgba => None,
+        }
+    }
+
+    pub fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
+        match &mut self.format {
+            PixelFormat::PaletteIndex { palette } => Some(palette.as_mut()),
+            PixelFormat::Rgba => None,
+        }
+    }
+
+    /// 先頭64エントリを RGBA8 バイト列 (256B) に変換。GPU upload 用。
+    /// PaletteIndex 形式以外の場合は None。
+    pub fn palette_as_rgba8(&self) -> Option<[u8; 256]> {
+        let palette = self.palette()?;
+        let mut rgba8 = [0u8; 256];
+        for (i, &color) in palette.iter().enumerate().take(64) {
+            let pos = i * 4;
+            rgba8[pos] = (color >> 24) as u8; // R
+            rgba8[pos + 1] = (color >> 16) as u8; // G
+            rgba8[pos + 2] = (color >> 8) as u8; // B
+            rgba8[pos + 3] = color as u8; // A
+        }
+        Some(rgba8)
+    }
 }
 
 impl AsRef<[u8]> for FrameBuffer {

@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
-use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
@@ -26,7 +25,9 @@ pub struct VideoRenderProfile {
     pub logical_size: LogicalSize,
     pub physical_size: PhysicalSize,
     pub frame_format: VideoFrameFormat,
-    pub console_video_assets: Option<ConsoleVideoAssets>,
+    /// NTSC カーネルデータ (packed RGBA8)。ある場合は NTSC パイプラインを使用。
+    /// パレットデータは含まない — パレットは FrameBuffer から render 時に同期される。
+    pub ntsc_packed_rgba8: Option<Box<[u8]>>,
 }
 
 #[derive(Debug)]
@@ -62,12 +63,22 @@ impl ConsoleVideo {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
-    pub fn swap_frame_buffer(&mut self) {
+    /// 新しいフレームがあった場合は `true`、スキップの場合は `false`。
+    pub fn swap_frame_buffer(&mut self) -> bool {
         if let Some(EmuToRenderer::FrameReady(_cmds)) = self.renderer_channel.try_recv_cmd() {
             let mut guard = self.frame_buffer.lock().unwrap();
             std::mem::swap(&mut *guard, &mut self.disp_fb);
             self.renderer_channel.send_ack();
+            true
+        } else {
+            false
         }
+    }
+
+    /// 表示バッファへの参照を返す。
+    /// `swap_frame_buffer()` の後に呼ぶこと。
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        &self.disp_fb
     }
 
     /// 表示バッファの内容をロックなしで読み取る。
@@ -109,7 +120,7 @@ mod tests {
                 height: 1.0,
             },
             frame_format: VideoFrameFormat::Rgba,
-            console_video_assets: None,
+            ntsc_packed_rgba8: None,
         };
         (
             ConsoleVideo::new(profile, shared, disp, renderer_ch),

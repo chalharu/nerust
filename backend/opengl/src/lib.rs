@@ -1,6 +1,6 @@
 use nerust_console::video::VideoRenderProfile;
 use nerust_screen_opengl::GlView;
-use nerust_screen_video::VideoFrameFormat;
+use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.
@@ -54,11 +54,16 @@ impl GlBackend {
     }
 
     /// Upload `frame_buffer` to the GPU and draw a frame.
-    pub fn on_update(&self, frame_buffer: &[u8]) {
-        let frame_buffer = frame_buffer
+    pub fn on_update(&self, frame_buffer: &FrameBuffer) {
+        // PaletteIndex 形式の場合、palette texture を同期する
+        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
+            self.view.update_palette_texture(&palette_rgba8);
+        }
+        let bytes = frame_buffer.as_ref();
+        let bytes = bytes
             .get(..self.expected_frame_len)
             .expect("OpenGL backend expected a loaded frame buffer of the configured size");
-        self.view.on_update(frame_buffer.as_ptr());
+        self.view.on_update(bytes.as_ptr());
     }
 
     /// Handle a viewport resize.
