@@ -135,8 +135,8 @@ impl GlView {
             configure_frame_texture(
                 1,
                 self.palette_texture,
-                self.palette_width,
-                self.palette_height,
+                self.palette_width as usize,
+                self.palette_height as usize,
                 gl::RGBA as GLint,
                 gl::RGBA,
                 &palette_data,
