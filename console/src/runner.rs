@@ -57,7 +57,9 @@ impl ConsoleRunner {
 
     fn publish_frame(&mut self) {
         // PPU が ppu_fb に書き込んだデータを screen_backing にコピーして publish
-        self.screen_backing.as_mut().copy_from_slice(self.ppu_fb.as_ref());
+        self.screen_backing
+            .as_mut()
+            .copy_from_slice(self.ppu_fb.as_ref());
         if self.channel.try_send_frame(GpuCommandList {
             commands: vec![GpuCommand::Blit { slot: 0 }],
         }) {

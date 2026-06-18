@@ -3,9 +3,14 @@ pub mod logical;
 pub mod physical;
 pub mod rgb;
 
-pub use crate::filter::{BLACK_PALETTE_INDEX, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+pub use crate::filter::presentation::{
+    ConsoleVideoAssets, EncodedNtscTextures, EncodedPackedNtscTexture, FilterLayout,
+    NesVideoAssets, VideoFilterPipeline, VideoPresentationPipelineKind,
+};
+pub use crate::filter::{
+    BLACK_PALETTE_INDEX, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
+};
 pub use crate::filter::{FilterFunc, FilterType, NesFilter};
-pub use crate::filter::presentation::{ConsoleVideoAssets, NesVideoAssets, VideoFilterPipeline, VideoPresentationPipelineKind, EncodedPackedNtscTexture, EncodedNtscTextures, FilterLayout};
 pub use crate::logical::LogicalSize;
 pub use crate::physical::PhysicalSize;
 pub use crate::rgb::RGB;
@@ -166,7 +171,11 @@ impl FrameBuffer {
     /// バッファ不足時は警告ログを出力して無視する。
     pub fn push(&mut self, value: u8) {
         if self.cursor >= self.data.len() {
-            log::warn!("FrameBuffer::push: cursor {} out of bounds (len {})", self.cursor, self.data.len());
+            log::warn!(
+                "FrameBuffer::push: cursor {} out of bounds (len {})",
+                self.cursor,
+                self.data.len()
+            );
             return;
         }
         self.data[self.cursor] = value;
@@ -180,15 +189,15 @@ impl FrameBuffer {
         if end > self.data.len() {
             log::warn!(
                 "FrameBuffer::push_many: cursor {} + count {} out of bounds (len {})",
-                self.cursor, count, self.data.len()
+                self.cursor,
+                count,
+                self.data.len()
             );
             return;
         }
         self.data[self.cursor..end].fill(value);
         self.cursor = end;
     }
-
-
 
     /// フレーム完了を通知する（cursor を先頭に戻す）。
     pub fn render(&mut self) {
@@ -260,5 +269,3 @@ impl AsMut<[u8]> for FrameBuffer {
         &mut self.data
     }
 }
-
-

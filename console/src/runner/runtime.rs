@@ -80,8 +80,8 @@ impl ConsoleRunner {
                             self.frame_counter = 0;
                             self.controller.reset_runtime();
                             core = None;
-                        self.ppu_fb.as_mut().fill(0);
-                        self.publish_frame();
+                            self.ppu_fb.as_mut().fill(0);
+                            self.publish_frame();
                             Ok(ConsoleReply::Unit)
                         } else {
                             Err(Self::core_not_loaded())

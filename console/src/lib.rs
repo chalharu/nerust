@@ -175,10 +175,15 @@ impl Console {
         };
         let src_w = source_logical_size.width;
         let src_h = source_logical_size.height;
-        Self::build(speaker, render_profile, pixel_format, src_w, src_h, controller)
+        Self::build(
+            speaker,
+            render_profile,
+            pixel_format,
+            src_w,
+            src_h,
+            controller,
+        )
     }
-
-
 
     /// 内部ビルド — render_profile / pixel_format から Console を構築
     fn build<S: 'static + Sound + MixerInput + Send>(

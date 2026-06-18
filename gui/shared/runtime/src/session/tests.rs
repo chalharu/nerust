@@ -21,7 +21,10 @@ fn test_session() -> GuiSession {
     GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
         TestSpeaker,
         nerust_screen_video::FilterType::NtscComposite,
-        nerust_screen_video::LogicalSize { width: 256, height: 240 },
+        nerust_screen_video::LogicalSize {
+            width: 256,
+            height: 240,
+        },
         Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
             nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(std::sync::Arc::new(
                 nerust_input_nes_runtime::nes_input_cell::NesInputCell::new(),

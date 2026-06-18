@@ -4,9 +4,9 @@ use super::{
     setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
 };
 use crate::surface::SurfaceSize;
-use nerust_screen_video::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
+use nerust_screen_video::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
 use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[test]

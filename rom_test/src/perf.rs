@@ -263,9 +263,13 @@ impl PerfRunner {
                 }
             })?;
         let cell = Arc::new(NesInputCell::new());
-        let mut screen = FrameBuffer::with_capacity(256, 240, PixelFormat::PaletteIndex {
-            palette: Box::new([0u32; 256]),
-        });
+        let mut screen = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
         screen.resize(256, 240);
         Ok(Self {
             core,
