@@ -40,7 +40,17 @@ pub(crate) fn encode_screenshot_png(frame: &FrameBuffer) -> Result<Vec<u8>, RomT
     let w = frame.width();
     let h = frame.height();
     let src = frame.as_ref();
-    let palette_rgba8 = frame.palette_as_rgba8().unwrap_or([0u8; 256]);
+    let palette_rgba8 = match frame.palette_as_rgba8() {
+        Some(p) => p,
+        None => {
+            let assets = FilterType::None.palette_console_video_assets();
+            let src_pal = assets.palette_rgba8();
+            let mut out = [0u8; 256];
+            let n = src_pal.len().min(256);
+            out[..n].copy_from_slice(&src_pal[..n]);
+            out
+        }
+    };
     let mut rgba = Vec::with_capacity(w * h * 4);
 
     for &index in src.iter().take(w * h) {
