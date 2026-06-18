@@ -147,12 +147,14 @@ impl SessionCore {
 mod tests {
     use super::SessionCore;
     use nerust_console::Console;
-    use nerust_sound_traits::MixerInput;
+    use nerust_contract_core::audio::AudioBackend;
 
     #[derive(Default)]
     struct TestSpeaker;
 
-    impl MixerInput for TestSpeaker {
+    impl AudioBackend for TestSpeaker {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, _data: f32) {}
     }
 
