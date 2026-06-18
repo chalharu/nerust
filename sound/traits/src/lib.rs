@@ -1,29 +1,18 @@
+use nerust_contract_core::audio::AudioBackend;
 use nerust_soundfilter::Filter;
 use nerust_soundfilter::resampler::Resampler;
-
-pub trait MixerInput {
-    fn push(&mut self, data: f32); // 0.0 ~ 1.0
-
-    /// Audio samples per second the mixer wants to receive from the core.
-    ///
-    /// The core advances APU timing at the CPU rate, but emits mixed audio only at this rate.
-    /// Backends can request an oversampled rate here and downsample before device output when
-    /// they need stronger anti-alias filtering.
-    fn sample_rate(&self) -> u32 {
-        48_000
-    }
-}
 
 /// Multiplier cap on the internal oversampling rate relative to device rate.
 const OVERSAMPLE_FACTOR: u32 = 4;
 
-/// `AudioBackend` → `MixerInput` アダプタ
+/// NES APU 出力をダウンサンプリング・フィルタリングして `AudioBackend` に渡すアダプタ。
 ///
-/// NES 固有のフィルタ (`NesFilter`) とリサンプラ (`SimpleDownSampler`) を内蔵し、
-/// バックエンドに渡す前に NES APU 出力を処理する。
+/// `AudioBackend` をラップし、CPU クロックレートで到着するサンプルを
+/// バックエンドの出力レートにリサンプルする。`sample_rate()` は CPU クロックレートを
+/// 返すことで、APU が全サンプルを送出することを保証する。
 ///
-/// Phase 4b で `run_frame` が `&mut dyn AudioBackend` を直接受け取るようになった時点で
-/// このアダプタは不要になり削除され、フィルタ/リサンプラは `NesConsole` 側に移動する。
+/// 将来 Phase 2c-3 以降でフィルタ/リサンプラは `NesConsole` 側に移動し、
+/// このアダプタは削除される。
 pub struct MixerBridge {
     pub backend: Box<dyn nerust_contract_core::audio::AudioBackend + Send>,
     filter: nerust_soundfilter::NesFilter,
@@ -57,7 +46,15 @@ impl MixerBridge {
     }
 }
 
-impl MixerInput for MixerBridge {
+impl AudioBackend for MixerBridge {
+    fn start(&mut self) {
+        self.backend.start();
+    }
+
+    fn pause(&mut self) {
+        self.backend.pause();
+    }
+
     fn push(&mut self, data: f32) {
         if let Some(resampled) = self.resampler.step(data) {
             let sample = self.filter.step((resampled * 2.0 - 1.0) * self.gain);
