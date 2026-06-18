@@ -149,14 +149,15 @@ impl Console {
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
+        let layout = filter_type.layout(source_logical_size);
         let assets = filter_type.palette_console_video_assets();
         let ntsc_packed_rgba8 = assets
             .packed_ntsc_rgba8()
             .map(|data| data.to_vec().into_boxed_slice());
         let render_profile = video::VideoRenderProfile {
-            source_logical_size,
-            logical_size: source_logical_size,
-            physical_size: PhysicalSize::from(source_logical_size),
+            source_logical_size: layout.source_logical_size,
+            logical_size: layout.logical_size,
+            physical_size: layout.physical_size,
             frame_format: nerust_screen_video::VideoFrameFormat::Palette,
             ntsc_packed_rgba8,
         };
