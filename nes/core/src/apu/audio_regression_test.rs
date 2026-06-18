@@ -8,7 +8,7 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 use std::io::Cursor;
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;
@@ -81,7 +81,9 @@ impl CapturingMixer {
     }
 }
 
-impl MixerInput for CapturingMixer {
+impl AudioBackend for CapturingMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, data: f32) {
         self.samples.push(data);
     }

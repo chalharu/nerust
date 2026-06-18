@@ -22,7 +22,7 @@ use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::interrupt::{Interrupt, IrqSource};
 use crate::persistence_error::PersistenceError;
-use nerust_sound_traits::MixerInput;
+use nerust_sound_traits::AudioBackend;
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
@@ -178,7 +178,7 @@ impl Core {
         self.step_timer(interrupt);
     }
 
-    pub(crate) fn step<M: MixerInput>(
+    pub(crate) fn step<M: AudioBackend>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -197,7 +197,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn step_many<M: MixerInput>(
+    pub(crate) fn step_many<M: AudioBackend>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -219,7 +219,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn step_many_batched<M: MixerInput>(
+    pub(crate) fn step_many_batched<M: AudioBackend>(
         &mut self,
         cpu: &mut Cpu,
         mixer: &mut M,
@@ -287,7 +287,7 @@ impl Core {
             .min(self.dmc.cycles_until_next_dma_request(max_cycles))
     }
 
-    pub(crate) fn send_sample<M: MixerInput>(
+    pub(crate) fn send_sample<M: AudioBackend>(
         &self,
         mixer: &mut M,
         expansion_audio_output: f32,
@@ -336,7 +336,7 @@ impl Core {
         self.triangle.step_timer();
     }
 
-    fn advance_no_frame_event<M: MixerInput>(
+    fn advance_no_frame_event<M: AudioBackend>(
         &mut self,
         cycles: u64,
         interrupt: &mut Interrupt,
@@ -371,7 +371,7 @@ impl Core {
         self.triangle.step_timer_many(cycles);
     }
 
-    fn advance_sample_accumulator<M: MixerInput>(
+    fn advance_sample_accumulator<M: AudioBackend>(
         &mut self,
         cycles: u64,
         mixer: &mut M,
@@ -448,7 +448,7 @@ mod tests {
     use super::Core;
     use crate::cpu::Core as Cpu;
     use crate::interrupt::Interrupt;
-    use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 
     struct CapturingMixer {
         samples: Vec<f32>,
@@ -470,7 +470,9 @@ mod tests {
         }
     }
 
-    impl MixerInput for CapturingMixer {
+    impl AudioBackend for CapturingMixer {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, data: f32) {
             self.samples.push(data);
         }
