@@ -8,7 +8,7 @@ use crate::interrupt::Interrupt;
 use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
 use crate::{OpenBus, OpenBusReadResult};
-use nerust_screen_video::Screen;
+use nerust_screen_video::FrameBuffer;
 use std::cmp;
 use std::mem;
 
@@ -42,15 +42,10 @@ mod tests {
     use crate::interrupt::Interrupt;
     use nerust_contract_core::mirror::MirrorMode;
     use nerust_contract_core::rom::RomFormat;
-    use nerust_screen_video::Screen;
+    use nerust_screen_video::FrameBuffer;
 
-    #[derive(Default)]
-    struct NullScreen;
-
-    impl Screen for NullScreen {
-        fn push(&mut self, _index: u8) {}
-
-        fn render(&mut self) {}
+    fn null_fb() -> FrameBuffer {
+        FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba)
     }
 
     fn nrom_cartridge() -> Box<dyn Cartridge> {
@@ -114,7 +109,7 @@ mod tests {
         let mut ppu = Core::new();
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
 
         ppu.scan_line = 0;
         ppu.cycle = 338;
@@ -159,7 +154,7 @@ mod tests {
     fn run_repeated_step(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut result = false;
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         for _ in 0..cycles {
@@ -171,7 +166,7 @@ mod tests {
     fn run_exact_many(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
         (ppu, interrupt, result)
@@ -180,7 +175,7 @@ mod tests {
     fn run_step_many(mut ppu: Core, cycles: u64) -> (Core, Interrupt, bool) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
         (ppu, interrupt, result)
@@ -208,34 +203,13 @@ mod tests {
         assert_eq!(left.0.openbus_io.decay, right.0.openbus_io.decay);
     }
 
-    #[derive(Default)]
-    struct RecordingScreen {
-        pixels: Vec<u8>,
-        renders: usize,
-    }
-
-    impl Screen for RecordingScreen {
-        fn push(&mut self, index: u8) {
-            self.pixels.push(index);
-        }
-
-        fn push_many(&mut self, index: u8, count: u16) {
-            self.pixels
-                .extend(std::iter::repeat_n(index, usize::from(count)));
-        }
-
-        fn render(&mut self) {
-            self.renders += 1;
-        }
-    }
-
     fn run_repeated_step_recording(
         mut ppu: Core,
         cycles: u64,
-    ) -> (Core, Interrupt, bool, RecordingScreen) {
+    ) -> (Core, Interrupt, bool, FrameBuffer) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = RecordingScreen::default();
+        let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
         let mut result = false;
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         for _ in 0..cycles {
@@ -247,25 +221,24 @@ mod tests {
     fn run_exact_many_recording(
         mut ppu: Core,
         cycles: u64,
-    ) -> (Core, Interrupt, bool, RecordingScreen) {
+    ) -> (Core, Interrupt, bool, FrameBuffer) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = RecordingScreen::default();
+        let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
         (ppu, interrupt, result, screen)
     }
 
     fn assert_visible_advance_matches(
-        left: &(Core, Interrupt, bool, RecordingScreen),
-        right: &(Core, Interrupt, bool, RecordingScreen),
+        left: &(Core, Interrupt, bool, FrameBuffer),
+        right: &(Core, Interrupt, bool, FrameBuffer),
     ) {
         assert_idle_advance_matches(
             &(left.0.clone(), left.1, left.2),
             &(right.0.clone(), right.1, right.2),
         );
-        assert_eq!(left.3.pixels, right.3.pixels);
-        assert_eq!(left.3.renders, right.3.renders);
+        assert_eq!(left.3.as_ref(), right.3.as_ref());
     }
 
     #[test]
@@ -329,7 +302,7 @@ mod tests {
         let batched = run_exact_many_recording(ppu, 5);
 
         assert_visible_advance_matches(&repeated, &batched);
-        assert_eq!(batched.3.pixels, vec![0x2A; 5]);
+        assert_eq!(&batched.3.as_ref()[..5], &[0x2A; 5]);
         assert_eq!(batched.0.vram_read_delay, 0);
     }
 
@@ -345,7 +318,7 @@ mod tests {
         let batched = run_exact_many_recording(ppu, 12);
 
         assert_visible_advance_matches(&repeated, &batched);
-        assert_eq!(batched.3.pixels, vec![0x31; 12]);
+        assert_eq!(&batched.3.as_ref()[..12], &[0x31; 12]);
     }
 
     #[test]
@@ -361,7 +334,7 @@ mod tests {
 
         assert_visible_advance_matches(&repeated, &batched);
         assert_eq!(batched.0.cycle, 260);
-        assert_eq!(batched.3.pixels.len(), 6);
+        assert_eq!(batched.3.as_ref().iter().take(6).filter(|&&b| b != 0).count(), 6);
     }
 
     #[test]
@@ -1378,7 +1351,7 @@ impl Core {
     }
 
     #[inline]
-    fn render_pixel<S: Screen>(&mut self, screen: &mut S) {
+    fn render_pixel(&mut self, screen: &mut FrameBuffer) {
         let color = if self.render_executing || ((self.state.vram_addr & 0x3F00) == 0) {
             usize::from(self.evaluate_pixel())
         } else {
@@ -1389,7 +1362,7 @@ impl Core {
     }
 
     #[inline]
-    fn render_screen<S: Screen>(&mut self, screen: &mut S) {
+    fn render_screen(&mut self, screen: &mut FrameBuffer) {
         screen.render();
         // self.screen_buffer.iter().forEach(screen.push);
     }
@@ -1503,9 +1476,9 @@ impl Core {
         }
     }
 
-    pub(crate) fn step<S: Screen>(
+    pub(crate) fn step(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
     ) -> bool {
@@ -1673,9 +1646,9 @@ impl Core {
         result
     }
 
-    pub(crate) fn step_many<S: Screen>(
+    pub(crate) fn step_many(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
         cycles: u64,
@@ -1704,9 +1677,9 @@ impl Core {
         result
     }
 
-    pub(crate) fn step_exact_many<S: Screen>(
+    pub(crate) fn step_exact_many(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         cartridge: &mut dyn Cartridge,
         interrupt: &mut Interrupt,
         cycles: u64,
@@ -1758,7 +1731,7 @@ impl Core {
         (cycles > 0).then_some(InactiveSkip::Idle(cycles))
     }
 
-    fn advance_visible_disabled_pixel_cycles<S: Screen>(&mut self, screen: &mut S, cycles: u64) {
+    fn advance_visible_disabled_pixel_cycles(&mut self, screen: &mut FrameBuffer, cycles: u64) {
         let color = if (self.state.vram_addr & 0x3F00) == 0 {
             self.read_palette(0)
         } else {

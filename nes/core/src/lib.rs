@@ -41,7 +41,7 @@ use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
-use nerust_screen_video::Screen;
+use nerust_screen_video::FrameBuffer;
 use nerust_sound_traits::MixerInput;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
@@ -297,18 +297,18 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<S: Screen, M: MixerInput>(
+    pub fn step<M: MixerInput>(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
         mixer: &mut M,
     ) -> bool {
         self.step_cycle(screen, controller, mixer, mixer.sample_rate())
     }
 
-    pub fn run_frame<S: Screen, M: MixerInput>(
+    pub fn run_frame<M: MixerInput>(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
         mixer: &mut M,
     ) -> u64 {
@@ -352,9 +352,9 @@ impl Core {
     }
 
     #[inline(always)]
-    fn step_cycle<S: Screen, M: MixerInput>(
+    fn step_cycle<M: MixerInput>(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
         mixer: &mut M,
         mixer_sample_rate: u32,
@@ -397,9 +397,9 @@ impl Core {
         }
     }
 
-    fn step_instruction_event<S: Screen, M: MixerInput>(
+    fn step_instruction_event<M: MixerInput>(
         &mut self,
-        screen: &mut S,
+        screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
         mixer: &mut M,
         mixer_sample_rate: u32,
@@ -742,13 +742,8 @@ mod scheduler_tests {
     use crate::OpenBusReadResult;
     use crate::interrupt::{DmcDmaKind, Interrupt};
 
-    #[derive(Default)]
-    struct NullScreen;
-
-    impl Screen for NullScreen {
-        fn push(&mut self, _palette: u8) {}
-
-        fn render(&mut self) {}
+    fn null_fb() -> FrameBuffer {
+        FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba)
     }
 
     #[derive(Default)]
@@ -800,8 +795,8 @@ mod scheduler_tests {
     fn assert_run_frame_matches_cycle_stepping(data: CartridgeData) {
         let mut scheduled = Core::new(data.clone()).expect("scheduled core should construct");
         let mut exact = Core::new(data).expect("exact core should construct");
-        let mut scheduled_screen = NullScreen;
-        let mut exact_screen = NullScreen;
+        let mut scheduled_screen = null_fb();
+        let mut exact_screen = null_fb();
         let mut scheduled_controller = NullController;
         let mut exact_controller = NullController;
         let mut scheduled_mixer = CountingMixer::default();
@@ -841,7 +836,7 @@ mod scheduler_tests {
 
     fn advance_to_fast_path_candidate(
         core: &mut Core,
-        screen: &mut NullScreen,
+        screen: &mut FrameBuffer,
         controller: &mut NullController,
         mixer: &mut CountingMixer,
         limit: usize,
@@ -862,7 +857,7 @@ mod scheduler_tests {
 
     fn step_instruction_event_for_test(
         core: &mut Core,
-        screen: &mut NullScreen,
+        screen: &mut FrameBuffer,
         controller: &mut NullController,
         mixer: &mut CountingMixer,
         sample_rate: u32,
@@ -1036,8 +1031,8 @@ mod scheduler_tests {
         .expect("test cartridge data should be valid");
         let mut scheduled = Core::new(data.clone()).expect("scheduled core should construct");
         let mut exact = Core::new(data).expect("exact core should construct");
-        let mut scheduled_screen = NullScreen;
-        let mut exact_screen = NullScreen;
+        let mut scheduled_screen = null_fb();
+        let mut exact_screen = null_fb();
         let mut scheduled_controller = NullController;
         let mut exact_controller = NullController;
         let mut scheduled_mixer = RecordingMixer::default();
@@ -1089,7 +1084,7 @@ mod scheduler_tests {
     fn instruction_scheduler_fast_path_runs_at_safe_instruction_boundary() {
         let mut core =
             Core::new(nrom_program_test_data(&[0xA9, 0x01])).expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1120,7 +1115,7 @@ mod scheduler_tests {
     fn instruction_scheduler_falls_back_when_dma_is_pending() {
         let mut core =
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1147,7 +1142,7 @@ mod scheduler_tests {
             0xBD, 0xFF, 0x1F, // LDA $1FFF,X
         ]))
         .expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1177,7 +1172,7 @@ mod scheduler_tests {
             0x8D, 0x00, 0x20, // STA $2000
         ]))
         .expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1204,7 +1199,7 @@ mod scheduler_tests {
     fn instruction_scheduler_falls_back_before_ppu_event() {
         let mut core =
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1239,7 +1234,7 @@ mod scheduler_tests {
     fn instruction_scheduler_falls_back_before_apu_irq_event() {
         let mut core =
             Core::new(nrom_repeating_fast_path_program_test_data()).expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1281,7 +1276,7 @@ mod scheduler_tests {
             &[0xA9, 0x01],
         ))
         .expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();
@@ -1313,7 +1308,7 @@ mod scheduler_tests {
     fn instruction_scheduler_stays_disabled_for_unaudited_mapper() {
         let mut core = Core::new(mapper_program_test_data(2, RomFormat::INes, 0x8000, 0x2000))
             .expect("core should construct");
-        let mut screen = NullScreen;
+        let mut screen = null_fb();
         let mut controller = NullController;
         let mut mixer = CountingMixer::default();
         let sample_rate = mixer.sample_rate();

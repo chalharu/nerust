@@ -149,11 +149,8 @@ impl Console {
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
-        Self::new(
-            speaker,
-            ScreenBuffer::new_gpu(filter_type, source_logical_size),
-            controller,
-        )
+        let screen_buffer = ScreenBuffer::new_gpu(filter_type, source_logical_size);
+        Self::from_screen_buffer(speaker, screen_buffer, controller)
     }
 
     pub fn new<S: 'static + Sound + MixerInput + Send>(
@@ -161,10 +158,10 @@ impl Console {
         screen_buffer: ScreenBuffer,
         controller: Box<dyn ControllerState>,
     ) -> Self {
-        Self::spawn(speaker, screen_buffer, controller)
+        Self::from_screen_buffer(speaker, screen_buffer, controller)
     }
 
-    fn spawn<S: 'static + Sound + MixerInput + Send>(
+    fn from_screen_buffer<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         screen: ScreenBuffer,
         controller: Box<dyn ControllerState>,
@@ -184,16 +181,17 @@ impl Console {
             frame_format: presentation.frame_format(),
             ntsc_packed_rgba8,
         };
-        let pixel_format = if screen.publishes_palette_frame() {
+        let is_palette = screen.publishes_palette_frame();
+        let pixel_format = if is_palette {
             let mut palette = [0u32; 256];
             if let Some(assets) = screen.console_video_assets() {
-                let rgba8 = assets.palette_rgba8(); // &[u8], 先頭64色分の RGBA8 (256 bytes)
+                let rgba8 = assets.palette_rgba8();
                 for (i, entry) in palette.iter_mut().enumerate().take(64) {
                     let pos = i * 4;
-                    *entry = u32::from(rgba8[pos]) << 24  // R
-                        | u32::from(rgba8[pos + 1]) << 16 // G
-                        | u32::from(rgba8[pos + 2]) << 8  // B
-                        | u32::from(rgba8[pos + 3]); // A
+                    *entry = u32::from(rgba8[pos]) << 24
+                        | u32::from(rgba8[pos + 1]) << 16
+                        | u32::from(rgba8[pos + 2]) << 8
+                        | u32::from(rgba8[pos + 3]);
                 }
             }
             PixelFormat::PaletteIndex {
@@ -221,6 +219,11 @@ impl Console {
             ..ConsoleMetrics::default()
         });
 
+        // PPU 書き込み用 FrameBuffer (ConsoleRunner が core.run_frame に渡す)
+        let mut ppu_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        ppu_fb.resize(src_w, src_h);
+        ppu_fb.resize_data(frame_len);
+
         let mut result = Self {
             data_sender,
             stop_sender,
@@ -243,7 +246,7 @@ impl Console {
             backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, screen, shared, console_ch, backing, metrics, controller,
+                data_recv, stop_recv, screen, ppu_fb, shared, console_ch, backing, metrics, controller,
             );
             state.run(speaker);
         }));
