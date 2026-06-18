@@ -3098,7 +3098,6 @@ name = "nerust_backend_opengl"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_console",
- "nerust_screen_buffer",
  "nerust_screen_opengl",
  "nerust_screen_video",
 ]
@@ -3109,7 +3108,6 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_console",
- "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_screen_wgpu",
  "pollster",
@@ -3136,7 +3134,6 @@ dependencies = [
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
- "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_sound_traits",
  "nerust_timer",
@@ -3217,7 +3214,6 @@ dependencies = [
  "nerust_input_schema",
  "nerust_nes_device",
  "nerust_persistence",
- "nerust_screen_buffer",
  "nerust_sound_traits",
  "serde",
  "serde_derive",
@@ -3233,7 +3229,6 @@ dependencies = [
  "nerust_contract_core",
  "nerust_input_nes_runtime",
  "nerust_nes_device",
- "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_sound_traits",
 ]
@@ -3264,7 +3259,6 @@ dependencies = [
  "nerust_input_schema",
  "nerust_nes_device",
  "nerust_persistence",
- "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_sound_cpal",
  "nerust_sound_openal",
@@ -3368,7 +3362,6 @@ dependencies = [
  "nerust_input_nes_runtime",
  "nerust_nes_core",
  "nerust_nes_device",
- "nerust_screen_buffer",
  "nerust_screen_video",
  "nerust_sound_traits",
  "png",
@@ -3376,13 +3369,6 @@ dependencies = [
  "serde_derive",
  "serde_yaml",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nerust_screen_buffer"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_screen_video",
 ]
 
 [[package]]

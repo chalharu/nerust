@@ -9,7 +9,6 @@ use nerust_contract_core::GpuCommand;
 use nerust_contract_core::GpuCommandList;
 use nerust_contract_core::channel::FrameChannelConsole;
 use nerust_input_nes_runtime::ControllerState;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_video::FrameBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;
@@ -23,7 +22,6 @@ pub(super) struct ConsoleRunner {
     channel: FrameChannelConsole,
     stop_receiver: Receiver<()>,
     data_receiver: Receiver<ConsoleData>,
-    screen: ScreenBuffer,
     ppu_fb: FrameBuffer,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
     screen_backing: FrameBuffer,
@@ -35,7 +33,6 @@ impl ConsoleRunner {
     pub(super) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
-        screen: ScreenBuffer,
         ppu_fb: FrameBuffer,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         channel: FrameChannelConsole,
@@ -51,7 +48,6 @@ impl ConsoleRunner {
             paused: true,
             frame_counter: 0,
             channel,
-            screen,
             ppu_fb,
             frame_buffer,
             screen_backing,

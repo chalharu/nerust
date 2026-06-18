@@ -1,6 +1,6 @@
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
-use crate::settings::nes::{build_screen_buffer, build_speaker, effective_load_options};
+use crate::settings::nes::{build_speaker, effective_load_options};
 use nerust_console::state::RuntimeStateExport;
 use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
@@ -206,23 +206,19 @@ pub fn apply_default_system_settings_choice(
 
 impl NesSystemDefinition {
     fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
-        self.build_console_with(
-            build_speaker(&settings.local)?,
-            build_screen_buffer(&settings.shared),
-        )
-    }
-
-    fn build_console_with<S: 'static + Sound + MixerInput + Send>(
-        &self,
-        speaker: S,
-        screen_buffer: nerust_screen_buffer::screen_buffer::ScreenBuffer,
-    ) -> Result<Console, String> {
+        let speaker = build_speaker(&settings.local)?;
+        let filter_type = nerust_gui_shell::settings::nes::filter_type(&settings.shared);
         let cell = self
             .input_cell
             .get_or_init(|| Arc::new(NesInputCell::new()))
             .clone();
         let device = NesPadDevice::new(SharedNesInputCell(cell));
-        Ok(Console::new(speaker, screen_buffer, Box::new(device)))
+        Ok(Console::new_gpu(
+            speaker,
+            filter_type,
+            nerust_screen_video::LogicalSize { width: 256, height: 240 },
+            Box::new(device),
+        ))
     }
 }
 

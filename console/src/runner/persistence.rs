@@ -47,7 +47,7 @@ impl ConsoleRunner {
                 .map_err(ConsoleError::Core)?;
             state::build_state_export(
                 core,
-                &self.screen,
+                &self.ppu_fb,
                 controller_state,
                 self.frame_counter,
                 self.paused,
@@ -64,7 +64,7 @@ impl ConsoleRunner {
         core.ok_or_else(Self::core_not_loaded).and_then(|core| {
             state::restore_imported_state(
                 core,
-                &mut self.screen,
+                &mut self.ppu_fb,
                 self.controller.as_mut(),
                 &mut self.frame_counter,
                 &mut self.paused,
