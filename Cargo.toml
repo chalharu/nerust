@@ -30,7 +30,6 @@ members = [
   "sound/cpal",
   "sound/openal",
   "sound/filter",
-  "sound/traits",
   "timer",
 ]
 default-members = ["nes/core", "persistence", "console"]
@@ -95,7 +94,6 @@ nerust_screen_video = { path = "screen/video" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
-nerust_sound_traits = { path = "sound/traits" }
 nerust_soundfilter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
 nes_ntsc = { path = "nes_ntsc" }
