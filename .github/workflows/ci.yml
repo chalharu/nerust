@@ -41,8 +41,7 @@ jobs:
       - name: Support crate tests
         run: |
           cargo test -p nerust_cartridge_data --lib --quiet
-          cargo test -p nerust_screen_buffer --lib --quiet
-          cargo test -p nerust_screen_filter --lib --quiet
+          cargo test -p nerust_screen_video --lib --quiet
           cargo test -p nerust_timer --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'

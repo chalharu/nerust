@@ -7,7 +7,7 @@ use crate::controller::Controller;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
-use nerust_screen_video::Screen;
+use nerust_screen_video::FrameBuffer;
 use nerust_sound_traits::MixerInput;
 use std::io::Cursor;
 
@@ -27,17 +27,20 @@ const LENGTH_TABLE: [u8; 32] = [
     0x0C, 0x10, 0x18, 0x12, 0x30, 0x14, 0x60, 0x16, 0xC0, 0x18, 0x48, 0x1A, 0x10, 0x1C, 0x20, 0x1E,
 ];
 
-#[derive(Default)]
-struct NullScreen;
+fn null_fb() -> FrameBuffer {
+    let mut fb = FrameBuffer::with_capacity(
+        256,
+        240,
+        nerust_screen_video::PixelFormat::PaletteIndex {
+            palette: Box::new([0u32; 256]),
+        },
+    );
+    fb.resize(256, 240);
+    fb
+}
 
 #[derive(Default)]
 struct NullController;
-
-impl Screen for NullScreen {
-    fn push(&mut self, _palette: u8) {}
-
-    fn render(&mut self) {}
-}
 
 impl Controller for NullController {
     fn read(&mut self, _address: usize) -> OpenBusReadResult {
@@ -289,7 +292,7 @@ fn run_rom_until_silence(
     let mut core = Core::new(cartridge_data).expect("test ROM should load");
     core.reset();
 
-    let mut screen = NullScreen;
+    let mut screen = null_fb();
     let mut controller = NullController;
     let mut mixer = CapturingMixer::new(sample_rate);
 

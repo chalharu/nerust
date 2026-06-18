@@ -1,9 +1,6 @@
-use crate::filters;
-use crate::{FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
-use nerust_screen_rgb::RGB;
-use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
+use super::filters;
+use super::{FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH};
+use crate::{LogicalSize, PhysicalSize, RGB, VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 use nes_ntsc::{ShaderKernelEntry, setup::Setup};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

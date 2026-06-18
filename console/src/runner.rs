@@ -9,7 +9,6 @@ use nerust_contract_core::GpuCommand;
 use nerust_contract_core::GpuCommandList;
 use nerust_contract_core::channel::FrameChannelConsole;
 use nerust_input_nes_runtime::ControllerState;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_video::FrameBuffer;
 use nerust_timer::{TARGET_FPS, Timer};
 use std::sync::mpsc::Receiver;
@@ -23,9 +22,8 @@ pub(super) struct ConsoleRunner {
     channel: FrameChannelConsole,
     stop_receiver: Receiver<()>,
     data_receiver: Receiver<ConsoleData>,
-    screen: ScreenBuffer,
+    ppu_fb: FrameBuffer,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
-    screen_backing: FrameBuffer,
     metrics: SharedConsoleMetrics,
 }
 
@@ -34,10 +32,9 @@ impl ConsoleRunner {
     pub(super) fn new(
         data_receiver: Receiver<ConsoleData>,
         stop_receiver: Receiver<()>,
-        screen: ScreenBuffer,
+        ppu_fb: FrameBuffer,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         channel: FrameChannelConsole,
-        screen_backing: FrameBuffer,
         metrics: SharedConsoleMetrics,
         controller: Box<dyn ControllerState>,
     ) -> Self {
@@ -49,20 +46,20 @@ impl ConsoleRunner {
             paused: true,
             frame_counter: 0,
             channel,
-            screen,
+            ppu_fb,
             frame_buffer,
-            screen_backing,
             metrics,
         }
     }
 
     fn publish_frame(&mut self) {
-        self.screen.write_frame_into(self.screen_backing.as_mut());
+        // PPU が ppu_fb に書き込んだデータを shared と swap して publish
+        // state export 時は shared から直接読む (ppu_fb は swap で上書きされる)
         if self.channel.try_send_frame(GpuCommandList {
             commands: vec![GpuCommand::Blit { slot: 0 }],
         }) {
             let mut guard = self.frame_buffer.lock().unwrap();
-            std::mem::swap(&mut *guard, &mut self.screen_backing);
+            std::mem::swap(&mut *guard, &mut self.ppu_fb);
         }
     }
 

@@ -147,7 +147,6 @@ impl SessionCore {
 mod tests {
     use super::SessionCore;
     use nerust_console::Console;
-    use nerust_screen_buffer::screen_buffer::ScreenBuffer;
     use nerust_sound_traits::{MixerInput, Sound};
 
     #[derive(Default)]
@@ -165,9 +164,13 @@ mod tests {
 
     fn test_core() -> SessionCore {
         use std::sync::Arc;
-        SessionCore::from_console(Console::new(
+        SessionCore::from_console(Console::new_gpu(
             TestSpeaker,
-            ScreenBuffer::new_nes_gpu_default(),
+            nerust_screen_video::FilterType::NtscComposite,
+            nerust_screen_video::LogicalSize {
+                width: 256,
+                height: 240,
+            },
             Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
                 nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(Arc::new(
                     nerust_input_nes_runtime::nes_input_cell::NesInputCell::new(),

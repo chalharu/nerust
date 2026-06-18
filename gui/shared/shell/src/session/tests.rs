@@ -20,7 +20,6 @@ use nerust_gui_session::core::SessionCore;
 
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::fs;
 use std::path::PathBuf;
@@ -107,9 +106,13 @@ fn test_session() -> SessionHandle {
     SessionHandle::from_runtime(
         HostBackendIdentity::gtk_opengl(),
         Box::new(TestRuntime(SessionCore::from_console(
-            nerust_console::Console::new(
+            nerust_console::Console::new_gpu(
                 TestSpeaker,
-                ScreenBuffer::new_nes_gpu_default(),
+                nerust_screen_video::FilterType::NtscComposite,
+                nerust_screen_video::LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
                 Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
                     nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(
                         std::sync::Arc::new(
