@@ -17,7 +17,7 @@ use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell}
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::Sound;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
@@ -207,7 +207,7 @@ pub fn apply_default_system_settings_choice(
 impl NesSystemDefinition {
     fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
         let speaker = build_speaker(&settings.local)?;
-        let filter_type = nerust_gui_shell::settings::nes::filter_type(&settings.shared);
+        let filter_type = crate::settings::nes::filter_type(&settings.shared);
         let cell = self
             .input_cell
             .get_or_init(|| Arc::new(NesInputCell::new()))
