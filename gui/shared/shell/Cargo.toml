@@ -18,7 +18,6 @@ nerust_input_nes_runtime.workspace = true
 nerust_nes_device.workspace = true
 nerust_input_schema.workspace = true
 nerust_persistence.workspace = true
-nerust_screen_buffer.workspace = true
 nerust_screen_video.workspace = true
 nerust_sound_cpal.workspace = true
 nerust_sound_traits.workspace = true

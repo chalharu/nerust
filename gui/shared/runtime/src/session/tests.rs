@@ -2,7 +2,6 @@ use super::{GuiSession, commands::redraw_needed_after_pause_change};
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
 
 #[derive(Default)]
@@ -19,9 +18,10 @@ impl MixerInput for TestSpeaker {
 }
 
 fn test_session() -> GuiSession {
-    GuiSession::from_session_core(SessionCore::from_console(Console::new(
+    GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
         TestSpeaker,
-        ScreenBuffer::new_nes_gpu_default(),
+        nerust_screen_video::FilterType::NtscComposite,
+        nerust_screen_video::LogicalSize { width: 256, height: 240 },
         Box::new(nerust_nes_device::nes_pad::NesPadDevice::new(
             nerust_input_nes_runtime::nes_input_cell::SharedNesInputCell(std::sync::Arc::new(
                 nerust_input_nes_runtime::nes_input_cell::NesInputCell::new(),

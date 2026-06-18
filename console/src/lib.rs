@@ -17,7 +17,6 @@ use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
@@ -143,65 +142,55 @@ pub struct Console {
 }
 
 impl Console {
+    /// NES 用の新規 Console を作成する (GPU palette decode パス)。
     pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
-        let screen_buffer = ScreenBuffer::new_gpu(filter_type, source_logical_size);
-        Self::from_screen_buffer(speaker, screen_buffer, controller)
+        let assets = filter_type.palette_console_video_assets();
+        let ntsc_packed_rgba8 = assets
+            .packed_ntsc_rgba8()
+            .map(|data| data.to_vec().into_boxed_slice());
+        let render_profile = video::VideoRenderProfile {
+            source_logical_size,
+            logical_size: source_logical_size,
+            physical_size: PhysicalSize::from(source_logical_size),
+            frame_format: nerust_screen_video::VideoFrameFormat::Palette,
+            ntsc_packed_rgba8,
+        };
+        let mut palette = [0u32; 256];
+        let rgba8 = assets.palette_rgba8();
+        for (i, entry) in palette.iter_mut().enumerate().take(64) {
+            let pos = i * 4;
+            *entry = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
+        let pixel_format = PixelFormat::PaletteIndex {
+            palette: Box::new(palette),
+        };
+        let src_w = source_logical_size.width;
+        let src_h = source_logical_size.height;
+        Self::build(speaker, render_profile, pixel_format, src_w, src_h, controller)
     }
 
-    pub fn new<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
-        screen_buffer: ScreenBuffer,
-        controller: Box<dyn ControllerState>,
-    ) -> Self {
-        Self::from_screen_buffer(speaker, screen_buffer, controller)
-    }
 
-    fn from_screen_buffer<S: 'static + Sound + MixerInput + Send>(
+
+    /// 内部ビルド — render_profile / pixel_format から Console を構築
+    fn build<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
-        screen: ScreenBuffer,
+        render_profile: video::VideoRenderProfile,
+        pixel_format: PixelFormat,
+        src_w: usize,
+        src_h: usize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
-        let frame_len = screen.frame_len();
-        let presentation = screen.video_presentation().clone();
-        let ntsc_packed_rgba8 = screen
-            .console_video_assets()
-            .and_then(|a| a.packed_ntsc_rgba8())
-            .map(|data| data.to_vec().into_boxed_slice());
-        let render_profile = video::VideoRenderProfile {
-            source_logical_size: presentation.source_logical_size(),
-            logical_size: presentation.logical_size(),
-            physical_size: presentation.physical_size(),
-            frame_format: presentation.frame_format(),
-            ntsc_packed_rgba8,
-        };
-        let is_palette = screen.publishes_palette_frame();
-        let pixel_format = if is_palette {
-            let mut palette = [0u32; 256];
-            if let Some(assets) = screen.console_video_assets() {
-                let rgba8 = assets.palette_rgba8();
-                for (i, entry) in palette.iter_mut().enumerate().take(64) {
-                    let pos = i * 4;
-                    *entry = u32::from(rgba8[pos]) << 24
-                        | u32::from(rgba8[pos + 1]) << 16
-                        | u32::from(rgba8[pos + 2]) << 8
-                        | u32::from(rgba8[pos + 3]);
-                }
-            }
-            PixelFormat::PaletteIndex {
-                palette: Box::new(palette),
-            }
-        } else {
-            PixelFormat::Rgba
-        };
-        let src_w = presentation.source_logical_size().width;
-        let src_h = presentation.source_logical_size().height;
+        let frame_len = src_w * src_h;
 
         let mut shared_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         shared_fb.resize(src_w, src_h);
@@ -219,7 +208,6 @@ impl Console {
             ..ConsoleMetrics::default()
         });
 
-        // PPU 書き込み用 FrameBuffer (ConsoleRunner が core.run_frame に渡す)
         let mut ppu_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         ppu_fb.resize(src_w, src_h);
         ppu_fb.resize_data(frame_len);
@@ -235,7 +223,7 @@ impl Console {
         // 初期フレームを共有バッファに書き込み、チャネルに送信
         {
             let mut guard = shared.lock().unwrap();
-            screen.write_frame_into(guard.as_mut());
+            guard.as_mut().copy_from_slice(ppu_fb.as_ref());
         }
         console_ch.try_send_frame(nerust_contract_core::GpuCommandList {
             commands: vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }],
@@ -246,7 +234,7 @@ impl Console {
             backing.resize(src_w, src_h);
             backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, screen, ppu_fb, shared, console_ch, backing, metrics, controller,
+                data_recv, stop_recv, ppu_fb, shared, console_ch, backing, metrics, controller,
             );
             state.run(speaker);
         }));

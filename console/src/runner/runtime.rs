@@ -57,7 +57,7 @@ impl ConsoleRunner {
                         self.paused = true;
                         speaker.pause();
                         let mut hasher = Crc64Hasher::new();
-                        self.screen.hash(&mut hasher);
+                        self.ppu_fb.as_ref().hash(&mut hasher);
                         log::info!(
                             "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
                             self.frame_counter,

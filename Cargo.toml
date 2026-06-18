@@ -22,7 +22,6 @@ members = [
   "gui/shared/shell",
   "gui/shared/session",
   "nes_ntsc",
-  "screen/buffer",
   "screen/glwrap",
   "screen/opengl",
   "screen/wgpu",
@@ -90,7 +89,6 @@ nerust_rom_test = { path = "rom_test" }
 nerust_backend_opengl = { path = "backend/opengl" }
 nerust_backend_wgpu = { path = "backend/wgpu" }
 nerust_glwrap = { path = "screen/glwrap" }
-nerust_screen_buffer = { path = "screen/buffer" }
 nerust_screen_opengl = { path = "screen/opengl" }
 nerust_screen_wgpu = { path = "screen/wgpu" }
 nerust_screen_video = { path = "screen/video" }
