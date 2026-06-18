@@ -17,7 +17,7 @@ use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell}
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::Sound;
+
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
