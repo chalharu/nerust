@@ -53,12 +53,13 @@ impl ConsoleRunner {
     }
 
     fn publish_frame(&mut self) {
-        // PPU が ppu_fb に書き込んだデータを publish
+        // PPU が ppu_fb に書き込んだデータを shared にコピーして publish
+        // (swap ではなく copy: ppu_fb は state export で参照されるため上書き不可)
         if self.channel.try_send_frame(GpuCommandList {
             commands: vec![GpuCommand::Blit { slot: 0 }],
         }) {
             let mut guard = self.frame_buffer.lock().unwrap();
-            std::mem::swap(&mut *guard, &mut self.ppu_fb);
+            guard.as_mut().copy_from_slice(self.ppu_fb.as_ref());
         }
     }
 
