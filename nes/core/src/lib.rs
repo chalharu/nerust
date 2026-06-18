@@ -35,6 +35,7 @@ use self::persistence_codec::{
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::options::CoreOptions;
 #[cfg(test)]
@@ -42,7 +43,6 @@ use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
-use nerust_contract_core::audio::AudioBackend;
 use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
 use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};
 
@@ -388,7 +388,7 @@ impl Core {
             .unwrap_or_else(|| Box::new(ApuState::new(CLOCK_RATE as u32, audio.sample_rate())));
         let mut adapter = ApuAdapter {
             inner: audio,
-            state: &mut *state,
+            state: &mut state,
         };
         let result = self.run_frame_inner(screen, controller, &mut adapter);
         self.apu_state = Some(state);
