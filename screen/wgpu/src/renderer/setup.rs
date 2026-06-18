@@ -4,7 +4,7 @@ use crate::{
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::FrameUploadLayout,
 };
-use nerust_screen_filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
+use nerust_screen_video::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{

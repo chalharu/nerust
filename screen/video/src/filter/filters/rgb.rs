@@ -1,7 +1,7 @@
 use super::FilterUnit;
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::PhysicalSize;
-use nerust_screen_video::RGB;
+use crate::LogicalSize;
+use crate::PhysicalSize;
+use crate::RGB;
 
 pub(crate) const PALETTE: [u32; 64] = [
     0x66_6666, 0x00_2A88, 0x14_12A7, 0x3B_00A4, 0x5C_007E, 0x6E_0040, 0x6C_0600, 0x56_1D00,

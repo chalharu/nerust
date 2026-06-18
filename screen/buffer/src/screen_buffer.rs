@@ -1,6 +1,6 @@
 use super::screen_buffer_unit::ScreenBufferUnit;
-use nerust_screen_filter::presentation::ConsoleVideoAssets;
-use nerust_screen_filter::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
+use nerust_screen_video::ConsoleVideoAssets;
+use nerust_screen_video::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat, Screen, VideoPresentation};
@@ -266,7 +266,7 @@ impl Hash for ScreenBuffer {
 #[cfg(test)]
 mod tests {
     use super::ScreenBuffer;
-    use nerust_screen_filter::FilterType;
+    use nerust_screen_video::FilterType;
     use nerust_screen_video::LogicalSize;
     use nerust_screen_video::{Screen, VideoFrameFormat};
 
@@ -313,7 +313,7 @@ mod tests {
             screen
                 .console_video_assets()
                 .map(|assets| assets.as_nes().unwrap().pipeline_kind()),
-            Some(nerust_screen_filter::presentation::VideoPresentationPipelineKind::Ntsc)
+            Some(nerust_screen_video::presentation::VideoPresentationPipelineKind::Ntsc)
         );
     }
 

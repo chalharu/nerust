@@ -1,5 +1,5 @@
 use super::allocate;
-use nerust_screen_filter::FilterFunc;
+use nerust_screen_video::FilterFunc;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::RGB;
 use std::{mem, slice};
