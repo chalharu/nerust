@@ -28,9 +28,11 @@ const LENGTH_TABLE: [u8; 32] = [
 ];
 
 fn null_fb() -> FrameBuffer {
-    FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::PaletteIndex {
+    let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::PaletteIndex {
         palette: Box::new([0u32; 256]),
-    })
+    });
+    fb.resize(256, 240);
+    fb
 }
 
 #[derive(Default)]
