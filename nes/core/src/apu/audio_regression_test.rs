@@ -299,7 +299,7 @@ fn run_rom_until_silence(
     let mut mixer = CapturingMixer::new(sample_rate);
 
     for _ in 0..max_frames {
-        core.run_frame(&mut screen, &mut controller, &mut mixer);
+        core.run_frame_inner(&mut screen, &mut controller, &mut mixer);
         if mixer.has_activity() && mixer.tail_is_silent(silence_tail_seconds) {
             break;
         }

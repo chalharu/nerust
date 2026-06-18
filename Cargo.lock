@@ -3260,8 +3260,6 @@ dependencies = [
  "nerust_screen_video",
  "nerust_sound_cpal",
  "nerust_sound_openal",
- "nerust_sound_traits",
- "nerust_timer",
 ]
 
 [[package]]
@@ -3308,6 +3306,7 @@ dependencies = [
  "nerust_contract_core",
  "nerust_screen_video",
  "nerust_serialize",
+ "nerust_soundfilter",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3420,14 +3419,6 @@ dependencies = [
  "libc",
  "log",
  "nerust_contract_core",
-]
-
-[[package]]
-name = "nerust_sound_traits"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_core",
- "nerust_soundfilter",
 ]
 
 [[package]]

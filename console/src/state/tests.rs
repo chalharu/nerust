@@ -135,7 +135,7 @@ fn test_console() -> Console {
 
 fn test_console_with_controller(controller: Box<dyn ControllerState>) -> Console {
     Console::new_gpu(
-        TestSpeaker::default(),
+        Box::new(TestSpeaker::default()),
         FilterType::None,
         LogicalSize {
             width: 2,
