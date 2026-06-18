@@ -22,7 +22,7 @@ use crate::Cpu;
 use crate::OpenBusReadResult;
 use crate::interrupt::{Interrupt, IrqSource};
 use crate::persistence_error::PersistenceError;
-use nerust_sound_traits::AudioBackend;
+use nerust_contract_core::audio::AudioBackend;
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
