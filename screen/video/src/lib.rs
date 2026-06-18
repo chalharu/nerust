@@ -1,5 +1,10 @@
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
+pub mod logical;
+pub mod physical;
+pub mod rgb;
+
+pub use crate::logical::LogicalSize;
+pub use crate::physical::PhysicalSize;
+pub use crate::rgb::RGB;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoFrameFormat {

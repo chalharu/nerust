@@ -7,8 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_screen_logical.workspace = true
-nerust_screen_physical.workspace = true
-nerust_screen_rgb.workspace = true
 nerust_screen_video.workspace = true
 nes_ntsc.workspace = true

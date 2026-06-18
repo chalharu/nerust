@@ -7,5 +7,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_screen_logical.workspace = true
-nerust_screen_physical.workspace = true
+serde = { workspace = true, features = ["derive"] }

@@ -1,6 +1,6 @@
-use nerust_screen_logical::LogicalSize;
+use crate::logical::LogicalSize;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 pub struct PhysicalSize {
     pub width: f32,
     pub height: f32,

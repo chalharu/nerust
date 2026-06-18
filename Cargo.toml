@@ -25,10 +25,7 @@ members = [
   "screen/buffer",
   "screen/filter",
   "screen/glwrap",
-  "screen/logical",
   "screen/opengl",
-  "screen/physical",
-  "screen/rgb",
   "screen/wgpu",
   "screen/video",
   "serialize",
@@ -96,10 +93,7 @@ nerust_backend_wgpu = { path = "backend/wgpu" }
 nerust_glwrap = { path = "screen/glwrap" }
 nerust_screen_buffer = { path = "screen/buffer" }
 nerust_screen_filter = { path = "screen/filter" }
-nerust_screen_logical = { path = "screen/logical" }
 nerust_screen_opengl = { path = "screen/opengl" }
-nerust_screen_physical = { path = "screen/physical" }
-nerust_screen_rgb = { path = "screen/rgb" }
 nerust_screen_wgpu = { path = "screen/wgpu" }
 nerust_screen_video = { path = "screen/video" }
 nerust_serialize = { path = "serialize" }

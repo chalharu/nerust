@@ -1,7 +1,7 @@
 use super::allocate;
 use nerust_screen_filter::FilterFunc;
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_rgb::RGB;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::RGB;
 use std::{mem, slice};
 
 const OPAQUE_BLACK: u32 = 0xFF00_0000;

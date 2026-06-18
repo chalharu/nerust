@@ -1,8 +1,8 @@
 mod filters;
 pub mod presentation;
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
-use nerust_screen_rgb::RGB;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::PhysicalSize;
+use nerust_screen_video::RGB;
 
 pub const BLACK_PALETTE_INDEX: u8 = nes_ntsc::BLACK;
 pub const PALETTE_TEXTURE_WIDTH: u32 = 64;
@@ -60,8 +60,8 @@ mod tests {
         BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
         presentation::{ConsoleVideoAssets, VideoPresentationPipelineKind},
     };
-    use nerust_screen_logical::LogicalSize;
-    use nerust_screen_rgb::RGB;
+    use nerust_screen_video::LogicalSize;
+    use nerust_screen_video::RGB;
     use nerust_screen_video::VideoFrameFormat;
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [

@@ -3140,8 +3140,6 @@ dependencies = [
  "nerust_nes_core",
  "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
  "nerust_screen_video",
  "nerust_sound_traits",
  "nerust_timer",
@@ -3273,7 +3271,6 @@ dependencies = [
  "nerust_persistence",
  "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
  "nerust_sound_cpal",
  "nerust_sound_openal",
@@ -3379,7 +3376,6 @@ dependencies = [
  "nerust_nes_device",
  "nerust_screen_buffer",
  "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
  "nerust_sound_traits",
  "png",
@@ -3394,9 +3390,6 @@ name = "nerust_screen_buffer"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
- "nerust_screen_rgb",
  "nerust_screen_video",
 ]
 
@@ -3404,19 +3397,8 @@ dependencies = [
 name = "nerust_screen_filter"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_logical",
- "nerust_screen_physical",
- "nerust_screen_rgb",
  "nerust_screen_video",
  "nes_ntsc",
-]
-
-[[package]]
-name = "nerust_screen_logical"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
 ]
 
 [[package]]
@@ -3428,33 +3410,14 @@ dependencies = [
  "nerust_console",
  "nerust_glwrap",
  "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
-]
-
-[[package]]
-name = "nerust_screen_physical"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_screen_logical",
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "nerust_screen_rgb"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
 ]
 
 [[package]]
 name = "nerust_screen_video"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_logical",
- "nerust_screen_physical",
+ "serde",
 ]
 
 [[package]]
@@ -3462,8 +3425,6 @@ name = "nerust_screen_wgpu"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
  "nerust_screen_video",
  "raw-window-handle",
  "wgpu 29.0.3",
