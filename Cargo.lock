@@ -3135,7 +3135,6 @@ dependencies = [
  "nerust_input_nes_runtime",
  "nerust_nes_core",
  "nerust_screen_video",
- "nerust_sound_traits",
  "nerust_timer",
  "rmp-serde",
  "serde",
@@ -3215,7 +3214,6 @@ dependencies = [
  "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_video",
- "nerust_sound_traits",
  "serde",
  "serde_derive",
  "serde_yaml",
@@ -3231,7 +3229,6 @@ dependencies = [
  "nerust_input_nes_runtime",
  "nerust_nes_device",
  "nerust_screen_video",
- "nerust_sound_traits",
 ]
 
 [[package]]
@@ -3311,7 +3308,6 @@ dependencies = [
  "nerust_contract_core",
  "nerust_screen_video",
  "nerust_serialize",
- "nerust_sound_traits",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3364,7 +3360,6 @@ dependencies = [
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_screen_video",
- "nerust_sound_traits",
  "png",
  "serde",
  "serde_derive",
