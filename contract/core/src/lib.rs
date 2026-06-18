@@ -54,7 +54,6 @@ pub struct CoreCapabilities {
 pub enum GpuCommand {
     Blit { slot: u32 },
     PaletteDecode { slot: u32 },
-    UploadPalette { slot: u32 },
 }
 
 #[derive(Clone)]
@@ -173,9 +172,8 @@ mod tests {
             commands: vec![
                 GpuCommand::Blit { slot: 0 },
                 GpuCommand::PaletteDecode { slot: 1 },
-                GpuCommand::UploadPalette { slot: 2 },
             ],
         };
-        assert_eq!(list.commands.len(), 3);
+        assert_eq!(list.commands.len(), 2);
     }
 }

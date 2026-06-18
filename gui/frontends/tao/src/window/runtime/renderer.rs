@@ -37,10 +37,6 @@ impl WgpuRenderer {
         window_size: SurfaceSize,
     ) -> RenderResult {
         session.swap_frame_buffer();
-        let snapshot = session.snapshot();
-        let frame = snapshot
-            .video_frame
-            .expect("session should publish a video frame");
-        self.backend.render(frame.bytes(), window_size)
+        self.backend.render(session.frame_buffer(), window_size)
     }
 }

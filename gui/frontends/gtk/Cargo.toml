@@ -22,6 +22,7 @@ nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_session.workspace = true
 nerust_input_schema.workspace = true
+nerust_screen_video.workspace = true
 nerust_persistence.workspace = true
 nerust_sound_openal.workspace = true
 shared_library.workspace = true

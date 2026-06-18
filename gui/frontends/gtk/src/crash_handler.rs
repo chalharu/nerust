@@ -1,29 +1,30 @@
+#[cfg(target_env = "gnu")]
 use core::fmt::{self, Write as _};
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 use std::{
     ffi::c_void,
     mem, ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 static SIGNAL_HANDLER_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 const BACKTRACE_DEPTH: usize = 64;
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 pub(crate) fn install() {
     unsafe {
         install_signal(libc::SIGBUS);
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_env = "gnu"))]
 pub(crate) fn install() {}
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 unsafe fn install_signal(signal: libc::c_int) {
     let mut action = unsafe { mem::zeroed::<libc::sigaction>() };
     action.sa_sigaction = signal_handler as *const () as libc::sighandler_t;
@@ -40,7 +41,7 @@ unsafe fn install_signal(signal: libc::c_int) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 unsafe extern "C" fn signal_handler(
     signal: libc::c_int,
     info: *mut libc::siginfo_t,
@@ -95,7 +96,7 @@ unsafe extern "C" fn signal_handler(
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 fn signal_name(signal: libc::c_int) -> &'static str {
     match signal {
         libc::SIGBUS => "SIGBUS",
@@ -103,7 +104,7 @@ fn signal_name(signal: libc::c_int) -> &'static str {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 fn signal_code_name(signal: libc::c_int, code: libc::c_int) -> &'static str {
     match signal {
         libc::SIGBUS => bus_code_name(code),
@@ -111,7 +112,7 @@ fn signal_code_name(signal: libc::c_int, code: libc::c_int) -> &'static str {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 fn bus_code_name(code: libc::c_int) -> &'static str {
     match code {
         libc::BUS_ADRALN => "BUS_ADRALN",
@@ -125,7 +126,7 @@ fn bus_code_name(code: libc::c_int) -> &'static str {
     }
 }
 
-#[cfg(all(unix, target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(target_env = "gnu", target_os = "linux", target_arch = "x86_64"))]
 fn instruction_pointer(context: *mut c_void) -> Option<usize> {
     if context.is_null() {
         return None;
@@ -137,7 +138,7 @@ fn instruction_pointer(context: *mut c_void) -> Option<usize> {
     }
 }
 
-#[cfg(all(unix, target_os = "linux", target_arch = "aarch64"))]
+#[cfg(all(target_env = "gnu", target_os = "linux", target_arch = "aarch64"))]
 fn instruction_pointer(context: *mut c_void) -> Option<usize> {
     if context.is_null() {
         return None;
@@ -150,7 +151,7 @@ fn instruction_pointer(context: *mut c_void) -> Option<usize> {
 }
 
 #[cfg(all(
-    unix,
+    target_env = "gnu",
     not(any(
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64")
@@ -160,7 +161,7 @@ fn instruction_pointer(_: *mut c_void) -> Option<usize> {
     None
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 fn dump_native_backtrace() {
     let mut frames = [ptr::null_mut(); BACKTRACE_DEPTH];
     let frame_count = unsafe { backtrace(frames.as_mut_ptr(), BACKTRACE_DEPTH as libc::c_int) };
@@ -174,7 +175,7 @@ fn dump_native_backtrace() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 fn write_stderr(bytes: &[u8]) {
     let mut remaining = bytes;
     while !remaining.is_empty() {
@@ -192,13 +193,13 @@ fn write_stderr(bytes: &[u8]) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 struct StackBuffer {
     bytes: [u8; 1024],
     len: usize,
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 impl StackBuffer {
     const fn new() -> Self {
         Self {
@@ -212,7 +213,7 @@ impl StackBuffer {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 impl fmt::Write for StackBuffer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         let bytes = s.as_bytes();
@@ -229,13 +230,13 @@ impl fmt::Write for StackBuffer {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_env = "gnu")]
 unsafe extern "C" {
     fn backtrace(buffer: *mut *mut c_void, size: libc::c_int) -> libc::c_int;
     fn backtrace_symbols_fd(buffer: *const *mut c_void, size: libc::c_int, fd: libc::c_int);
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_env = "gnu"))]
 mod tests {
     use super::{bus_code_name, signal_name};
 

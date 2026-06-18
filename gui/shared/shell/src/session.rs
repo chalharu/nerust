@@ -18,6 +18,7 @@ use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
+use nerust_screen_video::FrameBuffer;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -148,6 +149,10 @@ impl SessionHandle {
 
     pub fn swap_frame_buffer(&mut self) {
         self.runtime.swap_frame_buffer();
+    }
+
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        self.runtime.frame_buffer()
     }
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {

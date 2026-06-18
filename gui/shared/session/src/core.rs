@@ -3,6 +3,7 @@ use nerust_console::video::{ConsoleVideo, VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleError, ConsoleMetrics};
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_screen_video::FrameBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -59,8 +60,12 @@ impl SessionCore {
         })
     }
 
-    pub fn swap_frame_buffer(&mut self) {
-        self.console.swap_frame_buffer();
+    pub fn swap_frame_buffer(&mut self) -> bool {
+        self.console.swap_frame_buffer()
+    }
+
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        self.console.frame_buffer()
     }
 
     pub fn video_render_profile(&self) -> VideoRenderProfile {
