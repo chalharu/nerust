@@ -448,7 +448,7 @@ mod tests {
     use super::Core;
     use crate::cpu::Core as Cpu;
     use crate::interrupt::Interrupt;
-use nerust_contract_core::audio::AudioBackend;
+    use nerust_contract_core::audio::AudioBackend;
 
     struct CapturingMixer {
         samples: Vec<f32>,

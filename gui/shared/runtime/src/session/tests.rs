@@ -1,8 +1,8 @@
 use super::{GuiSession, commands::redraw_needed_after_pause_change};
 use nerust_console::{Console, ConsoleMetrics};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
-use nerust_contract_core::audio::AudioBackend;
 
 #[derive(Default)]
 struct TestSpeaker;
