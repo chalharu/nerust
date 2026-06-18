@@ -45,6 +45,8 @@ fn allocate(size: usize) -> Box<[u8]> {
 pub struct GlView {
     frame_texture: u32,
     palette_texture: u32,
+    palette_width: i32,
+    palette_height: i32,
     ntsc_texture: u32,
     is_palette_format: bool,
     ntsc_enabled: bool,
@@ -61,6 +63,8 @@ impl GlView {
         Self {
             frame_texture: 0,
             palette_texture: 0,
+            palette_width: 0,
+            palette_height: 0,
             ntsc_texture: 0,
             is_palette_format: false,
             ntsc_enabled: false,
@@ -118,34 +122,30 @@ impl GlView {
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
         );
 
-        // palette texture
+        // palette texture: 常に 64x1 RGBA8、ゼロ初期化。
+        // 実データは render 時に FrameBuffer.palette_as_rgba8() から同期される。
         if self.is_palette_format {
-            let palette_rgba8 = render_profile
-                .console_video_assets
-                .as_ref()
-                .map(|a| a.palette_rgba8())
-                .unwrap_or(&[0u8; 256]);
+            self.palette_width = 64;
+            self.palette_height = 1;
+            let palette_data =
+                vec![0u8; self.palette_width as usize * self.palette_height as usize * 4];
             let mut pal_names = [0; 1];
             gen_textures(1, pal_names.as_mut_ptr()).unwrap();
             self.palette_texture = pal_names[0];
             configure_frame_texture(
                 1,
                 self.palette_texture,
-                64,
-                1,
+                self.palette_width,
+                self.palette_height,
                 gl::RGBA as GLint,
                 gl::RGBA,
-                palette_rgba8,
+                &palette_data,
             );
             uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
 
             // NTSC texture
             let ntsc_size = render_profile.logical_size;
-            if let Some(ntsc_data) = render_profile
-                .console_video_assets
-                .as_ref()
-                .and_then(|a| a.packed_ntsc_rgba8())
-            {
+            if let Some(ntsc_data) = render_profile.ntsc_packed_rgba8.as_deref() {
                 self.ntsc_enabled = true;
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
@@ -264,6 +264,29 @@ impl GlView {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// PaletteIndex 形式のパレットデータを palette texture にアップロードする。
+    /// `on_update()` の前に呼ばれることを想定。
+    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) {
+        if !self.is_palette_format {
+            return;
+        }
+        active_texture(gl::TEXTURE1).unwrap();
+        bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
+        tex_sub_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            0,
+            0,
+            self.palette_width,
+            self.palette_height,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            rgba8.as_ptr() as *const _,
+        )
+        .unwrap();
+        active_texture(gl::TEXTURE0).unwrap();
+    }
+
     pub fn on_update(&self, screen_ptr: *const u8) {
         self.shader.as_ref().unwrap().use_program();
 

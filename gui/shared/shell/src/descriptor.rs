@@ -16,6 +16,7 @@ use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_screen_video::FrameBuffer;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
@@ -139,6 +140,12 @@ pub trait SystemRuntime: Send {
         if let Some(frame) = snapshot.video_frame {
             f(frame.bytes());
         }
+    }
+
+    /// 表示バッファへの参照を返す。`swap_frame_buffer` の後に呼ぶこと。
+    /// デフォルト実装はパニックする — 各ランタイムがオーバーライドする。
+    fn frame_buffer(&self) -> &FrameBuffer {
+        panic!("SystemRuntime::frame_buffer not implemented for this runtime");
     }
 }
 
@@ -471,6 +478,10 @@ impl SystemRuntime for NesRuntime {
         self.core.with_frame_buffer(|bytes| {
             f(bytes);
         });
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        self.core.frame_buffer()
     }
 }
 

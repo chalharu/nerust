@@ -5,8 +5,7 @@ use crate::upload::FrameUploadLayout;
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_physical::PhysicalSize;
 use wgpu::{
-    BindGroup, BindGroupLayout, Buffer, Device, Limits, Queue, RenderPipeline,
-    SurfaceConfiguration, Texture,
+    BindGroup, Buffer, Device, Limits, Queue, RenderPipeline, SurfaceConfiguration, Texture,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -69,18 +68,43 @@ pub struct Renderer {
     queue: Queue,
     config: SurfaceConfiguration,
     frame_texture: Texture,
-    _palette_texture: Texture,
-    _ntsc_texture: Texture,
-    _srgb_lut_texture: Texture,
+    palette_texture: Texture,
+    palette_width: u32,
+    palette_height: u32,
     frame_upload_buffer: Buffer,
     frame_upload_layout: FrameUploadLayout,
     frame_upload_staging: Box<[u8]>,
-    _uniforms_buffer: Buffer,
-    _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
     pipeline: RenderPipeline,
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
+}
+
+impl Renderer {
+    /// PaletteIndex 形式の FrameBuffer からパレットデータを palette texture に書き込む。
+    /// `render()` の前に呼ばれることを想定。
+    /// palette の width/height は texture 作成時の値から自動的に決まる。
+    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) {
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.palette_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba8[..],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.palette_width * 4),
+                rows_per_image: Some(self.palette_height),
+            },
+            wgpu::Extent3d {
+                width: self.palette_width,
+                height: self.palette_height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 }
 
 #[cfg(test)]

@@ -41,10 +41,6 @@ impl WgpuRenderer {
         window_size: SurfaceSize,
     ) -> RenderResult {
         session.swap_frame_buffer();
-        let mut result: Option<RenderResult> = None;
-        session.with_frame_buffer(&mut |bytes| {
-            result = Some(self.backend.render(bytes, window_size));
-        });
-        result.unwrap_or(RenderResult::Skipped)
+        self.backend.render(session.frame_buffer(), window_size)
     }
 }

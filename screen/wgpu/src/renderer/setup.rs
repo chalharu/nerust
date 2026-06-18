@@ -4,7 +4,6 @@ use crate::{
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::FrameUploadLayout,
 };
-use nerust_screen_filter::presentation::ConsoleVideoAssets;
 use nerust_screen_filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
 use nerust_screen_logical::LogicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
@@ -27,8 +26,6 @@ struct FilterUniforms {
     output_height: u32,
 }
 
-const BLACK_RGBA8_TEXEL: [u8; 4] = [0, 0, 0, 0xFF];
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(super) enum FramePipelineKind {
     DirectColor,
@@ -41,14 +38,14 @@ impl Renderer {
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
-        assets: Option<&ConsoleVideoAssets>,
+        ntsc_data: Option<&[u8]>,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
         Self::new_with_device_limit_profile(
             render_surface,
             surface_size,
             presentation,
-            assets,
+            ntsc_data,
             DeviceLimitProfile::Default,
             presentation_options,
         )
@@ -59,11 +56,11 @@ impl Renderer {
         render_surface: &RenderSurface<T>,
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
-        assets: Option<&ConsoleVideoAssets>,
+        ntsc_data: Option<&[u8]>,
         device_limit_profile: DeviceLimitProfile,
         presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
-        let pipeline_kind = frame_pipeline_kind(presentation, assets)?;
+        let pipeline_kind = frame_pipeline_kind(presentation, ntsc_data)?;
 
         let instance = render_surface.instance();
         let surface = render_surface.surface();
@@ -125,34 +122,23 @@ impl Renderer {
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let (palette_rgba8, palette_size) = match assets {
-            Some(assets) => (
-                assets.palette_rgba8(),
-                Extent3d {
-                    width: PALETTE_TEXTURE_WIDTH,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            ),
-            None => (
-                BLACK_RGBA8_TEXEL.as_slice(),
-                Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            ),
+        // Palette texture: 常に 64x1 RGBA8、ゼロ初期化。
+        // 実データは render 時に FrameBuffer.palette_as_rgba8() から同期される。
+        let palette_size = Extent3d {
+            width: PALETTE_TEXTURE_WIDTH,
+            height: 1,
+            depth_or_array_layers: 1,
         };
+        let palette_data = vec![0u8; PALETTE_TEXTURE_WIDTH as usize * 4];
         let palette_texture = create_texture_from_bytes(
             &device,
             &queue,
             "nerust_palette_texture",
             TextureFormat::Rgba8Uint,
             palette_size,
-            palette_rgba8,
+            &palette_data,
         );
-        let (ntsc_data, ntsc_size) =
-            encode_ntsc_texture(assets.and_then(|assets| assets.packed_ntsc_rgba8()));
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(ntsc_data);
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -180,6 +166,10 @@ impl Renderer {
         let palette_view = palette_texture.create_view(&TextureViewDescriptor::default());
         let ntsc_view = ntsc_texture.create_view(&TextureViewDescriptor::default());
         let srgb_lut_view = srgb_lut_texture.create_view(&TextureViewDescriptor::default());
+        // ntsc_texture / srgb_lut_texture / uniforms_buffer / bind_group_layout は
+        // ここで drop。GPU リソースは BindGroup / View 経由で保持されるため安全。
+        drop(ntsc_texture);
+        drop(srgb_lut_texture);
         let uniforms = FilterUniforms {
             source_width: frame_logical_size.width as u32,
             source_height: frame_logical_size.height as u32,
@@ -294,19 +284,22 @@ impl Renderer {
             fragment_entry_point(pipeline_kind, config.format.is_srgb()),
         );
 
+        // uniforms_buffer / bind_group_layout は BindGroup 構築後に不要。
+        // GPU リソースは BindGroup が内部参照を保持するため drop して安全。
+        drop(uniforms_buffer);
+        drop(bind_group_layout);
+
         Ok(Self {
             device,
             queue,
             config,
             frame_texture,
-            _palette_texture: palette_texture,
-            _ntsc_texture: ntsc_texture,
-            _srgb_lut_texture: srgb_lut_texture,
+            palette_texture,
+            palette_width: PALETTE_TEXTURE_WIDTH,
+            palette_height: 1,
             frame_upload_buffer,
             frame_upload_layout,
             frame_upload_staging,
-            _uniforms_buffer: uniforms_buffer,
-            _bind_group_layout: bind_group_layout,
             bind_group,
             pipeline,
             frame_logical_size,
@@ -496,11 +489,11 @@ pub(super) fn composed_shader_source() -> String {
 
 fn frame_pipeline_kind(
     presentation: &VideoPresentation,
-    assets: Option<&ConsoleVideoAssets>,
+    ntsc_data: Option<&[u8]>,
 ) -> Result<FramePipelineKind, String> {
     match presentation.frame_format() {
         VideoFrameFormat::Rgba => Ok(FramePipelineKind::DirectColor),
-        VideoFrameFormat::Palette => Ok(match assets.and_then(|a| a.packed_ntsc_rgba8()) {
+        VideoFrameFormat::Palette => Ok(match ntsc_data {
             Some(_) => FramePipelineKind::Ntsc,
             None => FramePipelineKind::Palette,
         }),
