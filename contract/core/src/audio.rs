@@ -71,3 +71,40 @@ impl AudioBackend for NullAudio {
     fn pause(&mut self) {}
     fn push(&mut self, _sample: f32) {}
 }
+
+/// ゲイン適用ラッパー。`AudioBackend` に gain を乗算してから渡す。
+///
+/// Sample rate / start / pause は inner に委譲する。
+pub struct GainBackend {
+    inner: Box<dyn AudioBackend>,
+    gain: f32,
+}
+
+impl GainBackend {
+    pub fn new(inner: Box<dyn AudioBackend>, gain: f32) -> Self {
+        Self { inner, gain }
+    }
+
+    /// gain を動的に変更する (session rebuild 不要)。
+    pub fn set_gain(&mut self, gain: f32) {
+        self.gain = gain;
+    }
+}
+
+impl AudioBackend for GainBackend {
+    fn start(&mut self) {
+        self.inner.start();
+    }
+
+    fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    fn push(&mut self, sample: f32) {
+        self.inner.push(sample * self.gain);
+    }
+}

@@ -143,8 +143,8 @@ pub struct Console {
 
 impl Console {
     /// NES 用の新規 Console を作成する (GPU palette decode パス)。
-    pub fn new_gpu<S: 'static + AudioBackend + Send>(
-        speaker: S,
+    pub fn new_gpu(
+        speaker: Box<dyn AudioBackend + Send>,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
@@ -186,8 +186,8 @@ impl Console {
     }
 
     /// 内部ビルド — render_profile / pixel_format から Console を構築
-    fn build<S: 'static + AudioBackend + Send>(
-        speaker: S,
+    fn build(
+        mut speaker: Box<dyn AudioBackend + Send>,
         render_profile: video::VideoRenderProfile,
         pixel_format: PixelFormat,
         src_w: usize,
@@ -237,9 +237,9 @@ impl Console {
 
         result.thread = Some(thread::spawn(move || {
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, ppu_fb, shared, console_ch, metrics, controller,
+                data_recv, stop_recv, ppu_fb, shared, console_ch, metrics, controller, speaker,
             );
-            state.run(speaker);
+            state.run();
         }));
 
         result
