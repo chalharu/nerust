@@ -193,7 +193,7 @@ impl Console {
                     *entry = u32::from(rgba8[pos]) << 24  // R
                         | u32::from(rgba8[pos + 1]) << 16 // G
                         | u32::from(rgba8[pos + 2]) << 8  // B
-                        | u32::from(rgba8[pos + 3]);      // A
+                        | u32::from(rgba8[pos + 3]); // A
                 }
             }
             PixelFormat::PaletteIndex {
