@@ -9,11 +9,21 @@ use std::io::Cursor;
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
 pub(crate) fn validation_screen_buffer() -> FrameBuffer {
+    let mut palette = [0u32; 256];
+    let assets = FilterType::None.palette_console_video_assets();
+    let rgba8 = assets.palette_rgba8();
+    for i in 0..64 {
+        let pos = i * 4;
+        palette[i] = u32::from(rgba8[pos]) << 24
+            | u32::from(rgba8[pos + 1]) << 16
+            | u32::from(rgba8[pos + 2]) << 8
+            | u32::from(rgba8[pos + 3]);
+    }
     let mut fb = FrameBuffer::with_capacity(
         256,
         240,
         PixelFormat::PaletteIndex {
-            palette: Box::new([0u32; 256]),
+            palette: Box::new(palette),
         },
     );
     fb.resize(256, 240);

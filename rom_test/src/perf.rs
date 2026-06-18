@@ -9,7 +9,7 @@ use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::{FrameBuffer, PixelFormat};
+use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
 use nerust_sound_traits::MixerInput;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -263,11 +263,21 @@ impl PerfRunner {
                 }
             })?;
         let cell = Arc::new(NesInputCell::new());
+        let mut palette = [0u32; 256];
+        let assets = FilterType::NtscComposite.palette_console_video_assets();
+        let rgba8 = assets.palette_rgba8();
+        for i in 0..64 {
+            let pos = i * 4;
+            palette[i] = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
         let mut screen = FrameBuffer::with_capacity(
             256,
             240,
             PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
+                palette: Box::new(palette),
             },
         );
         screen.resize(256, 240);
