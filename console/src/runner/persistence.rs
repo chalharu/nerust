@@ -49,7 +49,7 @@ impl ConsoleRunner {
             let guard = self.frame_buffer.lock().unwrap();
             state::build_state_export(
                 core,
-                &*guard,
+                &guard,
                 controller_state,
                 self.frame_counter,
                 self.paused,
