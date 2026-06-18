@@ -3214,6 +3214,7 @@ dependencies = [
  "nerust_input_schema",
  "nerust_nes_device",
  "nerust_persistence",
+ "nerust_screen_video",
  "nerust_sound_traits",
  "serde",
  "serde_derive",
