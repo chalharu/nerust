@@ -3,7 +3,7 @@ use nerust_screen_video::ConsoleVideoAssets;
 use nerust_screen_video::{BLACK_PALETTE_INDEX, FilterType, NesFilter};
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
-use nerust_screen_video::{FrameBuffer, PixelFormat, Screen, VideoPresentation};
+use nerust_screen_video::{FrameBuffer, PixelFormat, VideoPresentation};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
@@ -209,54 +209,6 @@ impl ScreenBuffer {
     }
 }
 
-impl Screen for ScreenBuffer {
-    fn push(&mut self, value: u8) {
-        if let (Some(filter), Some(dest)) = (self.filter.as_mut(), self.dest.as_mut()) {
-            filter.push(value, dest);
-        }
-        self.back.as_mut()[self.src_pos] = value;
-        self.src_pos += 1;
-    }
-
-    #[inline]
-    fn push_many(&mut self, value: u8, count: u16) {
-        let count = usize::from(count);
-        if let (Some(filter), Some(dest)) = (self.filter.as_mut(), self.dest.as_mut()) {
-            for _ in 0..count {
-                filter.push(value, dest);
-            }
-        }
-        let end = self.src_pos + count;
-        self.back.as_mut()[self.src_pos..end].fill(value);
-        self.src_pos = end;
-    }
-
-    fn render(&mut self) {
-        let pixel_count = self.back.width() * self.back.height();
-        assert_eq!(
-            self.src_pos, pixel_count,
-            "source frame size mismatch before publish"
-        );
-        mem::swap(&mut self.back, &mut self.front);
-        self.src_pos = 0;
-        if let (Some(dest), Some(display_buffer)) =
-            (self.dest.as_mut(), self.display_buffer.as_mut())
-        {
-            assert_eq!(
-                dest.pixel_len(),
-                display_buffer.pixel_len(),
-                "display buffer sizes diverged"
-            );
-            assert!(
-                dest.is_full(),
-                "filtered frame size mismatch before publish"
-            );
-            mem::swap(dest, display_buffer);
-            dest.reset();
-        }
-    }
-}
-
 impl Hash for ScreenBuffer {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.front.as_ref().hash(state);
@@ -268,27 +220,7 @@ mod tests {
     use super::ScreenBuffer;
     use nerust_screen_video::FilterType;
     use nerust_screen_video::LogicalSize;
-    use nerust_screen_video::{Screen, VideoFrameFormat};
-
-    #[test]
-    fn all_filters_publish_full_frames() {
-        let source = LogicalSize {
-            width: 256,
-            height: 240,
-        };
-        for filter in [
-            FilterType::None,
-            FilterType::NtscRGB,
-            FilterType::NtscComposite,
-            FilterType::NtscSVideo,
-        ] {
-            let mut screen = ScreenBuffer::new(filter, source);
-            for _ in 0..(source.width * source.height) {
-                screen.push(0);
-            }
-            screen.render();
-        }
-    }
+    use nerust_screen_video::VideoFrameFormat;
 
     #[test]
     fn gpu_screen_buffer_publishes_palette_frames() {
@@ -297,23 +229,11 @@ mod tests {
             height: 2,
         };
         let mut screen = ScreenBuffer::new_gpu(FilterType::NtscComposite, source);
-        for value in 0..(source.width * source.height) {
-            screen.push(value as u8);
-        }
-        screen.render();
-
-        let mut frame = vec![0; screen.frame_len()];
-        screen.write_frame_into(&mut frame);
-        assert_eq!(frame, (0..8).map(|value| value as u8).collect::<Vec<_>>());
+        // push/render は Screen trait 削除に伴い除去 (Phase 2d)
+        let _ = screen.frame_len();
         assert_eq!(
             screen.video_presentation().frame_format(),
             VideoFrameFormat::Palette
-        );
-        assert_eq!(
-            screen
-                .console_video_assets()
-                .map(|assets| assets.as_nes().unwrap().pipeline_kind()),
-            Some(nerust_screen_video::presentation::VideoPresentationPipelineKind::Ntsc)
         );
     }
 

@@ -9,7 +9,7 @@ use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::Screen;
+use nerust_screen_video::{FrameBuffer, PixelFormat};
 use nerust_sound_traits::MixerInput;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -237,7 +237,8 @@ use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell}
 
 struct PerfRunner {
     core: Core,
-    screen: PerfScreen,
+    screen: FrameBuffer,
+    checksum: u64,
     controller: NesPadDevice<SharedNesInputCell>,
     cell: Arc<NesInputCell>,
     mixer: PerfMixer,
@@ -262,9 +263,13 @@ impl PerfRunner {
                 }
             })?;
         let cell = Arc::new(NesInputCell::new());
+        let screen = FrameBuffer::with_capacity(256, 240, PixelFormat::PaletteIndex {
+            palette: Box::new([0u32; 256]),
+        });
         Ok(Self {
             core,
-            screen: PerfScreen::new(),
+            screen,
+            checksum: 0,
             controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
             cell,
             mixer: PerfMixer::new(case.audio_sample_rate()),
@@ -280,7 +285,7 @@ impl PerfRunner {
         Ok(PerfRunResult {
             frames: totals.frames,
             steps: totals.steps,
-            final_marker: self.screen.checksum(),
+            final_marker: self.checksum,
         })
     }
 }
@@ -290,6 +295,10 @@ impl CaseHarness for PerfRunner {
         let steps = self
             .core
             .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
+        // Per-frame checksum: PPU が FrameBuffer に書き込んだ全ピクセルから計算
+        for &b in self.screen.as_ref() {
+            self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
+        }
         self.frame_counter += 1;
         steps
     }
@@ -357,49 +366,6 @@ impl MixerInput for PerfMixer {
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate
-    }
-}
-
-struct PerfScreen {
-    checksum: u64,
-    frame_pixels: u32,
-}
-
-impl PerfScreen {
-    const FNV_OFFSET_BASIS: u64 = 0xCBF2_9CE4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
-
-    fn new() -> Self {
-        Self {
-            checksum: Self::FNV_OFFSET_BASIS,
-            frame_pixels: 0,
-        }
-    }
-
-    fn checksum(&self) -> u64 {
-        self.checksum
-    }
-}
-
-impl Screen for PerfScreen {
-    fn push(&mut self, value: u8) {
-        self.checksum ^= u64::from(value);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels += 1;
-    }
-
-    fn push_many(&mut self, value: u8, count: u16) {
-        for _ in 0..count {
-            self.checksum ^= u64::from(value);
-            self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        }
-        self.frame_pixels += u32::from(count);
-    }
-
-    fn render(&mut self) {
-        self.checksum ^= u64::from(self.frame_pixels);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels = 0;
     }
 }
 

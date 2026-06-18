@@ -132,6 +132,7 @@ pub struct FrameBuffer {
     height: usize,
     stride: usize,
     format: PixelFormat,
+    cursor: usize,
 }
 
 impl FrameBuffer {
@@ -144,6 +145,7 @@ impl FrameBuffer {
             height: 0,
             stride: 0,
             format,
+            cursor: 0,
         }
     }
 
@@ -151,12 +153,31 @@ impl FrameBuffer {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
+        self.cursor = 0;
         let bpp = self.format.bytes_per_pixel();
         self.stride = match self.format {
             PixelFormat::Rgba => ((width * bpp).max(1) + 255) & !255,
             PixelFormat::PaletteIndex { .. } => width * bpp,
         };
         self.data.resize(self.stride * height, 0);
+    }
+
+    /// PPU が palette index を 1 ピクセル書き込む。
+    pub fn push(&mut self, value: u8) {
+        self.data[self.cursor] = value;
+        self.cursor += 1;
+    }
+
+    /// PPU が同一 palette index を連続書き込みする。
+    pub fn push_many(&mut self, value: u8, count: u16) {
+        let end = self.cursor + count as usize;
+        self.data[self.cursor..end].fill(value);
+        self.cursor = end;
+    }
+
+    /// フレーム完了を通知する（cursor を先頭に戻す）。
+    pub fn render(&mut self) {
+        self.cursor = 0;
     }
 
     /// データバッファを指定バイト数にリサイズする。
@@ -225,17 +246,4 @@ impl AsMut<[u8]> for FrameBuffer {
     }
 }
 
-// === 既存: Screen trait（あとで削除予定） ===
 
-pub trait Screen {
-    fn push(&mut self, palette: u8);
-
-    #[inline]
-    fn push_many(&mut self, palette: u8, count: u16) {
-        for _ in 0..count {
-            self.push(palette);
-        }
-    }
-
-    fn render(&mut self);
-}
