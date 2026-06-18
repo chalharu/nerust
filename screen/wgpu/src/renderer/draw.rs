@@ -3,7 +3,7 @@ use crate::{
     surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
     upload::pack_frame_rows,
 };
-use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::PhysicalSize;
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,

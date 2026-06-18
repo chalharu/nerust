@@ -1,7 +1,7 @@
 use super::FilterUnit;
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
-use nerust_screen_rgb::RGB;
+use crate::LogicalSize;
+use crate::PhysicalSize;
+use crate::RGB;
 
 #[derive(Debug)]
 pub(crate) struct NesNtsc {

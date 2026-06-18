@@ -3098,8 +3098,6 @@ name = "nerust_backend_opengl"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_console",
- "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_opengl",
  "nerust_screen_video",
 ]
@@ -3110,8 +3108,6 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_console",
- "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_video",
  "nerust_screen_wgpu",
  "pollster",
@@ -3138,10 +3134,6 @@ dependencies = [
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
- "nerust_screen_buffer",
- "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
  "nerust_screen_video",
  "nerust_sound_traits",
  "nerust_timer",
@@ -3222,8 +3214,7 @@ dependencies = [
  "nerust_input_schema",
  "nerust_nes_device",
  "nerust_persistence",
- "nerust_screen_buffer",
- "nerust_screen_filter",
+ "nerust_screen_video",
  "nerust_sound_traits",
  "serde",
  "serde_derive",
@@ -3239,8 +3230,6 @@ dependencies = [
  "nerust_contract_core",
  "nerust_input_nes_runtime",
  "nerust_nes_device",
- "nerust_screen_buffer",
- "nerust_screen_filter",
  "nerust_screen_video",
  "nerust_sound_traits",
 ]
@@ -3271,9 +3260,6 @@ dependencies = [
  "nerust_input_schema",
  "nerust_nes_device",
  "nerust_persistence",
- "nerust_screen_buffer",
- "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
  "nerust_sound_cpal",
  "nerust_sound_openal",
@@ -3377,9 +3363,6 @@ dependencies = [
  "nerust_input_nes_runtime",
  "nerust_nes_core",
  "nerust_nes_device",
- "nerust_screen_buffer",
- "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
  "nerust_sound_traits",
  "png",
@@ -3390,36 +3373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_screen_buffer"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
- "nerust_screen_rgb",
- "nerust_screen_video",
-]
-
-[[package]]
-name = "nerust_screen_filter"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_screen_logical",
- "nerust_screen_physical",
- "nerust_screen_rgb",
- "nerust_screen_video",
- "nes_ntsc",
-]
-
-[[package]]
-name = "nerust_screen_logical"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
-]
-
-[[package]]
 name = "nerust_screen_opengl"
 version = "0.1.0-dev"
 dependencies = [
@@ -3427,43 +3380,22 @@ dependencies = [
  "log",
  "nerust_console",
  "nerust_glwrap",
- "nerust_screen_filter",
- "nerust_screen_logical",
  "nerust_screen_video",
-]
-
-[[package]]
-name = "nerust_screen_physical"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_screen_logical",
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "nerust_screen_rgb"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
- "serde_derive",
 ]
 
 [[package]]
 name = "nerust_screen_video"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_logical",
- "nerust_screen_physical",
+ "log",
+ "nes_ntsc",
+ "serde",
 ]
 
 [[package]]
 name = "nerust_screen_wgpu"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_filter",
- "nerust_screen_logical",
- "nerust_screen_physical",
  "nerust_screen_video",
  "raw-window-handle",
  "wgpu 29.0.3",

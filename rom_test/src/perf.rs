@@ -9,7 +9,7 @@ use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::Screen;
+use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
 use nerust_sound_traits::MixerInput;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -237,7 +237,8 @@ use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell}
 
 struct PerfRunner {
     core: Core,
-    screen: PerfScreen,
+    screen: FrameBuffer,
+    checksum: u64,
     controller: NesPadDevice<SharedNesInputCell>,
     cell: Arc<NesInputCell>,
     mixer: PerfMixer,
@@ -262,9 +263,28 @@ impl PerfRunner {
                 }
             })?;
         let cell = Arc::new(NesInputCell::new());
+        let mut palette = [0u32; 256];
+        let assets = FilterType::NtscComposite.palette_console_video_assets();
+        let rgba8 = assets.palette_rgba8();
+        for (i, entry) in palette.iter_mut().enumerate().take(64) {
+            let pos = i * 4;
+            *entry = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
+        let mut screen = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new(palette),
+            },
+        );
+        screen.resize(256, 240);
         Ok(Self {
             core,
-            screen: PerfScreen::new(),
+            screen,
+            checksum: 0,
             controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
             cell,
             mixer: PerfMixer::new(case.audio_sample_rate()),
@@ -280,7 +300,7 @@ impl PerfRunner {
         Ok(PerfRunResult {
             frames: totals.frames,
             steps: totals.steps,
-            final_marker: self.screen.checksum(),
+            final_marker: self.checksum,
         })
     }
 }
@@ -290,6 +310,10 @@ impl CaseHarness for PerfRunner {
         let steps = self
             .core
             .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
+        // Per-frame checksum: PPU が FrameBuffer に書き込んだ全ピクセルから計算
+        for &b in self.screen.as_ref() {
+            self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
+        }
         self.frame_counter += 1;
         steps
     }
@@ -357,49 +381,6 @@ impl MixerInput for PerfMixer {
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate
-    }
-}
-
-struct PerfScreen {
-    checksum: u64,
-    frame_pixels: u32,
-}
-
-impl PerfScreen {
-    const FNV_OFFSET_BASIS: u64 = 0xCBF2_9CE4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
-
-    fn new() -> Self {
-        Self {
-            checksum: Self::FNV_OFFSET_BASIS,
-            frame_pixels: 0,
-        }
-    }
-
-    fn checksum(&self) -> u64 {
-        self.checksum
-    }
-}
-
-impl Screen for PerfScreen {
-    fn push(&mut self, value: u8) {
-        self.checksum ^= u64::from(value);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels += 1;
-    }
-
-    fn push_many(&mut self, value: u8, count: u16) {
-        for _ in 0..count {
-            self.checksum ^= u64::from(value);
-            self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        }
-        self.frame_pixels += u32::from(count);
-    }
-
-    fn render(&mut self) {
-        self.checksum ^= u64::from(self.frame_pixels);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels = 0;
     }
 }
 

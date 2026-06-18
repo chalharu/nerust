@@ -8,9 +8,8 @@ use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::ControllerState;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_logical::LogicalSize;
+use nerust_screen_video::FilterType;
+use nerust_screen_video::LogicalSize;
 use nerust_sound_traits::{MixerInput, Sound};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -146,15 +145,13 @@ fn test_console() -> Console {
 }
 
 fn test_console_with_controller(controller: Box<dyn ControllerState>) -> Console {
-    Console::new(
+    Console::new_gpu(
         TestSpeaker::default(),
-        ScreenBuffer::new_gpu(
-            FilterType::None,
-            LogicalSize {
-                width: 2,
-                height: 1,
-            },
-        ),
+        FilterType::None,
+        LogicalSize {
+            width: 2,
+            height: 1,
+        },
         controller,
     )
 }

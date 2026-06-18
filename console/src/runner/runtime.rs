@@ -22,7 +22,7 @@ impl ConsoleRunner {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.screen, self.controller.as_mut(), &mut speaker);
+                core.run_frame(&mut self.ppu_fb, self.controller.as_mut(), &mut speaker);
                 self.frame_counter += 1;
                 self.publish_frame();
             }
@@ -40,7 +40,7 @@ impl ConsoleRunner {
                         match result {
                             Ok(new_core) => {
                                 self.controller.reset_runtime();
-                                self.screen.clear();
+                                self.ppu_fb.as_mut().fill(0);
                                 self.publish_frame();
                                 self.frame_counter = 0;
                                 core = Some(new_core);
@@ -57,7 +57,7 @@ impl ConsoleRunner {
                         self.paused = true;
                         speaker.pause();
                         let mut hasher = Crc64Hasher::new();
-                        self.screen.hash(&mut hasher);
+                        self.ppu_fb.as_ref().hash(&mut hasher);
                         log::info!(
                             "Paused -- FrameCounter : {}, ScreenHash : 0x{:016X}",
                             self.frame_counter,
@@ -80,7 +80,7 @@ impl ConsoleRunner {
                             self.frame_counter = 0;
                             self.controller.reset_runtime();
                             core = None;
-                            self.screen.clear();
+                            self.ppu_fb.as_mut().fill(0);
                             self.publish_frame();
                             Ok(ConsoleReply::Unit)
                         } else {

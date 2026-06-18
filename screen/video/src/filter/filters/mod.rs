@@ -1,8 +1,8 @@
 pub(crate) mod ntsc;
 pub(crate) mod rgb;
 
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
+use crate::LogicalSize;
+use crate::PhysicalSize;
 
 pub trait FilterUnit: Send {
     type Input;

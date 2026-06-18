@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,20 +6,9 @@ use nerust_gui_settings::{
     local::ScalingMode,
     nes::{NesSettings, NesVideoFilter},
 };
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
+use nerust_screen_video::FilterType;
 use nerust_sound_traits::MixerBridge;
 use nerust_timer::CLOCK_RATE;
-
-pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
-    ScreenBuffer::new_gpu(
-        filter_type(settings),
-        nerust_screen_logical::LogicalSize {
-            width: 256,
-            height: 240,
-        },
-    )
-}
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Result<MixerBridge, String> {
     let sample_rate = if settings.audio.sample_rate > 0 {
@@ -128,7 +117,7 @@ mod tests {
 
         assert!(matches!(
             filter_type(&settings),
-            nerust_screen_filter::FilterType::NtscSVideo
+            nerust_screen_video::FilterType::NtscSVideo
         ));
     }
 

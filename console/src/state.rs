@@ -5,7 +5,7 @@ use nerust_contract_core::rom::RomIdentity;
 use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_nes_core::Core;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
+use nerust_screen_video::FrameBuffer;
 
 /// Compatibility version for the console-owned wrapper around opaque core machine-state bytes.
 ///
@@ -232,19 +232,15 @@ fn validate_console_state_target(
     Ok(())
 }
 
-fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
-    if screen.publishes_palette_frame() {
-        let source_size = screen.source_logical_size();
-        let pixel_count = source_size.width * source_size.height;
+fn export_preview_frame(frame: &FrameBuffer) -> Option<PreviewFrame> {
+    let w = frame.width();
+    let h = frame.height();
+    if let Some(palette_rgba8) = frame.palette_as_rgba8() {
         // PaletteIndex → RGBA 変換 (thumbnail は RGBA を期待)
-        let palette_rgba8 = screen
-            .console_video_assets()
-            .map(|a| a.palette_rgba8())
-            .unwrap_or(&[0u8; 256]);
-        let mut src = vec![0u8; pixel_count];
-        screen.write_frame_into(&mut src);
+        let src = frame.as_ref();
+        let pixel_count = w * h;
         let mut rgba = Vec::with_capacity(pixel_count * 4);
-        for &index in &src {
+        for &index in src.iter().take(pixel_count) {
             let i = usize::from(index.min(63)) * 4;
             rgba.push(palette_rgba8[i]);
             rgba.push(palette_rgba8[i + 1]);
@@ -252,19 +248,16 @@ fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
             rgba.push(palette_rgba8[i + 3]);
         }
         Some(PreviewFrame {
-            width: source_size.width as u32,
-            height: source_size.height as u32,
+            width: w as u32,
+            height: h as u32,
             rgba,
         })
     } else {
-        let frame_len = screen.frame_len();
-        let mut rgba = vec![0; frame_len];
-        screen.write_frame_into(&mut rgba);
-        // RGBA mode の width/height は frame data に合わせる
-        let display_size = screen.logical_size();
+        // RGBA mode — FrameBuffer の data をそのまま thumbnail に使う
+        let rgba = frame.as_ref().to_vec();
         Some(PreviewFrame {
-            width: display_size.width as u32,
-            height: display_size.height as u32,
+            width: w as u32,
+            height: h as u32,
             rgba,
         })
     }
@@ -272,7 +265,7 @@ fn export_preview_frame(screen: &ScreenBuffer) -> Option<PreviewFrame> {
 
 pub(crate) fn build_state_export(
     core: &Core,
-    screen: &ScreenBuffer,
+    screen: &FrameBuffer,
     controller_state: Vec<u8>,
     frame_counter: u64,
     paused: bool,
@@ -281,10 +274,8 @@ pub(crate) fn build_state_export(
     let machine_state = core
         .export_machine_state()
         .map_err(|error| ConsoleError::Core(error.to_string()))?;
-    let source_frame = if screen.publishes_palette_frame() {
-        let mut source_frame = vec![0; screen.source_frame_len()];
-        screen.copy_source_buffer(&mut source_frame);
-        source_frame
+    let source_frame = if screen.palette().is_some() {
+        screen.as_ref().to_vec()
     } else {
         Vec::new()
     };
@@ -306,7 +297,7 @@ pub(crate) fn build_state_export(
 
 pub(crate) fn restore_imported_state(
     core: &mut Core,
-    screen: &mut ScreenBuffer,
+    screen: &mut FrameBuffer,
     controller: &mut dyn ControllerState,
     frame_counter: &mut u64,
     paused: &mut bool,
@@ -317,9 +308,9 @@ pub(crate) fn restore_imported_state(
     controller
         .validate_controller_state(&payload.controller_state)
         .map_err(ConsoleError::Core)?;
-    if screen.publishes_palette_frame()
+    if screen.palette().is_some()
         && !payload.source_frame.is_empty()
-        && payload.source_frame.len() != screen.source_frame_len()
+        && payload.source_frame.len() != screen.as_ref().len()
     {
         return Err(ConsoleError::Core(
             "console source frame length mismatch".into(),
@@ -327,8 +318,8 @@ pub(crate) fn restore_imported_state(
     }
     core.import_machine_state(&payload.core_state)
         .map_err(|error| ConsoleError::Core(error.to_string()))?;
-    if screen.publishes_palette_frame() && !payload.source_frame.is_empty() {
-        screen.restore_source_buffer(&payload.source_frame);
+    if screen.palette().is_some() && !payload.source_frame.is_empty() {
+        screen.as_mut().copy_from_slice(&payload.source_frame);
     }
     controller
         .apply_controller_state(&payload.controller_state)

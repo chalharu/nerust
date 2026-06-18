@@ -17,10 +17,9 @@ use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::FilterType;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::Hasher;
@@ -143,67 +142,61 @@ pub struct Console {
 }
 
 impl Console {
+    /// NES 用の新規 Console を作成する (GPU palette decode パス)。
     pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
-        Self::new(
+        let layout = filter_type.layout(source_logical_size);
+        let assets = filter_type.palette_console_video_assets();
+        let ntsc_packed_rgba8 = assets
+            .packed_ntsc_rgba8()
+            .map(|data| data.to_vec().into_boxed_slice());
+        let render_profile = video::VideoRenderProfile {
+            source_logical_size: layout.source_logical_size,
+            logical_size: layout.logical_size,
+            physical_size: layout.physical_size,
+            frame_format: nerust_screen_video::VideoFrameFormat::Palette,
+            ntsc_packed_rgba8,
+        };
+        let mut palette = [0u32; 256];
+        let rgba8 = assets.palette_rgba8();
+        for (i, entry) in palette.iter_mut().enumerate().take(64) {
+            let pos = i * 4;
+            *entry = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
+        let pixel_format = PixelFormat::PaletteIndex {
+            palette: Box::new(palette),
+        };
+        let src_w = source_logical_size.width;
+        let src_h = source_logical_size.height;
+        Self::build(
             speaker,
-            ScreenBuffer::new_gpu(filter_type, source_logical_size),
+            render_profile,
+            pixel_format,
+            src_w,
+            src_h,
             controller,
         )
     }
 
-    pub fn new<S: 'static + Sound + MixerInput + Send>(
+    /// 内部ビルド — render_profile / pixel_format から Console を構築
+    fn build<S: 'static + Sound + MixerInput + Send>(
         speaker: S,
-        screen_buffer: ScreenBuffer,
-        controller: Box<dyn ControllerState>,
-    ) -> Self {
-        Self::spawn(speaker, screen_buffer, controller)
-    }
-
-    fn spawn<S: 'static + Sound + MixerInput + Send>(
-        speaker: S,
-        screen: ScreenBuffer,
+        render_profile: video::VideoRenderProfile,
+        pixel_format: PixelFormat,
+        src_w: usize,
+        src_h: usize,
         controller: Box<dyn ControllerState>,
     ) -> Self {
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
-        let frame_len = screen.frame_len();
-        let presentation = screen.video_presentation().clone();
-        let ntsc_packed_rgba8 = screen
-            .console_video_assets()
-            .and_then(|a| a.packed_ntsc_rgba8())
-            .map(|data| data.to_vec().into_boxed_slice());
-        let render_profile = video::VideoRenderProfile {
-            source_logical_size: presentation.source_logical_size(),
-            logical_size: presentation.logical_size(),
-            physical_size: presentation.physical_size(),
-            frame_format: presentation.frame_format(),
-            ntsc_packed_rgba8,
-        };
-        let pixel_format = if screen.publishes_palette_frame() {
-            let mut palette = [0u32; 256];
-            if let Some(assets) = screen.console_video_assets() {
-                let rgba8 = assets.palette_rgba8(); // &[u8], 先頭64色分の RGBA8 (256 bytes)
-                for (i, entry) in palette.iter_mut().enumerate().take(64) {
-                    let pos = i * 4;
-                    *entry = u32::from(rgba8[pos]) << 24  // R
-                        | u32::from(rgba8[pos + 1]) << 16 // G
-                        | u32::from(rgba8[pos + 2]) << 8  // B
-                        | u32::from(rgba8[pos + 3]); // A
-                }
-            }
-            PixelFormat::PaletteIndex {
-                palette: Box::new(palette),
-            }
-        } else {
-            PixelFormat::Rgba
-        };
-        let src_w = presentation.source_logical_size().width;
-        let src_h = presentation.source_logical_size().height;
+        let frame_len = src_w * src_h;
 
         let mut shared_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         shared_fb.resize(src_w, src_h);
@@ -221,6 +214,10 @@ impl Console {
             ..ConsoleMetrics::default()
         });
 
+        let mut ppu_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        ppu_fb.resize(src_w, src_h);
+        ppu_fb.resize_data(frame_len);
+
         let mut result = Self {
             data_sender,
             stop_sender,
@@ -232,18 +229,15 @@ impl Console {
         // 初期フレームを共有バッファに書き込み、チャネルに送信
         {
             let mut guard = shared.lock().unwrap();
-            screen.write_frame_into(guard.as_mut());
+            guard.as_mut().copy_from_slice(ppu_fb.as_ref());
         }
         console_ch.try_send_frame(nerust_contract_core::GpuCommandList {
             commands: vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }],
         });
 
         result.thread = Some(thread::spawn(move || {
-            let mut backing = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
-            backing.resize(src_w, src_h);
-            backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, screen, shared, console_ch, backing, metrics, controller,
+                data_recv, stop_recv, ppu_fb, shared, console_ch, metrics, controller,
             );
             state.run(speaker);
         }));
