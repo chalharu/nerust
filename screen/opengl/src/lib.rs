@@ -263,7 +263,6 @@ impl GlView {
         Ok(())
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     /// PaletteIndex 形式のパレットデータを palette texture にアップロードする。
     /// `on_update()` の前に呼ばれることを想定。
     pub fn update_palette_texture(&self, rgba8: &[u8; 256]) {
@@ -287,6 +286,7 @@ impl GlView {
         active_texture(gl::TEXTURE0).unwrap();
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_update(&self, screen_ptr: *const u8) {
         self.shader.as_ref().unwrap().use_program();
 
