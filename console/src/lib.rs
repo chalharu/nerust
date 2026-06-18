@@ -236,11 +236,8 @@ impl Console {
         });
 
         result.thread = Some(thread::spawn(move || {
-            let mut backing = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
-            backing.resize(src_w, src_h);
-            backing.resize_data(frame_len);
             let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, ppu_fb, shared, console_ch, backing, metrics, controller,
+                data_recv, stop_recv, ppu_fb, shared, console_ch, metrics, controller,
             );
             state.run(speaker);
         }));

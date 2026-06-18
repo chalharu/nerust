@@ -24,7 +24,6 @@ pub(super) struct ConsoleRunner {
     data_receiver: Receiver<ConsoleData>,
     ppu_fb: FrameBuffer,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
-    screen_backing: FrameBuffer,
     metrics: SharedConsoleMetrics,
 }
 
@@ -36,7 +35,6 @@ impl ConsoleRunner {
         ppu_fb: FrameBuffer,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         channel: FrameChannelConsole,
-        screen_backing: FrameBuffer,
         metrics: SharedConsoleMetrics,
         controller: Box<dyn ControllerState>,
     ) -> Self {
@@ -50,21 +48,17 @@ impl ConsoleRunner {
             channel,
             ppu_fb,
             frame_buffer,
-            screen_backing,
             metrics,
         }
     }
 
     fn publish_frame(&mut self) {
-        // PPU が ppu_fb に書き込んだデータを screen_backing にコピーして publish
-        self.screen_backing
-            .as_mut()
-            .copy_from_slice(self.ppu_fb.as_ref());
+        // PPU が ppu_fb に書き込んだデータを publish
         if self.channel.try_send_frame(GpuCommandList {
             commands: vec![GpuCommand::Blit { slot: 0 }],
         }) {
             let mut guard = self.frame_buffer.lock().unwrap();
-            std::mem::swap(&mut *guard, &mut self.screen_backing);
+            std::mem::swap(&mut *guard, &mut self.ppu_fb);
         }
     }
 
