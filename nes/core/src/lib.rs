@@ -43,6 +43,10 @@ use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
 use nerust_contract_core::audio::AudioBackend;
+use nerust_soundfilter::resampler::SimpleDownSampler;
+use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};
+
+pub(crate) const CLOCK_RATE: u64 = 1_789_773;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
@@ -87,6 +91,61 @@ pub struct Core {
     apu: Apu,
     cartridge: Box<dyn Cartridge>,
     options: CoreOptions,
+    apu_state: Option<Box<ApuState>>,
+}
+
+// NES 固有のフィルタ構成: LPF 14kHz + HPF 90Hz + HPF 442Hz (3段 IIR)
+type ApuFilter = ChaindFilter<ChaindFilter<IirFilter, IirFilter>, IirFilter>;
+
+impl ApuFilter {
+    fn new(sample_rate: f32) -> Self {
+        IirFilter::get_lowpass_filter(sample_rate, 14000.0)
+            .chain(IirFilter::get_highpass_filter(sample_rate, 90.0))
+            .chain(IirFilter::get_highpass_filter(sample_rate, 442.0))
+    }
+}
+
+/// APU のリサンプラ/フィルタ状態。`Core::run_frame` 内で `ApuAdapter` が借用する。
+struct ApuState {
+    resampler: SimpleDownSampler,
+    filter: ApuFilter,
+}
+
+impl ApuState {
+    fn new(cpu_clock: u32, target_sample_rate: u32) -> Self {
+        Self {
+            resampler: SimpleDownSampler::new(cpu_clock, target_sample_rate),
+            filter: ApuFilter::new(target_sample_rate as f32),
+        }
+    }
+}
+
+/// `run_frame` 内部で使用するスタックローカルアダプタ。
+/// Core のフィールドを直接借用せず、`take()` で切り出したローカル変数を借用する。
+struct ApuAdapter<'a> {
+    inner: &'a mut dyn AudioBackend,
+    state: &'a mut ApuState,
+}
+
+impl AudioBackend for ApuAdapter<'_> {
+    fn start(&mut self) {
+        self.inner.start();
+    }
+
+    fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    fn push(&mut self, data: f32) {
+        if let Some(r) = self.state.resampler.step(data) {
+            let sample = self.state.filter.step(r * 2.0 - 1.0);
+            self.inner.push(sample);
+        }
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.state.resampler.source_rate()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +210,7 @@ impl Core {
             apu,
             cartridge,
             options,
+            apu_state: None,
         })
     }
 
@@ -158,6 +218,7 @@ impl Core {
         self.cpu.reset();
         self.ppu.reset();
         self.apu.reset(self.cpu.interrupt_mut());
+        self.apu_state = None;
     }
 
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
@@ -306,7 +367,26 @@ impl Core {
         self.step_cycle(screen, controller, mixer, mixer.sample_rate())
     }
 
-    pub fn run_frame<M: AudioBackend>(
+    pub fn run_frame(
+        &mut self,
+        screen: &mut FrameBuffer,
+        controller: &mut dyn Controller,
+        audio: &mut dyn AudioBackend,
+    ) -> u64 {
+        let mut state = self
+            .apu_state
+            .take()
+            .unwrap_or_else(|| Box::new(ApuState::new(CLOCK_RATE as u32, audio.sample_rate())));
+        let mut adapter = ApuAdapter {
+            inner: audio,
+            state: &mut *state,
+        };
+        let result = self.run_frame_inner(screen, controller, &mut adapter);
+        self.apu_state = Some(state);
+        result
+    }
+
+    fn run_frame_inner<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
