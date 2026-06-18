@@ -9,13 +9,15 @@ use std::io::Cursor;
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
 pub(crate) fn validation_screen_buffer() -> FrameBuffer {
-    FrameBuffer::with_capacity(
+    let mut fb = FrameBuffer::with_capacity(
         256,
         240,
         PixelFormat::PaletteIndex {
             palette: Box::new([0u32; 256]),
         },
-    )
+    );
+    fb.resize(256, 240);
+    fb
 }
 
 pub(crate) fn screen_hash(frame: &FrameBuffer) -> u64 {
