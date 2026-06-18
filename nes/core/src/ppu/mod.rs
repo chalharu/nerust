@@ -211,7 +211,8 @@ mod tests {
     ) -> (Core, Interrupt, bool, FrameBuffer) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        let mut screen =
+            FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
         screen.resize(256, 240);
         let mut result = false;
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
@@ -227,7 +228,8 @@ mod tests {
     ) -> (Core, Interrupt, bool, FrameBuffer) {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
-        let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        let mut screen =
+            FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
         screen.resize(256, 240);
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
@@ -338,7 +340,16 @@ mod tests {
 
         assert_visible_advance_matches(&repeated, &batched);
         assert_eq!(batched.0.cycle, 260);
-        assert_eq!(batched.3.as_ref().iter().take(6).filter(|&&b| b != 0).count(), 6);
+        assert_eq!(
+            batched
+                .3
+                .as_ref()
+                .iter()
+                .take(6)
+                .filter(|&&b| b != 0)
+                .count(),
+            6
+        );
     }
 
     #[test]

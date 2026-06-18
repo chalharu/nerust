@@ -216,7 +216,10 @@ impl NesSystemDefinition {
         Ok(Console::new_gpu(
             speaker,
             filter_type,
-            nerust_screen_video::LogicalSize { width: 256, height: 240 },
+            nerust_screen_video::LogicalSize {
+                width: 256,
+                height: 240,
+            },
             Box::new(device),
         ))
     }
