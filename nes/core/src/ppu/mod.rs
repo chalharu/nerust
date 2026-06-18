@@ -45,7 +45,9 @@ mod tests {
     use nerust_screen_video::FrameBuffer;
 
     fn null_fb() -> FrameBuffer {
-        FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba)
+        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        fb.resize(256, 240);
+        fb
     }
 
     fn nrom_cartridge() -> Box<dyn Cartridge> {
@@ -210,6 +212,7 @@ mod tests {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
         let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        screen.resize(256, 240);
         let mut result = false;
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         for _ in 0..cycles {
@@ -225,6 +228,7 @@ mod tests {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
         let mut screen = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        screen.resize(256, 240);
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);
         (ppu, interrupt, result, screen)

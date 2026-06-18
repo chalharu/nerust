@@ -743,7 +743,9 @@ mod scheduler_tests {
     use crate::interrupt::{DmcDmaKind, Interrupt};
 
     fn null_fb() -> FrameBuffer {
-        FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba)
+        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        fb.resize(256, 240);
+        fb
     }
 
     #[derive(Default)]

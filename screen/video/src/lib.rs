@@ -163,12 +163,14 @@ impl FrameBuffer {
     }
 
     /// PPU が palette index を 1 ピクセル書き込む。
+    /// `resize()` で事前にバッファを確保しておくこと。
     pub fn push(&mut self, value: u8) {
         self.data[self.cursor] = value;
         self.cursor += 1;
     }
 
     /// PPU が同一 palette index を連続書き込みする。
+    /// `resize()` で事前にバッファを確保しておくこと。
     pub fn push_many(&mut self, value: u8, count: u16) {
         let end = self.cursor + count as usize;
         self.data[self.cursor..end].fill(value);
