@@ -10,7 +10,7 @@ use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::MixerInput;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -19,16 +19,6 @@ const CONSOLE_STATE_FIXTURE_HEX: &str = "88ae736368656d615f76657273696f6e01aa636
 #[derive(Clone, Default)]
 struct TestSpeaker {
     events: Arc<Mutex<Vec<&'static str>>>,
-}
-
-impl Sound for TestSpeaker {
-    fn start(&mut self) {
-        self.events.lock().unwrap().push("start");
-    }
-
-    fn pause(&mut self) {
-        self.events.lock().unwrap().push("pause");
-    }
 }
 
 impl MixerInput for TestSpeaker {

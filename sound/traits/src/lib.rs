@@ -1,11 +1,6 @@
 use nerust_soundfilter::Filter;
 use nerust_soundfilter::resampler::Resampler;
 
-pub trait Sound {
-    fn start(&mut self);
-    fn pause(&mut self);
-}
-
 pub trait MixerInput {
     fn push(&mut self, data: f32); // 0.0 ~ 1.0
 
@@ -75,12 +70,4 @@ impl MixerInput for MixerBridge {
     }
 }
 
-impl Sound for MixerBridge {
-    fn start(&mut self) {
-        self.backend.start();
-    }
 
-    fn pause(&mut self) {
-        self.backend.pause();
-    }
-}
