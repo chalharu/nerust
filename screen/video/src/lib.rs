@@ -163,19 +163,32 @@ impl FrameBuffer {
     }
 
     /// PPU が palette index を 1 ピクセル書き込む。
-    /// `resize()` で事前にバッファを確保しておくこと。
+    /// バッファ不足時は警告ログを出力して無視する。
     pub fn push(&mut self, value: u8) {
+        if self.cursor >= self.data.len() {
+            log::warn!("FrameBuffer::push: cursor {} out of bounds (len {})", self.cursor, self.data.len());
+            return;
+        }
         self.data[self.cursor] = value;
         self.cursor += 1;
     }
 
     /// PPU が同一 palette index を連続書き込みする。
-    /// `resize()` で事前にバッファを確保しておくこと。
+    /// バッファ不足時は警告ログを出力して無視する。
     pub fn push_many(&mut self, value: u8, count: u16) {
         let end = self.cursor + count as usize;
+        if end > self.data.len() {
+            log::warn!(
+                "FrameBuffer::push_many: cursor {} + count {} out of bounds (len {})",
+                self.cursor, count, self.data.len()
+            );
+            return;
+        }
         self.data[self.cursor..end].fill(value);
         self.cursor = end;
     }
+
+
 
     /// フレーム完了を通知する（cursor を先頭に戻す）。
     pub fn render(&mut self) {
