@@ -161,7 +161,7 @@ mod tests {
     fn test_core() -> SessionCore {
         use std::sync::Arc;
         SessionCore::from_console(Console::new_gpu(
-            TestSpeaker,
+            Box::new(TestSpeaker),
             nerust_screen_video::FilterType::NtscComposite,
             nerust_screen_video::LogicalSize {
                 width: 256,

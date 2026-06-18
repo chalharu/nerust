@@ -43,7 +43,7 @@ use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
 use nerust_contract_core::audio::AudioBackend;
-use nerust_soundfilter::resampler::SimpleDownSampler;
+use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
 use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};
 
 pub(crate) const CLOCK_RATE: u64 = 1_789_773;
@@ -91,17 +91,26 @@ pub struct Core {
     apu: Apu,
     cartridge: Box<dyn Cartridge>,
     options: CoreOptions,
+    #[serde(skip)]
     apu_state: Option<Box<ApuState>>,
 }
 
 // NES 固有のフィルタ構成: LPF 14kHz + HPF 90Hz + HPF 442Hz (3段 IIR)
-type ApuFilter = ChaindFilter<ChaindFilter<IirFilter, IirFilter>, IirFilter>;
+struct ApuFilter(ChaindFilter<ChaindFilter<IirFilter, IirFilter>, IirFilter>);
 
 impl ApuFilter {
     fn new(sample_rate: f32) -> Self {
-        IirFilter::get_lowpass_filter(sample_rate, 14000.0)
-            .chain(IirFilter::get_highpass_filter(sample_rate, 90.0))
-            .chain(IirFilter::get_highpass_filter(sample_rate, 442.0))
+        Self(
+            IirFilter::get_lowpass_filter(sample_rate, 14000.0)
+                .chain(IirFilter::get_highpass_filter(sample_rate, 90.0))
+                .chain(IirFilter::get_highpass_filter(sample_rate, 442.0)),
+        )
+    }
+}
+
+impl Filter for ApuFilter {
+    fn step(&mut self, data: f32) -> f32 {
+        self.0.step(data)
     }
 }
 
@@ -386,7 +395,7 @@ impl Core {
         result
     }
 
-    fn run_frame_inner<M: AudioBackend>(
+    pub(crate) fn run_frame_inner<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -888,7 +897,9 @@ mod scheduler_tests {
         let mut scheduled_mixer = CountingMixer::default();
         let mut exact_mixer = CountingMixer::default();
 
-        let scheduled_cycles = scheduled.run_frame(
+        // run_frame_inner は adapter を経由せず、テスト用 mixer を直接使う。
+        // これにより adapter による sample_rate キャップがスケジューラに影響しない。
+        let scheduled_cycles = scheduled.run_frame_inner(
             &mut scheduled_screen,
             &mut scheduled_controller,
             &mut scheduled_mixer,
@@ -1126,7 +1137,7 @@ mod scheduler_tests {
 
         let mut scheduled_cycles = 0;
         for _ in 0..3 {
-            scheduled_cycles += scheduled.run_frame(
+            scheduled_cycles += scheduled.run_frame_inner(
                 &mut scheduled_screen,
                 &mut scheduled_controller,
                 &mut scheduled_mixer,

@@ -8,8 +8,8 @@ cases:
     perf: true
     expected_audio:
       sample_rate: 192000
-      samples: 95586
-      hash: "0x27C6A0AD8041E1F7"
+      samples: 95587
+      hash: "0xB3AE13BB09996AE8"
     events:
       - {frame: 30, action: check_screen, hash: "0xE31EB51722472E30"}
   - id: apu.blargg_apu_2005.07.30.02.len_table
@@ -156,8 +156,8 @@ cases:
     rom: nes-audio-tests/build/db_apu.nes
     expected_audio:
       sample_rate: 192000
-      samples: 1389462
-      hash: "0x61A285CE2E9FDCD8"
+      samples: 1389463
+      hash: "0x833F44D65A81F61A"
     events:
       - {frame: 435, action: check_screen, hash: "0x043E5A1ABD2618A6"}
   - id: apu.nes_audio_tests.db_mmc5
@@ -167,7 +167,7 @@ cases:
     expected_audio:
       sample_rate: 192000
       samples: 2303163
-      hash: "0x0CD63C15C92485E1"
+      hash: "0xAF51F76ABFD0E054"
     events:
       - {frame: 721, action: check_screen, hash: "0x043E5A1ABD2618A6"}
   - id: apu.nes_audio_tests.db_mmc5_nrom
@@ -177,7 +177,7 @@ cases:
     expected_audio:
       sample_rate: 192000
       samples: 2303163
-      hash: "0xEB24873C853F8E58"
+      hash: "0xE9540CF44AC3185B"
     events:
       - {frame: 721, action: check_screen, hash: "0x043E5A1ABD2618A6"}
   - id: apu.nes_audio_tests.tri_silence
@@ -186,8 +186,8 @@ cases:
     rom: nes-audio-tests/build/tri_silence.nes
     expected_audio:
       sample_rate: 192000
-      samples: 7935517
-      hash: "0x93977D99F3723CA9"
+      samples: 7935518
+      hash: "0x04E483EBF6254497"
     events:
       - {frame: 2484, action: check_screen, hash: "0x043E5A1ABD2618A6"}
   - id: cpu.branch_timing_tests.1.Branch_Basics
@@ -351,8 +351,8 @@ cases:
     perf: true
     expected_audio:
       sample_rate: 192000
-      samples: 287270
-      hash: "0xD5BFE5997FBAFC8B"
+      samples: 287271
+      hash: "0x58AB71A301DE8997"
     events:
       - {frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E"}
       - {frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed}
@@ -1583,7 +1583,7 @@ cases:
     expected_audio:
       sample_rate: 192000
       samples: 5239142
-      hash: "0x2E612CB2A8E580BD"
+      hash: "0x2A93F2F158649CC1"
     events:
       - {frame: 1640, action: check_screen, hash: "0xEB57E16978E45540"}
   - id: ppu.sprite_hit_tests_2005.10.05.01.basics

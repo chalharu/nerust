@@ -187,7 +187,7 @@ impl Console {
 
     /// 内部ビルド — render_profile / pixel_format から Console を構築
     fn build(
-        mut speaker: Box<dyn AudioBackend + Send>,
+        speaker: Box<dyn AudioBackend + Send>,
         render_profile: video::VideoRenderProfile,
         pixel_format: PixelFormat,
         src_w: usize,

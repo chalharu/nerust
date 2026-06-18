@@ -206,7 +206,7 @@ pub fn apply_default_system_settings_choice(
 
 impl NesSystemDefinition {
     fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
-        let speaker = build_speaker(&settings.local)?;
+        let speaker = build_speaker(&settings.local);
         let filter_type = crate::settings::nes::filter_type(&settings.shared);
         let cell = self
             .input_cell

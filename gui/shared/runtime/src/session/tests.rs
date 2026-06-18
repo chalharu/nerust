@@ -15,7 +15,7 @@ impl AudioBackend for TestSpeaker {
 
 fn test_session() -> GuiSession {
     GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
-        TestSpeaker,
+        Box::new(TestSpeaker),
         nerust_screen_video::FilterType::NtscComposite,
         nerust_screen_video::LogicalSize {
             width: 256,

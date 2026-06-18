@@ -103,7 +103,7 @@ fn test_session() -> SessionHandle {
         HostBackendIdentity::gtk_opengl(),
         Box::new(TestRuntime(SessionCore::from_console(
             nerust_console::Console::new_gpu(
-                TestSpeaker,
+                Box::new(TestSpeaker),
                 nerust_screen_video::FilterType::NtscComposite,
                 nerust_screen_video::LogicalSize {
                     width: 256,
