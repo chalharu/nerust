@@ -45,9 +45,11 @@ impl ConsoleRunner {
                 .controller
                 .current_controller_state()
                 .map_err(ConsoleError::Core)?;
+            // state export 時は shared FrameBuffer から読む (ppu_fb は publish_frame の swap で上書きされる)
+            let guard = self.frame_buffer.lock().unwrap();
             state::build_state_export(
                 core,
-                &self.ppu_fb,
+                &*guard,
                 controller_state,
                 self.frame_counter,
                 self.paused,
