@@ -42,7 +42,7 @@ use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::MixerInput;
+use nerust_contract_core::audio::AudioBackend;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
@@ -297,7 +297,7 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<M: MixerInput>(
+    pub fn step<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -306,7 +306,7 @@ impl Core {
         self.step_cycle(screen, controller, mixer, mixer.sample_rate())
     }
 
-    pub fn run_frame<M: MixerInput>(
+    pub fn run_frame<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -352,7 +352,7 @@ impl Core {
     }
 
     #[inline(always)]
-    fn step_cycle<M: MixerInput>(
+    fn step_cycle<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -397,7 +397,7 @@ impl Core {
         }
     }
 
-    fn step_instruction_event<M: MixerInput>(
+    fn step_instruction_event<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -489,7 +489,7 @@ impl Core {
         Some((cpu_cycles, screen_updated))
     }
 
-    fn step_synchronized_mapper_and_apu<M: MixerInput>(
+    fn step_synchronized_mapper_and_apu<M: AudioBackend>(
         &mut self,
         mixer: &mut M,
         mixer_sample_rate: u32,
@@ -764,7 +764,9 @@ mod scheduler_tests {
         samples: usize,
     }
 
-    impl MixerInput for CountingMixer {
+    impl AudioBackend for CountingMixer {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, _data: f32) {
             self.samples += 1;
         }
@@ -784,7 +786,9 @@ mod scheduler_tests {
         }
     }
 
-    impl MixerInput for RecordingMixer {
+    impl AudioBackend for RecordingMixer {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, data: f32) {
             self.samples.push(data);
         }
