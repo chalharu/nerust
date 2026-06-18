@@ -5,8 +5,8 @@ use super::{
 };
 use crate::surface::SurfaceSize;
 use nerust_screen_filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
-use nerust_screen_logical::LogicalSize;
-use nerust_screen_physical::PhysicalSize;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[test]

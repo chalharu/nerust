@@ -5,7 +5,7 @@ use crate::{
     upload::FrameUploadLayout,
 };
 use nerust_screen_filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_logical::LogicalSize;
+use nerust_screen_video::LogicalSize;
 use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,

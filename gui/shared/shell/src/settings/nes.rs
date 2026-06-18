@@ -14,7 +14,7 @@ use nerust_timer::CLOCK_RATE;
 pub fn build_screen_buffer(settings: &DesktopSharedSettings) -> ScreenBuffer {
     ScreenBuffer::new_gpu(
         filter_type(settings),
-        nerust_screen_logical::LogicalSize {
+        nerust_screen_video::LogicalSize {
             width: 256,
             height: 240,
         },
