@@ -16,13 +16,13 @@ impl ConsoleRunner {
         ConsoleError::NoRomLoaded
     }
 
-    pub(crate) fn run<S: AudioBackend>(&mut self, mut speaker: S) {
+    pub(crate) fn run(&mut self) {
         let mut core: Option<Core> = None;
         while self.stop_receiver.try_recv().is_err() {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.ppu_fb, self.controller.as_mut(), &mut speaker);
+                core.run_frame(&mut self.ppu_fb, self.controller.as_mut(), &mut *self.audio);
                 self.frame_counter += 1;
                 self.publish_frame();
             }
@@ -51,11 +51,11 @@ impl ConsoleRunner {
                     }
                     ConsoleData::Resume => {
                         self.paused = false;
-                        speaker.start();
+                        self.audio.start();
                     }
                     ConsoleData::Pause => {
                         self.paused = true;
-                        speaker.pause();
+                        self.audio.pause();
                         let mut hasher = Crc64Hasher::new();
                         self.ppu_fb.as_ref().hash(&mut hasher);
                         log::info!(
@@ -108,9 +108,9 @@ impl ConsoleRunner {
                         let result = self.import_state_reply(core.as_mut(), &bytes);
                         if result.is_ok() {
                             if self.paused {
-                                speaker.pause();
+                                self.audio.pause();
                             } else {
-                                speaker.start();
+                                self.audio.start();
                             }
                             self.publish_frame();
                         }
