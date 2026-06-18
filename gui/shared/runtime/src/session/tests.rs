@@ -2,16 +2,10 @@ use super::{GuiSession, commands::redraw_needed_after_pause_change};
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::MixerInput;
 
 #[derive(Default)]
 struct TestSpeaker;
-
-impl Sound for TestSpeaker {
-    fn start(&mut self) {}
-
-    fn pause(&mut self) {}
-}
 
 impl MixerInput for TestSpeaker {
     fn push(&mut self, _: f32) {}

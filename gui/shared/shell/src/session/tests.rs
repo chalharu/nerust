@@ -20,7 +20,7 @@ use nerust_gui_session::core::SessionCore;
 
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::MixerInput;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -28,12 +28,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 struct TestSpeaker;
-
-impl Sound for TestSpeaker {
-    fn start(&mut self) {}
-
-    fn pause(&mut self) {}
-}
 
 impl MixerInput for TestSpeaker {
     fn push(&mut self, _data: f32) {}

@@ -21,7 +21,7 @@ use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
-use nerust_sound_traits::{MixerInput, Sound};
+use nerust_sound_traits::MixerInput;
 use std::hash::Hasher;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -143,7 +143,7 @@ pub struct Console {
 
 impl Console {
     /// NES 用の新規 Console を作成する (GPU palette decode パス)。
-    pub fn new_gpu<S: 'static + Sound + MixerInput + Send>(
+    pub fn new_gpu<S: 'static + MixerInput + Send>(
         speaker: S,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
@@ -186,7 +186,7 @@ impl Console {
     }
 
     /// 内部ビルド — render_profile / pixel_format から Console を構築
-    fn build<S: 'static + Sound + MixerInput + Send>(
+    fn build<S: 'static + MixerInput + Send>(
         speaker: S,
         render_profile: video::VideoRenderProfile,
         pixel_format: PixelFormat,

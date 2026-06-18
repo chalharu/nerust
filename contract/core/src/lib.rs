@@ -121,9 +121,6 @@ pub trait ConsoleCore: Send {
     fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
     fn frame_slot_size(&self) -> usize;
 
-    // -- audio --
-    fn audio_samples(&self, out: &mut dyn audio::AudioBackend);
-
     // -- peripherals --
     fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);
     fn detach_device(&mut self, port: usize);
