@@ -7,4 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nes_ntsc.workspace = true
 serde = { workspace = true, features = ["derive"] }

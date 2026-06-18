@@ -18,7 +18,7 @@ use nerust_input_nes_runtime::ControllerState;
 use nerust_nes_core::Core;
 use nerust_nes_core::cartridge_rom::CartridgeData;
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
+use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};

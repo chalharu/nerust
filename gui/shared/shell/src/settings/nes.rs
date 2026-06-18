@@ -7,7 +7,7 @@ use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
 };
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
+use nerust_screen_video::FilterType;
 use nerust_sound_traits::MixerBridge;
 use nerust_timer::CLOCK_RATE;
 
@@ -128,7 +128,7 @@ mod tests {
 
         assert!(matches!(
             filter_type(&settings),
-            nerust_screen_filter::FilterType::NtscSVideo
+            nerust_screen_video::FilterType::NtscSVideo
         ));
     }
 

@@ -1,7 +1,7 @@
 use super::error::RomTestError;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
+use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_sound_traits::MixerInput;
 use png::{BitDepth, ColorType, Encoder};
