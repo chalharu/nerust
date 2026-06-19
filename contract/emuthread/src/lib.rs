@@ -1,5 +1,6 @@
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -14,7 +15,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
     thread: Option<JoinHandle<()>>,
     frame_count: Arc<std::sync::atomic::AtomicU64>,
-    fps: Arc<Mutex<f32>>,
+    fps: Arc<AtomicU32>,
     _core: PhantomData<C>,
 }
 
@@ -27,7 +28,7 @@ impl<C: ConsoleCore + Send + 'static> fmt::Debug for EmuThread<C> {
             .field("last_cmds", &self.last_cmds)
             .field("thread", &self.thread)
             .field("frame_count", &self.frame_count)
-            .field("fps", &self.fps)
+            .field("fps", &self.fps.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -40,7 +41,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
             Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let fps: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
+        let fps: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 
         let cmds = Arc::clone(&last_cmds);
         let fb = Arc::clone(&shared_fb);
@@ -120,9 +121,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                 }
 
                 timer.wait();
-                if let Ok(mut fps_guard) = fps_c.lock() {
-                    *fps_guard = timer.as_fps();
-                }
+                fps_c.store(timer.as_fps().to_bits(), Ordering::Relaxed);
             }
         });
 
@@ -162,7 +161,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     }
 
     pub fn fps(&self) -> f32 {
-        *self.fps.lock().unwrap_or_else(|e| e.into_inner())
+        f32::from_bits(self.fps.load(Ordering::Relaxed))
     }
 
     pub fn join(&mut self) {
