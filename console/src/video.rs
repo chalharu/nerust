@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use nerust_contract_core::channel::{EmuToRenderer, FrameChannelRenderer};
+use nerust_contract_core::channel::FrameChannelRenderer;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
@@ -63,16 +63,11 @@ impl ConsoleVideo {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
-    /// 新しいフレームがあった場合は `true`、スキップの場合は `false`。
+    /// EmuThread が shared_fb を更新するため、無条件に swap する。
     pub fn swap_frame_buffer(&mut self) -> bool {
-        if let Some(EmuToRenderer::FrameReady(_cmds)) = self.renderer_channel.try_recv_cmd() {
-            let mut guard = self.frame_buffer.lock().unwrap();
-            std::mem::swap(&mut *guard, &mut self.disp_fb);
-            self.renderer_channel.send_ack();
-            true
-        } else {
-            false
-        }
+        let mut guard = self.frame_buffer.lock().unwrap();
+        std::mem::swap(&mut *guard, &mut self.disp_fb);
+        true
     }
 
     /// 表示バッファへの参照を返す。
