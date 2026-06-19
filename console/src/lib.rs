@@ -156,7 +156,9 @@ impl Console {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
     /// 新しいフレームがあった場合は `true`。
+    /// また、EmuThread に RenderFrame を要求する（次のフレームをレンダリング開始）。
     pub fn swap_frame_buffer(&mut self) -> bool {
+        let _ = self.emu.send(EmuCommand::RenderFrame);
         self.video.swap_frame_buffer()
     }
 

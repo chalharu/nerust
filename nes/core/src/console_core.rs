@@ -179,3 +179,91 @@ impl ConsoleCore for NesConsoleCore {
         Ok(CanonicalMediaIdentity::Rom(core.rom_identity()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::OpenBusReadResult;
+    use crate::controller::Controller;
+    use nerust_contract_core::CoreConfig;
+    use nerust_screen_video::PixelFormat;
+    use std::collections::HashMap;
+
+    struct MockController;
+    impl Controller for MockController {
+        fn read(&mut self, _address: usize) -> OpenBusReadResult {
+            OpenBusReadResult::new(0, 0)
+        }
+        fn write(&mut self, _value: u8) {}
+    }
+
+    fn test_rom() -> Vec<u8> {
+        let mut rom = vec![
+            0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        rom
+    }
+
+    #[test]
+    fn load_and_render_frame() {
+        let rom = test_rom();
+
+        // parse_rom should succeed
+        let cartridge = crate::rom_parse::parse_rom(&rom).expect("parse_rom should succeed");
+        assert_eq!(cartridge.mapper_type(), 0);
+
+        // NesConsoleCore::new should succeed
+        let mut core = NesConsoleCore::new(
+            cartridge,
+            Box::new(MockController),
+            Box::new(nerust_contract_core::audio::NullAudio),
+        )
+        .expect("NesConsoleCore::new should succeed");
+
+        // render_frame should succeed
+        let mut fb = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        let result = core.render_frame(&mut fb);
+        assert!(result.is_ok(), "render_frame should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn load_via_trait_method() {
+        let rom = test_rom();
+        let mut core = NesConsoleCore::new_empty(
+            Box::new(MockController),
+            Box::new(nerust_contract_core::audio::NullAudio),
+        );
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+        };
+
+        // load should succeed via trait method
+        let result = ConsoleCore::load(&mut core, &rom, &config);
+        assert!(result.is_ok(), "load should succeed: {:?}", result);
+
+        // render_frame should succeed after load
+        let mut fb = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        let result = core.render_frame(&mut fb);
+        assert!(
+            result.is_ok(),
+            "render_frame after load should succeed: {:?}",
+            result
+        );
+    }
+}
