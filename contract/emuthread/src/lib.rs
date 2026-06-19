@@ -48,6 +48,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         palette: Box::new([0u32; 256]),
                     });
             let mut frame_slot = FrameBuffer::with_capacity(256, 240, default_format);
+            frame_slot.resize(256, 240);
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
