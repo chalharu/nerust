@@ -367,15 +367,6 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<M: AudioBackend>(
-        &mut self,
-        screen: &mut FrameBuffer,
-        controller: &mut dyn Controller,
-        mixer: &mut M,
-    ) -> bool {
-        self.step_cycle(screen, controller, mixer, mixer.sample_rate())
-    }
-
     pub fn run_frame(
         &mut self,
         screen: &mut FrameBuffer,
