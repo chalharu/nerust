@@ -127,8 +127,6 @@ impl Console {
         let core = NesConsoleCore::new_empty(controller, speaker);
         let emu = EmuThread::spawn(core, Arc::clone(&shared_fb));
 
-        let _ = emu.send(EmuCommand::RenderFrame);
-
         Self {
             emu,
             video: ConsoleVideo::new(render_profile, shared_fb, disp_fb, renderer_ch),
