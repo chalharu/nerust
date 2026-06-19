@@ -63,10 +63,14 @@ impl ConsoleVideo {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
     /// GUI スレッドが各フレームの描画前に1回呼ぶ。
-    /// EmuThread が shared_fb を更新するため、無条件に swap する。
+    /// EmuThread が shared_fb を更新するため、無条件に copy する。
     pub fn swap_frame_buffer(&mut self) -> bool {
         let mut guard = self.frame_buffer.lock().unwrap();
-        std::mem::swap(&mut *guard, &mut self.disp_fb);
+        let src = guard.as_ref();
+        let dst = self.disp_fb.as_mut();
+        if dst.len() == src.len() {
+            dst.copy_from_slice(src);
+        }
         true
     }
 
