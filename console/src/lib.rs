@@ -124,6 +124,8 @@ impl Console {
             ..ConsoleMetrics::default()
         }));
 
+        let mut speaker = speaker;
+        speaker.start();
         let core = NesConsoleCore::new_empty(controller, speaker);
         let emu = EmuThread::spawn(core, Arc::clone(&shared_fb));
 
