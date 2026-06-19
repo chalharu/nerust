@@ -155,14 +155,13 @@ impl Console {
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
-    /// 新しいフレームがあった場合は `true`。
-    /// また、EmuThread に RenderFrame を要求する（次のフレームをレンダリング開始）。
+    /// EmuThread は Timer ループで自動レンダリングするため、
+    /// RenderFrame を送信する必要はない。
     pub fn swap_frame_buffer(&mut self) -> bool {
-        let _ = self.emu.send(EmuCommand::RenderFrame);
         let result = self.video.swap_frame_buffer();
         if let Ok(mut guard) = self.metrics.lock() {
-            guard.frame_counter += 1;
-            guard.emulation_fps = 60.0; // approximate; Phase C3 will add proper timing
+            guard.frame_counter = self.emu.frame_count();
+            guard.emulation_fps = 60.0;
         }
         result
     }

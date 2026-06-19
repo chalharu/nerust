@@ -259,7 +259,6 @@ impl HostState {
         let metrics = self.session.metrics();
         if self.shell.wants_redraw(metrics.frame_counter, metrics.loaded, metrics.paused) {
             window.request_redraw();
-            self.shell.on_redraw_requested();
         }
 
         if self.shell.wants_poll(metrics.loaded, metrics.paused) {

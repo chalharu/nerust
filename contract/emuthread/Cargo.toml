@@ -10,3 +10,4 @@ rust-version.workspace = true
 log.workspace = true
 nerust_contract_core.workspace = true
 nerust_screen_video.workspace = true
+nerust_timer.workspace = true
