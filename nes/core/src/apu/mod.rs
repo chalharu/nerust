@@ -30,7 +30,7 @@ use nerust_contract_core::audio::AudioBackend;
 const CLOCK_RATE: u64 = 1_789_773;
 const MIN_BULK_SAMPLE_INTERVAL: u64 = 32;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub(crate) struct Core {
     #[serde(skip, default = "make_pulse_table")]
     pulse_table: Vec<f32>,

@@ -1,13 +1,13 @@
 use crate::interrupt::{Interrupt, IrqSource};
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq)]
 pub(crate) enum FrameType {
     None,
     Quarter,
     Half,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct FrameCounter {
     period: bool,
     irq: bool,

@@ -16,7 +16,7 @@ const DUTY_TABLE: [[bool; 8]; 4] = [
 
 const AUDIO_CLOCK_RATE: u64 = 1_789_773;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 pub(super) struct Mmc5Pulse {
     duty_mode: u8,
     duty_value: u8,

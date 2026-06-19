@@ -1,7 +1,7 @@
 bitflags::bitflags! {
     #[derive(
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        serde::Serialize,
+        serde::Deserialize,
         Debug,
         Clone,
         Copy,

@@ -1,7 +1,7 @@
 bitflags::bitflags! {
     #[derive(
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        serde::Serialize,
+        serde::Deserialize,
         Debug,
         Clone,
         Copy,
@@ -15,13 +15,13 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum DmcDmaKind {
     Load,
     Reload,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Interrupt {
     pub nmi: bool,
     pub executing: bool,

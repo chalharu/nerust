@@ -19,5 +19,4 @@ nerust_timer.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
-serde_derive.workspace = true
 thiserror.workspace = true

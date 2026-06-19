@@ -26,7 +26,7 @@ enum InactiveSkip {
     Idle(u64),
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct DecayableOpenBus {
     data: u8,
     decay: [u8; 8],
@@ -422,7 +422,7 @@ impl DecayableOpenBus {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct State {
     control: u8,
     mask: u8,
@@ -478,7 +478,7 @@ impl State {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct Control {
     name_table: u8,
     increment: bool,
@@ -527,7 +527,7 @@ impl From<u8> for Control {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct Mask {
     grayscale: bool,
     show_left_background: bool,
@@ -580,7 +580,7 @@ impl From<u8> for Mask {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct Status {
     sprite_zero_hit: bool,
     sprite_overflow: bool,
@@ -603,7 +603,7 @@ impl Status {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct Core {
     // memory
     #[serde(with = "nerust_serialize::array::BigArray")]

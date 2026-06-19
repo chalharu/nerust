@@ -5,7 +5,7 @@ use crate::cartridge_rom::CartridgeData;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct NRom {
     cartridge_data: CartridgeData,
     state: MapperState,

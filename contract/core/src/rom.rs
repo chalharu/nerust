@@ -1,6 +1,6 @@
 use crate::mirror::MirrorMode;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RomFormat {
     INes,
     Nes20,
@@ -15,7 +15,7 @@ impl RomFormat {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomIdentity {
     pub format: RomFormat,
     pub mapper_type: u16,

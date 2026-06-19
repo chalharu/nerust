@@ -7,10 +7,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-log.workspace = true
 nerust_contract_core.workspace = true
 nerust_nes_core.workspace = true
 nerust_input_nes.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
-serde_derive.workspace = true

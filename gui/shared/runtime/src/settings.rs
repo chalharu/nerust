@@ -39,7 +39,7 @@ pub enum SettingsError {
     LockPoisoned,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostKind {
     Android,
@@ -65,7 +65,7 @@ pub enum AudioBackendKind {
     Android,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderBackendKind {
     OpenGl,
@@ -217,7 +217,7 @@ pub struct SettingsPaths {
     pub central_storage_root: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SettingsSnapshot {
     pub shared: DesktopSharedSettings,
     pub local: HostBackendLocalSettings,
