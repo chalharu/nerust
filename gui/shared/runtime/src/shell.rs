@@ -32,7 +32,7 @@ impl NativeShellState {
         self.needs_redraw = false;
     }
 
-        /// EmuThread が Timer ループで 60fps レンダリングし frame_count を更新するため、
+    /// EmuThread が Timer ループで 60fps レンダリングし frame_count を更新するため、
     /// frame_counter の変化で再描画を検出できる。
     pub fn wants_redraw(&self, current_frame_counter: u64, _loaded: bool, _paused: bool) -> bool {
         self.needs_redraw || current_frame_counter != self.last_presented_frame_counter

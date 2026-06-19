@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use nerust_contract_core::channel::FrameChannelRenderer;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
@@ -25,8 +24,6 @@ pub struct VideoRenderProfile {
     pub logical_size: LogicalSize,
     pub physical_size: PhysicalSize,
     pub frame_format: VideoFrameFormat,
-    /// NTSC カーネルデータ (packed RGBA8)。ある場合は NTSC パイプラインを使用。
-    /// パレットデータは含まない — パレットは FrameBuffer から render 時に同期される。
     pub ntsc_packed_rgba8: Option<Box<[u8]>>,
 }
 
@@ -34,12 +31,7 @@ pub struct VideoRenderProfile {
 pub struct ConsoleVideo {
     render_profile: VideoRenderProfile,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
-    /// 表示バッファ（GUI スレッドローカル）。
-    /// `swap_frame_buffer(&mut self)` で shared から最新フレームを引き取り、
-    /// `with_frame_buffer(&self)` でロックなし読み取り。
     disp_fb: FrameBuffer,
-    /// Renderer 側のチャネルハンドル。コマンド受信と ACK 送信を行う。
-    renderer_channel: FrameChannelRenderer,
 }
 
 impl ConsoleVideo {
@@ -47,13 +39,11 @@ impl ConsoleVideo {
         render_profile: VideoRenderProfile,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
-        renderer_channel: FrameChannelRenderer,
     ) -> Self {
         Self {
             render_profile,
             frame_buffer,
             disp_fb,
-            renderer_channel,
         }
     }
 
@@ -61,11 +51,8 @@ impl ConsoleVideo {
         self.render_profile.clone()
     }
 
-    /// 共有バッファから表示バッファに最新フレームを引き取る（`&mut self`）。
-    /// GUI スレッドが各フレームの描画前に1回呼ぶ。
-    /// EmuThread が shared_fb を更新するため、無条件に copy する。
     pub fn swap_frame_buffer(&mut self) -> bool {
-        let mut guard = self.frame_buffer.lock().unwrap();
+        let guard = self.frame_buffer.lock().unwrap();
         let src = guard.as_ref();
         let dst = self.disp_fb.as_mut();
         if dst.len() == src.len() {
@@ -74,14 +61,10 @@ impl ConsoleVideo {
         true
     }
 
-    /// 表示バッファへの参照を返す。
-    /// `swap_frame_buffer()` の後に呼ぶこと。
     pub fn frame_buffer(&self) -> &FrameBuffer {
         &self.disp_fb
     }
 
-    /// 表示バッファの内容をロックなしで読み取る。
-    /// `swap_frame_buffer()` の後に呼ぶこと。
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         f(self.disp_fb.as_ref())
     }
@@ -90,21 +73,14 @@ impl ConsoleVideo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_contract_core::GpuCommand;
-    use nerust_contract_core::GpuCommandList;
-    use nerust_contract_core::channel::frame_channel;
-    use nerust_screen_video::{FrameBuffer, PixelFormat, VideoFrameFormat};
+    use nerust_screen_video::{PixelFormat, VideoFrameFormat};
 
-    fn make_test_video() -> (
-        ConsoleVideo,
-        nerust_contract_core::channel::FrameChannelConsole,
-    ) {
+    fn make_test_video() -> ConsoleVideo {
         let mut shared = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         shared.resize(4, 1);
         let mut disp = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         disp.resize(4, 1);
         let shared = Arc::new(Mutex::new(shared));
-        let (console_ch, renderer_ch) = frame_channel(4);
         let profile = VideoRenderProfile {
             source_logical_size: LogicalSize {
                 width: 4,
@@ -121,31 +97,18 @@ mod tests {
             frame_format: VideoFrameFormat::Rgba,
             ntsc_packed_rgba8: None,
         };
-        (
-            ConsoleVideo::new(profile, shared, disp, renderer_ch),
-            console_ch,
-        )
+        ConsoleVideo::new(profile, shared, disp)
     }
 
     #[test]
-    fn console_video_swap_brings_new_data() {
-        let (mut video, console_ch) = make_test_video();
-        // Simulate publish_frame: write data to shared, send command
+    fn console_video_swap_copies_shared_to_disp() {
+        let mut video = make_test_video();
         {
             let mut guard = video.frame_buffer.lock().unwrap();
             guard.as_mut().fill(42);
         }
-        console_ch.try_send_frame(GpuCommandList {
-            commands: vec![GpuCommand::Blit { slot: 0 }],
-        });
-        // Before swap: disp_fb is empty (zeros)
-        video.with_frame_buffer(|bytes| {
-            assert_eq!(bytes[0], 0);
-        });
-        // After swap: disp_fb has the data
+        video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 0));
         video.swap_frame_buffer();
-        video.with_frame_buffer(|bytes| {
-            assert_eq!(bytes[0], 42);
-        });
+        video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 42));
     }
 }
