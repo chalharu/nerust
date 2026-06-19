@@ -1,4 +1,4 @@
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, Default)]
 pub(crate) struct SpriteInfo {
     pub(crate) low_byte: u8,
     pub(crate) high_byte: u8,

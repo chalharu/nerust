@@ -3139,7 +3139,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes",
- "serde_derive",
  "thiserror 2.0.18",
 ]
 
@@ -3151,7 +3150,6 @@ dependencies = [
  "nerust_input_schema",
  "nerust_screen_video",
  "serde",
- "serde_derive",
  "thiserror 2.0.18",
 ]
 
@@ -3179,13 +3177,10 @@ dependencies = [
  "epoxy",
  "gdk4",
  "gio 0.22.6",
- "gl",
  "gtk4",
  "libc",
  "log",
  "nerust_backend_opengl",
- "nerust_console",
- "nerust_contract_core",
  "nerust_gui_runtime",
  "nerust_gui_session",
  "nerust_gui_settings",
@@ -3215,7 +3210,6 @@ dependencies = [
  "nerust_persistence",
  "nerust_screen_video",
  "serde",
- "serde_derive",
  "serde_yaml",
  "thiserror 2.0.18",
 ]
@@ -3238,7 +3232,6 @@ dependencies = [
  "nerust_contract_core",
  "nerust_input_schema",
  "serde",
- "serde_derive",
  "serde_yaml",
 ]
 
@@ -3267,24 +3260,20 @@ name = "nerust_input_nes"
 version = "0.1.0-dev"
 dependencies = [
  "bitflags 2.13.0",
- "nerust_gui_settings",
  "nerust_input_schema",
  "rmp-serde",
  "serde",
- "serde_derive",
 ]
 
 [[package]]
 name = "nerust_input_nes_runtime"
 version = "0.1.0-dev"
 dependencies = [
- "log",
  "nerust_contract_core",
  "nerust_input_nes",
  "nerust_nes_core",
  "rmp-serde",
  "serde",
- "serde_derive",
 ]
 
 [[package]]
@@ -3292,7 +3281,6 @@ name = "nerust_input_schema"
 version = "0.1.0-dev"
 dependencies = [
  "serde",
- "serde_derive",
 ]
 
 [[package]]
@@ -3310,7 +3298,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes",
- "serde_derive",
  "strum",
  "strum_macros",
  "thiserror 2.0.18",
@@ -3340,7 +3327,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes",
- "serde_derive",
  "thiserror 2.0.18",
  "windows-sys 0.61.2",
  "zip",
@@ -3361,7 +3347,6 @@ dependencies = [
  "nerust_screen_video",
  "png",
  "serde",
- "serde_derive",
  "serde_yaml",
  "thiserror 2.0.18",
 ]
@@ -3416,7 +3401,6 @@ name = "nerust_sound_openal"
 version = "0.1.0-dev"
 dependencies = [
  "alto",
- "libc",
  "log",
  "nerust_contract_core",
 ]
@@ -3450,8 +3434,6 @@ dependencies = [
  "rfd",
  "rmp-serde",
  "serde",
- "serde_derive",
- "serde_yaml",
  "simple_logger",
  "tao",
 ]

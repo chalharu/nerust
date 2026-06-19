@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #[derive(
-    serde_derive::Serialize,
-    serde_derive::Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
     PartialEq,
     Eq,
     Clone,
@@ -122,7 +122,7 @@ impl CpuStatesEnum {
     pub(crate) const COUNT: usize = CpuStatesEnum::Txs as usize + 1;
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub(crate) struct InternalStat {
     pub(super) opcode: usize,
     pub(super) address: usize,

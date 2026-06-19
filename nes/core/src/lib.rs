@@ -84,7 +84,7 @@ pub struct RomInfo {
     pub body_len: usize,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Core {
     cpu: Cpu,
     ppu: Ppu,
@@ -170,7 +170,7 @@ enum ApuBatchMode {
 /// needed to reject incompatible imports. The `options` field is recorded for diagnostics and
 /// fixture visibility today, but mapper-save import compatibility is currently enforced only by
 /// `rom_identity`; changing that policy would require an explicit compatibility decision.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct MapperSavePayload {
     schema_version: u32,
     rom_identity: RomIdentity,
@@ -186,7 +186,7 @@ struct MapperSavePayload {
 /// This schema owns CPU/PPU/APU/cartridge runtime bytes and the import validation that protects
 /// them. Both `rom_identity` and `options` are part of the compatibility contract for imports, so
 /// any incompatible change here requires a `PERSISTENCE_SCHEMA_VERSION` bump.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct MachineStatePayload {
     schema_version: u32,
     rom_identity: RomIdentity,
@@ -633,7 +633,7 @@ impl Core {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 struct OpenBus {
     data: u8,
 }

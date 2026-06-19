@@ -18,6 +18,5 @@ nerust_nes_device.workspace = true
 nerust_screen_video.workspace = true
 png.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true

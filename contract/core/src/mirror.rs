@@ -1,4 +1,4 @@
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MirrorMode {
     Horizontal,
     Vertical,

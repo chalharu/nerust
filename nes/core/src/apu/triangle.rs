@@ -6,7 +6,7 @@ const TRIANGLE_TABLE: [u8; 32] = [
     13, 14, 15,
 ];
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct Triangle {
     duty_value: u8,
     counter_period: u8,

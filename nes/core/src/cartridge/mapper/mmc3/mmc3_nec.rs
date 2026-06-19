@@ -4,7 +4,7 @@ use crate::cartridge_rom::CartridgeData;
 use crate::cartridge_runtime_state::CartridgeRuntimeState;
 use crate::persistence_error::PersistenceError;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Mmc3Nec {
     pub(super) shared: Mapper4Shared,
 }

@@ -11,7 +11,7 @@ use nerust_contract_core::mirror::MirrorMode;
 const IRQ_ENABLE: u8 = 0x01;
 const IRQ_COUNT: u8 = 0x80;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Fme7RuntimeState {
     command: u8,
     chr_banks: [u8; 8],
@@ -20,7 +20,7 @@ struct Fme7RuntimeState {
     irq_counter: u16,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Fme7 {
     cartridge_data: CartridgeData,
     state: MapperState,
