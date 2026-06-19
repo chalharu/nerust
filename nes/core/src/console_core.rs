@@ -131,4 +131,27 @@ impl ConsoleCore for NesConsoleCore {
         core.import_machine_state(data)
             .map_err(|e| CoreError::Core(e.to_string()))
     }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.audio.set_volume(volume);
+    }
+
+    fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
+        let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
+        core.export_mapper_save()
+            .map_err(|e| CoreError::Core(e.to_string()))
+    }
+
+    fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        core.import_mapper_save(data)
+            .map_err(|e| CoreError::Core(e.to_string()))
+    }
+
+    fn identity(
+        &self,
+    ) -> Result<nerust_contract_core::persistence::CanonicalMediaIdentity, CoreError> {
+        let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
+        Ok(nerust_contract_core::persistence::CanonicalMediaIdentity::Rom(core.rom_identity()))
+    }
 }
