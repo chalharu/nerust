@@ -11,7 +11,6 @@ pub struct WindowSize {
     pub height: f32,
 }
 
-#[derive(Debug)]
 pub struct SessionCore {
     paused: bool,
     loaded: bool,

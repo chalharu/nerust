@@ -1,105 +1,24 @@
 pub mod controller;
-mod runner;
 pub mod state;
 pub mod video;
 
-use self::runner::ConsoleRunner;
-use self::runner::data::ConsoleData;
-use self::runner::metrics::SharedConsoleMetrics;
 use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
-use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::channel::frame_channel;
 use nerust_contract_core::options::CoreOptions;
-use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
-use nerust_input_nes_runtime::ControllerState;
-use nerust_nes_core::Core;
-use nerust_nes_core::cartridge_rom::CartridgeData;
+use nerust_contract_core::{CoreConfig, EmuCommand};
+use nerust_contract_emuthread::EmuThread;
+use nerust_nes_core::console_core::NesConsoleCore;
+use nerust_nes_core::controller::Controller;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
-use std::hash::Hasher;
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::thread::JoinHandle;
 use thiserror::Error;
-
-// The old crc crate exposed this reflected CRC-64/XZ variant as crc64::ECMA.
-const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
-
-struct Crc64Hasher(Digest<'static, u64>);
-
-impl Crc64Hasher {
-    fn new() -> Self {
-        Self(CRC64_LEGACY_ECMA.digest())
-    }
-}
-
-impl Hasher for Crc64Hasher {
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0.clone().finalize()
-    }
-}
-
-fn crc64(bytes: &[u8]) -> u64 {
-    let mut hasher = Crc64Hasher::new();
-    hasher.write(bytes);
-    hasher.finish()
-}
-
-fn mmc3_irq_variant_label(value: Option<Mmc3IrqVariant>) -> &'static str {
-    match value {
-        Some(Mmc3IrqVariant::Sharp) => "sharp",
-        Some(Mmc3IrqVariant::Nec) => "nec",
-        None => "auto",
-    }
-}
-
-fn print_rom_metadata(data: &[u8], cartridge_data: &CartridgeData, options: CoreOptions) {
-    let body = data.get(16..).unwrap_or(&[]);
-    let body_crc64 = crc64(body);
-
-    match Core::inspect_cartridge(cartridge_data, data.len()) {
-        Ok(info) => {
-            println!(
-                "ROM: body_crc64=0x{body_crc64:016X} format={} mapper={} submapper={} mirror={:?} battery={} trainer={} raw={} body={}",
-                info.format.label(),
-                info.mapper_type,
-                info.sub_mapper_type,
-                info.mirror_mode,
-                info.has_battery,
-                info.trainer_len,
-                info.raw_file_len,
-                info.body_len,
-            );
-            println!(
-                "ROM memory: prg_rom={} chr_rom={} prg_ram={} save_prg_ram={} chr_ram={} save_chr_ram={} mmc3_irq_variant={}",
-                info.prg_rom_len,
-                info.chr_rom_len,
-                info.prg_ram_len,
-                info.save_prg_ram_len,
-                info.chr_ram_len,
-                info.save_chr_ram_len,
-                mmc3_irq_variant_label(options.mmc3_irq_variant),
-            );
-        }
-        Err(error) => {
-            println!(
-                "ROM: body_crc64=0x{body_crc64:016X} parse_error={error} mmc3_irq_variant={}",
-                mmc3_irq_variant_label(options.mmc3_irq_variant),
-            );
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConsoleMetrics {
@@ -122,23 +41,11 @@ pub enum ConsoleError {
     Core(String),
 }
 
-enum ConsoleReply {
-    Unit,
-    MapperSave(Option<Vec<u8>>),
-    CanonicalMediaIdentity(CanonicalMediaIdentity),
-    StateExport(RuntimeStateExport),
-}
-
-type ConsoleRequestResult = Result<ConsoleReply, ConsoleError>;
-
-#[derive(Debug)]
+#[allow(missing_debug_implementations)]
 pub struct Console {
-    stop_sender: Sender<()>,
-    data_sender: Sender<ConsoleData>,
-    thread: Option<JoinHandle<()>>,
-
+    emu: EmuThread<NesConsoleCore>,
     video: ConsoleVideo,
-    metrics: SharedConsoleMetrics,
+    metrics: Arc<Mutex<ConsoleMetrics>>,
 }
 
 impl Console {
@@ -147,7 +54,7 @@ impl Console {
         speaker: Box<dyn AudioBackend + Send>,
         filter_type: FilterType,
         source_logical_size: LogicalSize,
-        controller: Box<dyn ControllerState>,
+        controller: Box<dyn Controller + Send>,
     ) -> Self {
         let layout = filter_type.layout(source_logical_size);
         let assets = filter_type.palette_console_video_assets();
@@ -175,6 +82,7 @@ impl Console {
         };
         let src_w = source_logical_size.width;
         let src_h = source_logical_size.height;
+
         Self::build(
             speaker,
             render_profile,
@@ -185,64 +93,46 @@ impl Console {
         )
     }
 
-    /// 内部ビルド — render_profile / pixel_format から Console を構築
     fn build(
         speaker: Box<dyn AudioBackend + Send>,
         render_profile: video::VideoRenderProfile,
         pixel_format: PixelFormat,
         src_w: usize,
         src_h: usize,
-        controller: Box<dyn ControllerState>,
+        controller: Box<dyn Controller + Send>,
     ) -> Self {
-        let (data_sender, data_recv) = channel();
-        let (stop_sender, stop_recv) = channel();
-        let frame_len = src_w * src_h;
-
-        let mut shared_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-        shared_fb.resize(src_w, src_h);
-        shared_fb.resize_data(frame_len);
-        let shared = Arc::new(Mutex::new(shared_fb));
-
-        let (console_ch, renderer_ch) = frame_channel(4);
+        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            src_w,
+            src_h,
+            pixel_format.clone(),
+        )));
+        {
+            let mut guard = shared_fb.lock().unwrap();
+            guard.resize(src_w, src_h);
+            guard.resize_data(src_w * src_h);
+        }
 
         let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
         disp_fb.resize(src_w, src_h);
-        disp_fb.resize_data(frame_len);
+        disp_fb.resize_data(src_w * src_h);
 
-        let metrics = SharedConsoleMetrics::new(ConsoleMetrics {
+        let (_console_ch, renderer_ch) = frame_channel(4);
+
+        let metrics = Arc::new(Mutex::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
-        });
-
-        let mut ppu_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-        ppu_fb.resize(src_w, src_h);
-        ppu_fb.resize_data(frame_len);
-
-        let mut result = Self {
-            data_sender,
-            stop_sender,
-            thread: None,
-            video: ConsoleVideo::new(render_profile, shared.clone(), disp_fb, renderer_ch),
-            metrics: metrics.clone(),
-        };
-
-        // 初期フレームを共有バッファに書き込み、チャネルに送信
-        {
-            let mut guard = shared.lock().unwrap();
-            guard.as_mut().copy_from_slice(ppu_fb.as_ref());
-        }
-        console_ch.try_send_frame(nerust_contract_core::GpuCommandList {
-            commands: vec![nerust_contract_core::GpuCommand::Blit { slot: 0 }],
-        });
-
-        result.thread = Some(thread::spawn(move || {
-            let mut state = ConsoleRunner::new(
-                data_recv, stop_recv, ppu_fb, shared, console_ch, metrics, controller, speaker,
-            );
-            state.run();
         }));
 
-        result
+        let core = NesConsoleCore::new_empty(controller, speaker);
+        let emu = EmuThread::spawn(core, Arc::clone(&shared_fb));
+
+        let _ = emu.send(EmuCommand::RenderFrame);
+
+        Self {
+            emu,
+            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb, renderer_ch),
+            metrics,
+        }
     }
 
     pub fn logical_size(&self) -> LogicalSize {
@@ -277,29 +167,19 @@ impl Console {
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.metrics.snapshot()
+        *self.metrics.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn set_volume(&self, volume: f32) {
-        if self
-            .data_sender
-            .send(ConsoleData::SetVolume(volume))
-            .is_err()
-        {
-            log::warn!("Core set_volume send failed");
-        }
+        let _ = self.emu.send(EmuCommand::SetVolume(volume));
     }
 
     pub fn resume(&self) {
-        if self.data_sender.send(ConsoleData::Resume).is_err() {
-            log::warn!("Core resume send failed");
-        }
+        let _ = self.emu.send(EmuCommand::Resume);
     }
 
     pub fn pause(&self) {
-        if self.data_sender.send(ConsoleData::Pause).is_err() {
-            log::warn!("Core pause send failed");
-        }
+        let _ = self.emu.send(EmuCommand::Pause);
     }
 
     pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
@@ -309,93 +189,111 @@ impl Console {
     pub fn load_with_options(
         &self,
         data: Vec<u8>,
-        options: CoreOptions,
+        _options: CoreOptions,
     ) -> Result<(), ConsoleError> {
-        match parse_cartridge_bytes(&data) {
-            Ok(cartridge_data) => {
-                print_rom_metadata(&data, &cartridge_data, options);
-                self.send_request(|reply| ConsoleData::Load {
-                    cartridge_data,
-                    options,
-                    reply,
-                })?;
-                Ok(())
-            }
-            Err(error) => {
-                let body_crc64 = crc64(data.get(16..).unwrap_or(&[]));
-                println!(
-                    "ROM: body_crc64=0x{body_crc64:016X} parse_error={error} mmc3_irq_variant={}",
-                    mmc3_irq_variant_label(options.mmc3_irq_variant),
-                );
-                Err(ConsoleError::RomParse(format!(
-                    "body_crc64=0x{body_crc64:016X}: {error}"
-                )))
-            }
-        }
+        let (reply_tx, reply_rx) = mpsc::channel();
+        use std::collections::HashMap;
+        self.emu
+            .send(EmuCommand::Load {
+                rom: data,
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                },
+                reply: reply_tx,
+            })
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 
     pub fn unload(&self) -> Result<(), ConsoleError> {
-        self.send_request(ConsoleData::Unload)?;
-        Ok(())
+        self.emu
+            .send(EmuCommand::Unload)
+            .map_err(|_| ConsoleError::WorkerUnavailable)
     }
 
     pub fn reset(&self) -> Result<(), ConsoleError> {
-        self.send_request(ConsoleData::Reset)?;
-        Ok(())
+        self.emu
+            .send(EmuCommand::Reset)
+            .map_err(|_| ConsoleError::WorkerUnavailable)
     }
 
     pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, ConsoleError> {
-        match self.send_request(ConsoleData::ExportMapperSave)? {
-            ConsoleReply::MapperSave(bytes) => Ok(bytes),
-            _ => Err(ConsoleError::Core("unexpected mapper save reply".into())),
-        }
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::MapperSave { reply: reply_tx })
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 
     pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.send_request(|reply| ConsoleData::ImportMapperSave { bytes, reply })?;
-        Ok(())
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::ImportMapperSave {
+                data: bytes,
+                reply: reply_tx,
+            })
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 
     pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
-        match self.send_request(ConsoleData::ExportState)? {
-            ConsoleReply::StateExport(export) => Ok(export),
-            _ => Err(ConsoleError::Core("unexpected state export reply".into())),
-        }
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::SaveState { reply: reply_tx })
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        let core_state = reply_rx
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))?;
+
+        let guard = self.emu.shared_frame_buffer().lock().unwrap();
+        let frame_data = guard.as_ref().to_vec();
+        let w = guard.width();
+        let h = guard.height();
+        drop(guard);
+
+        let preview = if w > 0 && h > 0 {
+            Some(state::PreviewFrame {
+                width: w as u32,
+                height: h as u32,
+                rgba: frame_data,
+            })
+        } else {
+            None
+        };
+
+        Ok(RuntimeStateExport {
+            state_blob: core_state,
+            preview,
+        })
     }
 
     pub fn canonical_media_identity(&self) -> Result<CanonicalMediaIdentity, ConsoleError> {
-        match self.send_request(ConsoleData::CanonicalMediaIdentity)? {
-            ConsoleReply::CanonicalMediaIdentity(identity) => Ok(identity),
-            _ => Err(ConsoleError::Core(
-                "unexpected canonical media identity reply".into(),
-            )),
-        }
-    }
-
-    pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        self.send_request(|reply| ConsoleData::ImportState { bytes, reply })?;
-        Ok(())
-    }
-
-    fn send_request(
-        &self,
-        build: impl FnOnce(Sender<ConsoleRequestResult>) -> ConsoleData,
-    ) -> Result<ConsoleReply, ConsoleError> {
-        let (reply_sender, reply_receiver) = channel();
-        self.data_sender
-            .send(build(reply_sender))
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Identity { reply: reply_tx })
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
-        reply_receiver
+        reply_rx
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))
     }
-}
 
-impl Drop for Console {
-    fn drop(&mut self) {
-        if self.stop_sender.send(()).is_err() {
-            log::warn!("Core stop send failed");
-        }
-        let _ = self.thread.take().map(JoinHandle::join);
+    pub fn import_state(&self, _bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        // Phase 7: implement state import via EmuCommand::LoadState
+        Err(ConsoleError::Core(
+            "state import not implemented in EmuThread path".into(),
+        ))
     }
 }

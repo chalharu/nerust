@@ -1,6 +1,7 @@
+use std::fmt;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
 use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
@@ -8,18 +9,33 @@ use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList,
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
     done_rx: Receiver<()>,
+    shared_fb: Arc<Mutex<FrameBuffer>>,
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
     thread: Option<JoinHandle<()>>,
     _core: PhantomData<C>,
 }
 
+impl<C: ConsoleCore + Send + 'static> fmt::Debug for EmuThread<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EmuThread")
+            .field("cmd_tx", &self.cmd_tx)
+            .field("done_rx", &self.done_rx)
+            .field("shared_fb", &self.shared_fb)
+            .field("last_cmds", &self.last_cmds)
+            .field("thread", &self.thread)
+            .finish()
+    }
+}
+
 impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
-    pub fn spawn(mut core: C) -> Self {
+    /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
+    pub fn spawn(mut core: C, shared_fb: Arc<Mutex<FrameBuffer>>) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let (done_tx, done_rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
 
         let cmds = Arc::clone(&last_cmds);
+        let fb = Arc::clone(&shared_fb);
         let thread = thread::spawn(move || {
             let mut frame_slot = FrameBuffer::with_capacity(
                 256,
@@ -38,6 +54,10 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             Err(e) => {
                                 log::error!("render_frame failed: {e}");
                             }
+                        }
+                        // swap internal fb with shared fb (zero-copy)
+                        if let Ok(mut guard) = fb.lock() {
+                            std::mem::swap(&mut *guard, &mut frame_slot);
                         }
                         let _ = done_tx.send(());
                     }
@@ -78,6 +98,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         Self {
             cmd_tx,
             done_rx,
+            shared_fb,
             last_cmds,
             thread: Some(thread),
             _core: PhantomData,
@@ -90,6 +111,10 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
 
     pub fn wait_frame(&self) -> Result<(), mpsc::RecvError> {
         self.done_rx.recv()
+    }
+
+    pub fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+        &self.shared_fb
     }
 
     pub fn last_commands(&self) -> Option<GpuCommandList> {

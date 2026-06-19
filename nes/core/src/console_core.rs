@@ -49,6 +49,18 @@ impl NesConsoleCore {
             paused: false,
         })
     }
+
+    /// Creates a NesConsoleCore with no ROM loaded.
+    /// Call `load()` before `render_frame()`.
+    pub fn new_empty(controller: Box<dyn Controller + Send>, audio: Box<dyn AudioBackend>) -> Self {
+        Self {
+            core: SendCore(None),
+            controller,
+            audio,
+            devices: array::from_fn(|_| None),
+            paused: false,
+        }
+    }
 }
 
 impl ConsoleCore for NesConsoleCore {
