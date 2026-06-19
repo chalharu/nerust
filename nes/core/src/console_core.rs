@@ -64,6 +64,9 @@ impl ConsoleCore for NesConsoleCore {
             });
         }
 
+        // controller はコンストラクタで注入されたものを使用する。
+        // attach_device で追加された Device は Phase 7 まで run_frame の
+        // &mut dyn Controller に変換できない（trait upcasting 制約）。
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(GpuCommandList {
@@ -71,6 +74,12 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
+    /// デバイスを指定 port に取り付ける。
+    ///
+    /// 注: Phase 7 までは Device → Controller bridging が未実装のため、
+    /// 取り付けられた Device は cycle() の呼び出し対象にはなるが、
+    /// run_frame に渡す controller はコンストラクタのものが使われ続ける。
+    /// Pad1/Pad2 はコンストラクタ経由で接続される。
     fn attach_device(&mut self, port: usize, device: Box<dyn Device>) {
         if port >= self.devices.len() {
             self.devices.resize_with(port + 1, || None);
