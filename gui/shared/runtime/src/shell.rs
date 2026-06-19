@@ -32,8 +32,10 @@ impl NativeShellState {
         self.needs_redraw = false;
     }
 
-    pub fn wants_redraw(&self, current_frame_counter: u64) -> bool {
-        self.needs_redraw || current_frame_counter != self.last_presented_frame_counter
+    pub fn wants_redraw(&self, current_frame_counter: u64, loaded: bool, paused: bool) -> bool {
+        self.needs_redraw
+            || current_frame_counter != self.last_presented_frame_counter
+            || (loaded && !paused)
     }
 
     pub fn wants_poll(&self, loaded: bool, paused: bool) -> bool {
@@ -64,10 +66,12 @@ mod tests {
     #[test]
     fn native_shell_state_tracks_frame_presentation() {
         let mut shell = NativeShellState::new();
-        assert!(shell.wants_redraw(0));
+        assert!(shell.wants_redraw(0, false, false));
         shell.on_frame_presented(1);
-        assert!(!shell.wants_redraw(1));
-        assert!(shell.wants_redraw(2));
+        assert!(!shell.wants_redraw(1, false, false));
+        assert!(shell.wants_redraw(2, false, false));
+        // running (loaded && !paused) always requests redraw
+        assert!(shell.wants_redraw(1, true, false));
     }
 
     #[test]
