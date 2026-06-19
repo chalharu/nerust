@@ -819,7 +819,7 @@ impl ApplicationHandler for AndroidFrontend {
 
         if let Some(window) = self.window.as_ref() {
             let metrics = self.session.metrics();
-            if self.shell.wants_redraw(metrics.frame_counter) {
+            if self.shell.wants_redraw(metrics.frame_counter, metrics.loaded, metrics.paused) {
                 window.request_redraw();
             }
             if self.shell.wants_poll(metrics.loaded, metrics.paused) {
