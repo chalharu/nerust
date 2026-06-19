@@ -69,8 +69,7 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
-        use crate::cartridge_rom::parse_rom;
-        let cartridge_data = parse_rom(rom).map_err(cartridge_error_to_core)?;
+        let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(cartridge_error_to_core)?;
         let core = Core::new(cartridge_data).map_err(|e| CoreError::Core(e.to_string()))?;
         self.core = SendCore(Some(core));
         self.paused = false;
