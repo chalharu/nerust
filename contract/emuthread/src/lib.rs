@@ -48,27 +48,32 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let fps_c = Arc::clone(&fps);
         let thread = thread::spawn(move || {
             let caps = core.capabilities();
-            let default_format = caps
-                .output_formats
-                .first()
-                .cloned()
-                .unwrap_or(PixelFormat::PaletteIndex {
-                    palette: Box::new([0u32; 256]),
-                });
+            let default_format =
+                caps.output_formats
+                    .first()
+                    .cloned()
+                    .unwrap_or(PixelFormat::PaletteIndex {
+                        palette: Box::new([0u32; 256]),
+                    });
             let mut frame_slot = FrameBuffer::with_capacity(256, 240, default_format);
             frame_slot.resize(256, 240);
 
             let mut timer = Timer::new();
+            let mut loaded = false;
 
-            'emu: loop {
+            loop {
                 // Process all pending commands first
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
                         EmuCommand::Load { rom, config, reply } => {
                             let result = core.load(&rom, &config);
+                            loaded = result.is_ok();
                             let _ = reply.send(result);
                         }
-                        EmuCommand::Unload => core.unload(),
+                        EmuCommand::Unload => {
+                            core.unload();
+                            loaded = false;
+                        }
                         EmuCommand::Pause => core.set_paused(true),
                         EmuCommand::Resume => core.set_paused(false),
                         EmuCommand::Reset => core.reset(),
@@ -93,13 +98,12 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             let result = core.identity();
                             let _ = reply.send(result);
                         }
-                        EmuCommand::RenderFrame => {} // auto-render loop makes this a no-op
-                        EmuCommand::Quit => break 'emu,
+                        EmuCommand::Quit => break,
                     }
                 }
 
-                // Auto-render one frame (if loaded and not paused)
-                if !core.paused() {
+                // Auto-render one frame (only when a ROM is loaded and not paused)
+                if loaded && !core.paused() {
                     match core.render_frame(&mut frame_slot) {
                         Ok(list) => {
                             *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
@@ -110,10 +114,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                             let _ = done_tx.send(());
                         }
                         Err(e) => {
-                            // NoRomLoaded is expected before any Load command
-                            if !matches!(e, nerust_contract_core::CoreError::NoRomLoaded) {
-                                log::error!("render_frame failed: {e}");
-                            }
+                            log::error!("render_frame failed: {e}");
                         }
                     }
                 }

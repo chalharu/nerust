@@ -8,12 +8,14 @@ use nerust_contract_core::rom::RomFormat;
 
 /// Raw ROM バイト列をパースして CartridgeData を生成する。
 /// iNES または NES 2.0 を自動判別する。
+type RomChunks = (Vec<u8>, Vec<u8>, Vec<u8>);
+
 fn extract_chunks(
     data: &[u8],
     prom_length: usize,
     crom_length: usize,
     has_trainer: bool,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), CartridgeError> {
+) -> Result<RomChunks, CartridgeError> {
     let mut offset = 16;
     let trainer = if has_trainer {
         let end = offset + 512;

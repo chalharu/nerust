@@ -106,7 +106,6 @@ pub struct CoreConfig {
 
 #[derive(Debug)]
 pub enum EmuCommand {
-    RenderFrame,
     Pause,
     Resume,
     Reset,

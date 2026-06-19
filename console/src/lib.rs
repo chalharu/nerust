@@ -1,11 +1,10 @@
-pub mod controller;
 pub mod state;
 pub mod video;
 
 use self::state::RuntimeStateExport;
 use self::video::ConsoleVideo;
 use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::channel::frame_channel;
+
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand};
@@ -117,8 +116,6 @@ impl Console {
         disp_fb.resize(src_w, src_h);
         disp_fb.resize_data(src_w * src_h);
 
-        let (_console_ch, renderer_ch) = frame_channel(4);
-
         let metrics = Arc::new(Mutex::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
@@ -131,7 +128,7 @@ impl Console {
 
         Self {
             emu,
-            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb, renderer_ch),
+            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb),
             metrics,
         }
     }
@@ -181,18 +178,18 @@ impl Console {
     }
 
     pub fn resume(&self) {
-        if self.emu.send(EmuCommand::Resume).is_ok() {
-            if let Ok(mut guard) = self.metrics.lock() {
-                guard.paused = false;
-            }
+        if self.emu.send(EmuCommand::Resume).is_ok()
+            && let Ok(mut guard) = self.metrics.lock()
+        {
+            guard.paused = false;
         }
     }
 
     pub fn pause(&self) {
-        if self.emu.send(EmuCommand::Pause).is_ok() {
-            if let Ok(mut guard) = self.metrics.lock() {
-                guard.paused = true;
-            }
+        if self.emu.send(EmuCommand::Pause).is_ok()
+            && let Ok(mut guard) = self.metrics.lock()
+        {
+            guard.paused = true;
         }
     }
 
@@ -224,10 +221,8 @@ impl Console {
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
             .map_err(|e| ConsoleError::Core(e.to_string()));
-        if result.is_ok() {
-            if let Ok(mut guard) = self.metrics.lock() {
-                guard.loaded = true;
-            }
+        if result.is_ok() && let Ok(mut guard) = self.metrics.lock() {
+            guard.loaded = true;
         }
         result
     }
@@ -323,8 +318,7 @@ impl Console {
     /// deserialize the wrapper; if it fails, the bytes are treated as raw core state.
     pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
         // Try to unwrap old ConsoleStatePayload format (contains core_state field).
-        let core_bytes = match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes)
-        {
+        let core_bytes = match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes) {
             Ok(payload) => payload.core_state,
             Err(_) => bytes, // treat as raw core state (new format)
         };
