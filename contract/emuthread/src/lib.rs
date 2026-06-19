@@ -50,7 +50,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                     }
                     Ok(EmuCommand::Unload) => core.unload(),
                     Ok(EmuCommand::SetVolume(vol)) => core.set_volume(vol),
-                    Ok(EmuCommand::SaveState(reply)) => {
+                    Ok(EmuCommand::SaveState { reply }) => {
                         let result = core.save_state();
                         let _ = reply.send(result);
                     }
@@ -58,7 +58,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         let result = core.load_state(&data);
                         let _ = reply.send(result);
                     }
-                    Ok(EmuCommand::MapperSave(reply)) => {
+                    Ok(EmuCommand::MapperSave { reply }) => {
                         let result = core.mapper_save();
                         let _ = reply.send(result);
                     }
@@ -66,7 +66,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                         let result = core.import_mapper_save(&data);
                         let _ = reply.send(result);
                     }
-                    Ok(EmuCommand::Identity(reply)) => {
+                    Ok(EmuCommand::Identity { reply }) => {
                         let result = core.identity();
                         let _ = reply.send(result);
                     }
