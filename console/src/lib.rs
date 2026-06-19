@@ -281,7 +281,11 @@ impl Console {
     }
 
     pub fn set_volume(&self, volume: f32) {
-        if self.data_sender.send(ConsoleData::SetVolume(volume)).is_err() {
+        if self
+            .data_sender
+            .send(ConsoleData::SetVolume(volume))
+            .is_err()
+        {
             log::warn!("Core set_volume send failed");
         }
     }
