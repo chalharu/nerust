@@ -159,7 +159,12 @@ impl Console {
     /// また、EmuThread に RenderFrame を要求する（次のフレームをレンダリング開始）。
     pub fn swap_frame_buffer(&mut self) -> bool {
         let _ = self.emu.send(EmuCommand::RenderFrame);
-        self.video.swap_frame_buffer()
+        let result = self.video.swap_frame_buffer();
+        if let Ok(mut guard) = self.metrics.lock() {
+            guard.frame_counter += 1;
+            guard.emulation_fps = 60.0; // approximate; Phase C3 will add proper timing
+        }
+        result
     }
 
     /// 表示バッファへの参照を返す。
