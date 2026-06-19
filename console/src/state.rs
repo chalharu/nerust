@@ -64,18 +64,18 @@ struct StructuredControllerStatePayload {
 /// this crate. The console layer owns paused/frame counter/controller/source-frame restoration and
 /// rejects wrapper schema mismatches before mutating any live console state.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct ConsoleStatePayload {
-    schema_version: u32,
+pub(crate) struct ConsoleStatePayload {
+    pub(crate) schema_version: u32,
     #[serde(with = "serde_bytes")]
-    core_state: Vec<u8>,
-    frame_counter: u64,
-    paused: bool,
+    pub(crate) core_state: Vec<u8>,
+    pub(crate) frame_counter: u64,
+    pub(crate) paused: bool,
     #[serde(with = "serde_bytes")]
-    controller_state: Vec<u8>,
-    rom_identity: RomIdentity,
-    options: CoreOptions,
+    pub(crate) controller_state: Vec<u8>,
+    pub(crate) rom_identity: RomIdentity,
+    pub(crate) options: CoreOptions,
     #[serde(with = "serde_bytes")]
-    source_frame: Vec<u8>,
+    pub(crate) source_frame: Vec<u8>,
 }
 
 #[derive(serde::Deserialize)]

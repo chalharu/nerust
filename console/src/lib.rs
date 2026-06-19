@@ -316,11 +316,22 @@ impl Console {
             .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 
+    /// Import a previously exported state.
+    ///
+    /// Supports both the old ConsoleStatePayload wrapper format (used by ConsoleRunner)
+    /// and the new raw core state format. The old format is detected by trying to
+    /// deserialize the wrapper; if it fails, the bytes are treated as raw core state.
     pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        // Try to unwrap old ConsoleStatePayload format (contains core_state field).
+        let core_bytes = match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes)
+        {
+            Ok(payload) => payload.core_state,
+            Err(_) => bytes, // treat as raw core state (new format)
+        };
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::LoadState {
-                data: bytes,
+                data: core_bytes,
                 reply: reply_tx,
             })
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
