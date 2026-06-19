@@ -39,7 +39,7 @@ pub enum SettingsError {
     LockPoisoned,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostKind {
     Android,
@@ -65,7 +65,7 @@ pub enum AudioBackendKind {
     Android,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderBackendKind {
     OpenGl,
@@ -217,7 +217,7 @@ pub struct SettingsPaths {
     pub central_storage_root: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SettingsSnapshot {
     pub shared: DesktopSharedSettings,
     pub local: HostBackendLocalSettings,
@@ -230,6 +230,7 @@ pub struct SettingsApplyPlan {
     pub bindings_changed: bool,
     pub persistence_changed: bool,
     pub session_rebuild_required: bool,
+    pub audio_volume_changed: bool,
     pub renderer_rebuild_required: bool,
     pub window_settings_changed: bool,
     pub backend_presentation_changed: bool,
@@ -644,6 +645,7 @@ video:
                 bindings_changed: false,
                 persistence_changed: false,
                 session_rebuild_required: true,
+                audio_volume_changed: false,
                 renderer_rebuild_required: true,
                 window_settings_changed: true,
                 backend_presentation_changed: false,

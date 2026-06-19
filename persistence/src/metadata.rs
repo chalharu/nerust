@@ -14,7 +14,7 @@ pub(crate) const STATE_ENTRY: &str = "state.bin";
 pub(crate) const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 1;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct StateArchiveMetadata {
     pub(crate) schema_version: u32,
     pub(crate) slot_id: u64,

@@ -8,7 +8,7 @@ const DMC_TABLE: [u8; 16] = [
     214, 190, 170, 160, 143, 127, 113, 107, 95, 80, 71, 64, 53, 42, 36, 27,
 ];
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 #[allow(
     clippy::upper_case_acronyms,
     reason = "DMC is the established NES APU channel name"

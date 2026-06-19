@@ -8,19 +8,19 @@ use crate::cartridge_runtime_state::CartridgeRuntimeState;
 use crate::mapper_state::MapperState;
 use crate::persistence_error::PersistenceError;
 
-#[derive(serde_derive::Serialize)]
+#[derive(serde::Serialize)]
 pub(super) struct Mmc3 {
     pub(super) shared: Mapper4Shared,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum Mmc3Deserialized {
     Current { shared: Mapper4Shared },
     Legacy(LegacyMmc3State),
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 struct LegacyMmc3State {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -32,13 +32,13 @@ struct LegacyMmc3State {
     prg_ram_model: LegacyPrgRamModel,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 enum LegacyIrqVariant {
     Sharp,
     NecOldStyle,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 struct LegacyIrqUnit {
     variant: LegacyIrqVariant,
     latch: u8,
@@ -49,7 +49,7 @@ struct LegacyIrqUnit {
     last_a12_low_tick: u64,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 enum LegacyPrgRamModel {
     Standard,
     Mmc6,

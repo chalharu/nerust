@@ -16,15 +16,13 @@ mod program;
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, Copy, serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 enum ChrBankSet {
     Sprite,
     Background,
 }
 
-#[derive(
-    Debug, Clone, Copy, serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq, Default,
-)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
 struct SplitTileContext {
     column: u8,
     coarse_y: u8,
@@ -32,7 +30,7 @@ struct SplitTileContext {
     uses_attribute_tiles: bool,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Mmc5RuntimeState {
     prg_mode: u8,
     chr_mode: u8,
@@ -99,7 +97,7 @@ impl Mmc5RuntimeState {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Mmc5 {
     cartridge_data: CartridgeData,
     state: MapperState,

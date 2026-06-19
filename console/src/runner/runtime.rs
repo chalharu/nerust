@@ -1,7 +1,6 @@
 use super::{ConsoleData, ConsoleRunner};
 use crate::{ConsoleError, ConsoleReply, ConsoleRequestResult, Crc64Hasher};
 use nerust_nes_core::Core;
-use nerust_sound_traits::{MixerInput, Sound};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::Sender;
 
@@ -16,13 +15,13 @@ impl ConsoleRunner {
         ConsoleError::NoRomLoaded
     }
 
-    pub(crate) fn run<S: Sound + MixerInput>(&mut self, mut speaker: S) {
+    pub(crate) fn run(&mut self) {
         let mut core: Option<Core> = None;
         while self.stop_receiver.try_recv().is_err() {
             if let Some(core) = core.as_mut()
                 && !self.paused
             {
-                core.run_frame(&mut self.ppu_fb, self.controller.as_mut(), &mut speaker);
+                core.run_frame(&mut self.ppu_fb, self.controller.as_mut(), &mut *self.audio);
                 self.frame_counter += 1;
                 self.publish_frame();
             }
@@ -51,11 +50,11 @@ impl ConsoleRunner {
                     }
                     ConsoleData::Resume => {
                         self.paused = false;
-                        speaker.start();
+                        self.audio.start();
                     }
                     ConsoleData::Pause => {
                         self.paused = true;
-                        speaker.pause();
+                        self.audio.pause();
                         let mut hasher = Crc64Hasher::new();
                         self.ppu_fb.as_ref().hash(&mut hasher);
                         log::info!(
@@ -96,6 +95,9 @@ impl ConsoleRunner {
                         let result = self.import_mapper_save_reply(core.as_mut(), &bytes);
                         Self::reply(reply, result);
                     }
+                    ConsoleData::SetVolume(volume) => {
+                        self.audio.set_volume(volume);
+                    }
                     ConsoleData::CanonicalMediaIdentity(reply) => {
                         let result = self.canonical_media_identity_reply(core.as_ref());
                         Self::reply(reply, result);
@@ -108,9 +110,9 @@ impl ConsoleRunner {
                         let result = self.import_state_reply(core.as_mut(), &bytes);
                         if result.is_ok() {
                             if self.paused {
-                                speaker.pause();
+                                self.audio.pause();
                             } else {
-                                speaker.start();
+                                self.audio.start();
                             }
                             self.publish_frame();
                         }

@@ -26,7 +26,7 @@ impl Default for StandardControllerState {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ControllerStatePayload {
     schema_version: u32,
     buttons: [Buttons; 2],

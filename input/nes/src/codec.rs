@@ -2,7 +2,7 @@ use crate::frame::{Buttons, NesInputFrame};
 
 const INPUT_STATE_SCHEMA_VERSION: u32 = 1;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct InputStatePayload {
     schema_version: u32,
     player_one: Buttons,

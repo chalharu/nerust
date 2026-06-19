@@ -57,7 +57,7 @@ const NMI_VECTOR: usize = 0xFFFA;
 const RESET_VECTOR: usize = 0xFFFC;
 const IRQ_VECTOR: usize = 0xFFFE;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 enum DmcDmaPhase {
     WaitForHalt,
     Dummy,
@@ -65,7 +65,7 @@ enum DmcDmaPhase {
     Read,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 struct DmcDmaState {
     delay: u8,
     halt_on_get_cycle: bool,
@@ -128,7 +128,7 @@ impl DmcDmaState {
     }
 }
 
-#[derive(serde_derive::Serialize)]
+#[derive(serde::Serialize)]
 pub(crate) struct Core {
     #[serde(skip)]
     opcode_tables: Opcodes,
@@ -1292,7 +1292,7 @@ impl Clone for Core {
     }
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 struct CoreDeserialize {
     memory: Memory,
     register: Register,

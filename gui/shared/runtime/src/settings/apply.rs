@@ -25,11 +25,18 @@ pub fn derive_apply_plan(
         && vsync_changed;
     let window_settings_changed = (window_capabilities.supports_scaling && scaling_changed)
         || (window_capabilities.supports_fullscreen_default && fullscreen_default_changed);
+
+    let audio_volume_changed = audio_changed
+        && before.local.audio.sample_rate == after.local.audio.sample_rate
+        && before.local.audio.latency_ms == after.local.audio.latency_ms;
+    let needs_rebuild = audio_changed && !audio_volume_changed;
+
     SettingsApplyPlan {
         language_changed: before.shared.general != after.shared.general,
         bindings_changed: before.shared.input != after.shared.input,
         persistence_changed: before.shared.persistence != after.shared.persistence,
-        session_rebuild_required: audio_changed || visual_changed,
+        session_rebuild_required: needs_rebuild || visual_changed,
+        audio_volume_changed,
         renderer_rebuild_required: audio_changed || visual_changed || backend_presentation_changed,
         window_settings_changed,
         backend_presentation_changed,

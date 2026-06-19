@@ -18,9 +18,9 @@ use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::core::SessionCore;
 
+use nerust_contract_core::audio::AudioBackend;
 use nerust_input_schema::{DigitalInputEvent, SystemId};
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_sound_traits::{MixerInput, Sound};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -29,13 +29,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Default)]
 struct TestSpeaker;
 
-impl Sound for TestSpeaker {
+impl AudioBackend for TestSpeaker {
     fn start(&mut self) {}
-
     fn pause(&mut self) {}
-}
-
-impl MixerInput for TestSpeaker {
     fn push(&mut self, _data: f32) {}
 }
 
@@ -107,7 +103,7 @@ fn test_session() -> SessionHandle {
         HostBackendIdentity::gtk_opengl(),
         Box::new(TestRuntime(SessionCore::from_console(
             nerust_console::Console::new_gpu(
-                TestSpeaker,
+                Box::new(TestSpeaker),
                 nerust_screen_video::FilterType::NtscComposite,
                 nerust_screen_video::LogicalSize {
                     width: 256,
@@ -544,7 +540,9 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
         .load(MediaObject::new(None, vec![0; 16]), LoadRequest::Auto)
         .unwrap();
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.muted = true;
+    // muted のみの変更は session rebuild 不要になったため、
+    // latency を変更して rebuild を強制する
+    next.local.audio.latency_ms = 90;
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);
@@ -603,7 +601,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
 
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.muted = true;
+    next.local.audio.latency_ms = 90;
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);

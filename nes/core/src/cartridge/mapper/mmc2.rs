@@ -9,19 +9,19 @@ use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuBusEvent;
 use nerust_contract_core::mirror::MirrorMode;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
     Mmc2,
     Mmc4,
 }
 
-#[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum LatchState {
     Fd,
     Fe,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Mmc2 {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -34,7 +34,7 @@ pub(crate) struct Mmc2 {
     latch_1: LatchState,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Mmc2RuntimeState {
     chr_bank_0_fd: u8,
     chr_bank_0_fe: u8,

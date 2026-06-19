@@ -10,7 +10,7 @@ use crate::persistence_codec::{decode_payload, encode_payload};
 use crate::persistence_error::PersistenceError;
 use nerust_contract_core::mirror::MirrorMode;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct SxRom {
     cartridge_data: CartridgeData,
     state: MapperState,
@@ -24,7 +24,7 @@ pub(crate) struct SxRom {
     prev_cycle: u64,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SxRomRuntimeState {
     control: u8,
     chr_bank_0: u8,

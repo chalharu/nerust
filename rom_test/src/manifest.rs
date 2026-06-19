@@ -2,7 +2,7 @@ use super::error::RomTestError;
 use super::events::RomEvent;
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::options::Mmc3IrqVariant;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};

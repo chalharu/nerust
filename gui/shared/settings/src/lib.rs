@@ -4,16 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub mod language {
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Default,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum AppLanguage {
         #[default]
@@ -28,18 +19,14 @@ pub mod input {
 
     pub const IMPLICIT_PROFILE_ID: &str = "default";
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct InputSettings {
         pub systems: BTreeMap<SystemId, SystemInputSettings>,
         pub shortcuts: ShortcutSettings,
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct SystemInputSettings {
         pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
@@ -57,15 +44,13 @@ pub mod input {
         }
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct KeyboardProfile {
         pub bindings: Vec<KeyboardBinding>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     pub struct KeyboardBinding {
         pub attachment: PersistedAttachmentId,
         pub control: PersistedControlId,
@@ -86,15 +71,13 @@ pub mod input {
         }
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct ShortcutSettings {
         pub keyboard: Vec<ShortcutBinding>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     pub struct ShortcutBinding {
         pub action: ShortcutAction,
         pub key: Option<KeyboardKey>,
@@ -109,8 +92,8 @@ pub mod input {
         PartialOrd,
         Ord,
         Hash,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        serde::Serialize,
+        serde::Deserialize,
     )]
     #[serde(rename_all = "snake_case")]
     pub enum ShortcutAction {
@@ -124,15 +107,7 @@ pub mod input {
     }
 
     #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
     )]
     pub struct PersistedAttachmentId(String);
 
@@ -147,15 +122,7 @@ pub mod input {
     }
 
     #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
     )]
     #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
     pub enum PersistedControlId {
@@ -188,8 +155,8 @@ pub mod input {
         PartialOrd,
         Ord,
         Hash,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
+        serde::Serialize,
+        serde::Deserialize,
     )]
     #[serde(rename_all = "snake_case")]
     pub enum KeyboardKey {
@@ -255,41 +222,26 @@ pub mod input {
 pub mod nes {
     use super::Mmc3IrqVariant;
 
-    #[derive(
-        Debug, Clone, PartialEq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct NesSettings {
         pub video: NesVideoSettings,
         pub core: NesCoreSettings,
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct NesVideoSettings {
         pub filter: NesVideoFilter,
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct NesCoreSettings {
         pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
     }
 
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Default,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum NesVideoFilter {
         None,
@@ -308,7 +260,7 @@ pub mod shared {
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
-    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct DesktopSharedSettings {
         pub schema_version: u32,
@@ -330,15 +282,13 @@ pub mod shared {
         }
     }
 
-    #[derive(
-        Debug, Clone, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct GeneralSettings {
         pub language: AppLanguage,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct PersistenceSettings {
         pub storage_policy: StoragePolicy,
@@ -354,16 +304,7 @@ pub mod shared {
         }
     }
 
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Default,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum StoragePolicy {
         #[default]
@@ -372,7 +313,7 @@ pub mod shared {
         CustomDirectory,
     }
 
-    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     #[serde(tag = "system", content = "settings", rename_all = "snake_case")]
     pub enum SystemSettings {
         Nes(NesSettings),
@@ -390,7 +331,7 @@ pub mod shared {
 pub mod local {
     pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
-    #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct HostBackendLocalSettings {
         pub schema_version: u32,
@@ -408,7 +349,7 @@ pub mod local {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct WindowVideoSettings {
         pub fullscreen_default: bool,
@@ -424,7 +365,7 @@ pub mod local {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct BackendPresentationSettings {
         pub vsync: bool,
@@ -442,7 +383,7 @@ pub mod local {
         pub presentation: BackendPresentationSettings,
     }
 
-    #[derive(Default, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     struct VideoSettingsDocument {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -499,16 +440,7 @@ pub mod local {
         }
     }
 
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Default,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum ScalingMode {
         #[default]
@@ -520,7 +452,7 @@ pub mod local {
         X5,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct AudioSettings {
         pub muted: bool,
@@ -546,23 +478,14 @@ pub mod app_state {
 
     pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 2;
 
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Default,
-        serde_derive::Serialize,
-        serde_derive::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct RememberedWindowSize {
         pub width: u32,
         pub height: u32,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, serde_derive::Serialize, serde_derive::Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct DesktopAppState {
         pub schema_version: u32,

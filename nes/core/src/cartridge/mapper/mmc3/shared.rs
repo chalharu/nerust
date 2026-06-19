@@ -11,7 +11,7 @@ use nerust_contract_core::mirror::MirrorMode;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Mapper4RuntimeState {
     bank_select: u8,
     bank_data: [u8; 8],
@@ -20,28 +20,26 @@ struct Mapper4RuntimeState {
     irq: IrqUnit,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum IrqVariant {
     Sharp,
     NecOldStyle,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum PrgRamModel {
     Standard,
     Mmc6,
 }
 
-#[derive(
-    serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(super) enum MirroringModel {
     #[default]
     Standard,
     TxSrom,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Mapper4Config {
     irq_variant: IrqVariant,
     prg_ram_model: PrgRamModel,
@@ -104,7 +102,7 @@ impl Mapper4Config {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct IrqUnit {
     variant: IrqVariant,
     latch: u8,
@@ -206,7 +204,7 @@ pub(super) struct LegacyMapper4State {
     pub(super) prg_ram_model: PrgRamModel,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Mapper4Shared {
     cartridge_data: CartridgeData,
     state: MapperState,

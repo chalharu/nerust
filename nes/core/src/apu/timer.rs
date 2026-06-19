@@ -1,4 +1,4 @@
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Copy, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
 pub(crate) struct TimerDao {
     value: u16,
     period: u16,

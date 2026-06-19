@@ -8,7 +8,7 @@ use crate::persistence_codec::{decode_payload, encode_payload};
 use crate::persistence_error::PersistenceError;
 use nerust_contract_core::mirror::MirrorMode;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Action53RuntimeState {
     selected_register: u8,
     chr_bank: u8,
@@ -18,7 +18,7 @@ struct Action53RuntimeState {
     onescreen_select: u8,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Action53 {
     cartridge_data: CartridgeData,
     state: MapperState,

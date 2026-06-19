@@ -138,6 +138,10 @@ impl SessionCore {
         self.console.canonical_media_identity()
     }
 
+    pub fn set_volume(&self, volume: f32) {
+        self.console.set_volume(volume);
+    }
+
     pub fn sync_paused_from_console(&mut self) {
         self.paused = self.console.metrics().paused;
     }
@@ -147,25 +151,21 @@ impl SessionCore {
 mod tests {
     use super::SessionCore;
     use nerust_console::Console;
-    use nerust_sound_traits::{MixerInput, Sound};
+    use nerust_contract_core::audio::AudioBackend;
 
     #[derive(Default)]
     struct TestSpeaker;
 
-    impl Sound for TestSpeaker {
+    impl AudioBackend for TestSpeaker {
         fn start(&mut self) {}
-
         fn pause(&mut self) {}
-    }
-
-    impl MixerInput for TestSpeaker {
         fn push(&mut self, _data: f32) {}
     }
 
     fn test_core() -> SessionCore {
         use std::sync::Arc;
         SessionCore::from_console(Console::new_gpu(
-            TestSpeaker,
+            Box::new(TestSpeaker),
             nerust_screen_video::FilterType::NtscComposite,
             nerust_screen_video::LogicalSize {
                 width: 256,

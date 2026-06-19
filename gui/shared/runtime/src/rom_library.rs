@@ -1,5 +1,5 @@
 use crc::{CRC_32_ISO_HDLC, Crc};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

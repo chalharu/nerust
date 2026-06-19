@@ -35,6 +35,7 @@ use self::persistence_codec::{
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
 use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::options::CoreOptions;
 #[cfg(test)]
@@ -42,7 +43,10 @@ use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::MixerInput;
+use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
+use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};
+
+pub(crate) const CLOCK_RATE: u64 = 1_789_773;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
@@ -80,13 +84,77 @@ pub struct RomInfo {
     pub body_len: usize,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Core {
     cpu: Cpu,
     ppu: Ppu,
     apu: Apu,
     cartridge: Box<dyn Cartridge>,
     options: CoreOptions,
+    #[serde(skip)]
+    apu_state: Option<Box<ApuState>>,
+}
+
+// NES 固有のフィルタ構成: LPF 14kHz + HPF 90Hz + HPF 442Hz (3段 IIR)
+struct ApuFilter(ChaindFilter<ChaindFilter<IirFilter, IirFilter>, IirFilter>);
+
+impl ApuFilter {
+    fn new(sample_rate: f32) -> Self {
+        Self(
+            IirFilter::get_lowpass_filter(sample_rate, 14000.0)
+                .chain(IirFilter::get_highpass_filter(sample_rate, 90.0))
+                .chain(IirFilter::get_highpass_filter(sample_rate, 442.0)),
+        )
+    }
+}
+
+impl Filter for ApuFilter {
+    fn step(&mut self, data: f32) -> f32 {
+        self.0.step(data)
+    }
+}
+
+/// APU のリサンプラ/フィルタ状態。`Core::run_frame` 内で `ApuAdapter` が借用する。
+struct ApuState {
+    resampler: SimpleDownSampler,
+    filter: ApuFilter,
+}
+
+impl ApuState {
+    fn new(cpu_clock: u32, target_sample_rate: u32) -> Self {
+        Self {
+            resampler: SimpleDownSampler::new(cpu_clock, target_sample_rate),
+            filter: ApuFilter::new(target_sample_rate as f32),
+        }
+    }
+}
+
+/// `run_frame` 内部で使用するスタックローカルアダプタ。
+/// Core のフィールドを直接借用せず、`take()` で切り出したローカル変数を借用する。
+struct ApuAdapter<'a> {
+    inner: &'a mut dyn AudioBackend,
+    state: &'a mut ApuState,
+}
+
+impl AudioBackend for ApuAdapter<'_> {
+    fn start(&mut self) {
+        self.inner.start();
+    }
+
+    fn pause(&mut self) {
+        self.inner.pause();
+    }
+
+    fn push(&mut self, data: f32) {
+        if let Some(r) = self.state.resampler.step(data) {
+            let sample = self.state.filter.step(r * 2.0 - 1.0);
+            self.inner.push(sample);
+        }
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.state.resampler.source_rate()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +170,7 @@ enum ApuBatchMode {
 /// needed to reject incompatible imports. The `options` field is recorded for diagnostics and
 /// fixture visibility today, but mapper-save import compatibility is currently enforced only by
 /// `rom_identity`; changing that policy would require an explicit compatibility decision.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct MapperSavePayload {
     schema_version: u32,
     rom_identity: RomIdentity,
@@ -118,7 +186,7 @@ struct MapperSavePayload {
 /// This schema owns CPU/PPU/APU/cartridge runtime bytes and the import validation that protects
 /// them. Both `rom_identity` and `options` are part of the compatibility contract for imports, so
 /// any incompatible change here requires a `PERSISTENCE_SCHEMA_VERSION` bump.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct MachineStatePayload {
     schema_version: u32,
     rom_identity: RomIdentity,
@@ -151,6 +219,7 @@ impl Core {
             apu,
             cartridge,
             options,
+            apu_state: None,
         })
     }
 
@@ -158,6 +227,7 @@ impl Core {
         self.cpu.reset();
         self.ppu.reset();
         self.apu.reset(self.cpu.interrupt_mut());
+        self.apu_state = None;
     }
 
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
@@ -297,16 +367,26 @@ impl Core {
         Ok(())
     }
 
-    pub fn step<M: MixerInput>(
+    pub fn run_frame(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
-        mixer: &mut M,
-    ) -> bool {
-        self.step_cycle(screen, controller, mixer, mixer.sample_rate())
+        audio: &mut dyn AudioBackend,
+    ) -> u64 {
+        let mut state = self
+            .apu_state
+            .take()
+            .unwrap_or_else(|| Box::new(ApuState::new(CLOCK_RATE as u32, audio.sample_rate())));
+        let mut adapter = ApuAdapter {
+            inner: audio,
+            state: &mut state,
+        };
+        let result = self.run_frame_inner(screen, controller, &mut adapter);
+        self.apu_state = Some(state);
+        result
     }
 
-    pub fn run_frame<M: MixerInput>(
+    pub(crate) fn run_frame_inner<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -352,7 +432,7 @@ impl Core {
     }
 
     #[inline(always)]
-    fn step_cycle<M: MixerInput>(
+    fn step_cycle<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -397,7 +477,7 @@ impl Core {
         }
     }
 
-    fn step_instruction_event<M: MixerInput>(
+    fn step_instruction_event<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,
         controller: &mut dyn Controller,
@@ -489,7 +569,7 @@ impl Core {
         Some((cpu_cycles, screen_updated))
     }
 
-    fn step_synchronized_mapper_and_apu<M: MixerInput>(
+    fn step_synchronized_mapper_and_apu<M: AudioBackend>(
         &mut self,
         mixer: &mut M,
         mixer_sample_rate: u32,
@@ -553,7 +633,7 @@ impl Core {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 struct OpenBus {
     data: u8,
 }
@@ -764,7 +844,9 @@ mod scheduler_tests {
         samples: usize,
     }
 
-    impl MixerInput for CountingMixer {
+    impl AudioBackend for CountingMixer {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, _data: f32) {
             self.samples += 1;
         }
@@ -784,7 +866,9 @@ mod scheduler_tests {
         }
     }
 
-    impl MixerInput for RecordingMixer {
+    impl AudioBackend for RecordingMixer {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
         fn push(&mut self, data: f32) {
             self.samples.push(data);
         }
@@ -804,7 +888,9 @@ mod scheduler_tests {
         let mut scheduled_mixer = CountingMixer::default();
         let mut exact_mixer = CountingMixer::default();
 
-        let scheduled_cycles = scheduled.run_frame(
+        // run_frame_inner は adapter を経由せず、テスト用 mixer を直接使う。
+        // これにより adapter による sample_rate キャップがスケジューラに影響しない。
+        let scheduled_cycles = scheduled.run_frame_inner(
             &mut scheduled_screen,
             &mut scheduled_controller,
             &mut scheduled_mixer,
@@ -1042,7 +1128,7 @@ mod scheduler_tests {
 
         let mut scheduled_cycles = 0;
         for _ in 0..3 {
-            scheduled_cycles += scheduled.run_frame(
+            scheduled_cycles += scheduled.run_frame_inner(
                 &mut scheduled_screen,
                 &mut scheduled_controller,
                 &mut scheduled_mixer,

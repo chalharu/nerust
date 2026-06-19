@@ -6,11 +6,11 @@ use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
 use nerust_cartridge_data::parse_cartridge_bytes;
+use nerust_contract_core::audio::AudioBackend;
 use nerust_input_nes::frame::Buttons;
 use nerust_nes_core::Core;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
-use nerust_sound_traits::MixerInput;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -376,7 +376,9 @@ impl PerfMixer {
     }
 }
 
-impl MixerInput for PerfMixer {
+impl AudioBackend for PerfMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, _data: f32) {}
 
     fn sample_rate(&self) -> u32 {
