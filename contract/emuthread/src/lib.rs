@@ -37,13 +37,17 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let cmds = Arc::clone(&last_cmds);
         let fb = Arc::clone(&shared_fb);
         let thread = thread::spawn(move || {
-            let mut frame_slot = FrameBuffer::with_capacity(
-                256,
-                240,
-                PixelFormat::PaletteIndex {
-                    palette: Box::new([0u32; 256]),
-                },
-            );
+            // Use core capabilities to size the initial FrameBuffer.
+            // PaletteIndex is the NES default; other systems may use Rgba.
+            let caps = core.capabilities();
+            let default_format =
+                caps.output_formats
+                    .first()
+                    .cloned()
+                    .unwrap_or(PixelFormat::PaletteIndex {
+                        palette: Box::new([0u32; 256]),
+                    });
+            let mut frame_slot = FrameBuffer::with_capacity(256, 240, default_format);
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
@@ -105,6 +109,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::SendError<EmuCommand>> {
         self.cmd_tx.send(cmd)
     }
