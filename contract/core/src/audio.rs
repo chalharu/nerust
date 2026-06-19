@@ -5,6 +5,11 @@ pub trait AudioBackend: Send {
         48_000
     }
     fn push(&mut self, sample: f32);
+
+    /// 再生音量を 0.0〜1.0 の範囲で設定する。
+    ///
+    /// デフォルト実装は no-op。`GainBackend` が `set_gain()` に委譲する。
+    fn set_volume(&mut self, _volume: f32) {}
 }
 
 /// Registry of audio backend factories.
@@ -84,11 +89,6 @@ impl GainBackend {
     pub fn new(inner: Box<dyn AudioBackend>, gain: f32) -> Self {
         Self { inner, gain }
     }
-
-    /// gain を動的に変更する (session rebuild 不要)。
-    pub fn set_gain(&mut self, gain: f32) {
-        self.gain = gain;
-    }
 }
 
 impl AudioBackend for GainBackend {
@@ -106,5 +106,9 @@ impl AudioBackend for GainBackend {
 
     fn push(&mut self, sample: f32) {
         self.inner.push(sample * self.gain);
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.gain = volume;
     }
 }

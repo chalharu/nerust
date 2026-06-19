@@ -95,6 +95,9 @@ impl ConsoleRunner {
                         let result = self.import_mapper_save_reply(core.as_mut(), &bytes);
                         Self::reply(reply, result);
                     }
+                    ConsoleData::SetVolume(volume) => {
+                        self.audio.set_volume(volume);
+                    }
                     ConsoleData::CanonicalMediaIdentity(reply) => {
                         let result = self.canonical_media_identity_reply(core.as_ref());
                         Self::reply(reply, result);
