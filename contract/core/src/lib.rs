@@ -51,13 +51,13 @@ pub struct CoreCapabilities {
 // GpuCommand
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GpuCommand {
     Blit { slot: u32 },
     PaletteDecode { slot: u32 },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GpuCommandList {
     pub commands: Vec<GpuCommand>,
 }

@@ -74,6 +74,7 @@ muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
 nerust_console = { path = "console" }
 nerust_contract_core = { path = "contract/core" }
+nerust_contract_emuthread = { path = "contract/emuthread" }
 nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
