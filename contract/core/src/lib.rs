@@ -65,7 +65,7 @@ pub struct GpuCommandList {
 // PixelFormat (re-export from screen/video for convenience)
 // ---------------------------------------------------------------------------
 
-pub use nerust_screen_video::PixelFormat;
+pub use nerust_screen_video::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
 // Region
@@ -118,8 +118,7 @@ pub enum EmuCommand {
 pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self, frame_slot: &mut [u8]) -> Result<GpuCommandList, CoreError>;
-    fn frame_slot_size(&self) -> usize;
+    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError>;
 
     // -- peripherals --
     fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);

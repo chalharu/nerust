@@ -3,7 +3,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
-use nerust_contract_core::{ConsoleCore, EmuCommand, GpuCommandList};
+use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
 
 pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     cmd_tx: Sender<EmuCommand>,
@@ -21,7 +21,13 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
 
         let cmds = Arc::clone(&last_cmds);
         let thread = thread::spawn(move || {
-            let mut frame_slot = vec![0u8; core.frame_slot_size()];
+            let mut frame_slot = FrameBuffer::with_capacity(
+                256,
+                240,
+                PixelFormat::PaletteIndex {
+                    palette: Box::new([0u32; 256]),
+                },
+            );
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
