@@ -176,11 +176,19 @@ impl Console {
     }
 
     pub fn resume(&self) {
-        let _ = self.emu.send(EmuCommand::Resume);
+        if self.emu.send(EmuCommand::Resume).is_ok() {
+            if let Ok(mut guard) = self.metrics.lock() {
+                guard.paused = false;
+            }
+        }
     }
 
     pub fn pause(&self) {
-        let _ = self.emu.send(EmuCommand::Pause);
+        if self.emu.send(EmuCommand::Pause).is_ok() {
+            if let Ok(mut guard) = self.metrics.lock() {
+                guard.paused = true;
+            }
+        }
     }
 
     pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
@@ -207,16 +215,26 @@ impl Console {
                 reply: reply_tx,
             })
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
-        reply_rx
+        let result = reply_rx
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))
+            .map_err(|e| ConsoleError::Core(e.to_string()));
+        if result.is_ok() {
+            if let Ok(mut guard) = self.metrics.lock() {
+                guard.loaded = true;
+            }
+        }
+        result
     }
 
     pub fn unload(&self) -> Result<(), ConsoleError> {
         self.emu
             .send(EmuCommand::Unload)
-            .map_err(|_| ConsoleError::WorkerUnavailable)
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        if let Ok(mut guard) = self.metrics.lock() {
+            guard.loaded = false;
+        }
+        Ok(())
     }
 
     pub fn reset(&self) -> Result<(), ConsoleError> {
