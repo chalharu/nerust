@@ -16,6 +16,7 @@ use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -186,13 +187,15 @@ impl Console {
         self.load_with_options(data, CoreOptions::default())
     }
 
+    // TODO(Phase 7): CoreConfig に CoreOptions を統合し、load_with_options の
+    // _options を反映させる。現状は NesConsoleCore::load も _config を無視する。
     pub fn load_with_options(
         &self,
         data: Vec<u8>,
         _options: CoreOptions,
     ) -> Result<(), ConsoleError> {
+        log::warn!("load_with_options: CoreOptions are ignored in Phase 2c-3 path");
         let (reply_tx, reply_rx) = mpsc::channel();
-        use std::collections::HashMap;
         self.emu
             .send(EmuCommand::Load {
                 rom: data,
@@ -290,10 +293,17 @@ impl Console {
             .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 
-    pub fn import_state(&self, _bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        // Phase 7: implement state import via EmuCommand::LoadState
-        Err(ConsoleError::Core(
-            "state import not implemented in EmuThread path".into(),
-        ))
+    pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::LoadState {
+                data: bytes,
+                reply: reply_tx,
+            })
+            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|e| ConsoleError::Core(e.to_string()))
     }
 }
