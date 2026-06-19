@@ -21,6 +21,7 @@ mod persistence_codec;
 mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
+pub mod rom_parse;
 
 use self::apu::Core as Apu;
 use self::cart_device::Cartridge;
