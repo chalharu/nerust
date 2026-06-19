@@ -280,6 +280,12 @@ impl Console {
         self.metrics.snapshot()
     }
 
+    pub fn set_volume(&self, volume: f32) {
+        if self.data_sender.send(ConsoleData::SetVolume(volume)).is_err() {
+            log::warn!("Core set_volume send failed");
+        }
+    }
+
     pub fn resume(&self) {
         if self.data_sender.send(ConsoleData::Resume).is_err() {
             log::warn!("Core resume send failed");
