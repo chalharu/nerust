@@ -18,6 +18,7 @@ pub(crate) enum ConsoleData {
         bytes: Vec<u8>,
         reply: Sender<ConsoleRequestResult>,
     },
+    SetVolume(f32),
     CanonicalMediaIdentity(Sender<ConsoleRequestResult>),
     ExportState(Sender<ConsoleRequestResult>),
     ImportState {

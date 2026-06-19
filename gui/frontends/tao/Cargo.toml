@@ -28,8 +28,6 @@ raw-window-handle.workspace = true
 rfd.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
-serde_yaml.workspace = true
 simple_logger.workspace = true
 tao.workspace = true
 

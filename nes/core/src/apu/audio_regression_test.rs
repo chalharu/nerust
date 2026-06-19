@@ -5,10 +5,10 @@ use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_rom::CartridgeData;
 use crate::controller::Controller;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::mirror::MirrorMode;
 use nerust_contract_core::rom::RomFormat;
 use nerust_screen_video::FrameBuffer;
-use nerust_sound_traits::MixerInput;
 use std::io::Cursor;
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;
@@ -81,7 +81,9 @@ impl CapturingMixer {
     }
 }
 
-impl MixerInput for CapturingMixer {
+impl AudioBackend for CapturingMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, data: f32) {
         self.samples.push(data);
     }
@@ -297,7 +299,7 @@ fn run_rom_until_silence(
     let mut mixer = CapturingMixer::new(sample_rate);
 
     for _ in 0..max_frames {
-        core.run_frame(&mut screen, &mut controller, &mut mixer);
+        core.run_frame_inner(&mut screen, &mut controller, &mut mixer);
         if mixer.has_activity() && mixer.tail_is_silent(silence_tail_seconds) {
             break;
         }

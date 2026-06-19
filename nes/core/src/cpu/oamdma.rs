@@ -1,7 +1,7 @@
 use super::CpuCartridgeBus;
 use super::{Apu, Controller, Core, Ppu, read_dummy_current};
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
     Step0,
     Step1,
@@ -9,7 +9,7 @@ pub(crate) enum OamDmaStateEnumValue {
     None,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct OamDmaStateValue {
     offset: u8,
     count: u8,
@@ -26,7 +26,7 @@ impl OamDmaStateValue {
     }
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct OamDmaState {
     #[serde(skip, default = "make_state_pool")]
     state_pool: [Box<dyn OamDmaStepState>; OamDmaStateEnumValue::None as usize],

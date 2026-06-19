@@ -4,7 +4,7 @@ mod ui;
 use crate::app_menu::UserEvent;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use serde::de::DeserializeOwned;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Read, Write};
 use std::io::{BufReader, BufWriter};
 use std::process::{Child, Command, Stdio};

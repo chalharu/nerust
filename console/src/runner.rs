@@ -7,6 +7,7 @@ use self::metrics::SharedConsoleMetrics;
 use data::ConsoleData;
 use nerust_contract_core::GpuCommand;
 use nerust_contract_core::GpuCommandList;
+use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::channel::FrameChannelConsole;
 use nerust_input_nes_runtime::ControllerState;
 use nerust_screen_video::FrameBuffer;
@@ -25,6 +26,7 @@ pub(super) struct ConsoleRunner {
     ppu_fb: FrameBuffer,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
     metrics: SharedConsoleMetrics,
+    audio: Box<dyn AudioBackend>,
 }
 
 impl ConsoleRunner {
@@ -37,6 +39,7 @@ impl ConsoleRunner {
         channel: FrameChannelConsole,
         metrics: SharedConsoleMetrics,
         controller: Box<dyn ControllerState>,
+        audio: Box<dyn AudioBackend>,
     ) -> Self {
         Self {
             data_receiver,
@@ -49,6 +52,7 @@ impl ConsoleRunner {
             ppu_fb,
             frame_buffer,
             metrics,
+            audio,
         }
     }
 

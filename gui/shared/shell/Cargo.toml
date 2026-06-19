@@ -20,8 +20,6 @@ nerust_input_schema.workspace = true
 nerust_persistence.workspace = true
 nerust_screen_video.workspace = true
 nerust_sound_cpal.workspace = true
-nerust_sound_traits.workspace = true
-nerust_timer.workspace = true
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 nerust_sound_openal.workspace = true

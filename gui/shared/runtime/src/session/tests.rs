@@ -1,25 +1,21 @@
 use super::{GuiSession, commands::redraw_needed_after_pause_change};
 use nerust_console::{Console, ConsoleMetrics};
+use nerust_contract_core::audio::AudioBackend;
 use nerust_gui_session::core::SessionCore;
 use nerust_gui_session::title::window_title;
-use nerust_sound_traits::{MixerInput, Sound};
 
 #[derive(Default)]
 struct TestSpeaker;
 
-impl Sound for TestSpeaker {
+impl AudioBackend for TestSpeaker {
     fn start(&mut self) {}
-
     fn pause(&mut self) {}
-}
-
-impl MixerInput for TestSpeaker {
     fn push(&mut self, _: f32) {}
 }
 
 fn test_session() -> GuiSession {
     GuiSession::from_session_core(SessionCore::from_console(Console::new_gpu(
-        TestSpeaker,
+        Box::new(TestSpeaker),
         nerust_screen_video::FilterType::NtscComposite,
         nerust_screen_video::LogicalSize {
             width: 256,

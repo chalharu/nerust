@@ -30,7 +30,7 @@ pub struct RuntimeStateExport {
     pub preview: Option<PreviewFrame>,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 struct LegacyControllerStatePayload {
     pad1_bits: u32,
     pad2_bits: u32,
@@ -40,18 +40,18 @@ struct LegacyControllerStatePayload {
     strobe: bool,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct StructuredControllerPortStatePayload {
     input_bits: u32,
     index: u64,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct StructuredControllerAuxiliaryStatePayload {
     microphone: bool,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct StructuredControllerStatePayload {
     ports: [StructuredControllerPortStatePayload; 2],
     auxiliary: StructuredControllerAuxiliaryStatePayload,
@@ -63,7 +63,7 @@ struct StructuredControllerStatePayload {
 /// `core_state` is an opaque `nerust_nes_core` machine-state payload stored without interpretation in
 /// this crate. The console layer owns paused/frame counter/controller/source-frame restoration and
 /// rejects wrapper schema mismatches before mutating any live console state.
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ConsoleStatePayload {
     schema_version: u32,
     #[serde(with = "serde_bytes")]
@@ -78,7 +78,7 @@ struct ConsoleStatePayload {
     source_frame: Vec<u8>,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde::Deserialize)]
 struct LegacyConsoleStatePayload {
     schema_version: u32,
     #[serde(with = "serde_bytes")]
@@ -92,7 +92,7 @@ struct LegacyConsoleStatePayload {
     source_frame: Vec<u8>,
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct StructuredConsoleStatePayload {
     schema_version: u32,
     #[serde(with = "serde_bytes")]

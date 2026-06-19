@@ -11,5 +11,4 @@ log.workspace = true
 nerust_input_schema.workspace = true
 nerust_screen_video.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 thiserror.workspace = true
