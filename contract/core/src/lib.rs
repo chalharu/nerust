@@ -104,6 +104,7 @@ pub struct CoreConfig {
 // EmuCommand
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub enum EmuCommand {
     RenderFrame,
     Pause,
@@ -117,17 +118,23 @@ pub enum EmuCommand {
     },
     Unload,
     SetVolume(f32),
-    SaveState(Sender<Result<Vec<u8>, CoreError>>),
+    SaveState {
+        reply: Sender<Result<Vec<u8>, CoreError>>,
+    },
     LoadState {
         data: Vec<u8>,
         reply: Sender<Result<(), CoreError>>,
     },
-    MapperSave(Sender<Result<Option<Vec<u8>>, CoreError>>),
+    MapperSave {
+        reply: Sender<Result<Option<Vec<u8>>, CoreError>>,
+    },
     ImportMapperSave {
         data: Vec<u8>,
         reply: Sender<Result<(), CoreError>>,
     },
-    Identity(Sender<Result<persistence::CanonicalMediaIdentity, CoreError>>),
+    Identity {
+        reply: Sender<Result<persistence::CanonicalMediaIdentity, CoreError>>,
+    },
 }
 
 // ---------------------------------------------------------------------------

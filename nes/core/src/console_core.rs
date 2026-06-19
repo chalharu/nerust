@@ -1,5 +1,8 @@
+use std::array;
+
 use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::device::{Device, PortIo};
+use nerust_contract_core::device::{Device, DeviceKind, PortIo};
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, GpuCommand, GpuCommandList,
     PixelFormat, VideoSignalKind,
@@ -8,9 +11,15 @@ use nerust_contract_core::{
 use crate::cartridge_rom::CartridgeData;
 use crate::{Controller, Core};
 
-/// Core は内部的に `Box<dyn Cartridge>` を持つが、全ての具象 mapper は Send。
+const NUM_PORTS: usize = 2;
+
+/// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
+/// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
+/// かつ全て Send であることが確認されているため、`unsafe impl Send` は安全。
 struct SendCore(Option<Core>);
 
+// Safety: 全ての Cartridge 実装は同一 crate 内にあり、全て Send。
+// `pub(crate)` なので外部からの非 Send 実装追加は不可能。
 unsafe impl Send for SendCore {}
 
 fn cartridge_error_to_core(e: crate::cartridge_error::CartridgeError) -> CoreError {
@@ -21,7 +30,7 @@ pub struct NesConsoleCore {
     core: SendCore,
     controller: Box<dyn Controller + Send>,
     audio: Box<dyn AudioBackend>,
-    devices: Vec<Option<Box<dyn Device>>>,
+    devices: [Option<Box<dyn Device>>; NUM_PORTS],
     paused: bool,
 }
 
@@ -36,7 +45,7 @@ impl NesConsoleCore {
             core: SendCore(Some(core)),
             controller,
             audio,
-            devices: (0..2).map(|_| None).collect(),
+            devices: array::from_fn(|_| None),
             paused: false,
         })
     }
@@ -55,13 +64,14 @@ impl ConsoleCore for NesConsoleCore {
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
+        let mut port_io = PortIo {
+            device: DeviceKind::None,
+            input: Vec::new(),
+            output: Vec::new(),
+        };
         for device in self.devices.iter_mut().flatten() {
-            let kind = device.kind();
-            device.cycle(&mut PortIo {
-                device: kind,
-                input: Vec::new(),
-                output: Vec::new(),
-            });
+            port_io.device = device.kind();
+            device.cycle(&mut port_io);
         }
 
         // controller はコンストラクタで注入されたものを使用する。
@@ -81,18 +91,22 @@ impl ConsoleCore for NesConsoleCore {
     /// run_frame に渡す controller はコンストラクタのものが使われ続ける。
     /// Pad1/Pad2 はコンストラクタ経由で接続される。
     fn attach_device(&mut self, port: usize, device: Box<dyn Device>) {
-        if port >= self.devices.len() {
-            self.devices.resize_with(port + 1, || None);
+        if let Some(slot) = self.devices.get_mut(port) {
+            *slot = Some(device);
+        } else {
+            log::warn!("NesConsoleCore: port {port} out of range (max {NUM_PORTS})");
         }
-        self.devices[port] = Some(device);
     }
 
     fn detach_device(&mut self, port: usize) {
-        if port < self.devices.len() {
-            self.devices[port] = None;
+        if let Some(slot) = self.devices.get_mut(port) {
+            *slot = None;
         }
     }
 
+    // TODO(Phase 2c-3-C2): `CoreConfig` から `CoreOptions` を抽出し、
+    // `Core::new_with_options(cartridge_data, options)` を使う。
+    // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
         let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(cartridge_error_to_core)?;
         let core = Core::new(cartridge_data).map_err(|e| CoreError::Core(e.to_string()))?;
@@ -148,10 +162,8 @@ impl ConsoleCore for NesConsoleCore {
             .map_err(|e| CoreError::Core(e.to_string()))
     }
 
-    fn identity(
-        &self,
-    ) -> Result<nerust_contract_core::persistence::CanonicalMediaIdentity, CoreError> {
+    fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
         let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
-        Ok(nerust_contract_core::persistence::CanonicalMediaIdentity::Rom(core.rom_identity()))
+        Ok(CanonicalMediaIdentity::Rom(core.rom_identity()))
     }
 }
