@@ -14,6 +14,7 @@ pub struct EmuThread<C: ConsoleCore + Send + 'static> {
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
     thread: Option<JoinHandle<()>>,
     frame_count: Arc<std::sync::atomic::AtomicU64>,
+    fps: Arc<Mutex<f32>>,
     _core: PhantomData<C>,
 }
 
@@ -26,6 +27,7 @@ impl<C: ConsoleCore + Send + 'static> fmt::Debug for EmuThread<C> {
             .field("last_cmds", &self.last_cmds)
             .field("thread", &self.thread)
             .field("frame_count", &self.frame_count)
+            .field("fps", &self.fps)
             .finish()
     }
 }
@@ -38,10 +40,12 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
             Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let fps: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
 
         let cmds = Arc::clone(&last_cmds);
         let fb = Arc::clone(&shared_fb);
         let fc = Arc::clone(&frame_count);
+        let fps_c = Arc::clone(&fps);
         let thread = thread::spawn(move || {
             let caps = core.capabilities();
             let default_format = caps
@@ -115,6 +119,9 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                 }
 
                 timer.wait();
+                if let Ok(mut fps_guard) = fps_c.lock() {
+                    *fps_guard = timer.as_fps();
+                }
             }
         });
 
@@ -125,6 +132,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
             last_cmds,
             thread: Some(thread),
             frame_count,
+            fps,
             _core: PhantomData,
         }
     }
@@ -150,6 +158,10 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
 
     pub fn frame_count(&self) -> u64 {
         self.frame_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn fps(&self) -> f32 {
+        *self.fps.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn join(&mut self) {
