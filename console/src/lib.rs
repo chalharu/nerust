@@ -165,11 +165,12 @@ impl Console {
         self.video.frame_buffer()
     }
 
-    /// Returns current metrics. Frame counter is synced from EmuThread on each call
-    /// so that the frontend can detect new frames even without swap_frame_buffer.
+    /// Returns current metrics. Frame counter and FPS are synced from EmuThread
+    /// on each call so the frontend can detect new frames and display FPS.
     pub fn metrics(&self) -> ConsoleMetrics {
         let mut guard = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
         guard.frame_counter = self.emu.frame_count();
+        guard.emulation_fps = self.emu.fps();
         *guard
     }
 
