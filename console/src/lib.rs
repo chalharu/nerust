@@ -155,15 +155,9 @@ impl Console {
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
-    /// EmuThread は Timer ループで自動レンダリングするため、
-    /// RenderFrame を送信する必要はない。
+    /// EmuThread は Timer ループで自動レンダリングする。
     pub fn swap_frame_buffer(&mut self) -> bool {
-        let result = self.video.swap_frame_buffer();
-        if let Ok(mut guard) = self.metrics.lock() {
-            guard.frame_counter = self.emu.frame_count();
-            guard.emulation_fps = 60.0;
-        }
-        result
+        self.video.swap_frame_buffer()
     }
 
     /// 表示バッファへの参照を返す。
@@ -171,8 +165,12 @@ impl Console {
         self.video.frame_buffer()
     }
 
+    /// Returns current metrics. Frame counter is synced from EmuThread on each call
+    /// so that the frontend can detect new frames even without swap_frame_buffer.
     pub fn metrics(&self) -> ConsoleMetrics {
-        *self.metrics.lock().unwrap_or_else(|e| e.into_inner())
+        let mut guard = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
+        guard.frame_counter = self.emu.frame_count();
+        *guard
     }
 
     pub fn set_volume(&self, volume: f32) {
