@@ -9,6 +9,7 @@ pub mod rom;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -109,6 +110,24 @@ pub enum EmuCommand {
     Resume,
     Reset,
     Quit,
+    Load {
+        rom: Vec<u8>,
+        config: CoreConfig,
+        reply: Sender<Result<(), CoreError>>,
+    },
+    Unload,
+    SetVolume(f32),
+    SaveState(Sender<Result<Vec<u8>, CoreError>>),
+    LoadState {
+        data: Vec<u8>,
+        reply: Sender<Result<(), CoreError>>,
+    },
+    MapperSave(Sender<Result<Option<Vec<u8>>, CoreError>>),
+    ImportMapperSave {
+        data: Vec<u8>,
+        reply: Sender<Result<(), CoreError>>,
+    },
+    Identity(Sender<Result<persistence::CanonicalMediaIdentity, CoreError>>),
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +148,9 @@ pub trait ConsoleCore: Send {
     fn unload(&mut self);
     fn reset(&mut self);
 
+    // -- audio --
+    fn set_volume(&mut self, _volume: f32) {}
+
     // -- pause --
     fn paused(&self) -> bool;
     fn set_paused(&mut self, paused: bool);
@@ -136,6 +158,19 @@ pub trait ConsoleCore: Send {
     // -- save states --
     fn save_state(&self) -> Result<Vec<u8>, CoreError>;
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError>;
+
+    // -- mapper save (system-specific, default: not supported) --
+    fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
+        Ok(None)
+    }
+    fn import_mapper_save(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    // -- identity --
+    fn identity(&self) -> Result<persistence::CanonicalMediaIdentity, CoreError> {
+        Err(CoreError::NoRomLoaded)
+    }
 
     // -- rewind (default: not supported) --
     fn rewind_state_size(&self) -> Option<usize> {

@@ -44,6 +44,32 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
                     Ok(EmuCommand::Pause) => core.set_paused(true),
                     Ok(EmuCommand::Resume) => core.set_paused(false),
                     Ok(EmuCommand::Reset) => core.reset(),
+                    Ok(EmuCommand::Load { rom, config, reply }) => {
+                        let result = core.load(&rom, &config);
+                        let _ = reply.send(result);
+                    }
+                    Ok(EmuCommand::Unload) => core.unload(),
+                    Ok(EmuCommand::SetVolume(vol)) => core.set_volume(vol),
+                    Ok(EmuCommand::SaveState(reply)) => {
+                        let result = core.save_state();
+                        let _ = reply.send(result);
+                    }
+                    Ok(EmuCommand::LoadState { data, reply }) => {
+                        let result = core.load_state(&data);
+                        let _ = reply.send(result);
+                    }
+                    Ok(EmuCommand::MapperSave(reply)) => {
+                        let result = core.mapper_save();
+                        let _ = reply.send(result);
+                    }
+                    Ok(EmuCommand::ImportMapperSave { data, reply }) => {
+                        let result = core.import_mapper_save(&data);
+                        let _ = reply.send(result);
+                    }
+                    Ok(EmuCommand::Identity(reply)) => {
+                        let result = core.identity();
+                        let _ = reply.send(result);
+                    }
                     Ok(EmuCommand::Quit) | Err(_) => break,
                 }
             }
