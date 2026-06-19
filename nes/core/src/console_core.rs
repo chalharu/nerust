@@ -1,5 +1,5 @@
 use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::device::Device;
+use nerust_contract_core::device::{Device, PortIo};
 use nerust_contract_core::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, GpuCommand, GpuCommandList,
     PixelFormat, VideoSignalKind,
@@ -21,6 +21,7 @@ pub struct NesConsoleCore {
     core: SendCore,
     controller: Box<dyn Controller + Send>,
     audio: Box<dyn AudioBackend>,
+    devices: Vec<Option<Box<dyn Device>>>,
     paused: bool,
 }
 
@@ -35,6 +36,7 @@ impl NesConsoleCore {
             core: SendCore(Some(core)),
             controller,
             audio,
+            devices: (0..2).map(|_| None).collect(),
             paused: false,
         })
     }
@@ -53,6 +55,15 @@ impl ConsoleCore for NesConsoleCore {
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
+        for device in self.devices.iter_mut().flatten() {
+            let kind = device.kind();
+            device.cycle(&mut PortIo {
+                device: kind,
+                input: Vec::new(),
+                output: Vec::new(),
+            });
+        }
+
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(GpuCommandList {
@@ -60,12 +71,17 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
-    fn attach_device(&mut self, port: usize, _device: Box<dyn Device>) {
-        log::warn!("NesConsoleCore::attach_device: port {port} not implemented yet");
+    fn attach_device(&mut self, port: usize, device: Box<dyn Device>) {
+        if port >= self.devices.len() {
+            self.devices.resize_with(port + 1, || None);
+        }
+        self.devices[port] = Some(device);
     }
 
     fn detach_device(&mut self, port: usize) {
-        log::warn!("NesConsoleCore::detach_device: port {port} not implemented yet");
+        if port < self.devices.len() {
+            self.devices[port] = None;
+        }
     }
 
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
