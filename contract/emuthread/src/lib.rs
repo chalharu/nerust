@@ -51,17 +51,21 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
             loop {
                 match cmd_rx.recv() {
                     Ok(EmuCommand::RenderFrame) => {
-                        match core.render_frame(&mut frame_slot) {
+                        let ok = match core.render_frame(&mut frame_slot) {
                             Ok(list) => {
                                 *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
+                                true
                             }
                             Err(e) => {
                                 log::error!("render_frame failed: {e}");
+                                false
                             }
-                        }
-                        // swap internal fb with shared fb (zero-copy)
-                        if let Ok(mut guard) = fb.lock() {
-                            std::mem::swap(&mut *guard, &mut frame_slot);
+                        };
+                        if ok {
+                            // swap internal fb with shared fb (zero-copy)
+                            if let Ok(mut guard) = fb.lock() {
+                                std::mem::swap(&mut *guard, &mut frame_slot);
+                            }
                         }
                         let _ = done_tx.send(());
                     }
