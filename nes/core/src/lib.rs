@@ -11,6 +11,7 @@ pub mod cartridge_data_parts;
 pub mod cartridge_error;
 pub mod cartridge_rom;
 mod cartridge_runtime_state;
+pub mod console_core;
 pub mod controller;
 mod cpu;
 mod interrupt;
