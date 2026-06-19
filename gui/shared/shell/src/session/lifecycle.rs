@@ -90,6 +90,10 @@ impl SessionHandle {
         if plan.session_rebuild_required {
             self.rebuild_for_settings(&next_settings)
                 .map_err(|error| format!("failed to apply settings: {error}"))?;
+        } else if plan.audio_volume_changed {
+            let volume = f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
+            let volume = if next_settings.local.audio.muted { 0.0 } else { volume };
+            self.runtime.set_volume(volume);
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {

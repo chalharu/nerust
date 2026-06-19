@@ -121,6 +121,9 @@ pub trait SystemRuntime: Send {
     fn reset(&self) -> Result<(), String>;
     fn pause(&mut self);
     fn resume(&mut self);
+
+    /// 再生音量を 0.0〜1.0 の範囲で設定する (session rebuild 不要)。
+    fn set_volume(&mut self, _volume: f32) {}
     fn export_state(&self) -> Result<RuntimeStateExport, String>;
     fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String>;
     fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String>;
@@ -443,6 +446,10 @@ impl SystemRuntime for NesRuntime {
 
     fn resume(&mut self) {
         self.core.resume();
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.core.set_volume(volume);
     }
 
     fn export_state(&self) -> Result<RuntimeStateExport, String> {

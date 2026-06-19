@@ -138,6 +138,10 @@ impl SessionCore {
         self.console.canonical_media_identity()
     }
 
+    pub fn set_volume(&self, volume: f32) {
+        self.console.set_volume(volume);
+    }
+
     pub fn sync_paused_from_console(&mut self) {
         self.paused = self.console.metrics().paused;
     }

@@ -540,7 +540,9 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
         .load(MediaObject::new(None, vec![0; 16]), LoadRequest::Auto)
         .unwrap();
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.muted = true;
+    // muted のみの変更は session rebuild 不要になったため、
+    // latency を変更して rebuild を強制する
+    next.local.audio.latency_ms = 90;
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);
@@ -599,7 +601,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
 
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.muted = true;
+    next.local.audio.latency_ms = 90;
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);
