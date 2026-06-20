@@ -9,8 +9,6 @@ pub struct NativeShellState {
 
 impl NativeShellState {
     pub const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-    /// Target frame interval (~60fps). Used as a hint for WaitUntil scheduling.
-    pub const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
     pub fn new() -> Self {
         Self {
@@ -26,20 +24,8 @@ impl NativeShellState {
     }
 
     /// Returns true if a redraw should be requested.
-    pub fn wants_redraw(&self, current_frame_counter: u64, _loaded: bool, _paused: bool) -> bool {
+    pub fn wants_redraw(&self, current_frame_counter: u64) -> bool {
         self.needs_redraw || current_frame_counter != self.last_presented_frame_counter
-    }
-
-    /// Returns true when the event loop should stay active (emulation running).
-    /// `frame_interval` returns the expected interval between frames (~16ms).
-    pub fn wants_active_loop(&self, loaded: bool, paused: bool) -> bool {
-        loaded && !paused
-    }
-
-    /// Returns a `WaitUntil` deadline for the next expected frame.
-    /// Falls back to `now + FRAME_INTERVAL` when running.
-    pub fn next_frame_deadline(&self, now: Instant) -> Instant {
-        now + Self::FRAME_INTERVAL
     }
 
     pub fn should_refresh_title(&mut self, now: Instant) -> bool {
