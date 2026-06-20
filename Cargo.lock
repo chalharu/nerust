@@ -3387,6 +3387,8 @@ dependencies = [
  "gdkx11-sys",
  "gtk",
  "iced",
+ "iced_tiny_skia",
+ "iced_winit",
  "log",
  "muda",
  "nerust_backend_wgpu",

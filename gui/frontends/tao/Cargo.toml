@@ -12,6 +12,8 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 iced.workspace = true
+iced_tiny_skia.workspace = true
+iced_winit.workspace = true
 log.workspace = true
 muda.workspace = true
 nerust_backend_wgpu.workspace = true
