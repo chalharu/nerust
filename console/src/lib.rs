@@ -7,7 +7,10 @@ use nerust_contract_core::audio::AudioBackend;
 
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
-use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
+use nerust_contract_core::{
+    CoreConfig, EmuCommand, LoadCommand, StateDataCommand, load_state_from_header,
+    save_state_with_header,
+};
 use nerust_contract_emuthread::EmuThread;
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_core::controller::Controller;
@@ -295,6 +298,7 @@ impl Console {
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
             .map_err(|e| ConsoleError::Core(e.to_string()))?;
+        let state_blob = save_state_with_header(core_state);
 
         let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
             return Err(ConsoleError::WorkerUnavailable);
@@ -334,7 +338,7 @@ impl Console {
         };
 
         Ok(RuntimeStateExport {
-            state_blob: core_state,
+            state_blob,
             preview,
         })
     }
@@ -352,14 +356,20 @@ impl Console {
 
     /// Import a previously exported state.
     ///
-    /// Supports both the old ConsoleStatePayload wrapper format (used by ConsoleRunner)
-    /// and the new raw core state format. The old format is detected by trying to
-    /// deserialize the wrapper; if it fails, the bytes are treated as raw core state.
+    /// Tries these formats in order:
+    /// 1. `SaveStateHeader`-prefixed (current, since Phase 9)
+    /// 2. Old `ConsoleStatePayload` msgpack wrapper (pre-Phase 2c-3)
+    /// 3. Raw core state bytes (Phase 2c-3)
     pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        // Try to unwrap old ConsoleStatePayload format (contains core_state field).
-        let core_bytes = match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes) {
-            Ok(payload) => payload.core_state,
-            Err(_) => bytes, // treat as raw core state (new format)
+        let core_bytes = match load_state_from_header(&bytes) {
+            Ok(inner) => inner.to_vec(),
+            Err(_) => {
+                // Try old ConsoleStatePayload format (contains core_state field).
+                match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes) {
+                    Ok(payload) => payload.core_state,
+                    Err(_) => bytes, // treat as raw core state (fallback)
+                }
+            }
         };
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -373,7 +383,8 @@ impl Console {
             .map_err(|_| ConsoleError::WorkerUnavailable)?
             .map_err(|e| {
                 ConsoleError::Core(format!(
-                    "state import failed (tried ConsoleStatePayload format, then raw): {e}"
+                    "state import failed (tried SaveStateHeader format, then \
+                     ConsoleStatePayload format, then raw): {e}"
                 ))
             })
     }
