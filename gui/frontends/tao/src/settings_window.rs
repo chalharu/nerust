@@ -188,6 +188,17 @@ impl SettingsWindowHandle {
         self.ensure_ui();
 
         if let Some(ui) = self.ui.as_mut() {
+            // update() with RedrawRequested to refresh widget status (hover state)
+            let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ));
+            let _ = ui.update(
+                &[redraw_event],
+                self.cursor,
+                &mut self.renderer.renderer,
+                &mut self.clipboard,
+                &mut std::vec::Vec::new(),
+            );
             ui.draw(
                 &mut self.renderer.renderer,
                 &theme,
