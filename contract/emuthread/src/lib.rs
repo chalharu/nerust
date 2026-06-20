@@ -144,8 +144,10 @@ impl EmuThread {
         }
     }
 
-    pub fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::SendError<EmuCommand>> {
-        self.cmd_tx.send(cmd)
+    /// Send a command to the emu thread. Never blocks — uses `try_send`.
+    /// Returns `Err(TrySendError)` if the channel is full or disconnected.
+    pub fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+        self.cmd_tx.try_send(cmd)
     }
 
     pub fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
