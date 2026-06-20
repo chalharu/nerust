@@ -9,11 +9,8 @@ pub struct NativeShellState {
 
 impl NativeShellState {
     pub const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-
-    // EmuThread drives rendering via frame_count changes at ~60fps.
-    // A 16ms poll interval provides responsive frame detection without
-    // excessive wakeups (60/sec instead of 1000/sec).
-    pub const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(16);
+    /// Target frame interval (~60fps). Used as a hint for WaitUntil scheduling.
+    pub const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
     pub fn new() -> Self {
         Self {
@@ -28,14 +25,16 @@ impl NativeShellState {
         self.needs_redraw = false;
     }
 
-    /// EmuThread が Timer ループで 60fps レンダリングし frame_count を更新するため、
-    /// frame_counter の変化で再描画を検出できる。
+    /// Returns true if a redraw should be requested.
     pub fn wants_redraw(&self, current_frame_counter: u64, _loaded: bool, _paused: bool) -> bool {
         self.needs_redraw || current_frame_counter != self.last_presented_frame_counter
     }
 
-    pub fn wants_poll(&self, loaded: bool, paused: bool) -> bool {
-        self.needs_redraw || (loaded && !paused)
+    /// Returns true when the event loop should stay active (emulation running).
+    /// The caller should use `ControlFlow::Poll` when this returns true,
+    /// `ControlFlow::Wait` when false.
+    pub fn wants_active_loop(&self, loaded: bool, paused: bool) -> bool {
+        loaded && !paused
     }
 
     pub fn should_refresh_title(&mut self, now: Instant) -> bool {

@@ -264,8 +264,8 @@ impl HostState {
             window.request_redraw();
         }
 
-        if self.shell.wants_poll(metrics.loaded, metrics.paused) {
-            *control_flow = ControlFlow::WaitUntil(now + NativeShellState::FRAME_POLL_INTERVAL);
+        if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
+            *control_flow = ControlFlow::Poll;
         } else {
             *control_flow = ControlFlow::Wait;
         }

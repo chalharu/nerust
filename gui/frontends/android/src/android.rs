@@ -825,18 +825,14 @@ impl ApplicationHandler for AndroidFrontend {
             {
                 window.request_redraw();
             }
-            if self.shell.wants_poll(metrics.loaded, metrics.paused) {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    now + NativeShellState::FRAME_POLL_INTERVAL,
-                ));
+            if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
+                event_loop.set_control_flow(ControlFlow::Poll);
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
         } else {
             if self.is_resumed || self.foreground_resume_pending {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    now + NativeShellState::FRAME_POLL_INTERVAL,
-                ));
+                event_loop.set_control_flow(ControlFlow::Poll);
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
