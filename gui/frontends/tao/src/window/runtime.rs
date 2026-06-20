@@ -122,9 +122,9 @@ impl WindowRuntime {
                     _ => {}
                 }
 
-                handle.window.request_redraw();
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
+                handle.window.request_redraw();
 
                 if handle.should_close.load(std::sync::atomic::Ordering::Acquire) {
                     let handle = self.host.settings_window.take().unwrap();
@@ -140,7 +140,12 @@ impl WindowRuntime {
                     handle.render();
                 }
             }
-            Event::MainEventsCleared => self.host.update_control_flow(control_flow),
+            Event::MainEventsCleared => {
+                if let Some(handle) = self.host.settings_window.as_mut() {
+                    handle.window.request_redraw();
+                }
+                self.host.update_control_flow(control_flow);
+            }
             Event::UserEvent(command) => match command {
                 UserEvent::Menu(command) => {
                     let action = self.host.on_menu_command(command, event_loop);
