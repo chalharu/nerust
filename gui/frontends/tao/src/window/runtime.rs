@@ -27,6 +27,7 @@ impl WindowRuntime {
         let event_loop = {
             let mut event_loop = event_loop;
             event_loop.set_activate_ignoring_other_apps(true);
+            event_loop.set_allows_automatic_window_tabbing(false);
             event_loop
         };
         let proxy = event_loop.create_proxy();
