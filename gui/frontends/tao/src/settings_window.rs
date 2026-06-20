@@ -8,7 +8,6 @@ use iced_tiny_skia::graphics::compositor::Compositor as _;
 use iced_tiny_skia::window::compositor;
 use iced_tiny_skia::window::{Compositor, Surface};
 use iced_tiny_skia::Renderer;
-use iced_winit::conversion;
 use iced_winit::graphics::Viewport;
 use iced_winit::program;
 use iced_winit::Clipboard;
