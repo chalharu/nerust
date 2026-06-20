@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
 use nerust_timer::Timer;
 
-const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,
