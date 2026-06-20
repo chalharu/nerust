@@ -136,14 +136,19 @@ impl SettingsWindowHandle {
             }
         }
 
+        // Build UserInterface once; update and draw on the SAME instance.
+        // Do NOT rebuild between update and draw, because build() resets
+        // self.overlay to None, losing any open overlay (dropdown) state
+        // that was set by update().
+        let vp = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        );
         let element = self.instance.view(self.window_id);
         let cache = std::mem::take(&mut self.ui_cache);
-        let mut ui = UserInterface::build(
-            element,
-            self.viewport,
-            cache,
-            &mut self.renderer.renderer,
-        );
+        let mut ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+
+        // 1. Process event (may open dropdown → sets ui.overlay)
         let _state = ui.update(
             &[mapped],
             self.cursor,
@@ -151,46 +156,34 @@ impl SettingsWindowHandle {
             &mut self.clipboard,
             &mut messages,
         );
+
+        // 2. Draw overlay + main tree on the SAME UI instance
+        ui.draw(
+            &mut self.renderer.renderer,
+            &iced::Theme::Dark,
+            &renderer::Style {
+                text_color: <iced::Theme as theme::Base>::base(&iced::Theme::Dark).text_color,
+            },
+            self.cursor,
+        );
+
+        // 3. Save cache (overlay state LOST here, but rendering is already done)
         self.ui_cache = ui.into_cache();
 
+        // 4. Process messages (changes program state)
         for msg in messages {
             let _task = self.instance.update(msg);
         }
 
-        // Rebuild and render immediately with updated state/cache
-        self.ui_cache = std::mem::take(&mut self.ui_cache);
-        {
-            let element = self.instance.view(self.window_id);
-            let vp = Viewport::with_physical_size(
-                Size::new(self.viewport_physical.0, self.viewport_physical.1),
-                self.scale_factor,
-            );
-            let cache = std::mem::take(&mut self.ui_cache);
-            let mut ui = UserInterface::build(
-                element,
-                vp.logical_size(),
-                cache,
-                &mut self.renderer.renderer,
-            );
-            ui.draw(
-                &mut self.renderer.renderer,
-                &iced::Theme::Dark,
-                &renderer::Style {
-                    text_color: <iced::Theme as theme::Base>::base(&iced::Theme::Dark).text_color,
-                },
-                self.cursor,
-            );
-            self.ui_cache = ui.into_cache();
-
-            if let Err(e) = self.renderer.compositor.present(
-                &mut self.renderer.renderer,
-                &mut self.renderer.surface,
-                &vp,
-                iced::Color::BLACK,
-                || {},
-            ) {
-                log::warn!("settings render present failed: {e:?}");
-            }
+        // 5. Present immediately
+        if let Err(e) = self.renderer.compositor.present(
+            &mut self.renderer.renderer,
+            &mut self.renderer.surface,
+            &vp,
+            iced::Color::BLACK,
+            || {},
+        ) {
+            log::warn!("settings render present failed: {e:?}");
         }
     }
 
