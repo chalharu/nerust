@@ -126,10 +126,18 @@ impl Console {
         speaker.start();
         let core = NesConsoleCore::new_empty(controller, speaker);
         let frame_ready = Arc::new(AtomicBool::new(false));
+        // Extract the correct palette for EmuThread's frame_slot.
+        // EmuThread's palette must match the renderer's palette, otherwise
+        // the palette alternates between correct and all-zero on each swap.
+        let palette = match &pixel_format {
+            PixelFormat::PaletteIndex { palette } => palette.clone(),
+            PixelFormat::Rgba => Box::new([0u32; 256]),
+        };
         let emu = EmuThread::spawn(
             Box::new(core),
             Arc::clone(&shared_fb),
             Arc::clone(&frame_ready),
+            palette,
         );
 
         Self {
