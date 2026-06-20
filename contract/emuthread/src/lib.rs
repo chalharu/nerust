@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
 use nerust_timer::Timer;
 
-const MAX_CONSECUTIVE_ERRORS: u32 = 3;
+
 
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,
@@ -59,17 +59,14 @@ impl EmuThread {
 
             let mut timer = Timer::new();
             let mut loaded = false;
-            let mut errors = 0u32;
-
             loop {
                 // When idle (no ROM loaded), block on recv() to avoid busy-looping.
                 if !loaded {
                     match cmd_rx.recv() {
                         Ok(cmd) => match cmd {
                             EmuCommand::Load(cmd) => {
-                                let result = core.load(&cmd.rom, &cmd.config);
+                            let result = core.load(&cmd.rom, &cmd.config);
                             loaded = result.is_ok();
-                            errors = 0;
                             let _ = cmd.reply.send(result);
                             }
                             EmuCommand::Quit => return,
@@ -85,13 +82,11 @@ impl EmuThread {
                         EmuCommand::Load(cmd) => {
                             let result = core.load(&cmd.rom, &cmd.config);
                             loaded = result.is_ok();
-                            errors = 0;
                             let _ = cmd.reply.send(result);
                         }
                         EmuCommand::Unload => {
                             core.unload();
                             loaded = false;
-                            errors = 0;
                         }
                         EmuCommand::Pause => core.set_paused(true),
                         EmuCommand::Resume => core.set_paused(false),
@@ -121,30 +116,17 @@ impl EmuThread {
                     }
                 }
 
-                if loaded && !core.paused() && errors < MAX_CONSECUTIVE_ERRORS {
-                    match core.render_frame(&mut frame_slot) {
-                        Ok(list) => {
-                            *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
-                            fc.fetch_add(1, Ordering::Relaxed);
-                            if !fr.load(Ordering::Relaxed)
-                                && let Ok(mut guard) = fb.lock()
-                                && !fr.load(Ordering::Acquire)
-                            {
-                                std::mem::swap(&mut *guard, &mut frame_slot);
-                                fr.store(true, Ordering::Release);
-                            }
-                            errors = 0;
-                        }
-                        Err(e) => {
-                            errors += 1;
-                            log::error!(
-                                "render_frame failed ({errors}/{MAX_CONSECUTIVE_ERRORS}): {e}"
-                            );
-                            if errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!(
-                                    "emulation stopped: {MAX_CONSECUTIVE_ERRORS} consecutive errors"
-                                );
-                            }
+                if loaded && !core.paused() {
+                    // render_frame only fails with NoRomLoaded (guarded by loaded flag)
+                    if let Ok(list) = core.render_frame(&mut frame_slot) {
+                        *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
+                        fc.fetch_add(1, Ordering::Relaxed);
+                        if !fr.load(Ordering::Relaxed)
+                            && let Ok(mut guard) = fb.lock()
+                            && !fr.load(Ordering::Acquire)
+                        {
+                            std::mem::swap(&mut *guard, &mut frame_slot);
+                            fr.store(true, Ordering::Release);
                         }
                     }
                 }
