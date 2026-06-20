@@ -74,9 +74,11 @@ impl SettingsWindowHandle {
         };
         let (instance, _task) = program::Instance::new(program);
 
+        let scale_factor = window.scale_factor() as f32;
         let window_size = window.inner_size();
-        let viewport = Size::new(window_size.width as f32, window_size.height as f32);
         let viewport_physical = (window_size.width, window_size.height);
+        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
+        let viewport = Size::new(logical_size.width as f32, logical_size.height as f32);
         let ui_cache = Cache::default();
 
         let mut compositor = compositor::new(
@@ -93,7 +95,6 @@ impl SettingsWindowHandle {
             window_size.height,
         );
 
-        let scale_factor = window.scale_factor() as f32;
         window.request_redraw();  // Trigger initial render
 
         Self {
@@ -285,8 +286,11 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        self.viewport = Size::new(width as f32, height as f32);
         self.viewport_physical = (width, height);
+        self.viewport = Size::new(
+            width as f32 / self.scale_factor,
+            height as f32 / self.scale_factor,
+        );
         self.renderer.compositor.configure_surface(
             &mut self.renderer.surface,
             width,
