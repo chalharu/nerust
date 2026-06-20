@@ -35,13 +35,37 @@ pub(crate) struct UiState {
 }
 
 impl UiState {
+    /// Build a UserInterface from instance state, transmuting the phantom
+    /// lifetime to 'static. Safe because UiState's Drop ensures the UI is
+    /// destroyed before the Instance it references.
+    #[allow(clippy::missing_transmute_annotations)]
+    fn build_ui(
+        instance: &program::Instance<SettingsAppProgram>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        cache: Cache,
+        renderer: &mut iced_tiny_skia::Renderer,
+    ) -> UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
+        unsafe {
+            std::mem::transmute::<
+                UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+                UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+            >(UserInterface::build(
+                instance.view(window_id),
+                bounds,
+                cache,
+                renderer,
+            ))
+        }
+    }
+
     fn new(
         instance: program::Instance<SettingsAppProgram>,
         window_id: iced::window::Id,
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
     ) -> Self {
-        let ui = transmute_build_ui(&instance, window_id, bounds, Cache::default(), renderer);
+        let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
             ui: std::mem::ManuallyDrop::new(ui),
             instance,
@@ -68,7 +92,7 @@ impl UiState {
         // Step 1: Replace UI with a placeholder, extract old cache.
         let placeholder = std::mem::replace(
             &mut *self.ui,
-            transmute_build_ui(
+            Self::build_ui(
                 &self.instance,
                 window_id,
                 bounds,
@@ -86,7 +110,7 @@ impl UiState {
         // Step 3: Replace placeholder with real UI from new state + cache.
         let stale = std::mem::replace(
             &mut *self.ui,
-            transmute_build_ui(&self.instance, window_id, bounds, cache, renderer),
+            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
         );
         let _ = stale.into_cache(); // discard placeholder
     }
@@ -382,38 +406,5 @@ impl SettingsWindowHandle {
         self.renderer
             .compositor
             .configure_surface(&mut self.renderer.surface, width, height);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build UserInterface with lifetime transmute
-//
-// SAFETY: UserInterface<'a> has a phantom lifetime after build(). The caller
-// (UiState) ensures correct drop order via ManuallyDrop + custom Drop impl.
-//
-// self_cell v1.2.2 cannot replace this because its macro requires
-// $Dependent:ident and appends <'static> automatically, which conflicts
-// with UserInterface already having a lifetime parameter.
-#[allow(clippy::missing_transmute_annotations)]
-fn transmute_build_ui(
-    instance: &program::Instance<SettingsAppProgram>,
-    window_id: iced::window::Id,
-    bounds: Size,
-    cache: Cache,
-    renderer: &mut iced_tiny_skia::Renderer,
-) -> UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
-    // SAFETY: UserInterface<'a> has a phantom lifetime. After build(), 'a
-    // does not borrow any data. The caller ensures the returned UI is
-    // stored in a field that is dropped before the instance.
-    unsafe {
-        std::mem::transmute::<
-            UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
-            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
-        >(UserInterface::build(
-            instance.view(window_id),
-            bounds,
-            cache,
-            renderer,
-        ))
     }
 }
