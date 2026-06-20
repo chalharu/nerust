@@ -103,7 +103,9 @@ impl WindowRuntime {
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_settings_window(window_id) => {
-                let Some(handle) = self.host.settings_window.as_mut() else { return };
+                let Some(handle) = self.host.settings_window.as_mut() else {
+                    return;
+                };
 
                 match &event {
                     WindowEvent::Resized(size) => {
@@ -116,7 +118,9 @@ impl WindowRuntime {
                         handle.set_modifiers(*state);
                     }
                     WindowEvent::CloseRequested => {
-                        handle.should_close.store(true, std::sync::atomic::Ordering::Release);
+                        handle
+                            .should_close
+                            .store(true, std::sync::atomic::Ordering::Release);
                     }
                     _ => {}
                 }
@@ -125,7 +129,10 @@ impl WindowRuntime {
                 handle.handle_tao_event(event);
                 handle.window.request_redraw();
 
-                if handle.should_close.load(std::sync::atomic::Ordering::Acquire) {
+                if handle
+                    .should_close
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
                     let handle = self.host.settings_window.take().unwrap();
                     let plan = self.host.close_settings_window(handle);
                     if plan.is_some_and(|p| p.renderer_rebuild_required) {
@@ -149,7 +156,6 @@ impl WindowRuntime {
                         HostAction::Exit => *control_flow = ControlFlow::Exit,
                     }
                 }
-
             },
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
@@ -176,7 +182,6 @@ impl WindowRuntime {
             .cloned()
             .map(|window| WgpuRenderer::new(window, self.host.session()));
     }
-
 }
 
 impl Drop for WindowRuntime {

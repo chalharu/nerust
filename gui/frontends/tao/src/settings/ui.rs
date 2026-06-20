@@ -131,11 +131,7 @@ impl Program for SettingsAppProgram {
         (state, Task::none())
     }
 
-    fn update(
-        &self,
-        state: &mut Self::State,
-        message: Self::Message,
-    ) -> Task<Self::Message> {
+    fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         state.update(message)
     }
 
@@ -349,7 +345,8 @@ impl SettingsAppState {
 
         let buttons = row![
             button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
-            button(ui_text(language, UiText::Ok)).on_press_maybe(can_submit.then_some(Message::Submit)),
+            button(ui_text(language, UiText::Ok))
+                .on_press_maybe(can_submit.then_some(Message::Submit)),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
@@ -621,11 +618,7 @@ fn labeled_pick_list<T: Clone + Eq + 'static>(
     .into()
 }
 
-fn labeled_slider<'a>(
-    label: &'static str,
-    value: String,
-    slider: impl Into<El<'a>>,
-) -> El<'a> {
+fn labeled_slider<'a>(label: &'static str, value: String, slider: impl Into<El<'a>>) -> El<'a> {
     row![
         text(label).width(Length::Fixed(220.0)),
         slider.into(),
@@ -770,7 +763,9 @@ fn input_topology() -> InputTopologyDescriptor {
     default_input_topology_descriptor()
 }
 
-pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<KeyboardKey> {
+pub(crate) fn keyboard_key_from_physical(
+    physical: iced::keyboard::key::Physical,
+) -> Option<KeyboardKey> {
     let iced::keyboard::key::Physical::Code(code) = physical else {
         return None;
     };
@@ -837,11 +832,10 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
 
 #[cfg(test)]
 mod tests {
-    use super::{Message, keyboard_key_from_physical};
-    use iced::Event;
-    use iced::event::Status;
-use iced::keyboard::key::{Code, Physical};
-    use iced::window;
+    use super::keyboard_key_from_physical;
+
+    use iced::keyboard::key::{Code, Physical};
+
     use nerust_gui_settings::input::KeyboardKey;
 
     #[test]
