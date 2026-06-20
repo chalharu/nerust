@@ -104,33 +104,37 @@ pub struct CoreConfig {
 // EmuCommand
 // ---------------------------------------------------------------------------
 
+// Boxed payloads for large variants to keep EmuCommand small (~16 bytes).
+#[derive(Debug)]
+pub struct LoadCommand {
+    pub rom: Vec<u8>,
+    pub config: CoreConfig,
+    pub reply: Sender<Result<(), CoreError>>,
+}
+
+#[derive(Debug)]
+pub struct StateDataCommand {
+    pub data: Vec<u8>,
+    pub reply: Sender<Result<(), CoreError>>,
+}
+
 #[derive(Debug)]
 pub enum EmuCommand {
     Pause,
     Resume,
     Reset,
     Quit,
-    Load {
-        rom: Vec<u8>,
-        config: CoreConfig,
-        reply: Sender<Result<(), CoreError>>,
-    },
+    Load(Box<LoadCommand>),
     Unload,
     SetVolume(f32),
     SaveState {
         reply: Sender<Result<Vec<u8>, CoreError>>,
     },
-    LoadState {
-        data: Vec<u8>,
-        reply: Sender<Result<(), CoreError>>,
-    },
+    LoadState(Box<StateDataCommand>),
     MapperSave {
         reply: Sender<Result<Option<Vec<u8>>, CoreError>>,
     },
-    ImportMapperSave {
-        data: Vec<u8>,
-        reply: Sender<Result<(), CoreError>>,
-    },
+    ImportMapperSave(Box<StateDataCommand>),
     Identity {
         reply: Sender<Result<persistence::CanonicalMediaIdentity, CoreError>>,
     },

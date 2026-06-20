@@ -66,12 +66,11 @@ impl EmuThread {
             loop {
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
-                        EmuCommand::Load { rom, config, reply } => {
-                            let result = core.load(&rom, &config);
+                        EmuCommand::Load(cmd) => {
+                            let result = core.load(&cmd.rom, &cmd.config);
                             loaded = result.is_ok();
                             errors = 0;
-                            suspend_ticks = 0;
-                            let _ = reply.send(result);
+                            let _ = cmd.reply.send(result);
                         }
                         EmuCommand::Unload => {
                             core.unload();
@@ -87,17 +86,17 @@ impl EmuThread {
                             let result = core.save_state();
                             let _ = reply.send(result);
                         }
-                        EmuCommand::LoadState { data, reply } => {
-                            let result = core.load_state(&data);
-                            let _ = reply.send(result);
+                        EmuCommand::LoadState(cmd) => {
+                            let result = core.load_state(&cmd.data);
+                            let _ = cmd.reply.send(result);
                         }
                         EmuCommand::MapperSave { reply } => {
                             let result = core.mapper_save();
                             let _ = reply.send(result);
                         }
-                        EmuCommand::ImportMapperSave { data, reply } => {
-                            let result = core.import_mapper_save(&data);
-                            let _ = reply.send(result);
+                        EmuCommand::ImportMapperSave(cmd) => {
+                            let result = core.import_mapper_save(&cmd.data);
+                            let _ = cmd.reply.send(result);
                         }
                         EmuCommand::Identity { reply } => {
                             let result = core.identity();

@@ -7,7 +7,7 @@ use nerust_contract_core::audio::AudioBackend;
 
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
-use nerust_contract_core::{CoreConfig, EmuCommand};
+use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_core::controller::Controller;
@@ -225,7 +225,7 @@ impl Console {
         log::warn!("load_with_options: CoreOptions are ignored in Phase 2c-3 path");
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
-            .send(EmuCommand::Load {
+            .send(EmuCommand::Load(Box::new(LoadCommand {
                 rom: data,
                 config: CoreConfig {
                     region: None,
@@ -233,7 +233,7 @@ impl Console {
                     controllers: HashMap::new(),
                 },
                 reply: reply_tx,
-            })
+            })))
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
         let result = reply_rx
             .recv()
@@ -277,10 +277,10 @@ impl Console {
     pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
-            .send(EmuCommand::ImportMapperSave {
+            .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
                 data: bytes,
                 reply: reply_tx,
-            })
+            })))
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
         reply_rx
             .recv()
@@ -363,10 +363,10 @@ impl Console {
         };
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
-            .send(EmuCommand::LoadState {
+            .send(EmuCommand::LoadState(Box::new(StateDataCommand {
                 data: core_bytes,
                 reply: reply_tx,
-            })
+            })))
             .map_err(|_| ConsoleError::WorkerUnavailable)?;
         reply_rx
             .recv()
