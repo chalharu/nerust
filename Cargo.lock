@@ -3072,7 +3072,6 @@ dependencies = [
 name = "nerust_backend_opengl"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_console",
  "nerust_screen_opengl",
  "nerust_screen_video",
 ]
@@ -3082,7 +3081,6 @@ name = "nerust_backend_wgpu"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_console",
  "nerust_screen_video",
  "nerust_screen_wgpu",
  "pollster",
@@ -3329,7 +3327,6 @@ version = "0.1.0-dev"
 dependencies = [
  "gl",
  "log",
- "nerust_console",
  "nerust_glwrap",
  "nerust_screen_video",
 ]

@@ -1,5 +1,5 @@
-use nerust_console::video::VideoRenderProfile;
 use nerust_screen_opengl::GlView;
+use nerust_screen_video::VideoRenderProfile;
 use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
 use std::os::raw::c_void;
 

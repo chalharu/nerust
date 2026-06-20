@@ -1,32 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::PhysicalSize;
-use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VideoFrameHandle {
-    pub width: u32,
-    pub height: u32,
-    pub stride_bytes: usize,
-    pub bytes: Arc<[u8]>,
-}
-
-impl VideoFrameHandle {
-    pub fn bytes(&self) -> &[u8] {
-        self.bytes.as_ref()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct VideoRenderProfile {
-    pub source_logical_size: LogicalSize,
-    pub logical_size: LogicalSize,
-    pub physical_size: PhysicalSize,
-    pub frame_format: VideoFrameFormat,
-    pub ntsc_packed_rgba8: Option<Box<[u8]>>,
-}
+use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::VideoRenderProfile;
 
 #[derive(Debug)]
 pub struct ConsoleVideo {
@@ -69,16 +45,14 @@ impl ConsoleVideo {
     pub fn frame_buffer(&self) -> &FrameBuffer {
         &self.disp_fb
     }
-
-    pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        f(self.disp_fb.as_ref())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_screen_video::{PixelFormat, VideoFrameFormat};
+    use nerust_screen_video::{
+        LogicalSize, PhysicalSize, PixelFormat, VideoFrameFormat, VideoRenderProfile,
+    };
 
     fn make_test_video() -> ConsoleVideo {
         let mut shared = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
@@ -114,10 +88,9 @@ mod tests {
                 guard.as_mut().fill(42);
             }
         }
-        // Simulate EmuThread signaling frame ready
         video.frame_ready.store(true, Ordering::Release);
-        video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 0));
+        assert_eq!(video.frame_buffer().as_ref()[0], 0);
         video.swap_frame_buffer();
-        video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 42));
+        assert_eq!(video.frame_buffer().as_ref()[0], 42);
     }
 }
