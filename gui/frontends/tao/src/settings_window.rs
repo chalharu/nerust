@@ -29,6 +29,7 @@ pub(crate) struct SettingsWindowHandle {
     window_id: iced::window::Id,
     instance: program::Instance<SettingsAppProgram>,
     ui_cache: Cache,
+    ui: Option<UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>>,
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
@@ -102,6 +103,7 @@ impl SettingsWindowHandle {
             window_id,
             instance,
             ui_cache,
+            ui: None,
             renderer: SettingsRenderer {
                 compositor,
                 surface,
@@ -117,6 +119,45 @@ impl SettingsWindowHandle {
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         }
+    }
+
+    /// Ensure a UserInterface exists. Rebuilds from current view + cache if needed.
+    fn ensure_ui(&mut self) {
+        if self.ui.is_some() {
+            return;
+        }
+        let vp = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        );
+        let element = self.instance.view(self.window_id);
+        let cache = std::mem::take(&mut self.ui_cache);
+        // SAFETY: element borrows from self.instance which has the same lifetime as self.
+        // The UserInterface is stored alongside instance and dropped before instance.
+        let ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+        self.ui = Some(unsafe { std::mem::transmute::<
+            UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+        >(ui) });
+    }
+
+    /// Force rebuild of the UserInterface (e.g. after program state changed).
+    fn rebuild_ui(&mut self) {
+        let vp = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        );
+        // Save cache from old UI before dropping it
+        if let Some(ui) = self.ui.take() {
+            self.ui_cache = ui.into_cache();
+        }
+        let element = self.instance.view(self.window_id);
+        let cache = std::mem::take(&mut self.ui_cache);
+        let ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+        self.ui = Some(unsafe { std::mem::transmute::<
+            UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+        >(ui) });
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
@@ -136,20 +177,11 @@ impl SettingsWindowHandle {
             }
         }
 
-        // Build UserInterface once; update and draw on the SAME instance.
-        // Do NOT rebuild between update and draw, because build() resets
-        // self.overlay to None, losing any open overlay (dropdown) state
-        // that was set by update().
-        let vp = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
-        );
-        let element = self.instance.view(self.window_id);
-        let cache = std::mem::take(&mut self.ui_cache);
-        let mut ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+        self.ensure_ui();
+        let ui = self.ui.as_mut().unwrap();
 
-        // 1. Process event (may open dropdown → sets ui.overlay)
-        let _state = ui.update(
+        // Process event on existing UI (preserves overlay state)
+        let _ui_state = ui.update(
             &[mapped],
             self.cursor,
             &mut self.renderer.renderer,
@@ -157,7 +189,7 @@ impl SettingsWindowHandle {
             &mut messages,
         );
 
-        // 2. Draw overlay + main tree on the SAME UI instance
+        // Draw on the SAME UI instance (preserves overlay)
         ui.draw(
             &mut self.renderer.renderer,
             &iced::Theme::Dark,
@@ -167,15 +199,11 @@ impl SettingsWindowHandle {
             self.cursor,
         );
 
-        // 3. Save cache (overlay state LOST here, but rendering is already done)
-        self.ui_cache = ui.into_cache();
-
-        // 4. Process messages (changes program state)
-        for msg in messages {
-            let _task = self.instance.update(msg);
-        }
-
-        // 5. Present immediately
+        // Present immediately (before processing messages, to show overlay)
+        let vp = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        );
         if let Err(e) = self.renderer.compositor.present(
             &mut self.renderer.renderer,
             &mut self.renderer.surface,
@@ -184,6 +212,18 @@ impl SettingsWindowHandle {
             || {},
         ) {
             log::warn!("settings render present failed: {e:?}");
+        }
+
+        // Process messages (changes program state)
+        if !messages.is_empty() {
+            // Save cache from current UI before rebuilding
+            drop(ui);
+            let old_ui = self.ui.take().unwrap();
+            self.ui_cache = old_ui.into_cache();
+            for msg in messages {
+                let _task = self.instance.update(msg);
+            }
+            self.rebuild_ui();
         }
     }
 
@@ -248,12 +288,6 @@ impl SettingsWindowHandle {
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
         use tao::event::WindowEvent;
         let iced_event = match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                let logical = position.to_logical::<f64>(self.scale_factor as f64);
-                let point = Point::new(logical.x as f32, logical.y as f32);
-                self.cursor = mouse::Cursor::Available(point);
-                Event::Mouse(mouse::Event::CursorMoved { position: point })
-            }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor = mouse::Cursor::Unavailable;
                 return;
