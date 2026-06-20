@@ -8,6 +8,7 @@ use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList,
 use nerust_timer::Timer;
 
 const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+const SUSPEND_RECOVERY_TICKS: u32 = 60; // ~1 second at 60fps
 
 pub struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
@@ -62,6 +63,7 @@ impl EmuThread {
             let mut timer = Timer::new();
             let mut loaded = false;
             let mut errors = 0u32;
+            let mut suspend_ticks = 0u32;
 
             loop {
                 while let Ok(cmd) = cmd_rx.try_recv() {
@@ -70,12 +72,14 @@ impl EmuThread {
                             let result = core.load(&rom, &config);
                             loaded = result.is_ok();
                             errors = 0;
+                            suspend_ticks = 0;
                             let _ = reply.send(result);
                         }
                         EmuCommand::Unload => {
                             core.unload();
                             loaded = false;
                             errors = 0;
+                            suspend_ticks = 0;
                         }
                         EmuCommand::Pause => core.set_paused(true),
                         EmuCommand::Resume => core.set_paused(false),
@@ -121,9 +125,19 @@ impl EmuThread {
                                 "render_frame failed ({errors}/{MAX_CONSECUTIVE_ERRORS}): {e}"
                             );
                             if errors >= MAX_CONSECUTIVE_ERRORS {
-                                log::error!("emulation suspended due to persistent errors");
+                                suspend_ticks = SUSPEND_RECOVERY_TICKS;
+                                log::error!(
+                                    "emulation suspended for ~1s ({} ticks)",
+                                    SUSPEND_RECOVERY_TICKS
+                                );
                             }
                         }
+                    }
+                } else if suspend_ticks > 0 {
+                    suspend_ticks -= 1;
+                    if suspend_ticks == 0 {
+                        errors = 0;
+                        log::info!("emulation resumed after suspension period");
                     }
                 }
 
