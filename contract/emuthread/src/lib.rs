@@ -119,13 +119,10 @@ impl EmuThread {
                     if let Ok(list) = core.render_frame(&mut frame_slot) {
                         *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
                         fc.fetch_add(1, Ordering::Relaxed);
-                        if !fr.load(Ordering::Relaxed)
-                            && let Ok(mut guard) = fb.lock()
-                            && !fr.load(Ordering::Acquire)
-                        {
+                        if let Ok(mut guard) = fb.lock() {
                             std::mem::swap(&mut *guard, &mut frame_slot);
-                            fr.store(true, Ordering::Release);
                         }
+                        fr.store(true, Ordering::Release);
                     }
                 }
 
