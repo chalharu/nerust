@@ -184,13 +184,15 @@ impl SettingsWindowHandle {
         );
         self.ui_cache = ui.into_cache();
 
-        let _ = self.renderer.compositor.present(
+        if let Err(e) = self.renderer.compositor.present(
             &mut self.renderer.renderer,
             &mut self.renderer.surface,
             &viewport,
             iced::Color::BLACK,
             || {},
-        );
+        ) {
+            log::warn!("settings render present failed: {e:?}");
+        }
     }
 
     pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
