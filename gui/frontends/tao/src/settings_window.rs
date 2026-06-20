@@ -96,20 +96,13 @@ impl SettingsWindowHandle {
             Size::new(viewport_physical.0, viewport_physical.1),
             scale_factor,
         );
-        let element = instance.view(window_id);
-        // SAFETY: after UserInterface::build() the lifetime 'a is phantom.
-        // The UI is dropped before instance (declaration order).
-        let ui = unsafe {
-            std::mem::transmute::<
-                UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
-                UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
-            >(UserInterface::build(
-                element,
-                vp.logical_size(),
-                Cache::default(),
-                &mut renderer,
-            ))
-        };
+        let ui = transmute_build_ui(
+            &instance,
+            window_id,
+            vp.logical_size(),
+            Cache::default(),
+            &mut renderer,
+        );
 
         window.request_redraw();
 
@@ -162,9 +155,9 @@ impl SettingsWindowHandle {
         );
 
         if !messages.is_empty() {
-            // Extract old UI, replace with a placeholder, then rebuild.
-            // The placeholder is immediately replaced, so the double transmute
-            // is harmless (the placeholder UI is never used).
+            // Step 1: Extract old UI, insert temporary UI (placeholder).
+            // The placeholder is from the pre-message state and is never
+            // displayed; it's immediately replaced in step 3.
             let window_id = self.window_id;
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
@@ -172,21 +165,36 @@ impl SettingsWindowHandle {
             )
             .logical_size();
             let renderer = &mut self.renderer.renderer;
-            let old_ui = std::mem::replace(&mut self.ui, unsafe {
-                std::mem::transmute::<
-                    UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
-                    UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
-                >(UserInterface::build(
-                    self.instance.view(window_id),
+            let old_ui = std::mem::replace(
+                &mut self.ui,
+                transmute_build_ui(
+                    &self.instance,
+                    window_id,
                     bounds,
                     Cache::default(),
                     renderer,
-                ))
-            });
-            let _cache = old_ui.into_cache();
+                ),
+            );
+            let cache = old_ui.into_cache();
+
+            // Step 2: Process messages (mutate instance state)
             for msg in messages {
                 let _task = self.instance.update(msg);
             }
+
+            // Step 3: Replace placeholder with real UI from NEW state + cache
+            let window_id = self.window_id;
+            let bounds = Viewport::with_physical_size(
+                Size::new(self.viewport_physical.0, self.viewport_physical.1),
+                self.scale_factor,
+            )
+            .logical_size();
+            let renderer = &mut self.renderer.renderer;
+            let placeholder = std::mem::replace(
+                &mut self.ui,
+                transmute_build_ui(&self.instance, window_id, bounds, cache, renderer),
+            );
+            let _ = placeholder.into_cache(); // discard placeholder
         }
     }
 
@@ -331,6 +339,42 @@ impl SettingsWindowHandle {
         self.renderer
             .compositor
             .configure_surface(&mut self.renderer.surface, width, height);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build UserInterface with lifetime transmute
+//
+// SAFETY: UserInterface<'a> has a phantom lifetime 'a that does not actually
+// borrow any data after build(). The 'a on Box<dyn Widget<'a, ...>> is a
+// type-erased upper bound that is not linked to any real borrow.
+// Additionally, the ui field is declared before instance in
+// SettingsWindowHandle, ensuring correct drop order (ui dropped first).
+//
+// self_cell v1.2.2 cannot replace this because its macro requires
+// $Dependent:ident and appends <'static> automatically, which conflicts
+// with UserInterface already having a lifetime parameter.
+#[allow(clippy::missing_transmute_annotations)]
+fn transmute_build_ui(
+    instance: &program::Instance<SettingsAppProgram>,
+    window_id: iced::window::Id,
+    bounds: Size,
+    cache: Cache,
+    renderer: &mut iced_tiny_skia::Renderer,
+) -> UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
+    // SAFETY: UserInterface<'a> has a phantom lifetime. After build(), 'a
+    // does not borrow any data. The caller ensures the returned UI is
+    // stored in a field that is dropped before the instance.
+    unsafe {
+        std::mem::transmute::<
+            UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+        >(UserInterface::build(
+            instance.view(window_id),
+            bounds,
+            cache,
+            renderer,
+        ))
     }
 }
 
