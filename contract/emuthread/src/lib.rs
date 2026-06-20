@@ -8,7 +8,6 @@ use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList,
 use nerust_timer::Timer;
 
 const MAX_CONSECUTIVE_ERRORS: u32 = 10;
-const SUSPEND_RECOVERY_TICKS: u32 = 60; // ~1 second at 60fps
 
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,
@@ -42,7 +41,7 @@ impl EmuThread {
         frame_ready: Arc<AtomicBool>,
         palette: Box<[u32; 256]>,
     ) -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(64);
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(8);
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
             Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -61,7 +60,6 @@ impl EmuThread {
             let mut timer = Timer::new();
             let mut loaded = false;
             let mut errors = 0u32;
-            let mut suspend_ticks = 0u32;
 
             loop {
                 // When idle (no ROM loaded), block on recv() to avoid busy-looping.
@@ -70,9 +68,9 @@ impl EmuThread {
                         Ok(cmd) => match cmd {
                             EmuCommand::Load(cmd) => {
                                 let result = core.load(&cmd.rom, &cmd.config);
-                                loaded = result.is_ok();
-                                errors = 0;
-                                let _ = cmd.reply.send(result);
+                            loaded = result.is_ok();
+                            errors = 0;
+                            let _ = cmd.reply.send(result);
                             }
                             EmuCommand::Quit => return,
                             _ => {}
@@ -94,7 +92,6 @@ impl EmuThread {
                             core.unload();
                             loaded = false;
                             errors = 0;
-                            suspend_ticks = 0;
                         }
                         EmuCommand::Pause => core.set_paused(true),
                         EmuCommand::Resume => core.set_paused(false),
@@ -144,19 +141,11 @@ impl EmuThread {
                                 "render_frame failed ({errors}/{MAX_CONSECUTIVE_ERRORS}): {e}"
                             );
                             if errors >= MAX_CONSECUTIVE_ERRORS {
-                                suspend_ticks = SUSPEND_RECOVERY_TICKS;
                                 log::error!(
-                                    "emulation suspended for ~1s ({} ticks)",
-                                    SUSPEND_RECOVERY_TICKS
+                                    "emulation stopped: {MAX_CONSECUTIVE_ERRORS} consecutive errors"
                                 );
                             }
                         }
-                    }
-                } else if suspend_ticks > 0 {
-                    suspend_ticks -= 1;
-                    if suspend_ticks == 0 {
-                        errors = 0;
-                        log::info!("emulation resumed after suspension period");
                     }
                 }
 
