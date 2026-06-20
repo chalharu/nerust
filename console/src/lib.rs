@@ -157,11 +157,13 @@ impl Console {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
     /// EmuThread が新しいフレームをレンダリングした場合のみ swap する。
+    /// swap 後に frame_count を再読込することで、swap 途中に EmuThread が
+    /// レンダリングしたフレームを見逃さない。
     pub fn swap_frame_buffer(&mut self) {
-        let current = self.emu.frame_count();
-        if current != self.last_presented_frame_count {
+        let before = self.emu.frame_count();
+        if before != self.last_presented_frame_count {
             self.video.swap_frame_buffer();
-            self.last_presented_frame_count = current;
+            self.last_presented_frame_count = self.emu.frame_count();
         }
     }
 
