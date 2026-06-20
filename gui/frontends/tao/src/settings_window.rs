@@ -1,11 +1,15 @@
 use crate::settings::ui::{Message, SettingsAppProgram};
 use iced::advanced::renderer;
 use iced::theme;
-use iced::{mouse, Font, Size};
+use iced::keyboard;
+use iced::mouse;
+use iced::{Event, Font, Point, Size};
+use iced_winit::core::SmolStr;
 use iced_tiny_skia::graphics::compositor::Compositor as _;
 use iced_tiny_skia::window::compositor;
 use iced_tiny_skia::window::{Compositor, Surface};
 use iced_tiny_skia::Renderer;
+use iced_winit::conversion;
 use iced_winit::graphics::Viewport;
 use iced_winit::program;
 use iced_winit::Clipboard;
@@ -15,11 +19,7 @@ use nerust_gui_shell::settings::editor::CaptureTarget;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tao::event_loop::EventLoopWindowTarget;
-use iced_winit::conversion;
-use iced_winit::core::{Event, Point, SmolStr};
-use iced_winit::core::keyboard;
-use iced_winit::core::mouse as IcedMouse;
-use iced_winit::winit::keyboard::ModifiersState;
+use tao::keyboard::ModifiersState as TaoModifiers;
 use tao::window::{Window as TaoWindow, WindowBuilder};
 
 pub(crate) struct SettingsWindowHandle {
@@ -31,7 +31,7 @@ pub(crate) struct SettingsWindowHandle {
     viewport: Size,
     viewport_physical: (u32, u32),
     pub(crate) scale_factor: f32,
-    pub(crate) modifiers: ModifiersState,
+    pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
@@ -105,7 +105,7 @@ impl SettingsWindowHandle {
             viewport,
             viewport_physical,
             scale_factor,
-            modifiers: ModifiersState::default(),
+            modifiers: keyboard::Modifiers::default(),
             pending_apply,
             should_close,
             capture_target,
@@ -157,7 +157,7 @@ impl SettingsWindowHandle {
         let theme = iced::Theme::Dark;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let viewport = Viewport::with_physical_size(
-            iced::Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
             self.scale_factor,
         );
 
@@ -196,9 +196,8 @@ impl SettingsWindowHandle {
         self.scale_factor = sf;
     }
 
-    pub(crate) fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
-        // SAFETY: tao::ModifiersState and winit::ModifiersState have same bit layout
-        self.modifiers = unsafe { std::mem::transmute(modifiers) };
+    pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
+        self.modifiers = tao_modifiers_to_iced(modifiers);
     }
 
     pub(crate) fn update_modifiers_from_tao_event(
@@ -211,64 +210,41 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        fn convert_tao_key(key: &tao::keyboard::Key) -> iced_winit::winit::keyboard::Key {
-            match key {
-                tao::keyboard::Key::Character(s) => {
-                    iced_winit::winit::keyboard::Key::Character(SmolStr::new(s))
-                }
-                _ => iced_winit::winit::keyboard::Key::Unidentified(
-                    iced_winit::winit::keyboard::NativeKey::Unidentified,
-                ),
-            }
-        }
-        fn convert_keycode(code: tao::keyboard::KeyCode) -> iced_winit::winit::keyboard::KeyCode {
-            // SAFETY: Tao is a winit fork; KeyCode enums have identical discriminant layout
-            unsafe { std::mem::transmute_copy(&code) }
-        }
         use tao::event::WindowEvent;
-        // Convert Tao WindowEvent to iced Event for UserInterface processing.
-        // Only essential events are handled; Tao types differ from winit types
-        // used by iced_winit::conversion::window_event.
         let iced_event = match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let logical = position.to_logical::<f64>(self.scale_factor as f64);
                 let point = Point::new(logical.x as f32, logical.y as f32);
-                self.cursor = IcedMouse::Cursor::Available(point);
-                Event::Mouse(IcedMouse::Event::CursorMoved { position: point })
+                self.cursor = mouse::Cursor::Available(point);
+                Event::Mouse(mouse::Event::CursorMoved { position: point })
             }
             WindowEvent::CursorLeft { .. } => {
-                self.cursor = IcedMouse::Cursor::Unavailable;
+                self.cursor = mouse::Cursor::Unavailable;
                 return;
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
-                let modifiers = conversion::modifiers(self.modifiers);
-                let location = keyboard::Location::Standard;
-                // SAFETY: tao::KeyCode layout matches winit::KeyCode
-                let physical_key = conversion::physical_key(
-                    iced_winit::winit::keyboard::PhysicalKey::Code(convert_keycode(ke.physical_key)),
-                );
-                let iced_key = conversion::key(convert_tao_key(&ke.logical_key));
-                let modified_key = conversion::key(convert_tao_key(&ke.logical_key));
-                let text = ke.text.map(|s| SmolStr::new(&s));
+                let modifiers = self.modifiers;
+                let iced_key = tao_key_to_iced_key(&ke.logical_key);
+                let physical_key = keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
                 match ke.state {
                     tao::event::ElementState::Pressed => {
                         Event::Keyboard(keyboard::Event::KeyPressed {
                             key: iced_key.clone(),
-                            modified_key,
+                            modified_key: iced_key.clone(),
                             physical_key,
                             modifiers,
-                            location,
-                            text,
+                            location: keyboard::Location::Standard,
+                            text: ke.text.map(SmolStr::new),
                             repeat: ke.repeat,
                         })
                     }
                     tao::event::ElementState::Released => {
                         Event::Keyboard(keyboard::Event::KeyReleased {
-                            key: iced_key,
-                            modified_key,
+                            key: iced_key.clone(),
+                            modified_key: iced_key,
                             physical_key,
                             modifiers,
-                            location,
+                            location: keyboard::Location::Standard,
                         })
                     }
                     _ => return,
@@ -276,17 +252,17 @@ impl SettingsWindowHandle {
             }
             WindowEvent::MouseInput { button, state, .. } => {
                 let btn = match button {
-                    tao::event::MouseButton::Left => IcedMouse::Button::Left,
-                    tao::event::MouseButton::Right => IcedMouse::Button::Right,
-                    tao::event::MouseButton::Middle => IcedMouse::Button::Middle,
+                    tao::event::MouseButton::Left => mouse::Button::Left,
+                    tao::event::MouseButton::Right => mouse::Button::Right,
+                    tao::event::MouseButton::Middle => mouse::Button::Middle,
                     _ => return,
                 };
                 match state {
                     tao::event::ElementState::Pressed => {
-                        Event::Mouse(IcedMouse::Event::ButtonPressed(btn))
+                        Event::Mouse(mouse::Event::ButtonPressed(btn))
                     }
                     tao::event::ElementState::Released => {
-                        Event::Mouse(IcedMouse::Event::ButtonReleased(btn))
+                        Event::Mouse(mouse::Event::ButtonReleased(btn))
                     }
                     _ => return,
                 }
@@ -312,6 +288,89 @@ impl SettingsWindowHandle {
             width,
             height,
         );
+    }
+}
+
+fn tao_modifiers_to_iced(m: TaoModifiers) -> keyboard::Modifiers {
+    let mut out = keyboard::Modifiers::empty();
+    out.set(keyboard::Modifiers::SHIFT, m.contains(TaoModifiers::SHIFT));
+    out.set(keyboard::Modifiers::CTRL, m.contains(TaoModifiers::CONTROL));
+    out.set(keyboard::Modifiers::ALT, m.contains(TaoModifiers::ALT));
+    out.set(keyboard::Modifiers::LOGO, m.contains(TaoModifiers::SUPER));
+    out
+}
+
+fn tao_keycode_to_iced_code(code: tao::keyboard::KeyCode) -> keyboard::key::Code {
+    use keyboard::key::Code as I;
+    use tao::keyboard::KeyCode as T;
+    match code {
+        T::KeyA => I::KeyA,       T::KeyB => I::KeyB,
+        T::KeyC => I::KeyC,       T::KeyD => I::KeyD,
+        T::KeyE => I::KeyE,       T::KeyF => I::KeyF,
+        T::KeyG => I::KeyG,       T::KeyH => I::KeyH,
+        T::KeyI => I::KeyI,       T::KeyJ => I::KeyJ,
+        T::KeyK => I::KeyK,       T::KeyL => I::KeyL,
+        T::KeyM => I::KeyM,       T::KeyN => I::KeyN,
+        T::KeyO => I::KeyO,       T::KeyP => I::KeyP,
+        T::KeyQ => I::KeyQ,       T::KeyR => I::KeyR,
+        T::KeyS => I::KeyS,       T::KeyT => I::KeyT,
+        T::KeyU => I::KeyU,       T::KeyV => I::KeyV,
+        T::KeyW => I::KeyW,       T::KeyX => I::KeyX,
+        T::KeyY => I::KeyY,       T::KeyZ => I::KeyZ,
+        T::Digit0 => I::Digit0,    T::Digit1 => I::Digit1,
+        T::Digit2 => I::Digit2,    T::Digit3 => I::Digit3,
+        T::Digit4 => I::Digit4,    T::Digit5 => I::Digit5,
+        T::Digit6 => I::Digit6,    T::Digit7 => I::Digit7,
+        T::Digit8 => I::Digit8,    T::Digit9 => I::Digit9,
+        T::ArrowUp => I::ArrowUp,     T::ArrowDown => I::ArrowDown,
+        T::ArrowLeft => I::ArrowLeft, T::ArrowRight => I::ArrowRight,
+        T::Enter => I::Enter,      T::Escape => I::Escape,
+        T::Space => I::Space,      T::Tab => I::Tab,
+        T::Backspace => I::Backspace,
+        T::Delete => I::Delete,    T::Insert => I::Insert,
+        T::Home => I::Home,        T::End => I::End,
+        T::PageUp => I::PageUp,    T::PageDown => I::PageDown,
+        T::F1 => I::F1,   T::F2 => I::F2,   T::F3 => I::F3,
+        T::F4 => I::F4,   T::F5 => I::F5,   T::F6 => I::F6,
+        T::F7 => I::F7,   T::F8 => I::F8,   T::F9 => I::F9,
+        T::F10 => I::F10, T::F11 => I::F11, T::F12 => I::F12,
+        T::ShiftLeft | T::ShiftRight => I::ShiftLeft,
+        T::ControlLeft | T::ControlRight => I::ControlLeft,
+        T::AltLeft | T::AltRight => I::AltLeft,
+        T::SuperLeft | T::SuperRight => I::SuperLeft,
+        T::Numpad0 => I::Numpad0,  T::Numpad1 => I::Numpad1,
+        T::Numpad2 => I::Numpad2,  T::Numpad3 => I::Numpad3,
+        T::Numpad4 => I::Numpad4,  T::Numpad5 => I::Numpad5,
+        T::Numpad6 => I::Numpad6,  T::Numpad7 => I::Numpad7,
+        T::Numpad8 => I::Numpad8,  T::Numpad9 => I::Numpad9,
+        T::NumpadAdd => I::NumpadAdd,
+        T::NumpadSubtract => I::NumpadSubtract,
+        T::NumpadMultiply => I::NumpadMultiply,
+        T::NumpadDivide => I::NumpadDivide,
+        T::NumpadDecimal => I::NumpadDecimal,
+        T::NumpadEnter => I::NumpadEnter,
+        T::CapsLock => I::CapsLock,
+        T::NumLock => I::NumLock,
+        T::ScrollLock => I::ScrollLock,
+        T::Comma => I::Comma,       T::Period => I::Period,
+        T::Semicolon => I::Semicolon,
+        T::Quote => I::Quote,       T::Backquote => I::Backquote,
+        T::Minus => I::Minus,       T::Equal => I::Equal,
+        T::BracketLeft => I::BracketLeft,
+        T::BracketRight => I::BracketRight,
+        T::Backslash => I::Backslash,
+        T::Slash => I::Slash,
+        T::IntlBackslash => I::IntlBackslash,
+        _ => I::Backquote, /* fallback */
+    }
+}
+
+fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
+    match key {
+        tao::keyboard::Key::Character(s) => {
+            keyboard::Key::Character(SmolStr::new(s))
+        }
+        _ => keyboard::Key::Unidentified,
     }
 }
 
