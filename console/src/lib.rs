@@ -46,6 +46,7 @@ pub struct Console {
     emu: EmuThread,
     video: ConsoleVideo,
     metrics: Arc<Mutex<ConsoleMetrics>>,
+    last_presented_frame_count: u64,
 }
 
 impl Console {
@@ -130,6 +131,7 @@ impl Console {
             emu,
             video: ConsoleVideo::new(render_profile, shared_fb, disp_fb),
             metrics,
+            last_presented_frame_count: 0,
         }
     }
 
@@ -154,9 +156,13 @@ impl Console {
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
-    /// EmuThread は Timer ループで自動レンダリングする。
+    /// EmuThread が新しいフレームをレンダリングした場合のみ swap する。
     pub fn swap_frame_buffer(&mut self) {
-        self.video.swap_frame_buffer();
+        let current = self.emu.frame_count();
+        if current != self.last_presented_frame_count {
+            self.video.swap_frame_buffer();
+            self.last_presented_frame_count = current;
+        }
     }
 
     /// 表示バッファへの参照を返す。
