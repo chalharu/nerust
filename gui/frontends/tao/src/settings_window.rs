@@ -91,6 +91,7 @@ impl SettingsWindowHandle {
         );
 
         let scale_factor = window.scale_factor() as f32;
+        window.request_redraw();  // Trigger initial render
 
         Self {
             window,
