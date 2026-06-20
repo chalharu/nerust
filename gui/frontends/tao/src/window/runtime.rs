@@ -4,7 +4,6 @@ mod renderer;
 use self::host::{HostAction, HostState};
 use self::renderer::WgpuRenderer;
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::load::LoadRequest;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -33,7 +32,7 @@ impl WindowRuntime {
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_request),
+            host: HostState::new(AppMenu::new(proxy), default_load_request),
             renderer: None,
         }
     }
@@ -150,10 +149,7 @@ impl WindowRuntime {
                         HostAction::Exit => *control_flow = ControlFlow::Exit,
                     }
                 }
-                UserEvent::ApplySettings { snapshot, reply } => {
-                    let _ = reply.send(self.apply_settings(snapshot));
-                }
-                UserEvent::SettingsClosed => self.host.on_settings_closed(),
+
             },
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
@@ -181,13 +177,6 @@ impl WindowRuntime {
             .map(|window| WgpuRenderer::new(window, self.host.session()));
     }
 
-    fn apply_settings(&mut self, settings: SettingsSnapshot) -> Result<(), String> {
-        let plan = self.host.apply_settings(settings)?;
-        if plan.renderer_rebuild_required {
-            self.recreate_renderer();
-        }
-        Ok(())
-    }
 }
 
 impl Drop for WindowRuntime {

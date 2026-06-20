@@ -1,5 +1,4 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
-use crate::settings;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -20,7 +19,7 @@ use std::time::Instant;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
-    event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
+    event_loop::{ControlFlow, EventLoopWindowTarget},
     keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
@@ -41,8 +40,6 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     default_load_request: LoadRequest,
-    user_event_proxy: EventLoopProxy<UserEvent>,
-    settings_helper: Option<settings::SettingsHelperHandle>,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
@@ -53,7 +50,6 @@ pub(crate) struct HostState {
 impl HostState {
     pub(crate) fn new(
         app_menu: AppMenu,
-        user_event_proxy: EventLoopProxy<UserEvent>,
         default_load_request: LoadRequest,
     ) -> Self {
         Self {
@@ -62,8 +58,6 @@ impl HostState {
             app_menu,
             shell: NativeShellState::new(),
             default_load_request,
-            user_event_proxy,
-            settings_helper: None,
             settings_window: None,
             settings_open: false,
             resume_after_settings: false,
@@ -303,9 +297,6 @@ impl HostState {
         self.remember_fit_window_size();
         self.settings_open = false;
         self.resume_after_settings = false;
-        if let Some(helper) = self.settings_helper.take() {
-            helper.terminate();
-        }
         self.settings_window.take();
         self.session.flush_before_exit();
         true
@@ -339,7 +330,6 @@ impl HostState {
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        self.settings_helper = None;
         self.settings_window = None;
         if !self.settings_open {
             return;

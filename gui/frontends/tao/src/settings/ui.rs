@@ -1,4 +1,3 @@
-use super::bridge::SettingsChildBridge;
 use iced::alignment::Alignment;
 use iced::keyboard::key::Code;
 use iced::widget::{
@@ -84,7 +83,6 @@ pub(crate) enum Message {
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
-    CloseRequested,
     Submit,
     Cancel,
 }
@@ -92,22 +90,6 @@ pub(crate) enum Message {
 // ---------------------------------------------------------------------------
 // Old path (dead code in PR2, removed in PR3 -- child process iced::application)
 // ---------------------------------------------------------------------------
-
-// Old path (dead code in PR2, removed in PR3 -- child process iced::application)
-// View function uses iced::Renderer (default) which differs from iced_tiny_skia::Renderer.
-// The body never runs in PR2; only kept for compilation.
-#[allow(dead_code)]
-pub(super) fn run(
-    snapshot: SettingsSnapshot,
-    bridge: SettingsChildBridge<
-        std::io::BufReader<std::io::Stdin>,
-        std::io::BufWriter<std::io::Stdout>,
-    >,
-) -> Result<(), String> {
-    let _ = snapshot;
-    let _ = bridge;
-    Err("old settings UI path is disabled in this build".into())
-}
 
 // ---------------------------------------------------------------------------
 // New path: Program + State (iced_winit integration)
@@ -183,7 +165,6 @@ pub(crate) struct SettingsAppState {
     input_section: InputPageSection,
     storage_directory_input: String,
     error_message: Option<String>,
-    submitting: bool,
 }
 
 impl SettingsAppState {
@@ -204,7 +185,6 @@ impl SettingsAppState {
             input_section: InputPageSection::Attachment(0),
             storage_directory_input,
             error_message: None,
-            submitting: false,
         }
     }
 
@@ -316,9 +296,6 @@ impl SettingsAppState {
                     return Task::none();
                 }
                 *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
-                self.should_close.store(true, Ordering::Release);
-            }
-            Message::CloseRequested => {
                 self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
