@@ -48,10 +48,7 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(
-        app_menu: AppMenu,
-        default_load_request: LoadRequest,
-    ) -> Self {
+    pub(crate) fn new(app_menu: AppMenu, default_load_request: LoadRequest) -> Self {
         Self {
             window: None,
             session: SessionHandle::new_for_host(HostBackendIdentity::tao_wgpu()),
