@@ -826,7 +826,9 @@ impl ApplicationHandler for AndroidFrontend {
                 window.request_redraw();
             }
             if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
-                event_loop.set_control_flow(ControlFlow::Poll);
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    self.shell.next_frame_deadline(now),
+                ));
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
