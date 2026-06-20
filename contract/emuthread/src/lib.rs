@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -34,9 +34,11 @@ impl fmt::Debug for EmuThread {
 
 impl EmuThread {
     /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
+    /// `frame_ready` signals ConsoleVideo that a new frame is available (1 = ready, 0 = consumed).
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
+        frame_ready: Arc<AtomicBool>,
     ) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
@@ -48,6 +50,7 @@ impl EmuThread {
         let fb = Arc::clone(&shared_fb);
         let fc = Arc::clone(&frame_count);
         let fps_c = Arc::clone(&fps);
+        let fr = Arc::clone(&frame_ready);
         let thread = thread::spawn(move || {
             let caps = core.capabilities();
             let default_format =
@@ -114,8 +117,12 @@ impl EmuThread {
                         Ok(list) => {
                             *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
                             fc.fetch_add(1, Ordering::Relaxed);
-                            if let Ok(mut guard) = fb.lock() {
+                            if !fr.load(Ordering::Relaxed)
+                                && let Ok(mut guard) = fb.lock()
+                                && !fr.load(Ordering::Acquire)
+                            {
                                 std::mem::swap(&mut *guard, &mut frame_slot);
+                                fr.store(true, Ordering::Release);
                             }
                             errors = 0;
                         }

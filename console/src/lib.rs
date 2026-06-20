@@ -16,6 +16,7 @@ use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -46,7 +47,6 @@ pub struct Console {
     emu: EmuThread,
     video: ConsoleVideo,
     metrics: Arc<Mutex<ConsoleMetrics>>,
-    last_presented_frame_count: u64,
 }
 
 impl Console {
@@ -125,13 +125,17 @@ impl Console {
         let mut speaker = speaker;
         speaker.start();
         let core = NesConsoleCore::new_empty(controller, speaker);
-        let emu = EmuThread::spawn(Box::new(core), Arc::clone(&shared_fb));
+        let frame_ready = Arc::new(AtomicBool::new(false));
+        let emu = EmuThread::spawn(
+            Box::new(core),
+            Arc::clone(&shared_fb),
+            Arc::clone(&frame_ready),
+        );
 
         Self {
             emu,
-            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb),
+            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb, frame_ready),
             metrics,
-            last_presented_frame_count: 0,
         }
     }
 
@@ -156,14 +160,12 @@ impl Console {
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
-    /// EmuThread が新しいフレームをレンダリングした場合のみ swap する。
-    /// swap 後に frame_count を再読込することで、swap 途中に EmuThread が
-    /// レンダリングしたフレームを見逃さない。
+    /// frame_ready フラグで handshake を行い、新しいフレームがある場合のみ swap する。
+    /// frame_count は frontend の再描画要求 (wants_redraw) 用に更新する。
     pub fn swap_frame_buffer(&mut self) {
-        let before = self.emu.frame_count();
-        if before != self.last_presented_frame_count {
-            self.video.swap_frame_buffer();
-            self.last_presented_frame_count = self.emu.frame_count();
+        self.video.swap_frame_buffer();
+        if let Ok(mut guard) = self.metrics.lock() {
+            guard.frame_counter = self.emu.frame_count();
         }
     }
 
