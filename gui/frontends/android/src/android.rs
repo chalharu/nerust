@@ -824,7 +824,6 @@ impl ApplicationHandler for AndroidFrontend {
                 .wants_redraw(metrics.frame_counter, metrics.loaded, metrics.paused)
             {
                 window.request_redraw();
-                self.shell.on_redraw_requested();
             }
             if self.shell.wants_poll(metrics.loaded, metrics.paused) {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
