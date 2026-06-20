@@ -52,12 +52,8 @@ impl ConsoleVideo {
     }
 
     pub fn swap_frame_buffer(&mut self) {
-        if let Ok(guard) = self.frame_buffer.lock() {
-            let src = guard.as_ref();
-            let dst = self.disp_fb.as_mut();
-            if dst.len() == src.len() {
-                dst.copy_from_slice(src);
-            }
+        if let Ok(mut guard) = self.frame_buffer.lock() {
+            std::mem::swap(&mut *guard, &mut self.disp_fb);
         }
     }
 
