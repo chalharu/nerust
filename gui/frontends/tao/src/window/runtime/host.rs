@@ -256,10 +256,8 @@ impl HostState {
         // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
         // On other platforms, it fires on the next event loop iteration.
         // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
-        if self.active {
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+        if self.active && let Some(window) = self.window.as_ref() {
+            window.request_redraw();
         }
     }
 
