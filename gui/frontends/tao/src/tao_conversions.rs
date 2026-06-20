@@ -139,3 +139,81 @@ pub(crate) fn default_font() -> Font {
         Font::DEFAULT
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_keycodes_have_mapping() {
+        use tao::keyboard::KeyCode as T;
+        let codes = [
+            T::KeyA,
+            T::KeyZ,
+            T::Digit0,
+            T::Digit9,
+            T::ArrowUp,
+            T::ArrowDown,
+            T::ArrowLeft,
+            T::ArrowRight,
+            T::Enter,
+            T::Escape,
+            T::Space,
+            T::Tab,
+            T::Backspace,
+            T::Delete,
+            T::Home,
+            T::End,
+            T::F1,
+            T::F12,
+            T::ShiftLeft,
+            T::ControlLeft,
+            T::AltLeft,
+            T::SuperLeft,
+            T::Numpad0,
+            T::Numpad9,
+            T::NumpadAdd,
+            T::NumpadSubtract,
+            T::NumpadMultiply,
+            T::NumpadDivide,
+            T::CapsLock,
+            T::NumLock,
+            T::ScrollLock,
+            T::Comma,
+            T::Period,
+            T::Semicolon,
+            T::Quote,
+            T::Minus,
+            T::Equal,
+            T::BracketLeft,
+            T::BracketRight,
+            T::Backslash,
+            T::Slash,
+            T::IntlBackslash,
+        ];
+        for code in codes {
+            let iced_code = tao_keycode_to_iced_code(code);
+            // Backquote is the fallback; no tested key should hit it.
+            assert_ne!(
+                iced_code as i32,
+                keyboard::key::Code::Backquote as i32,
+                "KeyCode variant {:?} fell through to fallback",
+                code,
+            );
+        }
+    }
+
+    #[test]
+    fn character_key_round_trip() {
+        let key = tao::keyboard::Key::Character("a");
+        let iced = tao_key_to_iced_key(&key);
+        assert_eq!(iced, keyboard::Key::Character(SmolStr::new("a")));
+    }
+
+    #[test]
+    fn unidentified_key_maps_to_unidentified() {
+        use tao::keyboard::NativeKeyCode;
+        let key = tao::keyboard::Key::Unidentified(NativeKeyCode::Unidentified);
+        assert_eq!(tao_key_to_iced_key(&key), keyboard::Key::Unidentified);
+    }
+}
