@@ -121,8 +121,8 @@ impl EmuThread {
                         fc.fetch_add(1, Ordering::Relaxed);
                         if let Ok(mut guard) = fb.lock() {
                             std::mem::swap(&mut *guard, &mut frame_slot);
+                            fr.store(true, Ordering::Release);
                         }
-                        fr.store(true, Ordering::Release);
                     }
                 }
 
