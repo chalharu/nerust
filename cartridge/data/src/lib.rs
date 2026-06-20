@@ -1,9 +1,5 @@
-mod ines;
-mod nes20;
-
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_nes_core::cartridge_data_parts::CartridgeDataParts;
 use nerust_nes_core::cartridge_rom::CartridgeData;
+use nerust_nes_core::rom_parse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CartridgeParseError {
@@ -16,37 +12,18 @@ pub enum CartridgeParseError {
     Unexpected,
 }
 
-pub fn parse_cartridge<I: Iterator<Item = u8>>(
-    input: &mut I,
-) -> Result<CartridgeData, CartridgeParseError> {
-    let mut headers = input.take(4).collect::<Vec<_>>();
-    if headers.len() != 4 {
-        Err(CartridgeParseError::UnexpectedEof)
-    } else if headers[0] == 0x4e && headers[1] == 0x45 && headers[2] == 0x53 && headers[3] == 0x1a {
-        headers.extend(input.take(12));
-        if headers.len() != 16 {
-            return Err(CartridgeParseError::UnexpectedEof);
-        }
-        if headers[7] & 0x0C == 0x08 {
-            nes20::read_nes20(&headers, input)
-        } else {
-            ines::read_ines(&headers, input)
-        }
-    } else {
-        Err(CartridgeParseError::DataError)
-    }
-}
-
 pub fn parse_cartridge_bytes(data: &[u8]) -> Result<CartridgeData, CartridgeParseError> {
-    parse_cartridge(&mut data.iter().copied())
-}
-
-fn cartridge_data(parts: CartridgeDataParts) -> Result<CartridgeData, CartridgeParseError> {
-    CartridgeData::new(parts).map_err(|_| CartridgeParseError::DataError)
-}
-
-fn validate_mirror_mode(mirror_mode: u8) -> Result<MirrorMode, CartridgeParseError> {
-    MirrorMode::try_from(mirror_mode).map_err(|_| CartridgeParseError::DataError)
+    rom_parse::parse_rom(data).map_err(|e| match e {
+        nerust_nes_core::cartridge_error::CartridgeError::DataError => {
+            CartridgeParseError::DataError
+        }
+        nerust_nes_core::cartridge_error::CartridgeError::UnexpectedEof => {
+            CartridgeParseError::UnexpectedEof
+        }
+        nerust_nes_core::cartridge_error::CartridgeError::Unexpected => {
+            CartridgeParseError::Unexpected
+        }
+    })
 }
 
 #[cfg(test)]

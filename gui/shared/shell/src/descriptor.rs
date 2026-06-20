@@ -179,7 +179,6 @@ impl NesAdapter {
     }
 }
 
-#[derive(Debug)]
 struct NesRuntime {
     core: SessionCore,
 }

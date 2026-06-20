@@ -46,6 +46,7 @@ pub(crate) struct HostState {
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
+    pub(crate) active: bool,
 }
 
 impl HostState {
@@ -65,6 +66,7 @@ impl HostState {
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
+            active: true,
         }
     }
 
@@ -248,23 +250,16 @@ impl HostState {
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         self.sync_fullscreen_default_from_window();
-        let now = Instant::now();
-        self.maybe_refresh_window_title(now);
+        self.maybe_refresh_window_title(Instant::now());
+        *control_flow = ControlFlow::Wait;
 
-        let Some(window) = self.window.as_ref() else {
-            *control_flow = ControlFlow::Wait;
-            return;
-        };
-
-        let metrics = self.session.metrics();
-        if self.shell.wants_redraw(metrics.frame_counter) {
+        // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
+        // On other platforms, it fires on the next event loop iteration.
+        // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
+        if self.active
+            && let Some(window) = self.window.as_ref()
+        {
             window.request_redraw();
-        }
-
-        if self.shell.wants_poll(metrics.loaded, metrics.paused) {
-            *control_flow = ControlFlow::WaitUntil(now + NativeShellState::FRAME_POLL_INTERVAL);
-        } else {
-            *control_flow = ControlFlow::Wait;
         }
     }
 
@@ -276,7 +271,7 @@ impl HostState {
                 self.maybe_refresh_window_title(Instant::now());
             }
             RenderResult::Skipped | RenderResult::Error => {
-                self.shell.needs_redraw = true;
+                self.request_redraw();
             }
         }
     }

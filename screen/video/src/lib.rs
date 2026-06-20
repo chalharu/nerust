@@ -211,6 +211,13 @@ impl FrameBuffer {
         self.data.resize(len, 0);
     }
 
+    pub fn set_format(&mut self, format: PixelFormat) {
+        self.format = format;
+        if self.width > 0 {
+            self.resize(self.width, self.height);
+        }
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }

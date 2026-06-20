@@ -80,7 +80,14 @@ impl WindowRuntime {
                 WindowEvent::CloseRequested if self.host.prepare_close() => {
                     *control_flow = ControlFlow::Exit;
                 }
-                WindowEvent::Focused(false) => self.host.clear_keys(),
+                WindowEvent::Focused(true) => {
+                    self.host.active = true;
+                    self.host.request_redraw();
+                }
+                WindowEvent::Focused(false) => {
+                    self.host.active = false;
+                    self.host.clear_keys();
+                }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
                     if let Some(window_size) = self.host.window_surface_size()

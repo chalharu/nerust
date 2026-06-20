@@ -11,6 +11,7 @@ pub mod cartridge_data_parts;
 pub mod cartridge_error;
 pub mod cartridge_rom;
 mod cartridge_runtime_state;
+pub mod console_core;
 pub mod controller;
 mod cpu;
 mod interrupt;
@@ -20,6 +21,7 @@ mod persistence_codec;
 mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
+pub mod rom_parse;
 
 use self::apu::Core as Apu;
 use self::cart_device::Cartridge;
