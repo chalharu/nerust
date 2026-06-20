@@ -26,9 +26,9 @@ use tao::window::{Window as TaoWindow, WindowBuilder};
 pub(crate) struct SettingsWindowHandle {
     pub(crate) window: Arc<TaoWindow>,
     window_id: iced::window::Id,
+    // ui before instance: correct drop order (phantom lifetime)
+    ui: UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
     instance: program::Instance<SettingsAppProgram>,
-    ui_cache: Cache,
-    ui: Option<UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>>,
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
@@ -74,13 +74,11 @@ impl SettingsWindowHandle {
             capture_target: capture_target.clone(),
         };
         let (instance, _task) = program::Instance::new(program);
-
         let scale_factor = window.scale_factor() as f32;
         let window_size = window.inner_size();
         let viewport_physical = (window_size.width, window_size.height);
         let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
         let viewport = Size::new(logical_size.width as f32, logical_size.height as f32);
-        let ui_cache = Cache::default();
 
         let mut compositor = compositor::new(
             iced_tiny_skia::Settings {
@@ -89,18 +87,37 @@ impl SettingsWindowHandle {
             },
             Arc::clone(&window),
         );
-        let renderer = compositor.create_renderer();
+        let mut renderer = compositor.create_renderer();
         let surface =
             compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
+
+        // Eagerly create the UserInterface so ensure_ui() is not needed.
+        let vp = Viewport::with_physical_size(
+            Size::new(viewport_physical.0, viewport_physical.1),
+            scale_factor,
+        );
+        let element = instance.view(window_id);
+        // SAFETY: after UserInterface::build() the lifetime 'a is phantom.
+        // The UI is dropped before instance (declaration order).
+        let ui = unsafe {
+            std::mem::transmute::<
+                UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+                UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+            >(UserInterface::build(
+                element,
+                vp.logical_size(),
+                Cache::default(),
+                &mut renderer,
+            ))
+        };
 
         window.request_redraw();
 
         Self {
             window,
             window_id,
+            ui,
             instance,
-            ui_cache,
-            ui: None,
             renderer: SettingsRenderer {
                 compositor,
                 surface,
@@ -116,33 +133,6 @@ impl SettingsWindowHandle {
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         }
-    }
-
-    /// Ensure a UserInterface exists. Creates one from current view + cache if needed,
-    /// using unsafe to extend the lifetime to 'static because both the UI and the
-    /// instance it borrows from are owned by this struct.
-    fn ensure_ui(&mut self) {
-        if self.ui.is_some() {
-            return;
-        }
-        let vp = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
-        );
-        let element = self.instance.view(self.window_id);
-        let cache = std::mem::take(&mut self.ui_cache);
-        let ui = UserInterface::build(
-            element,
-            vp.logical_size(),
-            cache,
-            &mut self.renderer.renderer,
-        );
-        self.ui = Some(unsafe {
-            std::mem::transmute::<
-                UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
-                UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
-            >(ui)
-        });
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
@@ -163,22 +153,37 @@ impl SettingsWindowHandle {
             }
         }
 
-        self.ensure_ui();
-
-        {
-            let ui = self.ui.as_mut().unwrap();
-            let _state = ui.update(
-                &[mapped],
-                self.cursor,
-                &mut self.renderer.renderer,
-                &mut self.clipboard,
-                &mut messages,
-            );
-        }
+        let _state = self.ui.update(
+            &[mapped],
+            self.cursor,
+            &mut self.renderer.renderer,
+            &mut self.clipboard,
+            &mut messages,
+        );
 
         if !messages.is_empty() {
-            let old_ui = self.ui.take().unwrap();
-            self.ui_cache = old_ui.into_cache();
+            // Extract old UI, replace with a placeholder, then rebuild.
+            // The placeholder is immediately replaced, so the double transmute
+            // is harmless (the placeholder UI is never used).
+            let window_id = self.window_id;
+            let bounds = Viewport::with_physical_size(
+                Size::new(self.viewport_physical.0, self.viewport_physical.1),
+                self.scale_factor,
+            )
+            .logical_size();
+            let renderer = &mut self.renderer.renderer;
+            let old_ui = std::mem::replace(&mut self.ui, unsafe {
+                std::mem::transmute::<
+                    UserInterface<'_, Message, iced::Theme, iced_tiny_skia::Renderer>,
+                    UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+                >(UserInterface::build(
+                    self.instance.view(window_id),
+                    bounds,
+                    Cache::default(),
+                    renderer,
+                ))
+            });
+            let _cache = old_ui.into_cache();
             for msg in messages {
                 let _task = self.instance.update(msg);
             }
@@ -193,29 +198,25 @@ impl SettingsWindowHandle {
             self.scale_factor,
         );
 
-        self.ensure_ui();
-
-        if let Some(ui) = self.ui.as_mut() {
-            // update() with RedrawRequested to refresh widget status (hover state)
-            let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
-                std::time::Instant::now(),
-            ));
-            let _ = ui.update(
-                &[redraw_event],
-                self.cursor,
-                &mut self.renderer.renderer,
-                &mut self.clipboard,
-                &mut std::vec::Vec::new(),
-            );
-            ui.draw(
-                &mut self.renderer.renderer,
-                &theme,
-                &renderer::Style {
-                    text_color: style.text_color,
-                },
-                self.cursor,
-            );
-        }
+        // update() with RedrawRequested to refresh widget status (hover state)
+        let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        ));
+        let _ = self.ui.update(
+            &[redraw_event],
+            self.cursor,
+            &mut self.renderer.renderer,
+            &mut self.clipboard,
+            &mut std::vec::Vec::new(),
+        );
+        self.ui.draw(
+            &mut self.renderer.renderer,
+            &theme,
+            &renderer::Style {
+                text_color: style.text_color,
+            },
+            self.cursor,
+        );
 
         if let Err(e) = self.renderer.compositor.present(
             &mut self.renderer.renderer,
@@ -314,6 +315,8 @@ impl SettingsWindowHandle {
                     .store(true, std::sync::atomic::Ordering::Release);
                 return;
             }
+            // Touch, IME, axis motion, and other platform-specific events
+            // are not needed for the settings UI.
             _ => return,
         };
         self.handle_event(iced_event);
