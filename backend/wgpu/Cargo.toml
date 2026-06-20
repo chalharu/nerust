@@ -8,7 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 log.workspace = true
-nerust_console.workspace = true
 nerust_screen_video.workspace = true
 nerust_screen_wgpu.workspace = true
 pollster.workspace = true

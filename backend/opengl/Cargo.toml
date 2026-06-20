@@ -7,6 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_console.workspace = true
 nerust_screen_opengl.workspace = true
 nerust_screen_video.workspace = true

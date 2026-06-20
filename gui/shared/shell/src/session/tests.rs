@@ -17,6 +17,7 @@ use nerust_contract_core::rom::RomFormat;
 use nerust_contract_core::rom::RomIdentity;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_session::core::SessionCore;
+use nerust_screen_video::FrameBuffer;
 
 use nerust_contract_core::audio::AudioBackend;
 use nerust_input_schema::{DigitalInputEvent, SystemId};
@@ -38,6 +39,14 @@ impl AudioBackend for TestSpeaker {
 struct TestRuntime(SessionCore);
 
 impl SystemRuntime for TestRuntime {
+    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+        f(self.0.frame_buffer().as_ref());
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        self.0.frame_buffer()
+    }
+
     fn snapshot(&self) -> SystemRuntimeSnapshot {
         SystemRuntimeSnapshot {
             metrics: self.0.metrics(),
@@ -153,6 +162,14 @@ impl SystemInputAdapter for MockInputAdapter {
 }
 
 impl SystemRuntime for MockRuntime {
+    fn with_frame_buffer(&self, _f: &mut dyn FnMut(&[u8])) {
+        unreachable!("MockRuntime never calls with_frame_buffer");
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        unreachable!("MockRuntime never calls frame_buffer");
+    }
+
     fn snapshot(&self) -> SystemRuntimeSnapshot {
         SystemRuntimeSnapshot {
             metrics: ConsoleMetrics {
@@ -308,6 +325,14 @@ struct PersistenceRuntime {
 }
 
 impl SystemRuntime for PersistenceRuntime {
+    fn with_frame_buffer(&self, _f: &mut dyn FnMut(&[u8])) {
+        unreachable!("PersistenceRuntime never calls with_frame_buffer");
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        unreachable!("PersistenceRuntime never calls frame_buffer");
+    }
+
     fn snapshot(&self) -> SystemRuntimeSnapshot {
         SystemRuntimeSnapshot {
             metrics: ConsoleMetrics {

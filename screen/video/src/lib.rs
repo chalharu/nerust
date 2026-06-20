@@ -30,6 +30,31 @@ impl VideoFrameFormat {
     }
 }
 
+use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoFrameHandle {
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: usize,
+    pub bytes: Arc<[u8]>,
+}
+
+impl VideoFrameHandle {
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VideoRenderProfile {
+    pub source_logical_size: LogicalSize,
+    pub logical_size: LogicalSize,
+    pub physical_size: PhysicalSize,
+    pub frame_format: VideoFrameFormat,
+    pub ntsc_packed_rgba8: Option<Box<[u8]>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VideoFrameSpec {
     frame_format: VideoFrameFormat,

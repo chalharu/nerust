@@ -22,7 +22,7 @@ impl GuiSession {
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.core.with_frame_buffer(f)
+        f(self.core.frame_buffer().as_ref())
     }
 
     pub fn window_size(&self) -> WindowSize {
