@@ -4,7 +4,6 @@ use iced::theme;
 use iced::keyboard;
 use iced::mouse;
 use iced::{Event, Font, Point, Size};
-use iced_winit::core::SmolStr;
 use iced_tiny_skia::graphics::compositor::Compositor as _;
 use iced_tiny_skia::window::compositor;
 use iced_tiny_skia::window::{Compositor, Surface};
@@ -14,6 +13,7 @@ use iced_winit::graphics::Viewport;
 use iced_winit::program;
 use iced_winit::Clipboard;
 use iced_winit::runtime::user_interface::{Cache, UserInterface};
+use iced_winit::core::{SmolStr};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::settings::editor::CaptureTarget;
 use std::sync::atomic::AtomicBool;
@@ -29,6 +29,7 @@ pub(crate) struct SettingsWindowHandle {
     window_id: iced::window::Id,
     instance: program::Instance<SettingsAppProgram>,
     ui_cache: Cache,
+    ui: Option<UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>>,
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
@@ -95,13 +96,14 @@ impl SettingsWindowHandle {
             window_size.height,
         );
 
-        window.request_redraw();  // Trigger initial render
+        window.request_redraw();
 
         Self {
             window,
             window_id,
             instance,
             ui_cache,
+            ui: None,
             renderer: SettingsRenderer {
                 compositor,
                 surface,
@@ -117,6 +119,23 @@ impl SettingsWindowHandle {
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         }
+    }
+
+    /// Ensure a UserInterface exists. Creates one from current view + cache if needed,
+    /// using unsafe to extend the lifetime to 'static because both the UI and the
+    /// instance it borrows from are owned by this struct.
+    fn ensure_ui(&mut self) {
+        if self.ui.is_some() {
+            return;
+        }
+        let vp = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        );
+        let element = self.instance.view(self.window_id);
+        let cache = std::mem::take(&mut self.ui_cache);
+        let ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+        self.ui = Some(unsafe { std::mem::transmute(ui) });
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
@@ -136,54 +155,25 @@ impl SettingsWindowHandle {
             }
         }
 
-        // Build UserInterface once; update and draw on the SAME instance.
-        // Do NOT rebuild between update and draw, because build() resets
-        // self.overlay to None, losing any open overlay (dropdown) state
-        // that was set by update().
-        let vp = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
-        );
-        let element = self.instance.view(self.window_id);
-        let cache = std::mem::take(&mut self.ui_cache);
-        let mut ui = UserInterface::build(element, vp.logical_size(), cache, &mut self.renderer.renderer);
+        self.ensure_ui();
 
-        // 1. Process event (may open dropdown → sets ui.overlay)
-        let _state = ui.update(
-            &[mapped],
-            self.cursor,
-            &mut self.renderer.renderer,
-            &mut self.clipboard,
-            &mut messages,
-        );
-
-        // 2. Draw overlay + main tree on the SAME UI instance
-        ui.draw(
-            &mut self.renderer.renderer,
-            &iced::Theme::Dark,
-            &renderer::Style {
-                text_color: <iced::Theme as theme::Base>::base(&iced::Theme::Dark).text_color,
-            },
-            self.cursor,
-        );
-
-        // 3. Save cache (overlay state LOST here, but rendering is already done)
-        self.ui_cache = ui.into_cache();
-
-        // 4. Process messages (changes program state)
-        for msg in messages {
-            let _task = self.instance.update(msg);
+        {
+            let ui = self.ui.as_mut().unwrap();
+            let _state = ui.update(
+                &[mapped],
+                self.cursor,
+                &mut self.renderer.renderer,
+                &mut self.clipboard,
+                &mut messages,
+            );
         }
 
-        // 5. Present immediately
-        if let Err(e) = self.renderer.compositor.present(
-            &mut self.renderer.renderer,
-            &mut self.renderer.surface,
-            &vp,
-            iced::Color::BLACK,
-            || {},
-        ) {
-            log::warn!("settings render present failed: {e:?}");
+        if !messages.is_empty() {
+            let old_ui = self.ui.take().unwrap();
+            self.ui_cache = old_ui.into_cache();
+            for msg in messages {
+                let _task = self.instance.update(msg);
+            }
         }
     }
 
@@ -195,23 +185,18 @@ impl SettingsWindowHandle {
             self.scale_factor,
         );
 
-        let element = self.instance.view(self.window_id);
-        let cache = std::mem::take(&mut self.ui_cache);
-        let mut ui = UserInterface::build(
-            element,
-            vp.logical_size(),
-            cache,
-            &mut self.renderer.renderer,
-        );
-        ui.draw(
-            &mut self.renderer.renderer,
-            &theme,
-            &renderer::Style {
-                text_color: style.text_color,
-            },
-            self.cursor,
-        );
-        self.ui_cache = ui.into_cache();
+        self.ensure_ui();
+
+        if let Some(ui) = self.ui.as_mut() {
+            ui.draw(
+                &mut self.renderer.renderer,
+                &theme,
+                &renderer::Style {
+                    text_color: style.text_color,
+                },
+                self.cursor,
+            );
+        }
 
         if let Err(e) = self.renderer.compositor.present(
             &mut self.renderer.renderer,
@@ -330,6 +315,10 @@ impl SettingsWindowHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tao type conversions
+// ---------------------------------------------------------------------------
+
 fn tao_modifiers_to_iced(m: TaoModifiers) -> keyboard::Modifiers {
     let mut out = keyboard::Modifiers::empty();
     out.set(keyboard::Modifiers::SHIFT, m.contains(TaoModifiers::SHIFT));
@@ -400,7 +389,7 @@ fn tao_keycode_to_iced_code(code: tao::keyboard::KeyCode) -> keyboard::key::Code
         T::Backslash => I::Backslash,
         T::Slash => I::Slash,
         T::IntlBackslash => I::IntlBackslash,
-        _ => I::Backquote, /* fallback */
+        _ => I::Backquote,
     }
 }
 
