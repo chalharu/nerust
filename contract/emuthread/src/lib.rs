@@ -34,11 +34,13 @@ impl fmt::Debug for EmuThread {
 
 impl EmuThread {
     /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
-    /// `frame_ready` signals ConsoleVideo that a new frame is available (1 = ready, 0 = consumed).
+    /// `frame_ready` signals ConsoleVideo that a new frame is available.
+    /// `palette` is the initial palette for the internal frame buffer (must match the renderer's palette).
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         frame_ready: Arc<AtomicBool>,
+        palette: Box<[u32; 256]>,
     ) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
@@ -52,15 +54,11 @@ impl EmuThread {
         let fps_c = Arc::clone(&fps);
         let fr = Arc::clone(&frame_ready);
         let thread = thread::spawn(move || {
-            let caps = core.capabilities();
-            let default_format =
-                caps.output_formats
-                    .first()
-                    .cloned()
-                    .unwrap_or(PixelFormat::PaletteIndex {
-                        palette: Box::new([0u32; 256]),
-                    });
-            let mut frame_slot = FrameBuffer::with_capacity(256, 240, default_format);
+            let mut frame_slot = FrameBuffer::with_capacity(
+                256,
+                240,
+                PixelFormat::PaletteIndex { palette },
+            );
             frame_slot.resize(256, 240);
 
             let mut timer = Timer::new();
