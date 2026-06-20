@@ -257,18 +257,13 @@ impl HostState {
         };
 
         let metrics = self.session.metrics();
-        if self
-            .shell
-            .wants_redraw(metrics.frame_counter, metrics.loaded, metrics.paused)
-        {
+        if self.shell.wants_redraw(metrics.frame_counter) {
             window.request_redraw();
         }
 
-        if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
-            *control_flow = ControlFlow::WaitUntil(self.shell.next_frame_deadline(now));
-        } else {
-            *control_flow = ControlFlow::Wait;
-        }
+        // The render loop sustains itself via request_redraw() after each present.
+        // Default to Wait — no polling or frame scheduling needed.
+        *control_flow = ControlFlow::Wait;
     }
 
     pub(crate) fn on_render_result(&mut self, result: RenderResult) {
@@ -277,6 +272,10 @@ impl HostState {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
+                // Schedule the next frame. On macOS this integrates with
+                // CVDisplayLink/vsync; on other platforms it fires on the
+                // next event loop iteration.
+                self.request_redraw();
             }
             RenderResult::Skipped | RenderResult::Error => {
                 self.shell.needs_redraw = true;

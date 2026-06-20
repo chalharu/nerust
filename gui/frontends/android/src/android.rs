@@ -674,6 +674,7 @@ impl AndroidFrontend {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
+                self.request_redraw();
             }
             RenderResult::Skipped => {
                 self.shell.needs_redraw = true;
@@ -818,20 +819,12 @@ impl ApplicationHandler for AndroidFrontend {
         self.maybe_refresh_title(now);
 
         if let Some(window) = self.window.as_ref() {
-            let metrics = self.session.metrics();
-            if self
-                .shell
-                .wants_redraw(metrics.frame_counter, metrics.loaded, metrics.paused)
-            {
+            let frame_counter = self.session.metrics().frame_counter;
+            if self.shell.wants_redraw(frame_counter) {
                 window.request_redraw();
             }
-            if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    self.shell.next_frame_deadline(now),
-                ));
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
+            // Render loop is self-sustaining via request_redraw() after each present.
+            event_loop.set_control_flow(ControlFlow::Wait);
         } else {
             if self.is_resumed || self.foreground_resume_pending {
                 event_loop.set_control_flow(ControlFlow::Poll);
