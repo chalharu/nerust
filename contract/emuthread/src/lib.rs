@@ -1,5 +1,4 @@
 use std::fmt;
-use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
@@ -10,17 +9,16 @@ use nerust_timer::Timer;
 
 const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
-pub struct EmuThread<C: ConsoleCore + Send + 'static> {
+pub struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
     shared_fb: Arc<Mutex<FrameBuffer>>,
     last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
     thread: Option<JoinHandle<()>>,
     frame_count: Arc<std::sync::atomic::AtomicU64>,
     fps: Arc<AtomicU32>,
-    _core: PhantomData<C>,
 }
 
-impl<C: ConsoleCore + Send + 'static> fmt::Debug for EmuThread<C> {
+impl fmt::Debug for EmuThread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EmuThread")
             .field("cmd_tx", &self.cmd_tx)
@@ -33,9 +31,12 @@ impl<C: ConsoleCore + Send + 'static> fmt::Debug for EmuThread<C> {
     }
 }
 
-impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
+impl EmuThread {
     /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
-    pub fn spawn(mut core: C, shared_fb: Arc<Mutex<FrameBuffer>>) -> Self {
+    pub fn spawn(
+        mut core: Box<dyn ConsoleCore + Send + 'static>,
+        shared_fb: Arc<Mutex<FrameBuffer>>,
+    ) -> Self {
         let (cmd_tx, cmd_rx): (Sender<EmuCommand>, Receiver<EmuCommand>) = mpsc::channel();
         let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
@@ -138,7 +139,6 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
             thread: Some(thread),
             frame_count,
             fps,
-            _core: PhantomData,
         }
     }
 
@@ -173,7 +173,7 @@ impl<C: ConsoleCore + Send + 'static> EmuThread<C> {
     }
 }
 
-impl<C: ConsoleCore + Send + 'static> Drop for EmuThread<C> {
+impl Drop for EmuThread {
     fn drop(&mut self) {
         self.join();
     }

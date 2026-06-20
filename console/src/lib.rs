@@ -43,7 +43,7 @@ pub enum ConsoleError {
 
 #[allow(missing_debug_implementations)]
 pub struct Console {
-    emu: EmuThread<NesConsoleCore>,
+    emu: EmuThread,
     video: ConsoleVideo,
     metrics: Arc<Mutex<ConsoleMetrics>>,
 }
@@ -124,7 +124,7 @@ impl Console {
         let mut speaker = speaker;
         speaker.start();
         let core = NesConsoleCore::new_empty(controller, speaker);
-        let emu = EmuThread::spawn(core, Arc::clone(&shared_fb));
+        let emu = EmuThread::spawn(Box::new(core), Arc::clone(&shared_fb));
 
         Self {
             emu,
