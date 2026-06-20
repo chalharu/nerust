@@ -2,7 +2,6 @@ use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
 use crate::settings::nes::{build_speaker, effective_load_options};
 use nerust_console::state::RuntimeStateExport;
-use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_console::{Console, ConsoleMetrics};
 use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
@@ -17,6 +16,7 @@ use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell}
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
 
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
@@ -136,20 +136,10 @@ pub trait SystemRuntime: Send {
     /// Provide access to the current frame buffer without allocating a per-frame copy.
     /// The closure is invoked while holding a read lock on the shared frame buffer.
     /// Implementations should call the closure synchronously and not retain the byte slice.
-    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        // Default implementation: take a snapshot and, if available, invoke the closure
-        // with the frame bytes while the VideoFrameHandle is still in scope.
-        let snapshot = self.snapshot();
-        if let Some(frame) = snapshot.video_frame {
-            f(frame.bytes());
-        }
-    }
+    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8]));
 
     /// 表示バッファへの参照を返す。`swap_frame_buffer` の後に呼ぶこと。
-    /// デフォルト実装はパニックする — 各ランタイムがオーバーライドする。
-    fn frame_buffer(&self) -> &FrameBuffer {
-        panic!("SystemRuntime::frame_buffer not implemented for this runtime");
-    }
+    fn frame_buffer(&self) -> &FrameBuffer;
 }
 
 struct NesSystemDefinition {
@@ -480,9 +470,7 @@ impl SystemRuntime for NesRuntime {
     }
 
     fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        self.core.with_frame_buffer(|bytes| {
-            f(bytes);
-        });
+        f(self.core.frame_buffer().as_ref());
     }
 
     fn frame_buffer(&self) -> &FrameBuffer {
