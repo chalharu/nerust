@@ -191,7 +191,9 @@ impl Console {
     }
 
     pub fn set_volume(&self, volume: f32) {
-        let _ = self.emu.send(EmuCommand::SetVolume(volume));
+        if self.emu.send(EmuCommand::SetVolume(volume)).is_err() {
+            log::warn!("set_volume: emu thread channel unavailable");
+        }
     }
 
     pub fn resume(&self) {
