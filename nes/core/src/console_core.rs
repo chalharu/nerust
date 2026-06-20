@@ -96,9 +96,10 @@ impl ConsoleCore for NesConsoleCore {
             device.cycle(&mut port_io);
         }
 
-        // controller はコンストラクタで注入されたものを使用する。
-        // attach_device で追加された Device は Phase 7 まで run_frame の
-        // &mut dyn Controller に変換できない（trait upcasting 制約）。
+        // `core_mut()` は `&mut self` を返すため、`self.controller` / `self.audio`
+        // の同時借用と競合する。このため直接 `self.core.0.as_mut()` を使う。
+        // attach_deviceで追加された Device は Phase 7 までコントローラとして使えない
+        //（trait upcasting 制約のため）。
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(GpuCommandList {

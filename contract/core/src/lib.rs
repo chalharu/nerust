@@ -104,7 +104,7 @@ pub struct CoreConfig {
 // EmuCommand
 // ---------------------------------------------------------------------------
 
-// Boxed payloads for large variants to keep EmuCommand small (~16 bytes).
+/// Boxed payload for `EmuCommand::Load`. Keeps the enum small (~16 bytes).
 #[derive(Debug)]
 pub struct LoadCommand {
     pub rom: Vec<u8>,
@@ -112,6 +112,7 @@ pub struct LoadCommand {
     pub reply: Sender<Result<(), CoreError>>,
 }
 
+/// Boxed payload for `EmuCommand::LoadState` / `EmuCommand::ImportMapperSave`.
 #[derive(Debug)]
 pub struct StateDataCommand {
     pub data: Vec<u8>,
@@ -183,12 +184,23 @@ pub trait ConsoleCore: Send {
     }
 
     // -- rewind (default: not supported) --
+    /// Returns `None` if rewind is not supported.
     fn rewind_state_size(&self) -> Option<usize> {
         None
     }
+    /// Saves the current state into `buf` for rewind.
+    ///
+    /// # Panics
+    /// Panics if the core does not support rewind.
+    /// Check `rewind_state_size()` returns `Some` before calling.
     fn rewind_save(&self, _buf: &mut [u8]) {
         panic!("rewind not supported")
     }
+    /// Restores a previously saved rewind state.
+    ///
+    /// # Panics
+    /// Panics if the core does not support rewind.
+    /// Check `rewind_state_size()` returns `Some` before calling.
     fn rewind_restore(&mut self, _buf: &[u8]) {
         panic!("rewind not supported")
     }
