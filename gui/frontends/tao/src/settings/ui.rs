@@ -1,12 +1,12 @@
 use super::bridge::SettingsChildBridge;
 use iced::alignment::Alignment;
-use iced::event::{self, Status};
-use iced::keyboard::key::{Code, Physical};
+use iced::keyboard::key::Code;
 use iced::widget::{
     button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
     text_input,
 };
-use iced::{Element, Event, Font, Length, Subscription, Task, Theme};
+use iced::{Font, Length, Task, Theme};
+use iced_winit::program::Program;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
 use nerust_gui_settings::input::KeyboardKey;
@@ -29,10 +29,17 @@ use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
 use nerust_input_schema::InputTopologyDescriptor;
 use rfd::FileDialog;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Choice<T: Clone + Eq> {
+pub(crate) struct Choice<T: Clone + Eq> {
     value: T,
     label: String,
 }
@@ -44,7 +51,7 @@ impl<T: Clone + Eq> fmt::Display for Choice<T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SettingsPage {
+pub(crate) enum SettingsPage {
     General,
     Input,
     Video,
@@ -53,13 +60,13 @@ enum SettingsPage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InputPageSection {
+pub(crate) enum InputPageSection {
     Attachment(usize),
     Shortcuts,
 }
 
 #[derive(Debug, Clone)]
-enum Message {
+pub(crate) enum Message {
     SelectPage(SettingsPage),
     SelectInputSection(InputPageSection),
     SetLanguage(Choice<AppLanguage>),
@@ -79,28 +86,17 @@ enum Message {
     CaptureKey(KeyboardKey),
     CloseRequested,
     Submit,
-    ApplyFinished(Result<(), String>),
     Cancel,
 }
 
-struct SettingsApp {
-    bridge: Arc<
-        Mutex<
-            SettingsChildBridge<
-                std::io::BufReader<std::io::Stdin>,
-                std::io::BufWriter<std::io::Stdout>,
-            >,
-        >,
-    >,
-    draft: SettingsSnapshot,
-    page: SettingsPage,
-    input_section: InputPageSection,
-    capture_target: Option<CaptureTarget>,
-    storage_directory_input: String,
-    error_message: Option<String>,
-    submitting: bool,
-}
+// ---------------------------------------------------------------------------
+// Old path (dead code in PR2, removed in PR3 -- child process iced::application)
+// ---------------------------------------------------------------------------
 
+// Old path (dead code in PR2, removed in PR3 -- child process iced::application)
+// View function uses iced::Renderer (default) which differs from iced_tiny_skia::Renderer.
+// The body never runs in PR2; only kept for compilation.
+#[allow(dead_code)]
 pub(super) fn run(
     snapshot: SettingsSnapshot,
     bridge: SettingsChildBridge<
@@ -108,214 +104,90 @@ pub(super) fn run(
         std::io::BufWriter<std::io::Stdout>,
     >,
 ) -> Result<(), String> {
-    let bridge = Arc::new(Mutex::new(bridge));
-    iced::application(
-        move || SettingsApp::new(snapshot.clone(), bridge.clone()),
-        update,
-        view,
-    )
-    .title(title)
-    .theme(theme)
-    .default_font(default_font())
-    .subscription(subscription)
-    .window(iced::window::Settings {
-        size: iced::Size::new(960.0, 720.0),
-        resizable: true,
-        ..Default::default()
-    })
-    .run()
-    .map_err(|error| format!("settings UI failed: {error}"))
+    let _ = snapshot;
+    let _ = bridge;
+    Err("old settings UI path is disabled in this build".into())
 }
 
-fn title(state: &SettingsApp) -> String {
-    ui_text(state.language(), UiText::Preferences).into()
+// ---------------------------------------------------------------------------
+// New path: Program + State (iced_winit integration)
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SettingsAppProgram {
+    pub(crate) snapshot: SettingsSnapshot,
+    pub(crate) should_close: Arc<AtomicBool>,
+    pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
-fn theme(_state: &SettingsApp) -> Theme {
-    Theme::Dark
-}
+impl Program for SettingsAppProgram {
+    type State = SettingsAppState;
+    type Message = Message;
+    type Theme = Theme;
+    type Renderer = iced_tiny_skia::Renderer;
+    type Executor = iced_winit::futures::backend::default::Executor;
 
-fn subscription(state: &SettingsApp) -> Subscription<Message> {
-    let close_events = event::listen_with(close_requested_event);
-    if state.capture_target.is_some() {
-        Subscription::batch([close_events, event::listen_with(capture_key_event)])
-    } else {
-        close_events
+    fn name() -> &'static str {
+        "nerust_settings"
+    }
+
+    fn settings(&self) -> iced::Settings {
+        iced::Settings {
+            default_font: default_font(),
+            default_text_size: iced::Pixels(16.0),
+            ..Default::default()
+        }
+    }
+
+    fn boot(&self) -> (Self::State, Task<Self::Message>) {
+        let state = SettingsAppState::new_with_shared(
+            &self.snapshot,
+            self.should_close.clone(),
+            self.pending_apply.clone(),
+            self.capture_target.clone(),
+        );
+        (state, Task::none())
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        message: Self::Message,
+    ) -> Task<Self::Message> {
+        state.update(message)
+    }
+
+    fn view<'a>(
+        &self,
+        state: &'a Self::State,
+        _window: iced::window::Id,
+    ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+        state.view()
+    }
+
+    fn window(&self) -> Option<iced::window::Settings> {
+        None
     }
 }
 
-fn capture_key_event(event: Event, _status: Status, _window: iced::window::Id) -> Option<Message> {
-    match event {
-        Event::Keyboard(iced::keyboard::Event::KeyPressed {
-            physical_key,
-            repeat,
-            ..
-        }) if !repeat => keyboard_key_from_physical(physical_key).map(Message::CaptureKey),
-        _ => None,
-    }
+// ---------------------------------------------------------------------------
+// SettingsAppState
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SettingsAppState {
+    pub(crate) should_close: Arc<AtomicBool>,
+    pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
+    draft: SettingsSnapshot,
+    page: SettingsPage,
+    input_section: InputPageSection,
+    storage_directory_input: String,
+    error_message: Option<String>,
+    submitting: bool,
 }
 
-fn close_requested_event(
-    event: Event,
-    _status: Status,
-    _window: iced::window::Id,
-) -> Option<Message> {
-    match event {
-        Event::Window(iced::window::Event::CloseRequested) => Some(Message::CloseRequested),
-        _ => None,
-    }
-}
-
-fn can_submit_settings(state: &SettingsApp) -> bool {
-    !state.submitting && state.validation_errors().is_empty()
-}
-
-fn submit_draft(state: &mut SettingsApp) -> Task<Message> {
-    if !can_submit_settings(state) {
-        return Task::none();
-    }
-    state.submitting = true;
-    let bridge = state.bridge.clone();
-    let draft = state.draft.clone();
-    Task::perform(
-        async move {
-            bridge
-                .lock()
-                .map_err(|_| "settings helper bridge lock was poisoned".to_string())
-                .and_then(|mut bridge| bridge.apply_settings(&draft))
-        },
-        Message::ApplyFinished,
-    )
-}
-
-fn update(state: &mut SettingsApp, message: Message) -> Task<Message> {
-    state.error_message = None;
-    match message {
-        Message::SelectPage(page) => state.page = page,
-        Message::SelectInputSection(section) => state.input_section = section,
-        Message::SetLanguage(choice) => state.draft.shared.general.language = choice.value,
-        Message::SetStoragePolicy(choice) => {
-            state.draft.shared.persistence.storage_policy = choice.value;
-        }
-        Message::SetStorageDirectory(value) => {
-            state.storage_directory_input = value;
-            state.draft.shared.persistence.storage_directory =
-                (!state.storage_directory_input.is_empty())
-                    .then(|| state.storage_directory_input.clone().into());
-        }
-        Message::BrowseStorageDirectory => {
-            if let Some(path) = FileDialog::new()
-                .set_title(ui_text(state.language(), UiText::SaveStorageDirectory))
-                .pick_folder()
-            {
-                let path = path.to_string_lossy().to_string();
-                state.storage_directory_input = path.clone();
-                state.draft.shared.persistence.storage_directory = Some(path.into());
-            }
-        }
-        Message::ToggleFullscreenDefault(value) => {
-            state.draft.local.video.window.fullscreen_default = value;
-        }
-        Message::SetScaling(choice) => state.draft.local.video.window.scaling = choice.value,
-        Message::ToggleVsync(value) => state.draft.local.video.presentation.vsync = value,
-        Message::ToggleMute(value) => state.draft.local.audio.muted = value,
-        Message::SetVolume(value) => state.draft.local.audio.master_volume_percent = value,
-        Message::SetSampleRate(choice) => state.draft.local.audio.sample_rate = choice.value,
-        Message::SetLatency(value) => state.draft.local.audio.latency_ms = value,
-        Message::SetSystemChoice(field, choice) => {
-            let _ = apply_default_system_settings_choice(
-                &mut state.draft,
-                &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
-                &SystemSettingsChoiceId(choice.value.into()),
-            );
-        }
-        Message::StartCapture(target) => state.capture_target = Some(target),
-        Message::ClearCapture(target) => {
-            apply_capture_target(&mut state.draft, &target, None);
-            state.capture_target = None;
-        }
-        Message::CaptureKey(key) => {
-            if let Some(target) = state.capture_target.take() {
-                apply_capture_target(&mut state.draft, &target, Some(key));
-            }
-        }
-        Message::CloseRequested | Message::Submit => return submit_draft(state),
-        Message::ApplyFinished(result) => {
-            state.submitting = false;
-            match result {
-                Ok(()) => return iced::exit(),
-                Err(error) => state.error_message = Some(error),
-            }
-        }
-        Message::Cancel => return iced::exit(),
-    }
-    Task::none()
-}
-
-fn view(state: &SettingsApp) -> Element<'_, Message> {
-    let language = state.language();
-    let validation_errors = state.validation_errors();
-    let can_submit = can_submit_settings(state);
-
-    let sidebar = column![
-        page_radio(language, UiText::General, SettingsPage::General, state.page),
-        page_radio(language, UiText::Input, SettingsPage::Input, state.page),
-        page_radio(language, UiText::Video, SettingsPage::Video, state.page),
-        page_radio(language, UiText::Audio, SettingsPage::Audio, state.page),
-        page_radio(language, UiText::System, SettingsPage::System, state.page),
-    ]
-    .spacing(10)
-    .width(Length::Shrink);
-
-    let content = scrollable(
-        container(state.page_content())
-            .padding(12)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    let mut root = column![
-        row![
-            container(sidebar).padding(12).width(Length::Fixed(180.0)),
-            content
-        ]
-        .spacing(16)
-        .width(Length::Fill)
-        .height(Length::Fill)
-    ]
-    .spacing(12)
-    .padding(16)
-    .height(Length::Fill);
-
-    if let Some(error_message) = state.error_message.as_ref() {
-        root = root.push(text(error_message.clone()));
-    } else if let Some(first_error) = validation_errors.first() {
-        root = root.push(text(first_error.clone()));
-    }
-
-    let buttons = row![
-        button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
-        button(ui_text(language, UiText::Ok)).on_press_maybe(can_submit.then_some(Message::Submit)),
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center);
-
-    root.push(container(buttons).width(Length::Fill)).into()
-}
-
-impl SettingsApp {
-    fn new(
-        snapshot: SettingsSnapshot,
-        bridge: Arc<
-            Mutex<
-                SettingsChildBridge<
-                    std::io::BufReader<std::io::Stdin>,
-                    std::io::BufWriter<std::io::Stdout>,
-                >,
-            >,
-        >,
-    ) -> Self {
+impl SettingsAppState {
+    pub(crate) fn new(snapshot: &SettingsSnapshot) -> Self {
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -324,15 +196,29 @@ impl SettingsApp {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
         Self {
-            bridge,
-            draft: snapshot,
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            capture_target: Arc::new(Mutex::new(None)),
+            draft: snapshot.clone(),
             page: SettingsPage::General,
             input_section: InputPageSection::Attachment(0),
-            capture_target: None,
             storage_directory_input,
             error_message: None,
             submitting: false,
         }
+    }
+
+    pub(crate) fn new_with_shared(
+        snapshot: &SettingsSnapshot,
+        should_close: Arc<AtomicBool>,
+        pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+        capture_target: Arc<Mutex<Option<CaptureTarget>>>,
+    ) -> Self {
+        let mut state = Self::new(snapshot);
+        state.should_close = should_close;
+        state.pending_apply = pending_apply;
+        state.capture_target = capture_target;
+        state
     }
 
     fn language(&self) -> AppLanguage {
@@ -371,7 +257,130 @@ impl SettingsApp {
         ))
     }
 
-    fn page_content(&self) -> Element<'_, Message> {
+    fn update(&mut self, message: Message) -> Task<Message> {
+        self.error_message = None;
+        match message {
+            Message::SelectPage(page) => self.page = page,
+            Message::SelectInputSection(section) => self.input_section = section,
+            Message::SetLanguage(choice) => self.draft.shared.general.language = choice.value,
+            Message::SetStoragePolicy(choice) => {
+                self.draft.shared.persistence.storage_policy = choice.value;
+            }
+            Message::SetStorageDirectory(value) => {
+                self.storage_directory_input = value;
+                self.draft.shared.persistence.storage_directory =
+                    (!self.storage_directory_input.is_empty())
+                        .then(|| self.storage_directory_input.clone().into());
+            }
+            Message::BrowseStorageDirectory => {
+                if let Some(path) = FileDialog::new()
+                    .set_title(ui_text(self.language(), UiText::SaveStorageDirectory))
+                    .pick_folder()
+                {
+                    let path = path.to_string_lossy().to_string();
+                    self.storage_directory_input = path.clone();
+                    self.draft.shared.persistence.storage_directory = Some(path.into());
+                }
+            }
+            Message::ToggleFullscreenDefault(value) => {
+                self.draft.local.video.window.fullscreen_default = value;
+            }
+            Message::SetScaling(choice) => self.draft.local.video.window.scaling = choice.value,
+            Message::ToggleVsync(value) => self.draft.local.video.presentation.vsync = value,
+            Message::ToggleMute(value) => self.draft.local.audio.muted = value,
+            Message::SetVolume(value) => self.draft.local.audio.master_volume_percent = value,
+            Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
+            Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
+            Message::SetSystemChoice(field, choice) => {
+                let _ = apply_default_system_settings_choice(
+                    &mut self.draft,
+                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
+                    &SystemSettingsChoiceId(choice.value.into()),
+                );
+            }
+            Message::StartCapture(target) => {
+                *self.capture_target.lock().unwrap() = Some(target);
+            }
+            Message::ClearCapture(target) => {
+                apply_capture_target(&mut self.draft, &target, None);
+                self.capture_target.lock().unwrap().take();
+            }
+            Message::CaptureKey(key) => {
+                let target = self.capture_target.lock().unwrap().take();
+                if let Some(target) = target {
+                    apply_capture_target(&mut self.draft, &target, Some(key));
+                }
+            }
+            Message::Submit => {
+                if !self.validation_errors().is_empty() {
+                    return Task::none();
+                }
+                *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
+                self.should_close.store(true, Ordering::Release);
+            }
+            Message::CloseRequested => {
+                self.should_close.store(true, Ordering::Release);
+            }
+            Message::Cancel => {
+                self.should_close.store(true, Ordering::Release);
+            }
+        }
+        Task::none()
+    }
+
+    fn view(&self) -> El<'_> {
+        let language = self.language();
+        let validation_errors = self.validation_errors();
+        let can_submit = validation_errors.is_empty();
+
+        let sidebar = column![
+            page_radio(language, UiText::General, SettingsPage::General, self.page),
+            page_radio(language, UiText::Input, SettingsPage::Input, self.page),
+            page_radio(language, UiText::Video, SettingsPage::Video, self.page),
+            page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
+            page_radio(language, UiText::System, SettingsPage::System, self.page),
+        ]
+        .spacing(10)
+        .width(Length::Shrink);
+
+        let content = scrollable(
+            container(self.page_content())
+                .padding(12)
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let mut root = column![
+            row![
+                container(sidebar).padding(12).width(Length::Fixed(180.0)),
+                content
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+        ]
+        .spacing(12)
+        .padding(16)
+        .height(Length::Fill);
+
+        if let Some(error_message) = self.error_message.as_ref() {
+            root = root.push(text(error_message.clone()));
+        } else if let Some(first_error) = validation_errors.first() {
+            root = root.push(text(first_error.clone()));
+        }
+
+        let buttons = row![
+            button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
+            button(ui_text(language, UiText::Ok)).on_press_maybe(can_submit.then_some(Message::Submit)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+        root.push(container(buttons).width(Length::Fill)).into()
+    }
+
+    fn page_content(&self) -> El<'_> {
         match self.page {
             SettingsPage::General => self.general_page(),
             SettingsPage::Input => self.input_page(),
@@ -381,7 +390,7 @@ impl SettingsApp {
         }
     }
 
-    fn general_page(&self) -> Element<'_, Message> {
+    fn general_page(&self) -> El<'_> {
         let language = self.language();
         let mut content = column![
             labeled_pick_list(
@@ -427,7 +436,7 @@ impl SettingsApp {
         content.into()
     }
 
-    fn input_page(&self) -> Element<'_, Message> {
+    fn input_page(&self) -> El<'_> {
         let language = self.language();
         let mut content = column![];
         if let Some(conflict) = self.input_conflict() {
@@ -487,11 +496,12 @@ impl SettingsApp {
         &'a self,
         title: &'static str,
         rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
-    ) -> Element<'a, Message> {
+    ) -> El<'a> {
         let language = self.language();
+        let current_capture = self.capture_target.lock().unwrap();
         let mut content = column![text(title)];
         for (label, target) in rows {
-            let binding_label = if self.capture_target.as_ref() == Some(&target) {
+            let binding_label = if current_capture.as_ref() == Some(&target) {
                 ui_text(language, UiText::CapturePrompt)
             } else {
                 current_binding_label(&self.draft, &target)
@@ -514,7 +524,7 @@ impl SettingsApp {
         content.spacing(8).into()
     }
 
-    fn video_page(&self) -> Element<'_, Message> {
+    fn video_page(&self) -> El<'_> {
         let language = self.language();
         column![
             checkbox(self.draft.local.video.window.fullscreen_default)
@@ -537,7 +547,7 @@ impl SettingsApp {
         .into()
     }
 
-    fn audio_page(&self) -> Element<'_, Message> {
+    fn audio_page(&self) -> El<'_> {
         let language = self.language();
         column![
             checkbox(self.draft.local.audio.muted)
@@ -572,7 +582,7 @@ impl SettingsApp {
         .into()
     }
 
-    fn system_page(&self) -> Element<'_, Message> {
+    fn system_page(&self) -> El<'_> {
         let model = default_system_settings_page_model(&self.draft);
         let mut content = column![];
         for field in model.fields.iter() {
@@ -582,12 +592,16 @@ impl SettingsApp {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helper functions (shared between old and new paths)
+// ---------------------------------------------------------------------------
+
 fn page_radio(
     language: AppLanguage,
     label: UiText,
     value: SettingsPage,
     selected: SettingsPage,
-) -> Element<'static, Message> {
+) -> El<'static> {
     radio(
         ui_text(language, label),
         value,
@@ -602,7 +616,7 @@ fn input_section_radio(
     label: UiText,
     value: InputPageSection,
     selected: InputPageSection,
-) -> Element<'static, Message> {
+) -> El<'static> {
     input_section_radio_label(ui_text(language, label), value, selected)
 }
 
@@ -610,7 +624,7 @@ fn input_section_radio_label(
     label: &'static str,
     value: InputPageSection,
     selected: InputPageSection,
-) -> Element<'static, Message> {
+) -> El<'static> {
     radio(label, value, Some(selected), Message::SelectInputSection).into()
 }
 
@@ -619,7 +633,7 @@ fn labeled_pick_list<T: Clone + Eq + 'static>(
     options: impl Into<Vec<Choice<T>>>,
     selected: Choice<T>,
     on_select: fn(Choice<T>) -> Message,
-) -> Element<'static, Message> {
+) -> El<'static> {
     let options = options.into();
     row![
         text(label).width(Length::Fixed(220.0)),
@@ -633,8 +647,8 @@ fn labeled_pick_list<T: Clone + Eq + 'static>(
 fn labeled_slider<'a>(
     label: &'static str,
     value: String,
-    slider: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
+    slider: impl Into<El<'a>>,
+) -> El<'a> {
     row![
         text(label).width(Length::Fixed(220.0)),
         slider.into(),
@@ -653,7 +667,7 @@ fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) 
         .unwrap()
 }
 
-fn system_choice_row(field: &SystemSettingsFieldModel) -> Element<'static, Message> {
+fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
     let nerust_gui_shell::descriptor::SystemSettingsFieldKind::Choice { selected, options } =
         &field.kind;
     let choices = options
@@ -779,8 +793,8 @@ fn input_topology() -> InputTopologyDescriptor {
     default_input_topology_descriptor()
 }
 
-fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {
-    let Physical::Code(code) = physical else {
+pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<KeyboardKey> {
+    let iced::keyboard::key::Physical::Code(code) = physical else {
         return None;
     };
     Some(match code {
@@ -846,10 +860,10 @@ fn keyboard_key_from_physical(physical: Physical) -> Option<KeyboardKey> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Message, close_requested_event, keyboard_key_from_physical};
+    use super::{Message, keyboard_key_from_physical};
     use iced::Event;
     use iced::event::Status;
-    use iced::keyboard::key::{Code, Physical};
+use iced::keyboard::key::{Code, Physical};
     use iced::window;
     use nerust_gui_settings::input::KeyboardKey;
 
@@ -871,17 +885,5 @@ mod tests {
             keyboard_key_from_physical(Physical::Code(Code::Delete)),
             None
         );
-    }
-
-    #[test]
-    fn close_requested_event_maps_to_save_message() {
-        assert!(matches!(
-            close_requested_event(
-                Event::Window(window::Event::CloseRequested),
-                Status::Ignored,
-                window::Id::unique(),
-            ),
-            Some(Message::CloseRequested)
-        ));
     }
 }
