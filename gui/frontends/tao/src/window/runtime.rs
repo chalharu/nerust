@@ -80,6 +80,7 @@ impl WindowRuntime {
                 WindowEvent::CloseRequested if self.host.prepare_close() => {
                     *control_flow = ControlFlow::Exit;
                 }
+                WindowEvent::Focused(true) => self.host.request_redraw(),
                 WindowEvent::Focused(false) => self.host.clear_keys(),
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();

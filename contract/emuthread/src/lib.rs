@@ -54,11 +54,8 @@ impl EmuThread {
         let fps_c = Arc::clone(&fps);
         let fr = Arc::clone(&frame_ready);
         let thread = thread::spawn(move || {
-            let mut frame_slot = FrameBuffer::with_capacity(
-                256,
-                240,
-                PixelFormat::PaletteIndex { palette },
-            );
+            let mut frame_slot =
+                FrameBuffer::with_capacity(256, 240, PixelFormat::PaletteIndex { palette });
             frame_slot.resize(256, 240);
 
             let mut timer = Timer::new();

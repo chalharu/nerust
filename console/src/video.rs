@@ -33,7 +33,7 @@ pub struct ConsoleVideo {
     render_profile: VideoRenderProfile,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
     disp_fb: FrameBuffer,
-        frame_ready: Arc<AtomicBool>,
+    frame_ready: Arc<AtomicBool>,
 }
 
 impl ConsoleVideo {
@@ -41,7 +41,7 @@ impl ConsoleVideo {
         render_profile: VideoRenderProfile,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
-    frame_ready: Arc<AtomicBool>,
+        frame_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
             render_profile,
