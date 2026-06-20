@@ -1,5 +1,5 @@
 mod bridge;
-mod ui;
+pub(crate) mod ui;
 
 use crate::app_menu::UserEvent;
 use nerust_gui_runtime::settings::SettingsSnapshot;
