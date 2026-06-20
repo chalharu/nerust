@@ -31,10 +31,15 @@ impl NativeShellState {
     }
 
     /// Returns true when the event loop should stay active (emulation running).
-    /// The caller should use `ControlFlow::Poll` when this returns true,
-    /// `ControlFlow::Wait` when false.
+    /// `frame_interval` returns the expected interval between frames (~16ms).
     pub fn wants_active_loop(&self, loaded: bool, paused: bool) -> bool {
         loaded && !paused
+    }
+
+    /// Returns a `WaitUntil` deadline for the next expected frame.
+    /// Falls back to `now + FRAME_INTERVAL` when running.
+    pub fn next_frame_deadline(&self, now: Instant) -> Instant {
+        now + Self::FRAME_INTERVAL
     }
 
     pub fn should_refresh_title(&mut self, now: Instant) -> bool {

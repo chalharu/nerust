@@ -265,7 +265,7 @@ impl HostState {
         }
 
         if self.shell.wants_active_loop(metrics.loaded, metrics.paused) {
-            *control_flow = ControlFlow::Poll;
+            *control_flow = ControlFlow::WaitUntil(self.shell.next_frame_deadline(now));
         } else {
             *control_flow = ControlFlow::Wait;
         }
