@@ -65,6 +65,7 @@ impl EmuThread {
                             EmuCommand::Load(cmd) => {
                                 let result = core.load(&cmd.rom, &cmd.config);
                                 loaded = result.is_ok();
+                                // reply send failure: receiver dropped (timeout/abort) — expected
                                 let _ = cmd.reply.send(result);
                             }
                             EmuCommand::Quit => return,
@@ -80,6 +81,7 @@ impl EmuThread {
                         EmuCommand::Load(cmd) => {
                             let result = core.load(&cmd.rom, &cmd.config);
                             loaded = result.is_ok();
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = cmd.reply.send(result);
                         }
                         EmuCommand::Unload => {
@@ -92,22 +94,27 @@ impl EmuThread {
                         EmuCommand::SetVolume(vol) => core.set_volume(vol),
                         EmuCommand::SaveState { reply } => {
                             let result = core.save_state();
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
                         EmuCommand::LoadState(cmd) => {
                             let result = core.load_state(&cmd.data);
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = cmd.reply.send(result);
                         }
                         EmuCommand::MapperSave { reply } => {
                             let result = core.mapper_save();
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
                         EmuCommand::ImportMapperSave(cmd) => {
                             let result = core.import_mapper_save(&cmd.data);
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = cmd.reply.send(result);
                         }
                         EmuCommand::Identity { reply } => {
                             let result = core.identity();
+                            // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
                         EmuCommand::Quit => return,
@@ -168,6 +175,7 @@ impl EmuThread {
 
     pub fn join(&mut self) {
         if let Some(thread) = self.thread.take() {
+            // Quit send failure: thread already exited — expected during cleanup
             let _ = self.cmd_tx.send(EmuCommand::Quit);
             let _ = thread.join();
         }
