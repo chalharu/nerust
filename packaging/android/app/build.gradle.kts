@@ -19,12 +19,12 @@ val keystoreKeyPassword = envOrNull("ANDROID_KEY_PASSWORD")
 
 android {
     namespace = "io.github.chalharu.nerust"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.chalharu.nerust"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = versionCodeOverride
         versionName = versionNameOverride
@@ -83,7 +83,7 @@ kotlin {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
-    val lifecycleVersion = "2.10.0"
+    val lifecycleVersion = "2.11.0"
 
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
