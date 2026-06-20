@@ -10,15 +10,6 @@ pub struct NativeShellState {
 impl NativeShellState {
     pub const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
-    // On Android, use a coarser poll interval to avoid busy-looping the event
-    // loop at 1ms which can produce jitter due to OS scheduling. Desktop and
-    // other platforms keep the original 1ms value for responsiveness.
-    #[cfg(target_os = "android")]
-    pub const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(16);
-
-    #[cfg(not(target_os = "android"))]
-    pub const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
     pub fn new() -> Self {
         Self {
             needs_redraw: true,
@@ -32,12 +23,9 @@ impl NativeShellState {
         self.needs_redraw = false;
     }
 
+    /// Returns true if a redraw should be requested.
     pub fn wants_redraw(&self, current_frame_counter: u64) -> bool {
         self.needs_redraw || current_frame_counter != self.last_presented_frame_counter
-    }
-
-    pub fn wants_poll(&self, loaded: bool, paused: bool) -> bool {
-        self.needs_redraw || (loaded && !paused)
     }
 
     pub fn should_refresh_title(&mut self, now: Instant) -> bool {

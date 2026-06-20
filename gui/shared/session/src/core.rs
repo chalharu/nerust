@@ -11,7 +11,6 @@ pub struct WindowSize {
     pub height: f32,
 }
 
-#[derive(Debug)]
 pub struct SessionCore {
     paused: bool,
     loaded: bool,
@@ -60,8 +59,8 @@ impl SessionCore {
         })
     }
 
-    pub fn swap_frame_buffer(&mut self) -> bool {
-        self.console.swap_frame_buffer()
+    pub fn swap_frame_buffer(&mut self) {
+        self.console.swap_frame_buffer();
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {

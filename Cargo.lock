@@ -3102,15 +3102,11 @@ dependencies = [
 name = "nerust_console"
 version = "0.1.0-dev"
 dependencies = [
- "crc",
  "log",
- "nerust_cartridge_data",
  "nerust_contract_core",
- "nerust_input_nes",
- "nerust_input_nes_runtime",
+ "nerust_contract_emuthread",
  "nerust_nes_core",
  "nerust_screen_video",
- "nerust_timer",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3134,6 +3130,7 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_contract_core",
+ "nerust_timer",
 ]
 
 [[package]]
