@@ -56,14 +56,15 @@ impl SettingsWindowHandle {
         let pending_apply = Arc::new(Mutex::new(None));
         let capture_target = Arc::new(Mutex::new(None));
 
-        let mut wb = WindowBuilder::new()
+        #[allow(unused_mut)]
+        let mut window = WindowBuilder::new()
             .with_title("Preferences")
             .with_inner_size(tao::dpi::LogicalSize::new(960.0, 720.0));
         #[cfg(target_os = "macos")]
         {
-            wb = wb.with_automatic_window_tabbing(false);
+            window = window.with_automatic_window_tabbing(false);
         }
-        let window = Arc::new(wb.build(event_loop).unwrap());
+        let window = Arc::new(window.build(event_loop).unwrap());
         let window_id = iced::window::Id::unique();
 
         let program = SettingsAppProgram {
