@@ -107,8 +107,7 @@ impl Console {
             src_h,
             pixel_format.clone(),
         )));
-        {
-            let mut guard = shared_fb.lock().unwrap();
+        if let Ok(mut guard) = shared_fb.lock() {
             guard.resize(src_w, src_h);
             guard.resize_data(src_w * src_h);
         }
@@ -298,7 +297,9 @@ impl Console {
             .map_err(|_| ConsoleError::WorkerUnavailable)?
             .map_err(|e| ConsoleError::Core(e.to_string()))?;
 
-        let guard = self.emu.shared_frame_buffer().lock().unwrap();
+        let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
+            return Err(ConsoleError::WorkerUnavailable);
+        };
         let w = guard.width();
         let h = guard.height();
         // Preview needs RGBA data (4 BPP). PaletteIndex format stores 1 BPP indices.
@@ -371,6 +372,10 @@ impl Console {
         reply_rx
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))
+            .map_err(|e| {
+                ConsoleError::Core(format!(
+                    "state import failed (tried ConsoleStatePayload format, then raw): {e}"
+                ))
+            })
     }
 }
