@@ -23,12 +23,89 @@ use tao::keyboard::ModifiersState as TaoModifiers;
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::window::{Window as TaoWindow, WindowBuilder};
 
+/// Owns Instance + Cache + UI, ensuring UI is dropped before Instance.
+/// This makes the phantom lifetime safety explicit via Drop rather than
+/// relying on struct field declaration order.
+pub(crate) struct UiState {
+    ui: std::mem::ManuallyDrop<
+        UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+    >,
+    cache: Cache,
+    instance: program::Instance<SettingsAppProgram>,
+}
+
+impl UiState {
+    fn new(
+        instance: program::Instance<SettingsAppProgram>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        renderer: &mut iced_tiny_skia::Renderer,
+    ) -> Self {
+        let ui = transmute_build_ui(&instance, window_id, bounds, Cache::default(), renderer);
+        Self {
+            ui: std::mem::ManuallyDrop::new(ui),
+            cache: Cache::default(),
+            instance,
+        }
+    }
+
+    fn ui_mut(
+        &mut self,
+    ) -> &mut UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
+        &mut self.ui
+    }
+
+    /// Process messages, then rebuild UI with updated instance + old cache.
+    fn process_messages(
+        &mut self,
+        messages: Vec<Message>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        renderer: &mut iced_tiny_skia::Renderer,
+    ) {
+        if messages.is_empty() {
+            return;
+        }
+        // Step 1: Replace UI with a temporary placeholder, extract old cache.
+        let placeholder = std::mem::replace(
+            &mut *self.ui,
+            transmute_build_ui(
+                &self.instance,
+                window_id,
+                bounds,
+                Cache::default(),
+                renderer,
+            ),
+        );
+        self.cache = placeholder.into_cache();
+
+        // Step 2: Process messages (mutate instance state).
+        for msg in messages {
+            let _task = self.instance.update(msg);
+        }
+
+        // Step 3: Replace placeholder with real UI from new state + cache.
+        let old_cache = std::mem::take(&mut self.cache);
+        let stale = std::mem::replace(
+            &mut *self.ui,
+            transmute_build_ui(&self.instance, window_id, bounds, old_cache, renderer),
+        );
+        let _ = stale.into_cache(); // discard placeholder
+    }
+}
+
+impl Drop for UiState {
+    fn drop(&mut self) {
+        // SAFETY: UI has a phantom lifetime tied to Instance.
+        // Dropping UI before Instance prevents dangling reference.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
+    }
+}
+
 pub(crate) struct SettingsWindowHandle {
     pub(crate) window: Arc<TaoWindow>,
     window_id: iced::window::Id,
-    // ui before instance: correct drop order (phantom lifetime)
-    ui: UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
-    instance: program::Instance<SettingsAppProgram>,
+    ui_state: UiState,
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
@@ -92,25 +169,19 @@ impl SettingsWindowHandle {
             compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
 
         // Eagerly create the UserInterface so ensure_ui() is not needed.
-        let vp = Viewport::with_physical_size(
+        let bounds = Viewport::with_physical_size(
             Size::new(viewport_physical.0, viewport_physical.1),
             scale_factor,
-        );
-        let ui = transmute_build_ui(
-            &instance,
-            window_id,
-            vp.logical_size(),
-            Cache::default(),
-            &mut renderer,
-        );
+        )
+        .logical_size();
+        let ui_state = UiState::new(instance, window_id, bounds, &mut renderer);
 
         window.request_redraw();
 
         Self {
             window,
             window_id,
-            ui,
-            instance,
+            ui_state,
             renderer: SettingsRenderer {
                 compositor,
                 surface,
@@ -146,7 +217,7 @@ impl SettingsWindowHandle {
             }
         }
 
-        let _state = self.ui.update(
+        self.ui_state.ui_mut().update(
             &[mapped],
             self.cursor,
             &mut self.renderer.renderer,
@@ -155,46 +226,17 @@ impl SettingsWindowHandle {
         );
 
         if !messages.is_empty() {
-            // Step 1: Extract old UI, insert temporary UI (placeholder).
-            // The placeholder is from the pre-message state and is never
-            // displayed; it's immediately replaced in step 3.
-            let window_id = self.window_id;
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,
             )
             .logical_size();
-            let renderer = &mut self.renderer.renderer;
-            let old_ui = std::mem::replace(
-                &mut self.ui,
-                transmute_build_ui(
-                    &self.instance,
-                    window_id,
-                    bounds,
-                    Cache::default(),
-                    renderer,
-                ),
+            self.ui_state.process_messages(
+                messages,
+                self.window_id,
+                bounds,
+                &mut self.renderer.renderer,
             );
-            let cache = old_ui.into_cache();
-
-            // Step 2: Process messages (mutate instance state)
-            for msg in messages {
-                let _task = self.instance.update(msg);
-            }
-
-            // Step 3: Replace placeholder with real UI from NEW state + cache
-            let window_id = self.window_id;
-            let bounds = Viewport::with_physical_size(
-                Size::new(self.viewport_physical.0, self.viewport_physical.1),
-                self.scale_factor,
-            )
-            .logical_size();
-            let renderer = &mut self.renderer.renderer;
-            let placeholder = std::mem::replace(
-                &mut self.ui,
-                transmute_build_ui(&self.instance, window_id, bounds, cache, renderer),
-            );
-            let _ = placeholder.into_cache(); // discard placeholder
         }
     }
 
@@ -210,14 +252,14 @@ impl SettingsWindowHandle {
         let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         ));
-        let _ = self.ui.update(
+        let _ = self.ui_state.ui_mut().update(
             &[redraw_event],
             self.cursor,
             &mut self.renderer.renderer,
             &mut self.clipboard,
             &mut std::vec::Vec::new(),
         );
-        self.ui.draw(
+        self.ui_state.ui_mut().draw(
             &mut self.renderer.renderer,
             &theme,
             &renderer::Style {
@@ -345,11 +387,8 @@ impl SettingsWindowHandle {
 // ---------------------------------------------------------------------------
 // Helper: build UserInterface with lifetime transmute
 //
-// SAFETY: UserInterface<'a> has a phantom lifetime 'a that does not actually
-// borrow any data after build(). The 'a on Box<dyn Widget<'a, ...>> is a
-// type-erased upper bound that is not linked to any real borrow.
-// Additionally, the ui field is declared before instance in
-// SettingsWindowHandle, ensuring correct drop order (ui dropped first).
+// SAFETY: UserInterface<'a> has a phantom lifetime after build(). The caller
+// (UiState) ensures correct drop order via ManuallyDrop + custom Drop impl.
 //
 // self_cell v1.2.2 cannot replace this because its macro requires
 // $Dependent:ident and appends <'static> automatically, which conflicts
