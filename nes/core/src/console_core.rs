@@ -63,6 +63,16 @@ impl NesConsoleCore {
     }
 }
 
+impl NesConsoleCore {
+    fn core_ref(&self) -> Result<&Core, CoreError> {
+        self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)
+    }
+
+    fn core_mut(&mut self) -> Result<&mut Core, CoreError> {
+        self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)
+    }
+}
+
 impl ConsoleCore for NesConsoleCore {
     fn capabilities(&self) -> CoreCapabilities {
         CoreCapabilities {
@@ -147,13 +157,13 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
-        let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
+        let core = self.core_ref()?;
         core.export_machine_state()
             .map_err(|e| CoreError::Core(e.to_string()))
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
-        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        let core = self.core_mut()?;
         core.import_machine_state(data)
             .map_err(|e| CoreError::Core(e.to_string()))
     }
@@ -163,20 +173,19 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
-        let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
+        let core = self.core_ref()?;
         core.export_mapper_save()
             .map_err(|e| CoreError::Core(e.to_string()))
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
-        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        let core = self.core_mut()?;
         core.import_mapper_save(data)
             .map_err(|e| CoreError::Core(e.to_string()))
     }
 
     fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
-        let core = self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)?;
-        Ok(CanonicalMediaIdentity::Rom(core.rom_identity()))
+        Ok(CanonicalMediaIdentity::Rom(self.core_ref()?.rom_identity()))
     }
 }
 

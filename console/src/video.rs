@@ -51,14 +51,14 @@ impl ConsoleVideo {
         self.render_profile.clone()
     }
 
-    pub fn swap_frame_buffer(&mut self) -> bool {
-        let guard = self.frame_buffer.lock().unwrap();
-        let src = guard.as_ref();
-        let dst = self.disp_fb.as_mut();
-        if dst.len() == src.len() {
-            dst.copy_from_slice(src);
+    pub fn swap_frame_buffer(&mut self) {
+        if let Ok(guard) = self.frame_buffer.lock() {
+            let src = guard.as_ref();
+            let dst = self.disp_fb.as_mut();
+            if dst.len() == src.len() {
+                dst.copy_from_slice(src);
+            }
         }
-        true
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -104,8 +104,9 @@ mod tests {
     fn console_video_swap_copies_shared_to_disp() {
         let mut video = make_test_video();
         {
-            let mut guard = video.frame_buffer.lock().unwrap();
-            guard.as_mut().fill(42);
+            if let Ok(mut guard) = video.frame_buffer.lock() {
+                guard.as_mut().fill(42);
+            }
         }
         video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 0));
         video.swap_frame_buffer();

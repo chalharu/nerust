@@ -155,8 +155,8 @@ impl Console {
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
     /// EmuThread は Timer ループで自動レンダリングする。
-    pub fn swap_frame_buffer(&mut self) -> bool {
-        self.video.swap_frame_buffer()
+    pub fn swap_frame_buffer(&mut self) {
+        self.video.swap_frame_buffer();
     }
 
     /// 表示バッファへの参照を返す。
@@ -221,7 +221,9 @@ impl Console {
             .recv()
             .map_err(|_| ConsoleError::WorkerUnavailable)?
             .map_err(|e| ConsoleError::Core(e.to_string()));
-        if result.is_ok() && let Ok(mut guard) = self.metrics.lock() {
+        if result.is_ok()
+            && let Ok(mut guard) = self.metrics.lock()
+        {
             guard.loaded = true;
         }
         result
