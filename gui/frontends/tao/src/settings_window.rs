@@ -31,7 +31,6 @@ pub(crate) struct UiState {
     ui: std::mem::ManuallyDrop<
         UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
     >,
-    cache: Cache,
     instance: program::Instance<SettingsAppProgram>,
 }
 
@@ -45,7 +44,6 @@ impl UiState {
         let ui = transmute_build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
             ui: std::mem::ManuallyDrop::new(ui),
-            cache: Cache::default(),
             instance,
         }
     }
@@ -67,7 +65,7 @@ impl UiState {
         if messages.is_empty() {
             return;
         }
-        // Step 1: Replace UI with a temporary placeholder, extract old cache.
+        // Step 1: Replace UI with a placeholder, extract old cache.
         let placeholder = std::mem::replace(
             &mut *self.ui,
             transmute_build_ui(
@@ -78,7 +76,7 @@ impl UiState {
                 renderer,
             ),
         );
-        self.cache = placeholder.into_cache();
+        let cache = placeholder.into_cache();
 
         // Step 2: Process messages (mutate instance state).
         for msg in messages {
@@ -86,10 +84,9 @@ impl UiState {
         }
 
         // Step 3: Replace placeholder with real UI from new state + cache.
-        let old_cache = std::mem::take(&mut self.cache);
         let stale = std::mem::replace(
             &mut *self.ui,
-            transmute_build_ui(&self.instance, window_id, bounds, old_cache, renderer),
+            transmute_build_ui(&self.instance, window_id, bounds, cache, renderer),
         );
         let _ = stale.into_cache(); // discard placeholder
     }
