@@ -7,8 +7,6 @@ use std::thread::{self, JoinHandle};
 use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
 use nerust_timer::Timer;
 
-
-
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,
     shared_fb: Arc<Mutex<FrameBuffer>>,
@@ -65,9 +63,9 @@ impl EmuThread {
                     match cmd_rx.recv() {
                         Ok(cmd) => match cmd {
                             EmuCommand::Load(cmd) => {
-                            let result = core.load(&cmd.rom, &cmd.config);
-                            loaded = result.is_ok();
-                            let _ = cmd.reply.send(result);
+                                let result = core.load(&cmd.rom, &cmd.config);
+                                loaded = result.is_ok();
+                                let _ = cmd.reply.send(result);
                             }
                             EmuCommand::Quit => return,
                             _ => {}
