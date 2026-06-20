@@ -6,6 +6,9 @@ pub mod mirror;
 pub mod options;
 pub mod persistence;
 pub mod rom;
+pub mod save_state;
+
+pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
