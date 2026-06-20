@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nerust_screen_video::LogicalSize;
@@ -32,6 +33,7 @@ pub struct ConsoleVideo {
     render_profile: VideoRenderProfile,
     frame_buffer: Arc<Mutex<FrameBuffer>>,
     disp_fb: FrameBuffer,
+        frame_ready: Arc<AtomicBool>,
 }
 
 impl ConsoleVideo {
@@ -39,11 +41,13 @@ impl ConsoleVideo {
         render_profile: VideoRenderProfile,
         frame_buffer: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
+    frame_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
             render_profile,
             frame_buffer,
             disp_fb,
+            frame_ready,
         }
     }
 
@@ -52,7 +56,12 @@ impl ConsoleVideo {
     }
 
     pub fn swap_frame_buffer(&mut self) {
-        if let Ok(mut guard) = self.frame_buffer.lock() {
+        if !self.frame_ready.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Ok(mut guard) = self.frame_buffer.lock()
+            && self.frame_ready.swap(false, Ordering::AcqRel)
+        {
             std::mem::swap(&mut *guard, &mut self.disp_fb);
         }
     }
@@ -77,6 +86,7 @@ mod tests {
         let mut disp = FrameBuffer::with_capacity(4, 1, PixelFormat::Rgba);
         disp.resize(4, 1);
         let shared = Arc::new(Mutex::new(shared));
+        let frame_ready = Arc::new(AtomicBool::new(false));
         let profile = VideoRenderProfile {
             source_logical_size: LogicalSize {
                 width: 4,
@@ -93,7 +103,7 @@ mod tests {
             frame_format: VideoFrameFormat::Rgba,
             ntsc_packed_rgba8: None,
         };
-        ConsoleVideo::new(profile, shared, disp)
+        ConsoleVideo::new(profile, shared, disp, frame_ready)
     }
 
     #[test]
@@ -104,6 +114,8 @@ mod tests {
                 guard.as_mut().fill(42);
             }
         }
+        // Simulate EmuThread signaling frame ready
+        video.frame_ready.store(true, Ordering::Release);
         video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 0));
         video.swap_frame_buffer();
         video.with_frame_buffer(|bytes| assert_eq!(bytes[0], 42));
