@@ -1,4 +1,4 @@
-use nerust_console::video::VideoRenderProfile;
+use nerust_screen_video::VideoRenderProfile;
 use nerust_screen_video::{FrameBuffer, VideoFrameSpec, VideoPresentation};
 use nerust_screen_wgpu::renderer::{
     DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,

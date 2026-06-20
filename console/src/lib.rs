@@ -14,6 +14,7 @@ use nerust_nes_core::controller::Controller;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
+use nerust_screen_video::VideoRenderProfile;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -62,7 +63,7 @@ impl Console {
         let ntsc_packed_rgba8 = assets
             .packed_ntsc_rgba8()
             .map(|data| data.to_vec().into_boxed_slice());
-        let render_profile = video::VideoRenderProfile {
+        let render_profile = VideoRenderProfile {
             source_logical_size: layout.source_logical_size,
             logical_size: layout.logical_size,
             physical_size: layout.physical_size,
@@ -96,7 +97,7 @@ impl Console {
 
     fn build(
         speaker: Box<dyn AudioBackend + Send>,
-        render_profile: video::VideoRenderProfile,
+        render_profile: VideoRenderProfile,
         pixel_format: PixelFormat,
         src_w: usize,
         src_h: usize,
@@ -160,10 +161,6 @@ impl Console {
 
     pub fn video(&self) -> &ConsoleVideo {
         &self.video
-    }
-
-    pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.video.with_frame_buffer(f)
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。

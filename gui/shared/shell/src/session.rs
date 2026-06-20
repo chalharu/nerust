@@ -12,13 +12,13 @@ use crate::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
 use nerust_console::ConsoleMetrics;
-use nerust_console::video::{VideoFrameHandle, VideoRenderProfile};
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
 use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -164,6 +164,6 @@ impl SessionHandle {
     }
 
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        self.runtime.with_frame_buffer(f);
+        f(self.runtime.frame_buffer().as_ref());
     }
 }

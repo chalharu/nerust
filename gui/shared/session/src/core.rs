@@ -1,9 +1,10 @@
 use nerust_console::state::RuntimeStateExport;
-use nerust_console::video::{ConsoleVideo, VideoFrameHandle, VideoRenderProfile};
+use nerust_console::video::ConsoleVideo;
 use nerust_console::{Console, ConsoleError, ConsoleMetrics};
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -38,10 +39,6 @@ impl SessionCore {
         self.console.video()
     }
 
-    pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
-        self.console.with_frame_buffer(f)
-    }
-
     pub fn window_size(&self) -> WindowSize {
         self.window_size
     }
@@ -51,12 +48,13 @@ impl SessionCore {
         let profile = self.console.video().render_profile();
         let logical_w = profile.logical_size.width;
         let bpp = profile.frame_format.bytes_per_pixel();
-        self.console.with_frame_buffer(|bytes| VideoFrameHandle {
+        let bytes = self.console.frame_buffer().as_ref();
+        VideoFrameHandle {
             width: logical_w as u32,
             height: profile.logical_size.height as u32,
             stride_bytes: logical_w * bpp,
             bytes: Arc::from(bytes),
-        })
+        }
     }
 
     pub fn swap_frame_buffer(&mut self) {
