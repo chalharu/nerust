@@ -10,14 +10,10 @@ pub struct NativeShellState {
 impl NativeShellState {
     pub const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
-    // On Android, use a coarser poll interval to avoid busy-looping the event
-    // loop at 1ms which can produce jitter due to OS scheduling. Desktop and
-    // other platforms keep the original 1ms value for responsiveness.
-    #[cfg(target_os = "android")]
+    // EmuThread drives rendering via frame_count changes at ~60fps.
+    // A 16ms poll interval provides responsive frame detection without
+    // excessive wakeups (60/sec instead of 1000/sec).
     pub const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(16);
-
-    #[cfg(not(target_os = "android"))]
-    pub const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
     pub fn new() -> Self {
         Self {
