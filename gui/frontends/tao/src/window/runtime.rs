@@ -124,6 +124,7 @@ impl WindowRuntime {
 
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
+                handle.render();
                 handle.window.request_redraw();
 
                 if handle.should_close.load(std::sync::atomic::Ordering::Acquire) {
