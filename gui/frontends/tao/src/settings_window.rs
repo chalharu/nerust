@@ -15,7 +15,9 @@ use nerust_gui_shell::settings::editor::CaptureTarget;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tao::event_loop::EventLoopWindowTarget;
-use iced_winit::core::{Event, Point};
+use iced_winit::conversion;
+use iced_winit::core::{Event, Point, SmolStr};
+use iced_winit::core::keyboard;
 use iced_winit::core::mouse as IcedMouse;
 use iced_winit::winit::keyboard::ModifiersState;
 use tao::window::{Window as TaoWindow, WindowBuilder};
@@ -209,6 +211,20 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
+        fn convert_tao_key(key: &tao::keyboard::Key) -> iced_winit::winit::keyboard::Key {
+            match key {
+                tao::keyboard::Key::Character(s) => {
+                    iced_winit::winit::keyboard::Key::Character(SmolStr::new(s))
+                }
+                _ => iced_winit::winit::keyboard::Key::Unidentified(
+                    iced_winit::winit::keyboard::NativeKey::Unidentified,
+                ),
+            }
+        }
+        fn convert_keycode(code: tao::keyboard::KeyCode) -> iced_winit::winit::keyboard::KeyCode {
+            // SAFETY: Tao is a winit fork; KeyCode enums have identical discriminant layout
+            unsafe { std::mem::transmute_copy(&code) }
+        }
         use tao::event::WindowEvent;
         // Convert Tao WindowEvent to iced Event for UserInterface processing.
         // Only essential events are handled; Tao types differ from winit types
@@ -223,6 +239,40 @@ impl SettingsWindowHandle {
             WindowEvent::CursorLeft { .. } => {
                 self.cursor = IcedMouse::Cursor::Unavailable;
                 return;
+            }
+            WindowEvent::KeyboardInput { event: ke, .. } => {
+                let modifiers = conversion::modifiers(self.modifiers);
+                let location = keyboard::Location::Standard;
+                // SAFETY: tao::KeyCode layout matches winit::KeyCode
+                let physical_key = conversion::physical_key(
+                    iced_winit::winit::keyboard::PhysicalKey::Code(convert_keycode(ke.physical_key)),
+                );
+                let iced_key = conversion::key(convert_tao_key(&ke.logical_key));
+                let modified_key = conversion::key(convert_tao_key(&ke.logical_key));
+                let text = ke.text.map(|s| SmolStr::new(&s));
+                match ke.state {
+                    tao::event::ElementState::Pressed => {
+                        Event::Keyboard(keyboard::Event::KeyPressed {
+                            key: iced_key.clone(),
+                            modified_key,
+                            physical_key,
+                            modifiers,
+                            location,
+                            text,
+                            repeat: ke.repeat,
+                        })
+                    }
+                    tao::event::ElementState::Released => {
+                        Event::Keyboard(keyboard::Event::KeyReleased {
+                            key: iced_key,
+                            modified_key,
+                            physical_key,
+                            modifiers,
+                            location,
+                        })
+                    }
+                    _ => return,
+                }
             }
             WindowEvent::MouseInput { button, state, .. } => {
                 let btn = match button {
@@ -240,6 +290,10 @@ impl SettingsWindowHandle {
                     }
                     _ => return,
                 }
+            }
+            WindowEvent::ModifiersChanged(state) => {
+                self.set_modifiers(state);
+                return;
             }
             WindowEvent::CloseRequested => {
                 self.should_close.store(true, std::sync::atomic::Ordering::Release);
