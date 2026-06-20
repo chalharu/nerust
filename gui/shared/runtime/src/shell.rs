@@ -52,10 +52,10 @@ mod tests {
     #[test]
     fn native_shell_state_tracks_frame_presentation() {
         let mut shell = NativeShellState::new();
-        assert!(shell.wants_redraw(0, false, false));
+        assert!(shell.wants_redraw(0));
         shell.on_frame_presented(1);
-        assert!(!shell.wants_redraw(1, false, false));
-        assert!(shell.wants_redraw(2, false, false));
+        assert!(!shell.wants_redraw(1));
+        assert!(shell.wants_redraw(2));
     }
 
     #[test]
