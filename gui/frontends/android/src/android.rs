@@ -674,6 +674,7 @@ impl AndroidFrontend {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
+                self.request_redraw();
             }
             RenderResult::Skipped => {
                 self.shell.needs_redraw = true;
