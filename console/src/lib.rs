@@ -299,16 +299,35 @@ impl Console {
             .map_err(|e| ConsoleError::Core(e.to_string()))?;
 
         let guard = self.emu.shared_frame_buffer().lock().unwrap();
-        let frame_data = guard.as_ref().to_vec();
         let w = guard.width();
         let h = guard.height();
+        // Preview needs RGBA data (4 BPP). PaletteIndex format stores 1 BPP indices.
+        let rgba = if w > 0 && h > 0 {
+            if let Some(palette) = guard.palette() {
+                let indices = guard.as_ref();
+                let mut rgba = Vec::with_capacity(w * h * 4);
+                for &idx in indices.iter().take(w * h) {
+                    let color = palette[idx as usize];
+                    rgba.push((color >> 24) as u8);
+                    rgba.push((color >> 16) as u8);
+                    rgba.push((color >> 8) as u8);
+                    rgba.push(color as u8);
+                }
+                rgba
+            } else {
+                // Rgba format — use raw data directly
+                guard.as_ref().to_vec()
+            }
+        } else {
+            Vec::new()
+        };
         drop(guard);
 
         let preview = if w > 0 && h > 0 {
             Some(state::PreviewFrame {
                 width: w as u32,
                 height: h as u32,
-                rgba: frame_data,
+                rgba,
             })
         } else {
             None
