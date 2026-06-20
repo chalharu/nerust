@@ -272,10 +272,9 @@ impl HostState {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
-                // Schedule the next frame. On macOS this integrates with
-                // CVDisplayLink/vsync; on other platforms it fires on the
-                // next event loop iteration.
-                self.request_redraw();
+                // Rendering is event-driven: the next frame will be picked up
+                // by update_control_flow when an event wakes the event loop.
+                // No self-sustaining request_redraw() here.
             }
             RenderResult::Skipped | RenderResult::Error => {
                 self.shell.needs_redraw = true;
