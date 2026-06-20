@@ -144,7 +144,7 @@ impl SettingsWindowHandle {
             cache,
             &mut self.renderer.renderer,
         );
-        let ui_state = ui.update(
+        let _state = ui.update(
             &[mapped],
             self.cursor,
             &mut self.renderer.renderer,
@@ -157,17 +157,44 @@ impl SettingsWindowHandle {
             let _task = self.instance.update(msg);
         }
 
-        // Process state change from update(): if layout changed, the next
-        // view() + build() will pick up the new layout via the cache.
-        if matches!(ui_state, iced_winit::runtime::user_interface::State::Updated {
-            has_layout_changed: true, ..
-        }) {
-            log::info!("layout changed");
+        // Rebuild and render immediately with updated state/cache
+        self.ui_cache = std::mem::take(&mut self.ui_cache);
+        {
+            let element = self.instance.view(self.window_id);
+            let vp = Viewport::with_physical_size(
+                Size::new(self.viewport_physical.0, self.viewport_physical.1),
+                self.scale_factor,
+            );
+            let cache = std::mem::take(&mut self.ui_cache);
+            let mut ui = UserInterface::build(
+                element,
+                vp.logical_size(),
+                cache,
+                &mut self.renderer.renderer,
+            );
+            ui.draw(
+                &mut self.renderer.renderer,
+                &iced::Theme::Dark,
+                &renderer::Style {
+                    text_color: <iced::Theme as theme::Base>::base(&iced::Theme::Dark).text_color,
+                },
+                self.cursor,
+            );
+            self.ui_cache = ui.into_cache();
+
+            if let Err(e) = self.renderer.compositor.present(
+                &mut self.renderer.renderer,
+                &mut self.renderer.surface,
+                &vp,
+                iced::Color::BLACK,
+                || {},
+            ) {
+                log::warn!("settings render present failed: {e:?}");
+            }
         }
     }
 
     pub(crate) fn render(&mut self) {
-        log::warn!("settings render() called, cache was_present: {}", self.cursor.is_some());
         let theme = iced::Theme::Dark;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let vp = Viewport::with_physical_size(
