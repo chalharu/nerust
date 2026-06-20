@@ -46,6 +46,7 @@ pub(crate) struct HostState {
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
+    pub(crate) active: bool,
 }
 
 impl HostState {
@@ -65,6 +66,7 @@ impl HostState {
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
+            active: true,
         }
     }
 
@@ -248,22 +250,17 @@ impl HostState {
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         self.sync_fullscreen_default_from_window();
-        let now = Instant::now();
-        self.maybe_refresh_window_title(now);
-
-        let Some(window) = self.window.as_ref() else {
-            *control_flow = ControlFlow::Wait;
-            return;
-        };
-
-        let metrics = self.session.metrics();
-        if self.shell.wants_redraw(metrics.frame_counter) {
-            window.request_redraw();
-        }
-
-        // The render loop sustains itself via request_redraw() after each present.
-        // Default to Wait — no polling or frame scheduling needed.
+        self.maybe_refresh_window_title(Instant::now());
         *control_flow = ControlFlow::Wait;
+
+        // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
+        // On other platforms, it fires on the next event loop iteration.
+        // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
+        if self.active {
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+        }
     }
 
     pub(crate) fn on_render_result(&mut self, result: RenderResult) {
@@ -272,14 +269,9 @@ impl HostState {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
-                // Schedule the next frame. On macOS this integrates with
-                // CVDisplayLink/vsync; on other platforms it fires on the
-                // next event loop iteration. With ControlFlow::Wait the
-                // event loop sleeps between redraws — no busy-wait.
-                self.request_redraw();
             }
             RenderResult::Skipped | RenderResult::Error => {
-                self.shell.needs_redraw = true;
+                self.request_redraw();
             }
         }
     }
