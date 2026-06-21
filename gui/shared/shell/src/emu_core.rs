@@ -28,11 +28,11 @@ pub(crate) enum EmuCoreError {
     #[error("emu thread reply channel closed")]
     NoReply,
     #[error("{0}")]
-    Core(String),
+    Reply(String),
 }
 
 #[derive(Debug, Clone)]
-pub struct SystemRuntimeSnapshot {
+pub struct CoreSnapshot {
     pub metrics: ConsoleMetrics,
     pub video_frame: Option<VideoFrameHandle>,
 }
@@ -164,6 +164,9 @@ impl EmuCore {
         &self.disp_fb
     }
 
+    // metrics() のみ into_inner() で回復する理由: レンダリングパスで毎フレーム呼ばれ、
+    // 常に最新の metrics を返す必要がある。他のメソッド(swap, pause, load 等)の metrics
+    // 更新は副次的な副作用であり、poison 時に諦めても動作に影響しない。
     pub fn metrics(&self) -> ConsoleMetrics {
         let mut guard = self.metrics.lock().unwrap_or_else(|e| {
             log::warn!("metrics mutex poisoned, recovering");
@@ -186,8 +189,8 @@ impl EmuCore {
         }
     }
 
-    pub fn snapshot(&self) -> SystemRuntimeSnapshot {
-        SystemRuntimeSnapshot {
+    pub fn snapshot(&self) -> CoreSnapshot {
+        CoreSnapshot {
             metrics: self.metrics(),
             video_frame: Some(self.video_frame_handle()),
         }
@@ -219,8 +222,9 @@ impl EmuCore {
         }
     }
 
-    // TODO(Phase 12): CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
-    // 現状は NesConsoleCore::load も config を無視する。
+    // TODO: CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
+    // 現状は NesConsoleCore::load も config を無視する。blocked on NesConsoleCore::load
+    // が &CoreConfig を受け取るように変更されること。
     pub fn load(
         &self,
         media: &MediaObject,
@@ -241,7 +245,7 @@ impl EmuCore {
         let result = reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Core(e.to_string()));
+            .map_err(|e| EmuCoreError::Reply(e.to_string()));
         if result.is_ok() {
             match self.metrics.lock() {
                 Ok(mut guard) => {
@@ -279,7 +283,7 @@ impl EmuCore {
         reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Core(e.to_string()))
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
     pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
@@ -293,7 +297,7 @@ impl EmuCore {
         reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Core(e.to_string()))
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
     pub fn export_state(&self) -> Result<RuntimeStateExport, EmuCoreError> {
@@ -304,14 +308,16 @@ impl EmuCore {
         let core_state = reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Core(e.to_string()))?;
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))?;
 
         let state_blob = save_state_with_header(core_state);
 
         let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
-            return Err(EmuCoreError::Core(
-                "emu thread shared frame buffer lock failed".into(),
-            ));
+            log::warn!("state export: shared frame buffer lock failed, preview unavailable");
+            return Ok(RuntimeStateExport {
+                state_blob,
+                preview: None,
+            });
         };
         let w = guard.width();
         let h = guard.height();
@@ -382,7 +388,7 @@ impl EmuCore {
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
             .map_err(|e| {
-                EmuCoreError::Core(format!(
+                EmuCoreError::Reply(format!(
                     "state import failed (tried SaveStateHeader format, then \
                      ConsoleStatePayload format, then raw): {e}"
                 ))
