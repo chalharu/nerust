@@ -288,7 +288,7 @@ impl SessionHandle {
         let Some(identity) = self.persistence_identity() else {
             return false;
         };
-        match self.emu_core.export_state() {
+        match self.emu_core.export_state(false) {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
                 match write_autosave_state_slot(
@@ -404,7 +404,11 @@ impl SessionHandle {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_state = if was_loaded {
-            Some(self.emu_core.export_state().map_err(|e| e.to_string())?)
+            Some(
+                self.emu_core
+                    .export_state(false)
+                    .map_err(|e| e.to_string())?,
+            )
         } else {
             None
         };
@@ -647,7 +651,7 @@ impl SessionHandle {
             make_active,
             sidecars.states_dir.display()
         );
-        match self.emu_core.export_state() {
+        match self.emu_core.export_state(true) {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(|preview| ThumbnailSource {
                     width: preview.width,
