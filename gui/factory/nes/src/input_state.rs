@@ -1,15 +1,13 @@
-pub mod persisted;
-
-use crate::frame::{Buttons, NesInputFrame};
-use crate::topology::{
+use nerust_input_nes_runtime::topology::{
     FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
     NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT, NES_CONTROL_RIGHT,
     NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
 use nerust_input_schema::{AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState};
+use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
 #[derive(Debug, Default)]
-pub struct NesInputState {
+pub(crate) struct NesInputState {
     held: NesInputFrame,
     dirty_player_one: bool,
     dirty_player_two: bool,
@@ -24,10 +22,6 @@ enum NesDigitalTarget {
 }
 
 impl NesInputState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn handle_input(&mut self, event: DigitalInputEvent) {
         let Some(target) = Self::digital_target(event.attachment, event.control) else {
             return;
@@ -117,16 +111,16 @@ impl NesInputState {
 #[cfg(test)]
 mod tests {
     use super::NesInputState;
-    use crate::frame::{Buttons, NesInputFrame};
-    use crate::topology::{
+    use nerust_input_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_RIGHT,
     };
     use nerust_input_schema::DigitalInputEvent;
+    use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
     #[test]
     fn nes_input_state_maps_player_one_buttons() {
-        let mut input = NesInputState::new();
+        let mut input = NesInputState::default();
 
         input.handle_input(DigitalInputEvent::pressed(
             NES_ATTACHMENT_PLAYER_ONE,
@@ -152,7 +146,7 @@ mod tests {
 
     #[test]
     fn nes_input_state_preserves_synced_frame_fields() {
-        let mut input = NesInputState::new();
+        let mut input = NesInputState::default();
         let base = NesInputFrame {
             player_one: Buttons::empty(),
             player_two: Buttons::LEFT,
@@ -176,7 +170,7 @@ mod tests {
 
     #[test]
     fn microphone_maps_to_microphone_field() {
-        let mut input = NesInputState::new();
+        let mut input = NesInputState::default();
 
         input.handle_input(DigitalInputEvent::pressed(
             NES_ATTACHMENT_PLAYER_TWO,

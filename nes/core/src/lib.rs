@@ -14,6 +14,7 @@ mod cartridge_runtime_state;
 pub mod console_core;
 pub mod controller;
 mod cpu;
+pub mod input_types;
 mod interrupt;
 mod mapper;
 mod mapper_state;

@@ -1,4 +1,4 @@
-use crate::frame::{Buttons, NesInputFrame};
+use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
 const INPUT_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -39,7 +39,7 @@ pub fn decode_input_state(bytes: &[u8]) -> Result<NesInputFrame, String> {
 #[cfg(test)]
 mod tests {
     use super::{decode_input_state, encode_input_state};
-    use crate::frame::{Buttons, NesInputFrame};
+    use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
     #[test]
     fn input_state_round_trips() {

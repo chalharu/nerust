@@ -3126,7 +3126,6 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
- "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
  "nerust_nes_core",
@@ -3204,7 +3203,7 @@ dependencies = [
  "nerust_contract_emuthread",
  "nerust_gui_runtime",
  "nerust_gui_settings",
- "nerust_input_nes",
+ "nerust_input_nes_runtime",
  "nerust_input_schema",
  "nerust_persistence",
  "nerust_screen_video",
@@ -3217,21 +3216,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_input_nes"
-version = "0.1.0-dev"
-dependencies = [
- "bitflags 2.13.0",
- "nerust_input_schema",
- "rmp-serde",
- "serde",
-]
-
-[[package]]
 name = "nerust_input_nes_runtime"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_contract_core",
- "nerust_input_nes",
+ "nerust_input_schema",
  "nerust_nes_core",
  "rmp-serde",
  "serde",
@@ -3270,7 +3259,6 @@ name = "nerust_nes_device"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_contract_core",
- "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
 ]
@@ -3301,7 +3289,6 @@ dependencies = [
  "crc",
  "nerust_cartridge_data",
  "nerust_contract_core",
- "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_nes_core",
  "nerust_nes_device",

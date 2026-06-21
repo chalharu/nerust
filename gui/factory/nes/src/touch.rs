@@ -1,4 +1,4 @@
-use nerust_input_nes::topology::{
+use nerust_input_nes_runtime::topology::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
@@ -204,7 +204,7 @@ mod tests {
         PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchRect, TouchTarget,
         actions_for_target,
     };
-    use nerust_input_nes::topology::{
+    use nerust_input_nes_runtime::topology::{
         NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
     };
     use nerust_input_schema::DigitalInputEvent;

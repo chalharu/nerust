@@ -35,7 +35,7 @@ mod tests {
     use super::controller_event_for_key;
     use crate::settings::defaults::seed::default_shared_settings;
     use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
-    use nerust_input_nes::topology::{
+    use nerust_input_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A,
     };
@@ -48,7 +48,7 @@ mod tests {
             nerust_input_schema::SystemId::Nes,
             KeyboardKey::KeyZ,
             true,
-            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+            nerust_input_nes_runtime::persisted::digital_event_from_persisted_ids,
         )
         .unwrap();
 
@@ -78,7 +78,7 @@ mod tests {
             nerust_input_schema::SystemId::Nes,
             KeyboardKey::KeyM,
             true,
-            nerust_input_nes::input::persisted::digital_event_from_persisted_ids,
+            nerust_input_nes_runtime::persisted::digital_event_from_persisted_ids,
         )
         .unwrap();
 

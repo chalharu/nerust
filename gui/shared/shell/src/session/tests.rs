@@ -193,7 +193,7 @@ impl CoreFactory for MockFactory {
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
         crate::descriptor::SystemDescriptor {
             system_id: nerust_input_schema::SystemId::Nes,
-            input_topology: nerust_input_nes::topology::input_topology_descriptor(),
+            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
         }
     }
     fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {

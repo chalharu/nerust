@@ -97,7 +97,7 @@ fn default_control_binding(
 mod tests {
     use super::default_shared_settings;
     use nerust_gui_settings::input::ShortcutAction;
-    use nerust_input_nes::topology::FAMICOM_P2_CONTROL_MICROPHONE;
+    use nerust_input_nes_runtime::topology::FAMICOM_P2_CONTROL_MICROPHONE;
 
     #[test]
     fn default_settings_seed_nes_bindings_and_system_settings() {
