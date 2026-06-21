@@ -1,10 +1,10 @@
 use nerust_console::state::RuntimeStateExport;
-use nerust_console::video::ConsoleVideo;
 use nerust_console::{Console, ConsoleError, ConsoleMetrics};
 use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {
@@ -22,7 +22,7 @@ pub struct SessionCore {
 impl SessionCore {
     pub fn from_console(console: Console) -> Self {
         let metrics = console.metrics();
-        let physical_size = console.video().render_profile().physical_size;
+        let physical_size = console.render_profile().physical_size;
         let window_size = WindowSize {
             width: physical_size.width,
             height: physical_size.height,
@@ -35,17 +35,12 @@ impl SessionCore {
         }
     }
 
-    pub fn video(&self) -> &ConsoleVideo {
-        self.console.video()
-    }
-
     pub fn window_size(&self) -> WindowSize {
         self.window_size
     }
 
     pub fn video_frame_handle(&self) -> VideoFrameHandle {
-        use std::sync::Arc;
-        let profile = self.console.video().render_profile();
+        let profile = self.console.render_profile();
         let logical_w = profile.logical_size.width;
         let bpp = profile.frame_format.bytes_per_pixel();
         let bytes = self.console.frame_buffer().as_ref();
@@ -66,7 +61,7 @@ impl SessionCore {
     }
 
     pub fn video_render_profile(&self) -> VideoRenderProfile {
-        self.console.video().render_profile()
+        self.console.render_profile().clone()
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
@@ -185,7 +180,7 @@ mod tests {
         assert!(!core.can_pause());
         assert!(!core.can_resume());
         assert_eq!(
-            core.video().render_profile().physical_size.width,
+            core.video_render_profile().physical_size.width,
             core.window_size().width
         );
         assert!(!core.video_frame_handle().bytes().is_empty());
