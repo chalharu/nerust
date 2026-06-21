@@ -4,7 +4,6 @@ mod renderer;
 use self::host::{HostAction, HostState};
 use self::renderer::WgpuRenderer;
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::load::LoadRequest;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -26,7 +25,6 @@ impl WindowRuntime {
         #[cfg(target_os = "macos")]
         let event_loop = {
             let mut event_loop = event_loop;
-            // Explicitly let macOS activate the app even when another app is currently active.
             event_loop.set_activate_ignoring_other_apps(true);
             event_loop
         };
@@ -34,7 +32,7 @@ impl WindowRuntime {
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_request),
+            host: HostState::new(AppMenu::new(proxy), default_load_request),
             renderer: None,
         }
     }
@@ -74,6 +72,7 @@ impl WindowRuntime {
                 self.recreate_renderer();
                 *control_flow = ControlFlow::Wait;
             }
+            // Main window events
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_window(window_id) => match event {
@@ -100,18 +99,63 @@ impl WindowRuntime {
                 WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
                 _ => (),
             },
+            // Settings window events
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_settings_window(window_id) => {
+                let Some(handle) = self.host.settings_window.as_mut() else {
+                    return;
+                };
+
+                match &event {
+                    WindowEvent::Resized(size) => {
+                        handle.resize(size.width, size.height);
+                    }
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        handle.set_scale_factor(*scale_factor as f32);
+                    }
+                    WindowEvent::ModifiersChanged(state) => {
+                        handle.set_modifiers(*state);
+                    }
+                    WindowEvent::CloseRequested => {
+                        handle
+                            .should_close
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    _ => {}
+                }
+
+                handle.update_modifiers_from_tao_event(&event);
+                handle.handle_tao_event(event);
+                handle.render();
+
+                if handle
+                    .should_close
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    let handle = self.host.settings_window.take().unwrap();
+                    let plan = self.host.close_settings_window(handle);
+                    if plan.is_some_and(|p| p.renderer_rebuild_required) {
+                        self.recreate_renderer();
+                    }
+                }
+            }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
+            Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
+                if let Some(handle) = self.host.settings_window.as_mut() {
+                    handle.render();
+                }
+            }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
             Event::UserEvent(command) => match command {
-                UserEvent::Menu(command) => match self.host.on_menu_command(command) {
-                    HostAction::None => (),
-                    HostAction::RomLoaded => self.recreate_renderer(),
-                    HostAction::Exit => *control_flow = ControlFlow::Exit,
-                },
-                UserEvent::ApplySettings { snapshot, reply } => {
-                    let _ = reply.send(self.apply_settings(snapshot));
+                UserEvent::Menu(command) => {
+                    let action = self.host.on_menu_command(command, event_loop);
+                    match action {
+                        HostAction::None => (),
+                        HostAction::RomLoaded => self.recreate_renderer(),
+                        HostAction::Exit => *control_flow = ControlFlow::Exit,
+                    }
                 }
-                UserEvent::SettingsClosed => self.host.on_settings_closed(),
             },
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
@@ -137,14 +181,6 @@ impl WindowRuntime {
             .window()
             .cloned()
             .map(|window| WgpuRenderer::new(window, self.host.session()));
-    }
-
-    fn apply_settings(&mut self, settings: SettingsSnapshot) -> Result<(), String> {
-        let plan = self.host.apply_settings(settings)?;
-        if plan.renderer_rebuild_required {
-            self.recreate_renderer();
-        }
-        Ok(())
     }
 }
 
