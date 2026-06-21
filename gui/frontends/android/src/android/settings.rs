@@ -8,6 +8,7 @@ use jni::refs::Global;
 use jni::sys::jobject;
 use jni::{JavaVM, jni_sig, jni_str};
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use std::sync::OnceLock;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_schema::SystemId;
