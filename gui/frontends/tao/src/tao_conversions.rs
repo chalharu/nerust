@@ -211,9 +211,11 @@ mod tests {
     }
 
     #[test]
-    fn unidentified_key_maps_to_unidentified() {
-        use tao::keyboard::NativeKeyCode;
-        let key = tao::keyboard::Key::Unidentified(NativeKeyCode::Unidentified);
-        assert_eq!(tao_key_to_iced_key(&key), keyboard::Key::Unidentified);
+    fn empty_string_character_preserved() {
+        let key = tao::keyboard::Key::Character("");
+        assert_eq!(
+            tao_key_to_iced_key(&key),
+            keyboard::Key::Character(SmolStr::new(""))
+        );
     }
 }

@@ -150,20 +150,26 @@ impl SettingsWindowHandle {
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
-    ) -> Self {
+    ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
         let capture_target = Arc::new(Mutex::new(None));
 
         #[allow(unused_mut)]
-        let mut window = WindowBuilder::new()
+        let mut wb = WindowBuilder::new()
             .with_title("Preferences")
             .with_inner_size(tao::dpi::LogicalSize::new(960.0, 720.0));
         #[cfg(target_os = "macos")]
         {
-            window = window.with_automatic_window_tabbing(false);
+            wb = wb.with_automatic_window_tabbing(false);
         }
-        let window = Arc::new(window.build(event_loop).unwrap());
+        let window = Arc::new(match wb.build(event_loop) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("failed to create settings window: {e}");
+                return None;
+            }
+        });
         let window_id = iced::window::Id::unique();
 
         let program = SettingsAppProgram {
@@ -200,7 +206,7 @@ impl SettingsWindowHandle {
 
         window.request_redraw();
 
-        Self {
+        Some(Self {
             window,
             window_id,
             ui_state,
@@ -218,7 +224,7 @@ impl SettingsWindowHandle {
             capture_target,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
-        }
+        })
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {

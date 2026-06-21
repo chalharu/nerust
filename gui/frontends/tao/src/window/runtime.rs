@@ -127,7 +127,7 @@ impl WindowRuntime {
 
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
-                handle.window.request_redraw();
+                handle.render();
 
                 if handle
                     .should_close

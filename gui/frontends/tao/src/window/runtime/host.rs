@@ -446,11 +446,21 @@ impl HostState {
             self.sync_menu_state();
         }
 
-        let handle = crate::settings_window::SettingsWindowHandle::new(
+        match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
             event_loop,
-        );
-        self.settings_window = Some(handle);
+        ) {
+            Some(handle) => self.settings_window = Some(handle),
+            None => {
+                log::error!("failed to open settings window");
+                self.settings_open = false;
+                if self.resume_after_settings {
+                    self.apply_session_command(SessionCommand::Resume);
+                } else {
+                    self.sync_menu_state();
+                }
+            }
+        }
     }
 
     pub(crate) fn close_settings_window(
