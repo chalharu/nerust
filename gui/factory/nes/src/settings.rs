@@ -178,7 +178,7 @@ mod tests {
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_input_nes::topology::{
+    use nerust_input_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,

@@ -1,8 +1,11 @@
+pub mod codec;
 pub mod nes_input_cell;
+pub mod persisted;
+pub mod topology;
 
-use nerust_input_nes::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
-use nerust_input_nes::frame::{Buttons, NesInputFrame};
+use crate::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
 use nerust_nes_core::controller::Controller;
+use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
 /// NES パッドのセーブステート関連のトレイト。
 ///
@@ -113,8 +116,8 @@ mod tests {
         StandardControllerSnapshot, apply_input_state, decode_controller_state,
         encode_controller_state, encode_input_state,
     };
-    use nerust_input_nes::codec::decode_input_state;
-    use nerust_input_nes::frame::{Buttons, NesInputFrame};
+    use crate::codec::decode_input_state;
+    use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
     #[test]
     fn controller_state_round_trips() {
@@ -168,7 +171,7 @@ mod tests {
 
         let snapshot = apply_input_state(
             base,
-            &nerust_input_nes::codec::encode_input_state(NesInputFrame {
+            &crate::codec::encode_input_state(NesInputFrame {
                 player_one: Buttons::A,
                 player_two: Buttons::RIGHT,
                 microphone: false,

@@ -13,7 +13,6 @@ nerust_contract_emuthread.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
-nerust_input_nes.workspace = true
 nerust_input_nes_runtime.workspace = true
 nerust_input_schema.workspace = true
 nerust_nes_core.workspace = true

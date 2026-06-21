@@ -106,14 +106,15 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 #[cfg(test)]
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use nerust_input_nes::topology::{
+    use nerust_input_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
     };
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections =
-            keyboard_binding_sections(&nerust_input_nes::topology::input_topology_descriptor());
+        let sections = keyboard_binding_sections(
+            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
+        );
 
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].attachment, NES_ATTACHMENT_PLAYER_ONE);

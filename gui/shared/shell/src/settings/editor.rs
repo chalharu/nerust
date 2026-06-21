@@ -106,7 +106,7 @@ mod tests {
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-    use nerust_input_nes::topology::{NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A};
+    use nerust_input_nes_runtime::topology::{NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A};
     use nerust_input_schema::SystemId;
 
     fn snapshot() -> SettingsSnapshot {

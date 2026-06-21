@@ -1,5 +1,6 @@
 mod adapter;
 mod builder;
+mod input_state;
 mod settings;
 
 use nerust_contract_core::input::SystemInputAdapter;
@@ -32,7 +33,7 @@ impl CoreFactory for NesFactory {
     fn system_descriptor(&self) -> SystemDescriptor {
         SystemDescriptor {
             system_id: SystemId::Nes,
-            input_topology: nerust_input_nes::topology::input_topology_descriptor(),
+            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
         }
     }
 

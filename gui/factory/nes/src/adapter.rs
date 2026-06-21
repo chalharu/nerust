@@ -1,7 +1,8 @@
+use crate::input_state::NesInputState;
 use nerust_contract_core::input::SystemInputAdapter;
-use nerust_input_nes::codec::{decode_input_state, encode_input_state};
-use nerust_input_nes::input::NesInputState;
+use nerust_input_nes_runtime::codec::{decode_input_state, encode_input_state};
 use nerust_input_nes_runtime::nes_input_cell::NesInputCell;
+use nerust_input_nes_runtime::persisted::digital_event_from_persisted_ids;
 use nerust_input_schema::DigitalInputEvent;
 use std::sync::Arc;
 
@@ -57,10 +58,6 @@ impl SystemInputAdapter for NesAdapter {
         control_id: &str,
         pressed: bool,
     ) -> Option<DigitalInputEvent> {
-        nerust_input_nes::input::persisted::digital_event_from_persisted_ids(
-            attachment_id,
-            control_id,
-            pressed,
-        )
+        digital_event_from_persisted_ids(attachment_id, control_id, pressed)
     }
 }
