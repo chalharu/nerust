@@ -3206,7 +3206,6 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_input_nes",
  "nerust_input_schema",
- "nerust_nes_core",
  "nerust_persistence",
  "nerust_screen_video",
  "nerust_sound_cpal",
