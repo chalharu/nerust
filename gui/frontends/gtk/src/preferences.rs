@@ -183,7 +183,11 @@ pub(crate) fn present_preferences_dialog(
     ));
     let sample_rate_combo = {
         let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
-        let rates: &[u32] = if rates.is_empty() { &[44_100, 48_000] } else { rates };
+        let rates: &[u32] = if rates.is_empty() {
+            &[44_100, 48_000]
+        } else {
+            rates
+        };
         let combo = gtk::ComboBoxText::new();
         for &rate in rates {
             let id = format!("{rate}");
