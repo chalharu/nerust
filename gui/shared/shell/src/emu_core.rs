@@ -39,11 +39,11 @@ pub struct SystemRuntimeSnapshot {
 }
 
 pub(crate) struct EmuCore {
-    pub emu: EmuThread,
-    pub render_profile: VideoRenderProfile,
-    pub shared_fb: Arc<Mutex<FrameBuffer>>,
-    pub disp_fb: FrameBuffer,
-    pub frame_ready: Arc<AtomicBool>,
+    emu: EmuThread,
+    render_profile: VideoRenderProfile,
+    shared_fb: Arc<Mutex<FrameBuffer>>,
+    disp_fb: FrameBuffer,
+    frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
 }
 
@@ -141,6 +141,10 @@ impl EmuCore {
             frame_ready,
             metrics,
         }
+    }
+
+    pub fn render_profile(&self) -> &VideoRenderProfile {
+        &self.render_profile
     }
 
     pub fn swap_frame_buffer(&mut self) {

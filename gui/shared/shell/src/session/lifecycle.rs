@@ -29,9 +29,10 @@ impl SessionHandle {
     }
 
     pub fn window_size(&self) -> WindowSize {
+        let profile = self.emu_core.render_profile();
         WindowSize {
-            width: self.emu_core.render_profile.physical_size.width,
-            height: self.emu_core.render_profile.physical_size.height,
+            width: profile.physical_size.width,
+            height: profile.physical_size.height,
         }
     }
 
