@@ -163,14 +163,23 @@ impl AudioBackendFactory for CpalFactory {
             Ok(c) => c.collect(),
             Err(_) => return vec![],
         };
+        // Prefer exact-supported rates (min == max) when available.
+        // These are common on ALSA, CoreAudio, WASAPI.
+        let exact: Vec<u32> = configs
+            .iter()
+            .filter(|cfg| cfg.min_sample_rate() == cfg.max_sample_rate())
+            .map(|cfg| cfg.min_sample_rate())
+            .filter(|&r| COMMON.contains(&r))
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        // No exact configs (e.g. Android OpenSL ES with a single wide range):
+        // probe by actually creating a short-lived backend for each candidate.
         COMMON
             .iter()
             .copied()
-            .filter(|&rate| {
-                configs
-                    .iter()
-                    .any(|cfg| rate >= cfg.min_sample_rate() && rate <= cfg.max_sample_rate())
-            })
+            .filter(|&rate| CpalAudio::new(rate, 10).is_ok())
             .collect()
     }
 
