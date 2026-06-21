@@ -164,7 +164,10 @@ impl EmuCore {
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        let mut guard = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.metrics.lock().unwrap_or_else(|e| {
+            log::warn!("metrics mutex poisoned, recovering");
+            e.into_inner()
+        });
         guard.frame_counter = self.emu.frame_count();
         guard.emulation_fps = self.emu.fps();
         *guard
