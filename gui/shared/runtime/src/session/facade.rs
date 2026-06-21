@@ -1,7 +1,6 @@
 use super::GuiSession;
 use super::persistence::PersistenceState;
 use nerust_console::state::RuntimeStateExport;
-use nerust_console::video::ConsoleVideo;
 use nerust_console::{ConsoleError, ConsoleMetrics};
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_gui_session::core::{SessionCore, WindowSize};
@@ -15,10 +14,6 @@ impl GuiSession {
             core,
             persistence: PersistenceState::default(),
         }
-    }
-
-    pub fn video(&self) -> &ConsoleVideo {
-        self.core.video()
     }
 
     pub fn with_frame_buffer<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
