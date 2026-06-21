@@ -2,37 +2,108 @@ use crate::emu_core::EmuCore;
 use crate::factory::CoreFactory;
 use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
-use nerust_contract_core::audio::AudioBackend;
+use nerust_contract_core::ConsoleCore;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_contract_core::{
+    CoreCapabilities, CoreConfig, CoreError, GpuCommandList, persistence::CanonicalMediaIdentity,
+};
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_nes_core::OpenBusReadResult;
-use nerust_nes_core::console_core::NesConsoleCore;
-use nerust_nes_core::controller::Controller;
+use nerust_input_schema::SystemId;
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_video::{
     FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile,
 };
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-struct TestSpeaker;
-impl AudioBackend for TestSpeaker {
-    fn start(&mut self) {}
-    fn pause(&mut self) {}
-    fn push(&mut self, _: f32) {}
+struct MockConsoleCore {
+    loaded: bool,
+    paused: bool,
+    identity: Option<CanonicalMediaIdentity>,
 }
 
-struct MockController;
-impl Controller for MockController {
-    fn read(&mut self, _: usize) -> OpenBusReadResult {
-        OpenBusReadResult::new(0, 0)
+impl MockConsoleCore {
+    fn new() -> Self {
+        Self {
+            loaded: false,
+            paused: true,
+            identity: None,
+        }
     }
-    fn write(&mut self, _: u8) {}
+}
+
+impl ConsoleCore for MockConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: Vec::new(),
+            video_signal: nerust_contract_core::VideoSignalKind::Ntsc,
+        }
+    }
+    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
+        Ok(GpuCommandList {
+            commands: Vec::new(),
+        })
+    }
+    fn attach_device(
+        &mut self,
+        _port: usize,
+        _device: Box<dyn nerust_contract_core::device::Device>,
+    ) {
+    }
+    fn detach_device(&mut self, _port: usize) {}
+    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+        self.loaded = true;
+        self.paused = true;
+        let mapper = if rom.len() > 6 {
+            (rom[6] >> 4) as u16
+        } else {
+            0
+        };
+        self.identity = Some(CanonicalMediaIdentity::rom(
+            nerust_contract_core::rom::RomIdentity {
+                format: nerust_contract_core::rom::RomFormat::INes,
+                mapper_type: mapper,
+                sub_mapper_type: 0,
+                mirror_mode: nerust_contract_core::mirror::MirrorMode::Horizontal,
+                has_battery: false,
+                trainer_len: 0,
+                prg_rom_len: 0x8000,
+                chr_rom_len: 0x2000,
+                prg_ram_len: 0,
+                save_prg_ram_len: 0,
+                chr_ram_len: 0,
+                save_chr_ram_len: 0,
+                prg_rom_crc64: 0,
+                chr_rom_crc64: 0,
+                trainer_crc64: 0,
+            },
+        ));
+        Ok(())
+    }
+    fn unload(&mut self) {
+        self.loaded = false;
+    }
+    fn reset(&mut self) {}
+    fn paused(&self) -> bool {
+        self.paused
+    }
+    fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+    fn save_state(&self) -> Result<Vec<u8>, CoreError> {
+        Ok(vec![])
+    }
+    fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+        Ok(())
+    }
+    fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
+        self.identity.clone().ok_or(CoreError::NoRomLoaded)
+    }
 }
 
 fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
@@ -56,9 +127,7 @@ fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
     disp_fb.resize(src_w, src_h);
     disp_fb.resize_data(src_w * src_h);
 
-    let mut speaker = TestSpeaker;
-    speaker.start();
-    let core = NesConsoleCore::new_empty(Box::new(MockController), Box::new(speaker));
+    let core = MockConsoleCore::new();
     let frame_ready = Arc::new(AtomicBool::new(false));
     let palette = Box::new([0u32; 256]);
     let emu = EmuThread::spawn(

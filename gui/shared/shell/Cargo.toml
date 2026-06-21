@@ -27,4 +27,3 @@ nerust_sound_openal.workspace = true
 [dev-dependencies]
 nerust_contract_core.workspace = true
 nerust_input_nes.workspace = true
-nerust_nes_core.workspace = true
