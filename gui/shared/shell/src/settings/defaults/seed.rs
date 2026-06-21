@@ -6,10 +6,6 @@ use nerust_gui_settings::input::{
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::nes::NesSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-use nerust_input_nes::topology::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
 use nerust_input_schema::{DigitalControlId, SystemId};
 use std::collections::BTreeMap;
 
@@ -19,45 +15,46 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         ..Default::default()
     };
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
+    const P1: &str = "nes.attachment.player1";
     nes_input.implicit_keyboard_profile_mut().bindings = vec![
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_A,
+            P1,
+            DigitalControlId::new("nes.control.a"),
             KeyboardKey::KeyZ,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_B,
+            P1,
+            DigitalControlId::new("nes.control.b"),
             KeyboardKey::KeyX,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_SELECT,
+            P1,
+            DigitalControlId::new("nes.control.select"),
             KeyboardKey::KeyC,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_START,
+            P1,
+            DigitalControlId::new("nes.control.start"),
             KeyboardKey::KeyV,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_UP,
+            P1,
+            DigitalControlId::new("nes.control.up"),
             KeyboardKey::ArrowUp,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_DOWN,
+            P1,
+            DigitalControlId::new("nes.control.down"),
             KeyboardKey::ArrowDown,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_LEFT,
+            P1,
+            DigitalControlId::new("nes.control.left"),
             KeyboardKey::ArrowLeft,
         ),
         default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_RIGHT,
+            P1,
+            DigitalControlId::new("nes.control.right"),
             KeyboardKey::ArrowRight,
         ),
     ];
