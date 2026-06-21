@@ -162,7 +162,7 @@ impl HostState {
             .session
             .factory()
             .resolve_load_request(&snapshot, options)
-            && self.session.load_with(media, resolved).is_ok()
+            && self.session.load_resolved(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
             self.after_rom_load();

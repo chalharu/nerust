@@ -1,4 +1,4 @@
-use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
@@ -116,14 +116,9 @@ impl EmuCore {
         Ok(())
     }
 
-    // TODO: CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
-    // 現状は NesConsoleCore::load も config を無視する。blocked on NesConsoleCore::load
+    // TODO: CoreConfig に CoreOptions を統合する。blocked on NesConsoleCore::load
     // が &CoreConfig を受け取るように変更されること。
-    pub fn load(
-        &self,
-        media: &MediaObject,
-        _request: &ResolvedLoadRequest,
-    ) -> Result<(), EmuCoreError> {
+    pub fn load(&self, media: &MediaObject) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {

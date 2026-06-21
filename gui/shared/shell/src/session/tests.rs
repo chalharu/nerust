@@ -288,7 +288,7 @@ fn system_load_options_flow_into_session_load() {
         .unwrap();
     assert!(
         session
-            .load_with(MediaObject::new(None, test_rom()), resolved)
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
             .is_ok()
     );
 }
@@ -302,7 +302,7 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_with(MediaObject::new(None, test_rom()), resolved)
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
     assert!(session.loaded());
 
@@ -326,7 +326,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_with(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     let mapper_save_path = session
@@ -359,7 +359,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_with(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -398,7 +398,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_with(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -430,7 +430,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_with(
+        .load_resolved(
             MediaObject::new(Some(rom_path.clone()), test_rom()),
             resolved,
         )
@@ -455,7 +455,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
         .resolve_load_request(session2.settings_snapshot(), options)
         .unwrap();
     session2
-        .load_with(
+        .load_resolved(
             MediaObject::new(Some(rom_path), test_rom_with_mapper4()),
             resolved,
         )

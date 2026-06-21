@@ -121,7 +121,7 @@ impl SessionHandle {
         Ok(plan)
     }
 
-    pub fn load_with(
+    pub fn load_resolved(
         &mut self,
         media: MediaObject,
         resolved: ResolvedLoadRequest,
@@ -130,9 +130,7 @@ impl SessionHandle {
             return Err(format!("unsupported system id: {:?}", resolved.system_id));
         }
         self.flush_mapper_save()?;
-        self.emu_core
-            .load(&media, &resolved)
-            .map_err(|e| e.to_string())?;
+        self.emu_core.load(&media).map_err(|e| e.to_string())?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
             request: resolved,
@@ -383,7 +381,7 @@ impl SessionHandle {
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core
-                .load(&loaded_media.media, &loaded_media.request)
+                .load(&loaded_media.media)
                 .map_err(|e| e.to_string())?;
             if let Some(core_bytes) = exported_core_bytes.as_ref() {
                 rebuilt_core
