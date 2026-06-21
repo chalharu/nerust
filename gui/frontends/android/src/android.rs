@@ -202,7 +202,7 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
         let snapshot = self.session.settings_snapshot().clone();
-        let options = self.session.factory().default_load_options();
+        let options = self.session.default_load_options();
         let resolved = self
             .session
             .factory()
@@ -267,7 +267,7 @@ impl AndroidFrontend {
             })?;
         let media = MediaObject::new(Some(path), bytes);
         let snapshot = self.session.settings_snapshot().clone();
-        let options = self.session.factory().default_load_options();
+        let options = self.session.default_load_options();
         let resolved = self
             .session
             .factory()

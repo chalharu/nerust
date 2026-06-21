@@ -8,10 +8,10 @@ pub mod title;
 
 pub use lifecycle::WindowSize;
 
-use crate::descriptor::SystemDescriptor;
+use crate::descriptor::{SystemDescriptor, SystemSettingsPageModel};
 use crate::emu_core::EmuCore;
 use crate::factory::CoreFactory;
-use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::session::metrics::ConsoleMetrics;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
@@ -27,7 +27,6 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
-    request: ResolvedLoadRequest,
 }
 
 #[derive(Debug, Default)]
@@ -130,6 +129,22 @@ impl SessionHandle {
 
     pub fn factory(&self) -> &dyn CoreFactory {
         &*self.factory
+    }
+
+    pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
+        self.factory.settings_page(settings)
+    }
+
+    pub fn default_load_options(&self) -> SystemLoadOptions {
+        self.factory.default_load_options()
+    }
+
+    pub fn resolve_load_request(
+        &self,
+        settings: &SettingsSnapshot,
+        options: SystemLoadOptions,
+    ) -> Result<ResolvedLoadRequest, String> {
+        self.factory.resolve_load_request(settings, options)
     }
 
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {

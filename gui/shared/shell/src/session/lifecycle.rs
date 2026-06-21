@@ -133,7 +133,6 @@ impl SessionHandle {
         self.emu_core.load(&media).map_err(|e| e.to_string())?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
-            request: resolved,
         });
         self.configure_persistence_for_loaded_media(true);
         self.remember_last_successful_rom_directory(media.path.as_deref());

@@ -157,7 +157,7 @@ impl HostState {
     fn load_inner(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
         let media = MediaObject::new(rom_path, data);
         let snapshot = self.session.settings_snapshot().clone();
-        let options = self.session.factory().default_load_options();
+        let options = self.session.default_load_options();
         if let Ok(resolved) = self
             .session
             .factory()
