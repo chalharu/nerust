@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use crate::load::SystemLoadOptions;
 use nerust_contract_core::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_gui_settings::local::HostBackendLocalSettings;
@@ -7,6 +9,23 @@ use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
 };
 use nerust_screen_video::FilterType;
+
+fn build_registry() -> AudioBackendRegistry {
+    let mut reg = AudioBackendRegistry::new();
+    reg.register(0, &nerust_sound_cpal::CPAL);
+    #[cfg(not(target_os = "android"))]
+    reg.register(1, &nerust_sound_openal::OPENAL);
+    reg
+}
+
+/// Returns a lazily-initialized global audio backend registry.
+///
+/// Factories are registered once at first access. The registry caches
+/// probe results so that `supported_rates()` is only queried once.
+pub fn audio_registry() -> &'static AudioBackendRegistry {
+    static REGISTRY: OnceLock<AudioBackendRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| build_registry())
+}
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend> {
     let sample_rate = if settings.audio.sample_rate > 0 {
@@ -20,11 +39,16 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Box<dyn AudioBacken
         f32::from(settings.audio.master_volume_percent.min(100)) / 100.0
     };
 
-    let mut registry = AudioBackendRegistry::new();
-    registry.register(0, "CPAL", nerust_sound_cpal::factory);
-    #[cfg(not(target_os = "android"))]
-    registry.register(1, "OpenAL", nerust_sound_openal::factory);
-    let backend = registry.autoselect(sample_rate, u32::from(settings.audio.latency_ms));
+    let registry = audio_registry();
+    let rate = {
+        let supported = registry.supported_rates();
+        if supported.is_empty() || supported.contains(&sample_rate) {
+            sample_rate
+        } else {
+            supported.last().copied().unwrap_or(48_000)
+        }
+    };
+    let backend = registry.autoselect(rate, u32::from(settings.audio.latency_ms));
     Box::new(GainBackend::new(backend, gain))
 }
 
