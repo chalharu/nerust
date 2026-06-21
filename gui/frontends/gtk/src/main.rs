@@ -100,7 +100,7 @@ impl State {
         let snapshot = self.session.settings_snapshot().clone();
         let options = self.factory.default_load_options();
         if let Ok(resolved) = self.factory.resolve_load_request(&snapshot, options)
-            && self.session.load_with(media, resolved).is_ok()
+            && self.session.load_resolved(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
         }
