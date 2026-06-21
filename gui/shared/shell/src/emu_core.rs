@@ -166,34 +166,32 @@ impl EmuCore {
         *guard
     }
 
-    pub fn snapshot(&self) -> ConsoleMetrics {
-        self.metrics()
-    }
-
     pub fn set_volume(&self, volume: f32) -> Result<(), EmuCoreError> {
         self.emu
             .send(EmuCommand::SetVolume(volume))
             .map_err(|_| EmuCoreError::WorkerUnavailable)
     }
 
-    pub fn resume(&self) {
-        if self.emu.send(EmuCommand::Resume).is_err() {
-            return;
-        }
+    pub fn resume(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Resume)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         match self.metrics.lock() {
             Ok(mut guard) => guard.paused = false,
             Err(e) => log::warn!("metrics lock poisoned in resume: {e}"),
         }
+        Ok(())
     }
 
-    pub fn pause(&self) {
-        if self.emu.send(EmuCommand::Pause).is_err() {
-            return;
-        }
+    pub fn pause(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Pause)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         match self.metrics.lock() {
             Ok(mut guard) => guard.paused = true,
             Err(e) => log::warn!("metrics lock poisoned in pause: {e}"),
         }
+        Ok(())
     }
 
     // TODO: CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
