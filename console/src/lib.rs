@@ -1,8 +1,6 @@
 pub mod state;
-pub mod video;
 
 use self::state::RuntimeStateExport;
-use self::video::ConsoleVideo;
 use nerust_contract_core::audio::AudioBackend;
 
 use nerust_contract_core::options::CoreOptions;
@@ -20,7 +18,7 @@ use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::VideoRenderProfile;
 use nerust_screen_video::{FrameBuffer, PixelFormat};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -48,8 +46,11 @@ pub enum ConsoleError {
 
 #[allow(missing_debug_implementations)]
 pub struct Console {
-    emu: EmuThread,
-    video: ConsoleVideo,
+    pub(crate) emu: EmuThread,
+    render_profile: VideoRenderProfile,
+    pub(crate) shared_fb: Arc<Mutex<FrameBuffer>>,
+    pub(crate) disp_fb: FrameBuffer,
+    pub(crate) frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
 }
 
@@ -145,32 +146,40 @@ impl Console {
 
         Self {
             emu,
-            video: ConsoleVideo::new(render_profile, shared_fb, disp_fb, frame_ready),
+            render_profile,
+            shared_fb,
+            disp_fb,
+            frame_ready,
             metrics,
         }
     }
 
     pub fn logical_size(&self) -> LogicalSize {
-        self.video().render_profile().logical_size
+        self.render_profile.logical_size
     }
 
     pub fn source_logical_size(&self) -> LogicalSize {
-        self.video().render_profile().source_logical_size
+        self.render_profile.source_logical_size
     }
 
     pub fn physical_size(&self) -> PhysicalSize {
-        self.video().render_profile().physical_size
+        self.render_profile.physical_size
     }
 
-    pub fn video(&self) -> &ConsoleVideo {
-        &self.video
+    pub fn render_profile(&self) -> &VideoRenderProfile {
+        &self.render_profile
     }
 
     /// 共有バッファから表示バッファに最新フレームを引き取る。
     /// frame_ready フラグで handshake を行い、新しいフレームがある場合のみ swap する。
     /// frame_count は frontend の再描画要求 (wants_redraw) 用に更新する。
     pub fn swap_frame_buffer(&mut self) {
-        self.video.swap_frame_buffer();
+        if self.frame_ready.load(Ordering::Relaxed)
+            && let Ok(mut guard) = self.shared_fb.lock()
+            && self.frame_ready.swap(false, Ordering::AcqRel)
+        {
+            std::mem::swap(&mut *guard, &mut self.disp_fb);
+        }
         if let Ok(mut guard) = self.metrics.lock() {
             guard.frame_counter = self.emu.frame_count();
         }
@@ -178,7 +187,7 @@ impl Console {
 
     /// 表示バッファへの参照を返す。
     pub fn frame_buffer(&self) -> &FrameBuffer {
-        self.video.frame_buffer()
+        &self.disp_fb
     }
 
     /// Returns current metrics. Frame counter and FPS are synced from EmuThread
@@ -387,5 +396,64 @@ impl Console {
                      ConsoleStatePayload format, then raw): {e}"
                 ))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_contract_core::audio::AudioBackend;
+    use nerust_nes_core::OpenBusReadResult;
+    use nerust_nes_core::controller::Controller;
+    use nerust_screen_video::FilterType;
+    use nerust_screen_video::LogicalSize;
+    use std::sync::atomic::Ordering;
+
+    struct TestSpeaker;
+    impl AudioBackend for TestSpeaker {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
+        fn push(&mut self, _: f32) {}
+    }
+
+    struct TestController;
+    impl Controller for TestController {
+        fn read(&mut self, _: usize) -> OpenBusReadResult {
+            OpenBusReadResult::new(0, 0)
+        }
+        fn write(&mut self, _: u8) {}
+    }
+
+    #[test]
+    fn swap_frame_buffer_copies_shared_to_disp() {
+        let mut console = Console::new_gpu(
+            Box::new(TestSpeaker),
+            FilterType::NtscComposite,
+            LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            Box::new(TestController),
+        );
+        // Write test data into the shared buffer (emu thread side)
+        if let Ok(mut guard) = console.shared_fb.lock() {
+            let slice = guard.as_mut();
+            slice.fill(42);
+            // Only the first byte will be checked — enough to prove the swap
+        }
+        console.frame_ready.store(true, Ordering::Release);
+        // Before swap, disp_fb retains its previous (zeroed) content
+        assert_eq!(
+            console.disp_fb.as_ref()[0],
+            0,
+            "disp_fb should start as zero"
+        );
+        console.swap_frame_buffer();
+        // After swap, data has moved from shared_fb to disp_fb
+        assert_eq!(
+            console.disp_fb.as_ref()[0],
+            42,
+            "data should propagate via swap"
+        );
     }
 }
