@@ -155,14 +155,13 @@ impl AudioBackendFactory for CpalFactory {
 
     fn probe(&self) -> Vec<u32> {
         const COMMON: [u32; 6] = [22_050, 24_000, 44_100, 48_000, 88_200, 96_000];
-        let device = match cpal::default_host().default_output_device() {
-            Some(d) => d,
-            None => return vec![],
-        };
         #[cfg(not(target_os = "android"))]
         {
             // Desktop: trust supported_output_configs() range matching.
-            // ALSA/CoreAudio/WASAPI return per-rate configs that are reliable.
+            let device = match cpal::default_host().default_output_device() {
+                Some(d) => d,
+                None => return vec![],
+            };
             let configs: Vec<_> = match device.supported_output_configs() {
                 Ok(c) => c.collect(),
                 Err(_) => return vec![],
