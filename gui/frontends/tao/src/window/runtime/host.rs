@@ -1,5 +1,4 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
-use crate::settings;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -20,7 +19,7 @@ use std::time::Instant;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
-    event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
+    event_loop::{ControlFlow, EventLoopWindowTarget},
     keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
@@ -41,8 +40,7 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     default_load_request: LoadRequest,
-    user_event_proxy: EventLoopProxy<UserEvent>,
-    settings_helper: Option<settings::SettingsHelperHandle>,
+    pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -50,19 +48,14 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(
-        app_menu: AppMenu,
-        user_event_proxy: EventLoopProxy<UserEvent>,
-        default_load_request: LoadRequest,
-    ) -> Self {
+    pub(crate) fn new(app_menu: AppMenu, default_load_request: LoadRequest) -> Self {
         Self {
             window: None,
             session: SessionHandle::new_for_host(HostBackendIdentity::tao_wgpu()),
             app_menu,
             shell: NativeShellState::new(),
             default_load_request,
-            user_event_proxy,
-            settings_helper: None,
+            settings_window: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
@@ -121,6 +114,12 @@ impl HostState {
             .is_some_and(|window| window.id() == window_id)
     }
 
+    pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
+        self.settings_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -163,7 +162,11 @@ impl HostState {
         }
     }
 
-    pub(crate) fn on_menu_command(&mut self, command: MenuCommand) -> HostAction {
+    pub(crate) fn on_menu_command(
+        &mut self,
+        command: MenuCommand,
+        event_loop: &EventLoopWindowTarget<UserEvent>,
+    ) -> HostAction {
         if self.settings_open {
             return match command {
                 MenuCommand::Quit => {
@@ -185,7 +188,7 @@ impl HostState {
                 }
             }
             MenuCommand::Settings => {
-                self.open_settings_window();
+                self.open_settings_window(event_loop);
                 HostAction::None
             }
             MenuCommand::Session(command) => {
@@ -291,9 +294,7 @@ impl HostState {
         self.remember_fit_window_size();
         self.settings_open = false;
         self.resume_after_settings = false;
-        if let Some(helper) = self.settings_helper.take() {
-            helper.terminate();
-        }
+        self.settings_window.take();
         self.session.flush_before_exit();
         true
     }
@@ -326,7 +327,7 @@ impl HostState {
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        self.settings_helper = None;
+        self.settings_window = None;
         if !self.settings_open {
             return;
         }
@@ -433,7 +434,7 @@ impl HostState {
         }
     }
 
-    fn open_settings_window(&mut self) {
+    fn open_settings_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
         if self.settings_open {
             return;
         }
@@ -445,25 +446,39 @@ impl HostState {
             self.sync_menu_state();
         }
 
-        match settings::spawn_settings_helper(
+        match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
-            self.user_event_proxy.clone(),
+            event_loop,
         ) {
-            Ok(helper) => {
-                self.settings_helper = Some(helper);
-            }
-            Err(error) => {
-                log::warn!("failed to open settings helper: {error}");
+            Some(handle) => self.settings_window = Some(handle),
+            None => {
+                log::error!("failed to open settings window");
                 self.settings_open = false;
-                let should_resume = std::mem::take(&mut self.resume_after_settings);
-                if should_resume {
+                if self.resume_after_settings {
                     self.apply_session_command(SessionCommand::Resume);
                 } else {
                     self.sync_menu_state();
-                    self.refresh_window_title();
                 }
             }
         }
+    }
+
+    pub(crate) fn close_settings_window(
+        &mut self,
+        mut handle: crate::settings_window::SettingsWindowHandle,
+    ) -> Option<SettingsApplyPlan> {
+        let pending = handle.take_pending_apply();
+        drop(handle);
+        self.on_settings_closed();
+        if let Some(snapshot) = pending {
+            match self.apply_settings(snapshot) {
+                Ok(plan) => return Some(plan),
+                Err(error) => {
+                    log::warn!("settings apply failed after close: {error}");
+                }
+            }
+        }
+        None
     }
 
     fn startup_window_size(&self) -> TaoLogicalSize<f64> {

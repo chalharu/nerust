@@ -1,8 +1,6 @@
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
-use std::sync::mpsc;
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -16,11 +14,6 @@ pub(crate) enum MenuCommand {
 #[derive(Debug)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
-    ApplySettings {
-        snapshot: SettingsSnapshot,
-        reply: mpsc::Sender<Result<(), String>>,
-    },
-    SettingsClosed,
 }
 
 #[cfg(any(
