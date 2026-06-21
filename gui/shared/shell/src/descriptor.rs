@@ -1,6 +1,5 @@
 use crate::emu_core::EmuCore;
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use crate::session::metrics::ConsoleMetrics;
 use crate::settings::i18n::{UiText, text};
 use crate::settings::nes::{build_speaker, effective_load_options, filter_type};
 use nerust_contract_core::options::Mmc3IrqVariant;
@@ -13,8 +12,6 @@ use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
-
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -66,13 +63,6 @@ pub enum SystemSettingsFieldKind {
 pub struct SystemSettingsChoiceOption {
     pub id: SystemSettingsChoiceId,
     pub label: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SystemRuntimeSnapshot {
-    pub metrics: ConsoleMetrics,
-    pub video_frame: Option<VideoFrameHandle>,
-    pub video_profile: Option<VideoRenderProfile>,
 }
 
 pub trait SystemInputAdapter: Send {
