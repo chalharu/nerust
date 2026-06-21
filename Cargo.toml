@@ -4,7 +4,6 @@ members = [
   "backend/opengl",
   "backend/wgpu",
   "cartridge/data",
-  "console",
   "contract/core",
   "contract/emuthread",
   "gui/shared/settings",
@@ -20,7 +19,6 @@ members = [
   "gui/frontends/tao",
   "gui/shared/runtime",
   "gui/shared/shell",
-  "gui/shared/session",
   "nes_ntsc",
   "screen/glwrap",
   "screen/opengl",
@@ -32,7 +30,7 @@ members = [
   "sound/filter",
   "timer",
 ]
-default-members = ["nes/core", "persistence", "console"]
+default-members = ["nes/core", "persistence"]
 
 [profile.release]
 debug = false
@@ -74,7 +72,6 @@ libc = { version = "=0.2.186" }
 log = { version = "=0.4.32", default-features = false }
 muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
-nerust_console = { path = "console" }
 nerust_contract_core = { path = "contract/core" }
 nerust_contract_emuthread = { path = "contract/emuthread" }
 nerust_gui_settings = { path = "gui/shared/settings" }
@@ -82,7 +79,6 @@ nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
-nerust_gui_session = { path = "gui/shared/session" }
 nerust_input_schema = { path = "input/schema" }
 nerust_input_nes = { path = "input/nes" }
 nerust_input_nes_runtime = { path = "input/nes_runtime" }

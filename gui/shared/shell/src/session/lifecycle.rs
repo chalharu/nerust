@@ -1,10 +1,9 @@
-use crate::descriptor::{RuntimeHostServices, SystemSettingsPageModel};
+use crate::descriptor;
 use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
-use nerust_console::state::PreviewFrame;
-use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_session::core::WindowSize;
-use nerust_gui_session::title::window_title;
+use crate::session::commands::{SessionCommand, SessionCommandOutcome};
+use crate::session::title::window_title;
+use crate::state::PreviewFrame;
 use nerust_persistence::sidecar::{
     load_mapper_save, write_mapper_save, write_recovery_mapper_save,
 };
@@ -18,20 +17,21 @@ use nerust_persistence::time::latest_saved_slot_id;
 use std::io::ErrorKind;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowSize {
+    pub width: f32,
+    pub height: f32,
+}
+
 impl SessionHandle {
-    pub fn metrics(&self) -> nerust_console::ConsoleMetrics {
-        self.runtime.snapshot().metrics
+    pub fn metrics(&self) -> crate::session::metrics::ConsoleMetrics {
+        self.emu_core.metrics()
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let profile = self
-            .runtime
-            .snapshot()
-            .video_profile
-            .expect("system runtime should publish a video profile");
         WindowSize {
-            width: profile.physical_size.width,
-            height: profile.physical_size.height,
+            width: self.emu_core.render_profile.physical_size.width,
+            height: self.emu_core.render_profile.physical_size.height,
         }
     }
 
@@ -62,18 +62,17 @@ impl SessionHandle {
         self.descriptor.input_topology.clone()
     }
 
-    pub fn system_settings_page_model(&self) -> SystemSettingsPageModel {
-        self.definition.settings_page(&self.settings_snapshot)
+    pub fn system_settings_page_model(&self) -> descriptor::SystemSettingsPageModel {
+        descriptor::nes_settings_page(&self.settings_snapshot)
     }
 
     pub fn apply_system_settings_choice(
         &self,
         settings: &mut nerust_gui_runtime::settings::SettingsSnapshot,
-        field: &crate::descriptor::SystemSettingsFieldId,
-        choice: &crate::descriptor::SystemSettingsChoiceId,
+        field: &descriptor::SystemSettingsFieldId,
+        choice: &descriptor::SystemSettingsChoiceId,
     ) -> Result<(), String> {
-        self.definition
-            .apply_settings_choice(settings, field, choice)
+        descriptor::apply_nes_settings_choice(settings, field, choice)
     }
 
     pub fn apply_settings(
@@ -98,7 +97,7 @@ impl SessionHandle {
             } else {
                 volume
             };
-            self.runtime.set_volume(volume);
+            self.emu_core.set_volume(volume);
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
@@ -141,7 +140,7 @@ impl SessionHandle {
     pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
         let resolved = self.resolve_load_request(request, &media)?;
         self.flush_mapper_save()?;
-        self.runtime.load(&media, &resolved)?;
+        self.emu_core.load(&media, &resolved)?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
             request: resolved,
@@ -153,7 +152,7 @@ impl SessionHandle {
 
     pub fn unload(&mut self) -> Result<bool, String> {
         self.flush_mapper_save()?;
-        let unloaded = self.runtime.unload()?;
+        let unloaded = self.emu_core.unload()?;
         if unloaded {
             self.loaded_media = None;
             self.persistence = Default::default();
@@ -176,7 +175,7 @@ impl SessionHandle {
                 if self.paused() {
                     Ok(SessionCommandOutcome::default())
                 } else {
-                    self.runtime.pause();
+                    self.emu_core.pause();
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: false,
@@ -185,7 +184,7 @@ impl SessionHandle {
             }
             SessionCommand::Resume => {
                 if self.paused() {
-                    self.runtime.resume();
+                    self.emu_core.resume();
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: self.loaded(),
@@ -202,7 +201,7 @@ impl SessionHandle {
                 }
             }
             SessionCommand::Reset => {
-                self.runtime.reset()?;
+                self.emu_core.reset()?;
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -288,7 +287,7 @@ impl SessionHandle {
         let Some(identity) = self.persistence_identity() else {
             return false;
         };
-        match self.runtime.export_state() {
+        match self.emu_core.export_state() {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
                 match write_autosave_state_slot(
@@ -333,7 +332,7 @@ impl SessionHandle {
                     clear_hidden_lifecycle_state_path(&path);
                     return false;
                 }
-                if let Err(error) = self.runtime.import_state(&slot.machine_state) {
+                if let Err(error) = self.emu_core.import_state(&slot.machine_state) {
                     log::warn!("hidden lifecycle state import failed: {error}");
                     clear_hidden_lifecycle_state_path(&path);
                     false
@@ -369,7 +368,7 @@ impl SessionHandle {
     pub fn persistence_identity(
         &self,
     ) -> Option<nerust_contract_core::persistence::PersistenceIdentity> {
-        let media = self.runtime.canonical_media_identity()?;
+        let media = self.emu_core.canonical_media_identity()?;
         Some(nerust_contract_core::persistence::PersistenceIdentity {
             system_id: self.descriptor.system_id,
             media,
@@ -384,18 +383,17 @@ impl SessionHandle {
         let (system_id, options) = match request {
             LoadRequest::Auto => (
                 self.descriptor.system_id,
-                self.definition.default_load_options(),
+                descriptor::default_nes_load_options(),
             ),
             LoadRequest::Explicit { system_id, options } => (system_id, options),
         };
         if system_id != self.descriptor.system_id {
             return Err(format!("unsupported system id: {system_id:?}"));
         }
-        if !self.definition.probe_media(media) {
+        if !descriptor::probe_nes_media(media) {
             return Err("media probe failed for active system definition".into());
         }
-        self.definition
-            .resolve_load_request(&self.settings_snapshot, options)
+        descriptor::resolve_nes_load_request(&self.settings_snapshot, options)
     }
 
     fn rebuild_for_settings(
@@ -405,36 +403,30 @@ impl SessionHandle {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_state = if was_loaded {
-            Some(self.runtime.export_state()?)
+            Some(self.emu_core.export_state()?)
         } else {
             None
         };
         let restored_runtime_state = exported_state.is_some();
 
-        let mut rebuilt_runtime = self.definition.create_runtime(
-            &RuntimeHostServices {
-                host_backend: self.host_backend,
-            },
-            next_settings,
-        )?;
-        let rebuilt_adapter = self.definition.create_input_adapter(next_settings);
+        let (rebuilt_core, rebuilt_adapter) = descriptor::create_core_and_adapter(next_settings)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_runtime.load(&loaded_media.media, &loaded_media.request)?;
+            rebuilt_core.load(&loaded_media.media, &loaded_media.request)?;
             if let Some(exported_state) = exported_state.as_ref() {
-                rebuilt_runtime.import_state(&exported_state.state_blob)?;
+                rebuilt_core.import_state(&exported_state.state_blob)?;
                 if !was_paused {
-                    rebuilt_runtime.resume();
+                    rebuilt_core.resume();
                 }
             }
         }
 
-        self.runtime = rebuilt_runtime;
+        self.emu_core = rebuilt_core;
         self.input_adapter = rebuilt_adapter;
         if was_loaded {
             self.configure_persistence_for_loaded_media(!restored_runtime_state);
             if was_paused {
-                self.runtime.pause();
+                self.emu_core.pause();
             }
         }
         Ok(())
@@ -505,7 +497,7 @@ impl SessionHandle {
         if let Some(bytes) =
             load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
         {
-            self.runtime.import_mapper_save(bytes)?;
+            self.emu_core.import_mapper_save(bytes)?;
         }
         Ok(())
     }
@@ -518,7 +510,7 @@ impl SessionHandle {
             if self.persistence.mapper_save_recovery_written {
                 return Ok(());
             }
-            if let Some(bytes) = self.runtime.export_mapper_save()? {
+            if let Some(bytes) = self.emu_core.export_mapper_save()? {
                 let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
                     .map_err(|error| error.to_string())?;
                 self.persistence.mapper_save_recovery_written = true;
@@ -529,7 +521,7 @@ impl SessionHandle {
             }
             return Ok(());
         }
-        match self.runtime.export_mapper_save()? {
+        match self.emu_core.export_mapper_save()? {
             Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
                 .map_err(|error| error.to_string()),
             None => Ok(()),
@@ -640,7 +632,7 @@ impl SessionHandle {
             make_active,
             sidecars.states_dir.display()
         );
-        match self.runtime.export_state() {
+        match self.emu_core.export_state() {
             Ok(export) => {
                 let preview = export.preview.as_ref().map(|preview| ThumbnailSource {
                     width: preview.width,
@@ -680,7 +672,7 @@ impl SessionHandle {
         };
         match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
             Ok(slot) => {
-                if let Err(error) = self.runtime.import_state(&slot.machine_state) {
+                if let Err(error) = self.emu_core.import_state(&slot.machine_state) {
                     log::warn!("state import failed: {error}");
                     false
                 } else {
