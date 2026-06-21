@@ -19,6 +19,17 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub(crate) enum EmuCoreError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Core(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct SystemRuntimeSnapshot {
@@ -197,7 +208,11 @@ impl EmuCore {
         }
     }
 
-    pub fn load(&self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
+    pub fn load(
+        &self,
+        media: &MediaObject,
+        _request: &ResolvedLoadRequest,
+    ) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -209,11 +224,11 @@ impl EmuCore {
                 },
                 reply: reply_tx,
             })))
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         let result = reply_rx
             .recv()
-            .map_err(|_| "emu thread reply channel closed".to_string())?
-            .map_err(|e| e.to_string());
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Core(e.to_string()));
         if result.is_ok()
             && let Ok(mut guard) = self.metrics.lock()
         {
@@ -223,61 +238,63 @@ impl EmuCore {
         result
     }
 
-    pub fn unload(&mut self) -> Result<bool, String> {
+    pub fn unload(&mut self) -> Result<bool, EmuCoreError> {
         self.emu
             .send(EmuCommand::Unload)
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         if let Ok(mut guard) = self.metrics.lock() {
             guard.loaded = false;
         }
         Ok(true)
     }
 
-    pub fn reset(&self) -> Result<(), String> {
+    pub fn reset(&self) -> Result<(), EmuCoreError> {
         self.emu
             .send(EmuCommand::Reset)
-            .map_err(|_| "emu thread channel unavailable".to_string())
+            .map_err(|_| EmuCoreError::WorkerUnavailable)
     }
 
-    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
+    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::MapperSave { reply: reply_tx })
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| "emu thread reply channel closed".to_string())?
-            .map_err(|e| e.to_string())
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Core(e.to_string()))
     }
 
-    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String> {
+    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
                 data: bytes,
                 reply: reply_tx,
             })))
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| "emu thread reply channel closed".to_string())?
-            .map_err(|e| e.to_string())
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Core(e.to_string()))
     }
 
-    pub fn export_state(&self) -> Result<RuntimeStateExport, String> {
+    pub fn export_state(&self) -> Result<RuntimeStateExport, EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::SaveState { reply: reply_tx })
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         let core_state = reply_rx
             .recv()
-            .map_err(|_| "emu thread reply channel closed".to_string())?
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Core(e.to_string()))?;
 
         let state_blob = save_state_with_header(core_state);
 
         let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
-            return Err("emu thread shared frame buffer lock failed".into());
+            return Err(EmuCoreError::Core(
+                "emu thread shared frame buffer lock failed".into(),
+            ));
         };
         let w = guard.width();
         let h = guard.height();
@@ -329,7 +346,7 @@ impl EmuCore {
         reply_rx.recv().ok().and_then(|r| r.ok())
     }
 
-    pub fn import_state(&self, bytes: &[u8]) -> Result<(), String> {
+    pub fn import_state(&self, bytes: &[u8]) -> Result<(), EmuCoreError> {
         let core_bytes = match load_state_from_header(bytes) {
             Ok(inner) => inner.to_vec(),
             Err(_) => match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
@@ -343,15 +360,15 @@ impl EmuCore {
                 data: core_bytes,
                 reply: reply_tx,
             })))
-            .map_err(|_| "emu thread channel unavailable".to_string())?;
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| "emu thread reply channel closed".to_string())?
+            .map_err(|_| EmuCoreError::NoReply)?
             .map_err(|e| {
-                format!(
+                EmuCoreError::Core(format!(
                     "state import failed (tried SaveStateHeader format, then \
                      ConsoleStatePayload format, then raw): {e}"
-                )
+                ))
             })
     }
 }

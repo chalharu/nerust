@@ -23,6 +23,7 @@ nerust_sound_cpal.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 nerust_sound_openal.workspace = true

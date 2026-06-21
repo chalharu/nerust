@@ -140,7 +140,9 @@ impl SessionHandle {
     pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
         let resolved = self.resolve_load_request(request, &media)?;
         self.flush_mapper_save()?;
-        self.emu_core.load(&media, &resolved)?;
+        self.emu_core
+            .load(&media, &resolved)
+            .map_err(|e| e.to_string())?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
             request: resolved,
@@ -152,7 +154,7 @@ impl SessionHandle {
 
     pub fn unload(&mut self) -> Result<bool, String> {
         self.flush_mapper_save()?;
-        let unloaded = self.emu_core.unload()?;
+        let unloaded = self.emu_core.unload().map_err(|e| e.to_string())?;
         if unloaded {
             self.loaded_media = None;
             self.persistence = Default::default();
@@ -201,7 +203,7 @@ impl SessionHandle {
                 }
             }
             SessionCommand::Reset => {
-                self.emu_core.reset()?;
+                self.emu_core.reset().map_err(|e| e.to_string())?;
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -403,7 +405,7 @@ impl SessionHandle {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_state = if was_loaded {
-            Some(self.emu_core.export_state()?)
+            Some(self.emu_core.export_state().map_err(|e| e.to_string())?)
         } else {
             None
         };
@@ -412,9 +414,13 @@ impl SessionHandle {
         let (rebuilt_core, rebuilt_adapter) = descriptor::create_core_and_adapter(next_settings)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_core.load(&loaded_media.media, &loaded_media.request)?;
+            rebuilt_core
+                .load(&loaded_media.media, &loaded_media.request)
+                .map_err(|e| e.to_string())?;
             if let Some(exported_state) = exported_state.as_ref() {
-                rebuilt_core.import_state(&exported_state.state_blob)?;
+                rebuilt_core
+                    .import_state(&exported_state.state_blob)
+                    .map_err(|e| e.to_string())?;
                 if !was_paused {
                     rebuilt_core.resume();
                 }
@@ -497,7 +503,9 @@ impl SessionHandle {
         if let Some(bytes) =
             load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
         {
-            self.emu_core.import_mapper_save(bytes)?;
+            self.emu_core
+                .import_mapper_save(bytes)
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -510,7 +518,11 @@ impl SessionHandle {
             if self.persistence.mapper_save_recovery_written {
                 return Ok(());
             }
-            if let Some(bytes) = self.emu_core.export_mapper_save()? {
+            if let Some(bytes) = self
+                .emu_core
+                .export_mapper_save()
+                .map_err(|e| e.to_string())?
+            {
                 let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
                     .map_err(|error| error.to_string())?;
                 self.persistence.mapper_save_recovery_written = true;
@@ -521,7 +533,11 @@ impl SessionHandle {
             }
             return Ok(());
         }
-        match self.emu_core.export_mapper_save()? {
+        match self
+            .emu_core
+            .export_mapper_save()
+            .map_err(|e| e.to_string())?
+        {
             Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
                 .map_err(|error| error.to_string()),
             None => Ok(()),

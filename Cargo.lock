@@ -3194,6 +3194,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
