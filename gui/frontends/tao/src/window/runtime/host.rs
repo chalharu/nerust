@@ -1,16 +1,21 @@
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 use nerust_backend_wgpu::RenderResult;
+use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_settings::app_state::RememberedWindowSize;
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
+use nerust_gui_shell::settings::defaults::seed::{
+    default_app_state, default_local_settings, default_shared_settings,
+};
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_gui_shell::settings::nes::scaling_factor;
+use nerust_gui_shell::settings::scaling_factor;
 use nerust_screen_wgpu::surface::SurfaceSize;
 use rfd::FileDialog;
 use std::path::{Path, PathBuf};
@@ -39,7 +44,6 @@ pub(crate) struct HostState {
     session: SessionHandle,
     app_menu: AppMenu,
     shell: NativeShellState,
-    default_load_request: LoadRequest,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
@@ -48,13 +52,24 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(app_menu: AppMenu, default_load_request: LoadRequest) -> Self {
+    pub(crate) fn new(app_menu: AppMenu) -> Self {
+        let identity = HostBackendIdentity::tao_wgpu();
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let descriptor = factory.system_descriptor();
+        let snapshot = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let (core, adapter) = factory
+            .create_core_and_adapter(&snapshot)
+            .expect("failed to create core");
+        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
         Self {
             window: None,
-            session: SessionHandle::new_for_host(HostBackendIdentity::tao_wgpu()),
+            session,
             app_menu,
             shell: NativeShellState::new(),
-            default_load_request,
             settings_window: None,
             settings_open: false,
             resume_after_settings: false,
@@ -127,33 +142,40 @@ impl HostState {
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_with_options(None, data, self.default_load_request.clone())
+        self.load_inner(None, data)
     }
 
     pub(crate) fn load_with_options(
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        request: LoadRequest,
+        _request: LoadRequest,
     ) -> bool {
-        if self
+        self.load_inner(rom_path, data)
+    }
+
+    fn load_inner(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
+        let media = MediaObject::new(rom_path, data);
+        let snapshot = self.session.settings_snapshot().clone();
+        let options = self.session.factory().default_load_options();
+        if let Ok(resolved) = self
             .session
-            .load(MediaObject::new(rom_path, data), request)
-            .is_ok()
+            .factory()
+            .resolve_load_request(&snapshot, options)
+            && self.session.load_with(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
             self.after_rom_load();
-            true
-        } else {
-            false
+            return true;
         }
+        false
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();
-                self.load_with_options(Some(rom_path), data, self.default_load_request.clone())
+                self.load_inner(Some(rom_path), data)
             }
             Err(error) => {
                 log::warn!("ROM open failed: {error}");

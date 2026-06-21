@@ -1,5 +1,4 @@
-use crate::descriptor;
-use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
+use crate::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::title::window_title;
@@ -58,23 +57,6 @@ impl SessionHandle {
     pub fn can_resume(&self) -> bool {
         let metrics = self.metrics();
         metrics.loaded && metrics.paused
-    }
-
-    pub fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
-        self.descriptor.input_topology.clone()
-    }
-
-    pub fn system_settings_page_model(&self) -> descriptor::SystemSettingsPageModel {
-        descriptor::nes_settings_page(&self.settings_snapshot)
-    }
-
-    pub fn apply_system_settings_choice(
-        &self,
-        settings: &mut nerust_gui_runtime::settings::SettingsSnapshot,
-        field: &descriptor::SystemSettingsFieldId,
-        choice: &descriptor::SystemSettingsChoiceId,
-    ) -> Result<(), String> {
-        descriptor::apply_nes_settings_choice(settings, field, choice)
     }
 
     pub fn apply_settings(
@@ -139,8 +121,14 @@ impl SessionHandle {
         Ok(plan)
     }
 
-    pub fn load(&mut self, media: MediaObject, request: LoadRequest) -> Result<(), String> {
-        let resolved = self.resolve_load_request(request, &media)?;
+    pub fn load_with(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), String> {
+        if resolved.system_id != self.descriptor.system_id {
+            return Err(format!("unsupported system id: {:?}", resolved.system_id));
+        }
         self.flush_mapper_save()?;
         self.emu_core
             .load(&media, &resolved)
@@ -375,27 +363,6 @@ impl SessionHandle {
         })
     }
 
-    fn resolve_load_request(
-        &self,
-        request: LoadRequest,
-        media: &MediaObject,
-    ) -> Result<ResolvedLoadRequest, String> {
-        let (system_id, options) = match request {
-            LoadRequest::Auto => (
-                self.descriptor.system_id,
-                descriptor::default_nes_load_options(),
-            ),
-            LoadRequest::Explicit { system_id, options } => (system_id, options),
-        };
-        if system_id != self.descriptor.system_id {
-            return Err(format!("unsupported system id: {system_id:?}"));
-        }
-        if !descriptor::probe_nes_media(media) {
-            return Err("media probe failed for active system definition".into());
-        }
-        descriptor::resolve_nes_load_request(&self.settings_snapshot, options)
-    }
-
     fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
@@ -409,7 +376,10 @@ impl SessionHandle {
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let (rebuilt_core, rebuilt_adapter) = descriptor::create_core_and_adapter(next_settings)?;
+        let (rebuilt_core, rebuilt_adapter) = self
+            .factory
+            .create_core_and_adapter(next_settings)
+            .map_err(|e| e.to_string())?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core

@@ -2,7 +2,7 @@ use super::State;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_shell::session::WindowSize;
-use nerust_gui_shell::settings::nes::scaling_factor;
+use nerust_gui_shell::settings::scaling_factor;
 use nerust_screen_video::FrameBuffer;
 use shared_library::dynamic_library::DynamicLibrary;
 use std::ptr;

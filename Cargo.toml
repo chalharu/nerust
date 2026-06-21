@@ -6,12 +6,8 @@ members = [
   "cartridge/data",
   "contract/core",
   "contract/emuthread",
+  "gui/factory/nes",
   "gui/shared/settings",
-  "nes/core",
-  "nes/device",
-  "input/schema",
-  "input/nes",
-  "input/nes_runtime",
   "persistence",
   "rom_test",
   "gui/frontends/android",
@@ -74,6 +70,7 @@ muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
 nerust_cartridge_data = { path = "cartridge/data" }
 nerust_contract_core = { path = "contract/core" }
 nerust_contract_emuthread = { path = "contract/emuthread" }
+nerust_factory_nes = { path = "gui/factory/nes" }
 nerust_gui_settings = { path = "gui/shared/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }

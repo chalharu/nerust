@@ -2,7 +2,7 @@ use super::State;
 use super::renderer::GtkGlRenderer;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_gui_shell::settings::nes::scaling_factor;
+use nerust_gui_shell::settings::scaling_factor;
 use std::cell::RefCell;
 use std::rc::Rc;
 
