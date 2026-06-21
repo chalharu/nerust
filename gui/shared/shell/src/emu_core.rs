@@ -20,6 +20,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug, Clone)]
+pub struct SystemRuntimeSnapshot {
+    pub metrics: ConsoleMetrics,
+    pub video_frame: Option<VideoFrameHandle>,
+    pub video_profile: Option<VideoRenderProfile>,
+}
+
 pub(crate) struct EmuCore {
     pub emu: EmuThread,
     pub render_profile: VideoRenderProfile,
@@ -160,8 +167,8 @@ impl EmuCore {
         }
     }
 
-    pub fn snapshot(&self) -> crate::descriptor::SystemRuntimeSnapshot {
-        crate::descriptor::SystemRuntimeSnapshot {
+    pub fn snapshot(&self) -> SystemRuntimeSnapshot {
+        SystemRuntimeSnapshot {
             metrics: self.metrics(),
             video_frame: Some(self.video_frame_handle()),
             video_profile: Some(self.render_profile.clone()),
