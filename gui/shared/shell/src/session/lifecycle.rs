@@ -177,7 +177,7 @@ impl SessionHandle {
                 if self.paused() {
                     Ok(SessionCommandOutcome::default())
                 } else {
-                    self.emu_core.pause();
+                    self.emu_core.pause().map_err(|e| e.to_string())?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: false,
@@ -186,7 +186,7 @@ impl SessionHandle {
             }
             SessionCommand::Resume => {
                 if self.paused() {
-                    self.emu_core.resume();
+                    self.emu_core.resume().map_err(|e| e.to_string())?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: self.loaded(),
@@ -420,7 +420,7 @@ impl SessionHandle {
                     .load_state_raw(core_bytes.clone())
                     .map_err(|e| e.to_string())?;
                 if !was_paused {
-                    rebuilt_core.resume();
+                    rebuilt_core.resume().map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -430,7 +430,7 @@ impl SessionHandle {
         if was_loaded {
             self.configure_persistence_for_loaded_media(!restored_runtime_state);
             if was_paused {
-                self.emu_core.pause();
+                self.emu_core.pause().map_err(|e| e.to_string())?;
             }
         }
         Ok(())
