@@ -65,3 +65,22 @@ impl<const N: usize> InputSink<N> for std::sync::Arc<InputCell<N>> {
         self.store(src);
     }
 }
+
+use nerust_input_schema::DigitalInputEvent;
+
+/// 実行時の入力イベントをシステム固有のアダプタに転送する。
+///
+/// frontend (shell) はこの trait を通じてのみ入力処理を行う。
+/// 各システム (NES/SNES) の実装は factory crate で行う。
+pub trait SystemInputAdapter: Send {
+    fn apply_event(&mut self, event: DigitalInputEvent);
+    fn clear(&mut self);
+    fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), String>;
+    fn runtime_state_bytes(&self) -> Result<Vec<u8>, String>;
+    fn decode_persisted_input(
+        &self,
+        attachment_id: &str,
+        control_id: &str,
+        pressed: bool,
+    ) -> Option<DigitalInputEvent>;
+}

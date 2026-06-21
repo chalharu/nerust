@@ -8,10 +8,12 @@ pub mod title;
 
 pub use lifecycle::WindowSize;
 
-use crate::descriptor::{SystemDescriptor, SystemInputAdapter, default_system_descriptor};
+use crate::descriptor::SystemDescriptor;
 use crate::emu_core::EmuCore;
+use crate::factory::CoreFactory;
 use crate::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::metrics::ConsoleMetrics;
+use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
@@ -54,6 +56,7 @@ pub enum KeyboardShortcut {
 
 pub struct SessionHandle {
     pub(super) descriptor: SystemDescriptor,
+    pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) input_adapter: Box<dyn SystemInputAdapter>,
     pub(super) host_backend: HostBackendIdentity,
@@ -64,50 +67,17 @@ pub struct SessionHandle {
     pub(super) persistence: PersistenceState,
 }
 
-impl Default for SessionHandle {
-    fn default() -> Self {
-        Self::new_for_host(HostBackendIdentity::gtk_opengl())
-    }
-}
-
 impl SessionHandle {
-    pub fn new_for_host(identity: HostBackendIdentity) -> Self {
-        let settings = crate::settings::defaults::manager::load_settings_manager(identity);
-        Self::new_with_settings_manager(identity, settings)
-    }
-
-    pub fn new_with_settings_manager(
-        identity: HostBackendIdentity,
-        settings: SettingsManager,
-    ) -> Self {
-        let settings_snapshot = crate::settings::defaults::manager::current_or_default(&settings);
-        let descriptor = default_system_descriptor();
-        let (emu_core, input_adapter) =
-            crate::descriptor::create_core_and_adapter(&settings_snapshot)
-                .expect("default core should build");
-        Self {
-            emu_core,
-            input_adapter,
-            descriptor,
-            host_backend: identity,
-            settings,
-            settings_snapshot,
-            pressed_keys: BTreeSet::new(),
-            loaded_media: None,
-            persistence: PersistenceState::default(),
-        }
-    }
-
-    #[cfg(test)]
     pub fn new_with_core(
         identity: HostBackendIdentity,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
         emu_core: EmuCore,
         input_adapter: Box<dyn SystemInputAdapter>,
     ) -> Self {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let descriptor = default_system_descriptor();
         let settings = SettingsManager::ephemeral(
             default_shared_settings(),
             default_local_settings(),
@@ -118,6 +88,7 @@ impl SessionHandle {
             emu_core,
             input_adapter,
             descriptor,
+            factory,
             host_backend: identity,
             settings,
             settings_snapshot,
@@ -155,6 +126,10 @@ impl SessionHandle {
 
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings
+    }
+
+    pub fn factory(&self) -> &dyn CoreFactory {
+        &*self.factory
     }
 
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {

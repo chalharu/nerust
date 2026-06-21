@@ -18,6 +18,7 @@ log.workspace = true
 muda.workspace = true
 nerust_backend_wgpu.workspace = true
 nerust_contract_core.workspace = true
+nerust_factory_nes.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true

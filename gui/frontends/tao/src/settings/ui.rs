@@ -6,6 +6,7 @@ use iced::widget::{
 };
 use iced::{Font, Length, Task, Theme};
 use iced_winit::program::Program;
+use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
 use nerust_gui_settings::input::KeyboardKey;
@@ -13,9 +14,9 @@ use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldModel, apply_nes_settings_choice,
-    default_input_topology_descriptor, nes_settings_page,
+    SystemSettingsChoiceId, SystemSettingsFieldKind, SystemSettingsFieldModel,
 };
+use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_sections, shortcut_descriptors,
@@ -156,6 +157,7 @@ pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
+    factory: Arc<dyn CoreFactory>,
     draft: SettingsSnapshot,
     page: SettingsPage,
     input_section: InputPageSection,
@@ -176,6 +178,7 @@ impl SettingsAppState {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
+            factory: Arc::new(NesFactory),
             draft: snapshot.clone(),
             page: SettingsPage::General,
             input_section: InputPageSection::Attachment(0),
@@ -206,7 +209,7 @@ impl SettingsAppState {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        for (key, labels) in conflicting_keys(&self.draft.shared, &input_topology()) {
+        for (key, labels) in conflicting_keys(&self.draft.shared, &input_topology(self)) {
             errors.push(format!(
                 "{}: {}",
                 keyboard_key_label(key),
@@ -223,7 +226,7 @@ impl SettingsAppState {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology())
+        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology(self))
             .into_iter()
             .next()?;
         Some(format!(
@@ -268,7 +271,7 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = apply_nes_settings_choice(
+                let _ = self.factory.apply_settings_choice(
                     &mut self.draft,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
                     &SystemSettingsChoiceId(choice.value.into()),
@@ -417,7 +420,7 @@ impl SettingsAppState {
             content = content.push(text(conflict));
         }
 
-        let sections = keyboard_binding_sections(&input_topology());
+        let sections = keyboard_binding_sections(&input_topology(self));
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(
@@ -557,7 +560,7 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let model = nes_settings_page(&self.draft);
+        let model = self.factory.settings_page(&self.draft);
         let mut content = column![];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field));
@@ -638,8 +641,7 @@ fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) 
 }
 
 fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
-    let nerust_gui_shell::descriptor::SystemSettingsFieldKind::Choice { selected, options } =
-        &field.kind;
+    let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
     let choices = options
         .iter()
         .map(|option| Choice {
@@ -745,7 +747,7 @@ fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
 const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
 
 fn sample_rate_options() -> Vec<Choice<u32>> {
-    let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
+    let rates = nerust_gui_shell::settings::audio_registry().supported_rates();
     let rates = if rates.is_empty() {
         &FALLBACK_SAMPLE_RATES
     } else {
@@ -760,8 +762,8 @@ fn sample_rate_options() -> Vec<Choice<u32>> {
         .collect()
 }
 
-fn input_topology() -> InputTopologyDescriptor {
-    default_input_topology_descriptor()
+fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
+    state.factory.system_descriptor().input_topology
 }
 
 pub(crate) fn keyboard_key_from_physical(
