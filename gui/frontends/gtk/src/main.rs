@@ -15,7 +15,7 @@ use nerust_gui_shell::descriptor::SystemSettingsPageModel;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
@@ -39,10 +39,6 @@ impl State {
             session: SessionHandle::new_for_host(HostBackendIdentity::gtk_opengl()),
             renderer_reload_pending: false,
         }
-    }
-
-    pub(crate) fn snapshot(&self) -> SessionSnapshot {
-        self.session.snapshot()
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
