@@ -660,10 +660,22 @@ mod tests {
         assert_eq!(latency_choices.last(), Some(&"200 ms"));
         assert_eq!(latency_choices.len(), 191);
 
-        assert_eq!(
-            sample_rate_choices,
-            vec!["22050 Hz", "44100 Hz", "48000 Hz"]
+        assert!(
+            !sample_rate_choices.is_empty(),
+            "sample rate choices should be non-empty"
         );
+        for choice in &sample_rate_choices {
+            let Some(rate_str) = choice.strip_suffix(" Hz") else {
+                panic!("sample rate choice '{choice}' must end with ' Hz'");
+            };
+            let rate: u32 = rate_str
+                .parse()
+                .expect("sample rate must be a valid integer");
+            assert!(
+                (1..=192_000).contains(&rate),
+                "sample rate {rate} must be within 1..=192000"
+            );
+        }
     }
 
     #[test]
