@@ -8,11 +8,11 @@ use jni::refs::Global;
 use jni::sys::jobject;
 use jni::{JavaVM, jni_sig, jni_str};
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use std::sync::OnceLock;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_schema::SystemId;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
