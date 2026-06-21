@@ -502,7 +502,7 @@ impl SessionHandle {
             load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
         {
             self.emu_core
-                .import_mapper_save(bytes)
+                .load_mapper_raw(bytes)
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
@@ -516,11 +516,7 @@ impl SessionHandle {
             if self.persistence.mapper_save_recovery_written {
                 return Ok(());
             }
-            if let Some(bytes) = self
-                .emu_core
-                .export_mapper_save()
-                .map_err(|e| e.to_string())?
-            {
+            if let Some(bytes) = self.emu_core.save_mapper_raw().map_err(|e| e.to_string())? {
                 let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
                     .map_err(|error| error.to_string())?;
                 self.persistence.mapper_save_recovery_written = true;
@@ -531,11 +527,7 @@ impl SessionHandle {
             }
             return Ok(());
         }
-        match self
-            .emu_core
-            .export_mapper_save()
-            .map_err(|e| e.to_string())?
-        {
+        match self.emu_core.save_mapper_raw().map_err(|e| e.to_string())? {
             Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
                 .map_err(|error| error.to_string()),
             None => Ok(()),
