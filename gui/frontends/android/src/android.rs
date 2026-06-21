@@ -21,7 +21,7 @@ use nerust_factory_nes::touch::{
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::load::{LoadRequest, MediaObject};
+use nerust_gui_shell::load::MediaObject;
 use nerust_gui_shell::session::SessionHandle;
 use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_gui_shell::settings::defaults::seed::{
