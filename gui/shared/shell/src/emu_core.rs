@@ -26,11 +26,6 @@ pub(crate) enum EmuCoreError {
     Reply(String),
 }
 
-#[derive(Debug, Clone)]
-pub struct CoreSnapshot {
-    pub metrics: ConsoleMetrics,
-}
-
 pub(crate) struct EmuCore {
     emu: EmuThread,
     render_profile: VideoRenderProfile,
@@ -171,16 +166,14 @@ impl EmuCore {
         *guard
     }
 
-    pub fn snapshot(&self) -> CoreSnapshot {
-        CoreSnapshot {
-            metrics: self.metrics(),
-        }
+    pub fn snapshot(&self) -> ConsoleMetrics {
+        self.metrics()
     }
 
-    pub fn set_volume(&self, volume: f32) {
-        if self.emu.send(EmuCommand::SetVolume(volume)).is_err() {
-            log::warn!("set_volume: emu thread channel unavailable");
-        }
+    pub fn set_volume(&self, volume: f32) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::SetVolume(volume))
+            .map_err(|_| EmuCoreError::WorkerUnavailable)
     }
 
     pub fn resume(&self) {

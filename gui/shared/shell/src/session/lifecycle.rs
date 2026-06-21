@@ -99,7 +99,7 @@ impl SessionHandle {
             } else {
                 volume
             };
-            self.emu_core.set_volume(volume);
+            let _ = self.emu_core.set_volume(volume);
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
