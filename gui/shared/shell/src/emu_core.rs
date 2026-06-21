@@ -31,6 +31,7 @@ pub struct EmuCore {
 }
 
 impl EmuCore {
+    #[doc(hidden)]
     pub fn new(
         emu: EmuThread,
         render_profile: VideoRenderProfile,
