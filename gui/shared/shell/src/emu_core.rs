@@ -249,7 +249,7 @@ impl EmuCore {
             .map_err(|_| EmuCoreError::WorkerUnavailable)
     }
 
-    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
+    pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::MapperSave { reply: reply_tx })
@@ -260,7 +260,7 @@ impl EmuCore {
             .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
-    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
+    pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
