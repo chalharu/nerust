@@ -1,0 +1,46 @@
+use crate::descriptor::{
+    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+};
+use crate::emu_core::EmuCore;
+use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use nerust_contract_core::input::SystemInputAdapter;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+
+/// システム（NES/SNES）の全知識をカプセル化する factory。
+///
+/// frontend はこの trait を通じてのみシステムと対話する。
+/// 各システムの実装は `gui/factory/{nes,snes}/` クレートで行う。
+pub trait CoreFactory {
+    /// コアと入力アダプタを構築する（rebuild 時にも使用）。
+    fn create_core_and_adapter(
+        &self,
+        settings: &SettingsSnapshot,
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String>;
+
+    /// この factory が処理可能なメディアかを判定する。
+    fn probe_media(&self, media: &MediaObject) -> bool;
+
+    /// この factory が扱うシステムの descriptor を返す。
+    fn system_descriptor(&self) -> SystemDescriptor;
+
+    /// システム設定のページモデルを返す。
+    fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel;
+
+    /// 設定の選択を適用する。
+    fn apply_settings_choice(
+        &self,
+        settings: &mut SettingsSnapshot,
+        field: &SystemSettingsFieldId,
+        choice: &SystemSettingsChoiceId,
+    ) -> Result<(), String>;
+
+    /// load request を解決する。
+    fn resolve_load_request(
+        &self,
+        settings: &SettingsSnapshot,
+        options: SystemLoadOptions,
+    ) -> Result<ResolvedLoadRequest, String>;
+
+    /// デフォルトの load options を返す。
+    fn default_load_options(&self) -> SystemLoadOptions;
+}

@@ -8,15 +8,21 @@ use self::window::{StateMenus, Window, WindowExtend};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_settings::input::KeyboardKey;
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::descriptor::SystemSettingsPageModel;
-use nerust_gui_shell::load::{LoadRequest, MediaObject};
+use nerust_gui_shell::factory::CoreFactory;
+use nerust_gui_shell::load::MediaObject;
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
+use nerust_gui_shell::settings::defaults::seed::{
+    default_app_state, default_local_settings, default_shared_settings,
+};
 use nerust_gui_shell::settings::i18n::{UiText, text};
+use nerust_input_schema::InputTopologyDescriptor;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::VideoRenderProfile;
@@ -24,19 +30,35 @@ use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
     session: SessionHandle,
+    factory: Arc<dyn CoreFactory>,
     renderer_reload_pending: bool,
 }
 
 impl State {
     pub(crate) fn new() -> Self {
+        let identity = HostBackendIdentity::gtk_opengl();
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let descriptor = factory.system_descriptor();
+        let snapshot = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let (core, adapter) = factory
+            .create_core_and_adapter(&snapshot)
+            .expect("failed to create core");
+        let session =
+            SessionHandle::new_with_core(identity, descriptor, Arc::clone(&factory), core, adapter);
         Self {
-            session: SessionHandle::new_for_host(HostBackendIdentity::gtk_opengl()),
+            session,
+            factory,
             renderer_reload_pending: false,
         }
     }
@@ -49,12 +71,12 @@ impl State {
         self.session.frame_buffer()
     }
 
-    pub(crate) fn system_settings_page_model(&self) -> SystemSettingsPageModel {
-        self.session.system_settings_page_model()
+    pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
+        self.factory.settings_page(self.session.settings_snapshot())
     }
 
-    pub(crate) fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
-        self.session.input_topology_descriptor()
+    pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
+        self.factory.system_descriptor().input_topology
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
@@ -74,10 +96,12 @@ impl State {
     }
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        if self
-            .session
-            .load(MediaObject::new(rom_path, data), LoadRequest::Auto)
-            .is_ok()
+        let media = MediaObject::new(rom_path, data);
+        let options = self.factory.default_load_options();
+        if let Ok(resolved) = self
+            .factory
+            .resolve_load_request(self.session.settings_snapshot(), options)
+            && self.session.load_resolved(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
         }

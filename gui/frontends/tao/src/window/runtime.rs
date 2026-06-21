@@ -20,7 +20,7 @@ pub(crate) struct WindowRuntime {
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(default_load_request: LoadRequest) -> Self {
+    pub(crate) fn new() -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -32,7 +32,7 @@ impl WindowRuntime {
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy), default_load_request),
+            host: HostState::new(AppMenu::new(proxy)),
             renderer: None,
         }
     }

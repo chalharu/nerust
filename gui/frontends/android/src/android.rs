@@ -14,13 +14,18 @@ use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
 use jni::jni_str;
 use nerust_backend_wgpu::RenderResult;
-use nerust_gui_runtime::settings::HostBackendIdentity;
+use nerust_factory_nes::NesFactory;
+use nerust_factory_nes::touch::{
+    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+};
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_shell::load::{LoadRequest, MediaObject};
+use nerust_gui_shell::factory::CoreFactory;
+use nerust_gui_shell::load::MediaObject;
 use nerust_gui_shell::session::SessionHandle;
 use nerust_gui_shell::session::commands::SessionCommand;
-use nerust_gui_shell::touch::{
-    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+use nerust_gui_shell::settings::defaults::seed::{
+    default_app_state, default_local_settings, default_shared_settings,
 };
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -131,12 +136,21 @@ struct AndroidFrontend {
 impl AndroidFrontend {
     fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
+        let identity = HostBackendIdentity::android_wgpu();
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let descriptor = factory.system_descriptor();
+        let snapshot = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let (core, adapter) = factory
+            .create_core_and_adapter(&snapshot)
+            .expect("failed to create core");
+        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
         let frontend = Self {
             app,
-            session: SessionHandle::new_with_settings_manager(
-                HostBackendIdentity::android_wgpu(),
-                storage.settings.clone(),
-            ),
+            session,
             storage,
             shell: NativeShellState::new(),
             window: None,
@@ -186,10 +200,12 @@ impl AndroidFrontend {
             .map_err(|error| format!("failed to load ROM from library: {error}"))?
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let path = self.storage.rom_library.rom_path(id);
-        if let Err(error) = self
+        let media = MediaObject::new(path, bytes);
+        let options = self.session.default_load_options();
+        let resolved = self
             .session
-            .load(MediaObject::new(path, bytes), LoadRequest::Auto)
-        {
+            .resolve_load_request(self.session.settings_snapshot(), options);
+        if let Err(error) = resolved.and_then(|r| self.session.load_resolved(media, r)) {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
         self.finish_rom_load(event_loop, id, restore_hidden_state);
@@ -247,10 +263,12 @@ impl AndroidFrontend {
                     entry.id
                 )
             })?;
-        if let Err(error) = self
+        let media = MediaObject::new(Some(path), bytes);
+        let options = self.session.default_load_options();
+        let resolved = self
             .session
-            .load(MediaObject::new(Some(path), bytes), LoadRequest::Auto)
-        {
+            .resolve_load_request(self.session.settings_snapshot(), options);
+        if let Err(error) = resolved.and_then(|r| self.session.load_resolved(media, r)) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
                     "failed to roll back Android ROM import {} after load error: {remove_error}",

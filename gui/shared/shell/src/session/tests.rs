@@ -1,64 +1,248 @@
-use crate::descriptor::SystemInputAdapter;
 use crate::emu_core::EmuCore;
-use crate::load::{LoadRequest, MediaObject, SystemLoadOptions};
+use crate::factory::CoreFactory;
+use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
-use nerust_contract_core::audio::AudioBackend;
+use nerust_contract_core::ConsoleCore;
+use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_core::options::Mmc3IrqVariant;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan};
-use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_contract_core::{
+    CoreCapabilities, CoreConfig, CoreError, GpuCommandList, persistence::CanonicalMediaIdentity,
+};
+use nerust_contract_emuthread::EmuThread;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+
 use nerust_persistence::slots::autosave_state_slot_path;
+use nerust_screen_video::{
+    FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile,
+};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Default)]
-struct TestSpeaker;
+struct MockConsoleCore {
+    loaded: bool,
+    paused: bool,
+    identity: Option<CanonicalMediaIdentity>,
+}
 
-impl AudioBackend for TestSpeaker {
-    fn start(&mut self) {}
-    fn pause(&mut self) {}
-    fn push(&mut self, _data: f32) {}
+impl MockConsoleCore {
+    fn new() -> Self {
+        Self {
+            loaded: false,
+            paused: true,
+            identity: None,
+        }
+    }
+}
+
+impl ConsoleCore for MockConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: Vec::new(),
+            video_signal: nerust_contract_core::VideoSignalKind::Ntsc,
+        }
+    }
+    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
+        Ok(GpuCommandList {
+            commands: Vec::new(),
+        })
+    }
+    fn attach_device(
+        &mut self,
+        _port: usize,
+        _device: Box<dyn nerust_contract_core::device::Device>,
+    ) {
+    }
+    fn detach_device(&mut self, _port: usize) {}
+    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+        self.loaded = true;
+        self.paused = true;
+        let mapper = if rom.len() > 6 {
+            (rom[6] >> 4) as u16
+        } else {
+            0
+        };
+        self.identity = Some(CanonicalMediaIdentity::rom(
+            nerust_contract_core::rom::RomIdentity {
+                format: nerust_contract_core::rom::RomFormat::INes,
+                mapper_type: mapper,
+                sub_mapper_type: 0,
+                mirror_mode: nerust_contract_core::mirror::MirrorMode::Horizontal,
+                has_battery: false,
+                trainer_len: 0,
+                prg_rom_len: 0x8000,
+                chr_rom_len: 0x2000,
+                prg_ram_len: 0,
+                save_prg_ram_len: 0,
+                chr_ram_len: 0,
+                save_chr_ram_len: 0,
+                prg_rom_crc64: 0,
+                chr_rom_crc64: 0,
+                trainer_crc64: 0,
+            },
+        ));
+        Ok(())
+    }
+    fn unload(&mut self) {
+        self.loaded = false;
+    }
+    fn reset(&mut self) {}
+    fn paused(&self) -> bool {
+        self.paused
+    }
+    fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+    fn save_state(&self) -> Result<Vec<u8>, CoreError> {
+        Ok(vec![])
+    }
+    fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+        Ok(())
+    }
+    fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
+        self.identity.ok_or(CoreError::NoRomLoaded)
+    }
+}
+
+fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
+    let src_w = 256usize;
+    let src_h = 240usize;
+    let pixel_format = PixelFormat::PaletteIndex {
+        palette: Box::new([0u32; 256]),
+    };
+
+    let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+        src_w,
+        src_h,
+        pixel_format.clone(),
+    )));
+    if let Ok(mut guard) = shared_fb.lock() {
+        guard.resize(src_w, src_h);
+        guard.resize_data(src_w * src_h);
+    }
+
+    let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+    disp_fb.resize(src_w, src_h);
+    disp_fb.resize_data(src_w * src_h);
+
+    let core = MockConsoleCore::new();
+    let frame_ready = Arc::new(AtomicBool::new(false));
+    let palette = Box::new([0u32; 256]);
+    let emu = EmuThread::spawn(
+        Box::new(core),
+        Arc::clone(&shared_fb),
+        Arc::clone(&frame_ready),
+        palette,
+    );
+
+    let render_profile = VideoRenderProfile {
+        source_logical_size: LogicalSize {
+            width: 256,
+            height: 240,
+        },
+        logical_size: LogicalSize {
+            width: 256,
+            height: 240,
+        },
+        physical_size: PhysicalSize {
+            width: 256.0,
+            height: 240.0,
+        },
+        frame_format: nerust_screen_video::VideoFrameFormat::Palette,
+        ntsc_packed_rgba8: None,
+    };
+
+    let emu_core = EmuCore::new(emu, render_profile, shared_fb, disp_fb, frame_ready);
+    let adapter = Box::new(MockAdapter);
+    (emu_core, adapter)
+}
+
+struct MockAdapter;
+impl SystemInputAdapter for MockAdapter {
+    fn apply_event(&mut self, _: nerust_input_schema::DigitalInputEvent) {}
+    fn clear(&mut self) {}
+    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
+    fn runtime_state_bytes(&self) -> Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+    fn decode_persisted_input(
+        &self,
+        _: &str,
+        _: &str,
+        _: bool,
+    ) -> Option<nerust_input_schema::DigitalInputEvent> {
+        None
+    }
+}
+
+struct MockFactory;
+impl CoreFactory for MockFactory {
+    fn create_core_and_adapter(
+        &self,
+        _: &SettingsSnapshot,
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+        Ok(build_test_core_and_adapter())
+    }
+    fn probe_media(&self, _: &MediaObject) -> bool {
+        true
+    }
+    fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
+        crate::descriptor::SystemDescriptor {
+            system_id: nerust_input_schema::SystemId::Nes,
+            input_topology: nerust_input_nes::topology::input_topology_descriptor(),
+        }
+    }
+    fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {
+        crate::descriptor::SystemSettingsPageModel {
+            fields: Arc::from([]),
+        }
+    }
+    fn apply_settings_choice(
+        &self,
+        _: &mut SettingsSnapshot,
+        _: &crate::descriptor::SystemSettingsFieldId,
+        _: &crate::descriptor::SystemSettingsChoiceId,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    fn resolve_load_request(
+        &self,
+        _: &SettingsSnapshot,
+        options: SystemLoadOptions,
+    ) -> Result<crate::load::ResolvedLoadRequest, String> {
+        Ok(crate::load::ResolvedLoadRequest {
+            system_id: nerust_input_schema::SystemId::Nes,
+            options,
+            core_options: options.into_core_options(),
+        })
+    }
+    fn default_load_options(&self) -> SystemLoadOptions {
+        SystemLoadOptions::default()
+    }
 }
 
 fn test_session() -> SessionHandle {
     let identity = HostBackendIdentity::gtk_opengl();
-    let (core, adapter) = create_test_core_and_adapter();
-    SessionHandle::new_with_core(identity, core, adapter)
-}
-
-fn create_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
-    let cell = Arc::new(NesInputCell::new());
-    let device = NesPadDevice::new(SharedNesInputCell(cell.clone()));
-    let core = EmuCore::new_gpu(
-        Box::new(TestSpeaker),
-        nerust_screen_video::FilterType::NtscComposite,
-        nerust_screen_video::LogicalSize {
-            width: 256,
-            height: 240,
-        },
-        Box::new(device),
-    );
-    let adapter = Box::new(crate::descriptor::NesAdapter::new(cell));
-    (core, adapter)
-}
-
-fn make_ines_rom(prg_banks: u8, chr_banks: u8, flags6: u8, flags7: u8) -> Vec<u8> {
-    let prg_size = prg_banks as usize * 0x4000;
-    let chr_size = chr_banks as usize * 0x2000;
-    let mut data = vec![0x4E, 0x45, 0x53, 0x1A, prg_banks, chr_banks, flags6, flags7];
-    data.resize(16, 0);
-    data.resize(16 + prg_size + chr_size, 0);
-    data
+    let (core, adapter) = build_test_core_and_adapter();
+    let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let descriptor = factory.system_descriptor();
+    SessionHandle::new_with_core(identity, descriptor, factory, core, adapter)
 }
 
 fn test_rom() -> Vec<u8> {
-    make_ines_rom(2, 1, 0, 0)
+    let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0, 0];
+    data.resize(16 + 0x8000 + 0x2000, 0);
+    data
 }
 
 fn test_rom_with_mapper4() -> Vec<u8> {
-    make_ines_rom(2, 1, 0x40, 0) // mapper 4 (MMC3)
+    let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0x40, 0];
+    data.resize(16 + 0x8000 + 0x2000, 0);
+    data
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {
@@ -74,14 +258,13 @@ fn unique_temp_dir(label: &str) -> PathBuf {
 #[test]
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
-
     assert_eq!(
         session
             .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
             .unwrap(),
         Some(KeyboardShortcut::Session(
-            nerust_gui_settings::input::ShortcutAction::TogglePause,
-        ))
+            nerust_gui_settings::input::ShortcutAction::TogglePause
+        )),
     );
     assert_eq!(
         session
@@ -94,18 +277,18 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 #[test]
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
-
+    let resolved = session
+        .factory()
+        .resolve_load_request(
+            session.settings_snapshot(),
+            SystemLoadOptions {
+                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+            },
+        )
+        .unwrap();
     assert!(
         session
-            .load(
-                MediaObject::new(None, test_rom()),
-                LoadRequest::Explicit {
-                    system_id: nerust_input_schema::SystemId::Nes,
-                    options: SystemLoadOptions {
-                        mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-                    },
-                },
-            )
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
             .is_ok()
     );
 }
@@ -113,9 +296,13 @@ fn system_load_options_flow_into_session_load() {
 #[test]
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
-
+    let options = session.factory().default_load_options();
+    let resolved = session
+        .factory()
+        .resolve_load_request(session.settings_snapshot(), options)
+        .unwrap();
     session
-        .load(MediaObject::new(None, test_rom()), LoadRequest::Auto)
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
     assert!(session.loaded());
 
@@ -129,16 +316,17 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
 
 #[test]
 fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
-    let temp_dir = unique_temp_dir("phase5-rebuild");
+    let temp_dir = unique_temp_dir("rebuild");
     let rom_path = temp_dir.join("test.nes");
 
     let mut session = test_session();
-
+    let options = session.factory().default_load_options();
+    let resolved = session
+        .factory()
+        .resolve_load_request(session.settings_snapshot(), options)
+        .unwrap();
     session
-        .load(
-            MediaObject::new(Some(rom_path), test_rom()),
-            LoadRequest::Auto,
-        )
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     let mapper_save_path = session
@@ -155,9 +343,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);
-    // After rebuild with restored state, mapper save should still exist (wasn't reloaded)
     assert!(mapper_save_path.exists());
-
     let _ = fs::remove_dir_all(temp_dir);
 }
 
@@ -167,12 +353,13 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let rom_path = temp_dir.join("test.nes");
 
     let mut session = test_session();
-
+    let options = session.factory().default_load_options();
+    let resolved = session
+        .factory()
+        .resolve_load_request(session.settings_snapshot(), options)
+        .unwrap();
     session
-        .load(
-            MediaObject::new(Some(rom_path), test_rom()),
-            LoadRequest::Auto,
-        )
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -193,26 +380,25 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     assert_eq!(session.active_slot_id(), None);
 
     drop(session);
-    // Verify state file persists beyond session lifetime
     assert!(autosave_path.exists());
     fs::remove_file(&autosave_path).ok();
     assert!(!autosave_path.exists());
-
     let _ = fs::remove_dir_all(temp_dir);
 }
 
 #[test]
 fn hidden_lifecycle_state_is_deleted_after_import_failure() {
-    let temp_dir = unique_temp_dir("hidden-lifecycle-import-failure");
+    let temp_dir = unique_temp_dir("hidden-lifecycle-import");
     let rom_path = temp_dir.join("test.nes");
 
     let mut session = test_session();
-
+    let options = session.factory().default_load_options();
+    let resolved = session
+        .factory()
+        .resolve_load_request(session.settings_snapshot(), options)
+        .unwrap();
     session
-        .load(
-            MediaObject::new(Some(rom_path), test_rom()),
-            LoadRequest::Auto,
-        )
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -226,25 +412,27 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     );
     assert!(autosave_path.is_file());
 
-    // Corrupt the state file
-    fs::write(&autosave_path, [0xFF, 0xFF, 0xFF]).expect("should write corrupted state");
+    fs::write(&autosave_path, [0xFF, 0xFF, 0xFF]).expect("corrupt state");
     assert!(!session.load_hidden_lifecycle_state());
     assert!(!autosave_path.exists());
-
     let _ = fs::remove_dir_all(temp_dir);
 }
 
 #[test]
 fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
-    let temp_dir = unique_temp_dir("hidden-lifecycle-identity-mismatch");
+    let temp_dir = unique_temp_dir("hidden-lifecycle-identity");
     let rom_path = temp_dir.join("test.nes");
 
-    // First session: load test_rom (mapper 0), save hidden lifecycle state
     let mut session = test_session();
+    let options = session.factory().default_load_options();
+    let resolved = session
+        .factory()
+        .resolve_load_request(session.settings_snapshot(), options)
+        .unwrap();
     session
-        .load(
+        .load_resolved(
             MediaObject::new(Some(rom_path.clone()), test_rom()),
-            LoadRequest::Auto,
+            resolved,
         )
         .unwrap();
     assert!(session.save_hidden_lifecycle_state());
@@ -260,32 +448,30 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     assert!(autosave_path.is_file());
     drop(session);
 
-    // Second session: load different ROM data (mapper 4 → different identity),
-    // same path so sidecar dir matches, try to load hidden state
     let mut session2 = test_session();
+    let options = session2.factory().default_load_options();
+    let resolved = session2
+        .factory()
+        .resolve_load_request(session2.settings_snapshot(), options)
+        .unwrap();
     session2
-        .load(
+        .load_resolved(
             MediaObject::new(Some(rom_path), test_rom_with_mapper4()),
-            LoadRequest::Auto,
+            resolved,
         )
         .unwrap();
     assert!(!session2.load_hidden_lifecycle_state());
-    // After identity mismatch, the state file should be deleted
     assert!(!autosave_path.exists());
-
     let _ = fs::remove_dir_all(temp_dir);
 }
 
 #[test]
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
-
     session
         .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
         .unwrap();
-
     let plan = session.set_fullscreen_default(true).unwrap();
-
     assert_eq!(
         plan,
         SettingsApplyPlan {
@@ -302,7 +488,6 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
             .window
             .fullscreen_default
     );
-
     let second = session.set_fullscreen_default(true).unwrap();
     assert_eq!(second, SettingsApplyPlan::default());
 }

@@ -6,12 +6,18 @@ use nerust_gui_settings::input::{
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::nes::NesSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-use nerust_input_nes::topology::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
 use nerust_input_schema::{DigitalControlId, SystemId};
 use std::collections::BTreeMap;
+
+const P1: &str = "nes.attachment.player1";
+const A: DigitalControlId = DigitalControlId::new("nes.control.a");
+const B: DigitalControlId = DigitalControlId::new("nes.control.b");
+const SELECT: DigitalControlId = DigitalControlId::new("nes.control.select");
+const START: DigitalControlId = DigitalControlId::new("nes.control.start");
+const UP: DigitalControlId = DigitalControlId::new("nes.control.up");
+const DOWN: DigitalControlId = DigitalControlId::new("nes.control.down");
+const LEFT: DigitalControlId = DigitalControlId::new("nes.control.left");
+const RIGHT: DigitalControlId = DigitalControlId::new("nes.control.right");
 
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
@@ -20,46 +26,14 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
     };
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings = vec![
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_A,
-            KeyboardKey::KeyZ,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_B,
-            KeyboardKey::KeyX,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_SELECT,
-            KeyboardKey::KeyC,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_START,
-            KeyboardKey::KeyV,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_UP,
-            KeyboardKey::ArrowUp,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_DOWN,
-            KeyboardKey::ArrowDown,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_LEFT,
-            KeyboardKey::ArrowLeft,
-        ),
-        default_control_binding(
-            NES_ATTACHMENT_PLAYER_ONE.as_str(),
-            NES_CONTROL_RIGHT,
-            KeyboardKey::ArrowRight,
-        ),
+        default_control_binding(P1, A, KeyboardKey::KeyZ),
+        default_control_binding(P1, B, KeyboardKey::KeyX),
+        default_control_binding(P1, SELECT, KeyboardKey::KeyC),
+        default_control_binding(P1, START, KeyboardKey::KeyV),
+        default_control_binding(P1, UP, KeyboardKey::ArrowUp),
+        default_control_binding(P1, DOWN, KeyboardKey::ArrowDown),
+        default_control_binding(P1, LEFT, KeyboardKey::ArrowLeft),
+        default_control_binding(P1, RIGHT, KeyboardKey::ArrowRight),
     ];
     let _ = nes_input
         .keyboard_profiles
