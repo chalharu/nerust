@@ -3,7 +3,8 @@ use crate::load::{LoadRequest, MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::title::window_title;
-use crate::state::PreviewFrame;
+use crate::state::resolve_state_format;
+use nerust_contract_core::save_state_with_header;
 use nerust_persistence::sidecar::{
     load_mapper_save, write_mapper_save, write_recovery_mapper_save,
 };
@@ -288,15 +289,10 @@ impl SessionHandle {
         let Some(identity) = self.persistence_identity() else {
             return false;
         };
-        match self.emu_core.export_state(false) {
-            Ok(export) => {
-                let preview = export.preview.as_ref().map(preview_to_thumbnail_source);
-                match write_autosave_state_slot(
-                    &sidecars.states_dir,
-                    &export.state_blob,
-                    identity,
-                    preview.as_ref(),
-                ) {
+        match self.emu_core.save_state_raw() {
+            Ok(core_bytes) => {
+                let state_blob = save_state_with_header(core_bytes);
+                match write_autosave_state_slot(&sidecars.states_dir, &state_blob, identity, None) {
                     Ok(_) => true,
                     Err(error) => {
                         log::warn!("saving hidden lifecycle state failed: {error}");
@@ -333,7 +329,10 @@ impl SessionHandle {
                     clear_hidden_lifecycle_state_path(&path);
                     return false;
                 }
-                if let Err(error) = self.emu_core.import_state(&slot.machine_state) {
+                if let Err(error) = self
+                    .emu_core
+                    .load_state_raw(resolve_state_format(&slot.machine_state))
+                {
                     log::warn!("hidden lifecycle state import failed: {error}");
                     clear_hidden_lifecycle_state_path(&path);
                     false
@@ -403,16 +402,12 @@ impl SessionHandle {
     ) -> Result<(), String> {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
-        let exported_state = if was_loaded {
-            Some(
-                self.emu_core
-                    .export_state(false)
-                    .map_err(|e| e.to_string())?,
-            )
+        let exported_core_bytes = if was_loaded {
+            Some(self.emu_core.save_state_raw().map_err(|e| e.to_string())?)
         } else {
             None
         };
-        let restored_runtime_state = exported_state.is_some();
+        let restored_runtime_state = exported_core_bytes.is_some();
 
         let (rebuilt_core, rebuilt_adapter) = descriptor::create_core_and_adapter(next_settings)?;
 
@@ -420,9 +415,9 @@ impl SessionHandle {
             rebuilt_core
                 .load(&loaded_media.media, &loaded_media.request)
                 .map_err(|e| e.to_string())?;
-            if let Some(exported_state) = exported_state.as_ref() {
+            if let Some(core_bytes) = exported_core_bytes.as_ref() {
                 rebuilt_core
-                    .import_state(&exported_state.state_blob)
+                    .load_state_raw(core_bytes.clone())
                     .map_err(|e| e.to_string())?;
                 if !was_paused {
                     rebuilt_core.resume();
@@ -651,17 +646,18 @@ impl SessionHandle {
             make_active,
             sidecars.states_dir.display()
         );
-        match self.emu_core.export_state(true) {
-            Ok(export) => {
-                let preview = export.preview.as_ref().map(|preview| ThumbnailSource {
-                    width: preview.width,
-                    height: preview.height,
-                    rgba: preview.rgba.clone(),
+        match self.emu_core.save_state_raw() {
+            Ok(core_bytes) => {
+                let state_blob = save_state_with_header(core_bytes);
+                let preview = self.emu_core.generate_preview().map(|p| ThumbnailSource {
+                    width: p.width,
+                    height: p.height,
+                    rgba: p.rgba,
                 });
                 match write_state_slot(
                     &sidecars.states_dir,
                     slot_id,
-                    &export.state_blob,
+                    &state_blob,
                     identity,
                     preview.as_ref(),
                 ) {
@@ -691,7 +687,10 @@ impl SessionHandle {
         };
         match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
             Ok(slot) => {
-                if let Err(error) = self.emu_core.import_state(&slot.machine_state) {
+                if let Err(error) = self
+                    .emu_core
+                    .load_state_raw(resolve_state_format(&slot.machine_state))
+                {
                     log::warn!("state import failed: {error}");
                     false
                 } else {
@@ -763,13 +762,5 @@ fn adjacent_slot_id(
 fn clear_hidden_lifecycle_state_path(path: &Path) {
     if let Err(error) = delete_state_slot(path) {
         log::warn!("deleting hidden lifecycle state failed: {error}");
-    }
-}
-
-fn preview_to_thumbnail_source(preview: &PreviewFrame) -> ThumbnailSource {
-    ThumbnailSource {
-        width: preview.width,
-        height: preview.height,
-        rgba: preview.rgba.clone(),
     }
 }

@@ -1,13 +1,8 @@
 use crate::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::metrics::ConsoleMetrics;
-use crate::state::{ConsoleStatePayload, PreviewFrame, RuntimeStateExport};
-
 use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
-use nerust_contract_core::{
-    CoreConfig, EmuCommand, LoadCommand, StateDataCommand, load_state_from_header,
-    save_state_with_header,
-};
+use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_core::controller::Controller;
@@ -286,61 +281,21 @@ impl EmuCore {
             .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
-    /// `preview` が false の場合、サムネイル生成をスキップする（hidden lifecycle state等）。
-    pub fn export_state(&self, preview: bool) -> Result<RuntimeStateExport, EmuCoreError> {
+    /// Raw state save: Send SaveState, return core bytes (no header, no preview).
+    pub fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::SaveState { reply: reply_tx })
             .map_err(|_| EmuCoreError::WorkerUnavailable)?;
-        let core_state = reply_rx
+        reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()))?;
-
-        let state_blob = save_state_with_header(core_state);
-
-        let preview = if preview {
-            Self::generate_preview(&self.emu)
-        } else {
-            None
-        };
-
-        Ok(RuntimeStateExport {
-            state_blob,
-            preview,
-        })
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
-    fn generate_preview(emu: &EmuThread) -> Option<PreviewFrame> {
-        let Ok(guard) = emu.shared_frame_buffer().lock() else {
-            log::warn!("generate_preview: shared frame buffer lock failed");
-            return None;
-        };
-        let w = guard.width();
-        let h = guard.height();
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let rgba = if let Some(palette) = guard.palette() {
-            let indices = guard.as_ref();
-            let mut rgba = Vec::with_capacity(w * h * 4);
-            for &idx in indices.iter().take(w * h) {
-                let color = palette[idx as usize];
-                rgba.push((color >> 24) as u8);
-                rgba.push((color >> 16) as u8);
-                rgba.push((color >> 8) as u8);
-                rgba.push(color as u8);
-            }
-            rgba
-        } else {
-            guard.as_ref().to_vec()
-        };
-        drop(guard);
-        Some(PreviewFrame {
-            width: w as u32,
-            height: h as u32,
-            rgba,
-        })
+    /// Generate a preview frame from the EmuThread's shared frame buffer.
+    pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+        crate::state::generate_preview(&self.emu)
     }
 
     pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
@@ -364,29 +319,18 @@ impl EmuCore {
         }
     }
 
-    pub fn import_state(&self, bytes: &[u8]) -> Result<(), EmuCoreError> {
-        let core_bytes = match load_state_from_header(bytes) {
-            Ok(inner) => inner.to_vec(),
-            Err(_) => match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
-                Ok(payload) => payload.core_state,
-                Err(_) => bytes.to_vec(),
-            },
-        };
+    /// Raw state load: Send LoadState with raw core bytes. No format fallback.
+    pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::LoadState(Box::new(StateDataCommand {
-                data: core_bytes,
+                data,
                 reply: reply_tx,
             })))
             .map_err(|_| EmuCoreError::WorkerUnavailable)?;
         reply_rx
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| {
-                EmuCoreError::Reply(format!(
-                    "state import failed (tried SaveStateHeader format, then \
-                     ConsoleStatePayload format, then raw): {e}"
-                ))
-            })
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 }
