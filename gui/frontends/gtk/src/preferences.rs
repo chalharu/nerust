@@ -8,7 +8,7 @@ use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::{
-    SystemSettingsFieldKind, default_input_topology_descriptor, default_system_settings_page_model,
+    SystemSettingsFieldKind, default_input_topology_descriptor, nes_settings_page,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -753,7 +753,7 @@ fn connect_local_updates(
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                let _ = nerust_gui_shell::descriptor::apply_nes_settings_choice(
                     &mut snapshot,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
                     &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
@@ -774,7 +774,7 @@ fn connect_local_updates(
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_default_system_settings_choice(
+                let _ = nerust_gui_shell::descriptor::apply_nes_settings_choice(
                     &mut snapshot,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId(
                         "core.mmc3_irq_variant".into(),
@@ -899,7 +899,7 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = default_system_settings_page_model(snapshot);
+    let system_page = nes_settings_page(snapshot);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 

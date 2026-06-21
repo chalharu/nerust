@@ -13,8 +13,8 @@ use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldModel, apply_default_system_settings_choice,
-    default_input_topology_descriptor, default_system_settings_page_model,
+    SystemSettingsChoiceId, SystemSettingsFieldModel, apply_nes_settings_choice,
+    default_input_topology_descriptor, nes_settings_page,
 };
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
@@ -268,7 +268,7 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = apply_default_system_settings_choice(
+                let _ = apply_nes_settings_choice(
                     &mut self.draft,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
                     &SystemSettingsChoiceId(choice.value.into()),
@@ -557,7 +557,7 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let model = default_system_settings_page_model(&self.draft);
+        let model = nes_settings_page(&self.draft);
         let mut content = column![];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field));

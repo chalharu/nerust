@@ -1,7 +1,7 @@
 use super::State;
 use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
-use nerust_gui_session::core::WindowSize;
+use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::settings::nes::scaling_factor;
 use nerust_screen_video::FrameBuffer;
 use shared_library::dynamic_library::DynamicLibrary;
@@ -37,11 +37,7 @@ impl GtkGlRenderer {
 
         let mut view = GlBackend::new();
         view.use_vao(true);
-        let snapshot = state.snapshot();
-        let profile = snapshot
-            .video_profile
-            .expect("session should publish a render profile");
-        view.on_load(&profile).unwrap();
+        view.on_load(state.render_profile()).unwrap();
         self.view = Some(view);
         self.resize(
             gl_area,
@@ -131,7 +127,7 @@ fn viewport(
 #[cfg(test)]
 mod tests {
     use super::viewport;
-    use nerust_gui_session::core::WindowSize;
+    use nerust_gui_shell::session::WindowSize;
 
     #[test]
     fn viewport_preserves_aspect_ratio_for_letterboxed_width() {
