@@ -128,10 +128,9 @@ impl SessionHandle {
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
-        let core_snapshot = self.emu_core.snapshot();
         SessionSnapshot {
             system_id: Some(self.descriptor.system_id),
-            metrics: core_snapshot.metrics,
+            metrics: self.emu_core.snapshot(),
             input_topology: Some(self.descriptor.input_topology.clone()),
             slots: Arc::from(self.persistence.slots.clone()),
             active_slot_id: self.persistence.active_slot_id,
