@@ -742,7 +742,7 @@ fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
     ]
 }
 
-const FALLBACK_SAMPLE_RATES: [u32; 3] = [22_050, 44_100, 48_000];
+const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
 
 fn sample_rate_options() -> Vec<Choice<u32>> {
     let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
