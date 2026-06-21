@@ -14,7 +14,7 @@ use nerust_nes_core::controller::Controller;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::VideoRenderProfile;
-use nerust_screen_video::{FrameBuffer, PixelFormat, VideoFrameHandle};
+use nerust_screen_video::{FrameBuffer, PixelFormat};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -34,7 +34,6 @@ pub(crate) enum EmuCoreError {
 #[derive(Debug, Clone)]
 pub struct CoreSnapshot {
     pub metrics: ConsoleMetrics,
-    pub video_frame: Option<VideoFrameHandle>,
 }
 
 pub(crate) struct EmuCore {
@@ -177,22 +176,9 @@ impl EmuCore {
         *guard
     }
 
-    pub fn video_frame_handle(&self) -> VideoFrameHandle {
-        let logical_w = self.render_profile.logical_size.width;
-        let bpp = self.render_profile.frame_format.bytes_per_pixel();
-        let bytes = self.disp_fb.as_ref();
-        VideoFrameHandle {
-            width: logical_w as u32,
-            height: self.render_profile.logical_size.height as u32,
-            stride_bytes: logical_w * bpp,
-            bytes: Arc::from(bytes),
-        }
-    }
-
     pub fn snapshot(&self) -> CoreSnapshot {
         CoreSnapshot {
             metrics: self.metrics(),
-            video_frame: Some(self.video_frame_handle()),
         }
     }
 
@@ -300,7 +286,8 @@ impl EmuCore {
             .map_err(|e| EmuCoreError::Reply(e.to_string()))
     }
 
-    pub fn export_state(&self) -> Result<RuntimeStateExport, EmuCoreError> {
+    /// `preview` が false の場合、サムネイル生成をスキップする（hidden lifecycle state等）。
+    pub fn export_state(&self, preview: bool) -> Result<RuntimeStateExport, EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::SaveState { reply: reply_tx })
@@ -312,41 +299,8 @@ impl EmuCore {
 
         let state_blob = save_state_with_header(core_state);
 
-        let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
-            log::warn!("state export: shared frame buffer lock failed, preview unavailable");
-            return Ok(RuntimeStateExport {
-                state_blob,
-                preview: None,
-            });
-        };
-        let w = guard.width();
-        let h = guard.height();
-        let rgba = if w > 0 && h > 0 {
-            if let Some(palette) = guard.palette() {
-                let indices = guard.as_ref();
-                let mut rgba = Vec::with_capacity(w * h * 4);
-                for &idx in indices.iter().take(w * h) {
-                    let color = palette[idx as usize];
-                    rgba.push((color >> 24) as u8);
-                    rgba.push((color >> 16) as u8);
-                    rgba.push((color >> 8) as u8);
-                    rgba.push(color as u8);
-                }
-                rgba
-            } else {
-                guard.as_ref().to_vec()
-            }
-        } else {
-            Vec::new()
-        };
-        drop(guard);
-
-        let preview = if w > 0 && h > 0 {
-            Some(PreviewFrame {
-                width: w as u32,
-                height: h as u32,
-                rgba,
-            })
+        let preview = if preview {
+            Self::generate_preview(&self.emu)
         } else {
             None
         };
@@ -357,16 +311,57 @@ impl EmuCore {
         })
     }
 
-    pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        if self
-            .emu
-            .send(EmuCommand::Identity { reply: reply_tx })
-            .is_err()
-        {
+    fn generate_preview(emu: &EmuThread) -> Option<PreviewFrame> {
+        let Ok(guard) = emu.shared_frame_buffer().lock() else {
+            log::warn!("generate_preview: shared frame buffer lock failed");
+            return None;
+        };
+        let w = guard.width();
+        let h = guard.height();
+        if w == 0 || h == 0 {
             return None;
         }
-        reply_rx.recv().ok().and_then(|r| r.ok())
+        let rgba = if let Some(palette) = guard.palette() {
+            let indices = guard.as_ref();
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for &idx in indices.iter().take(w * h) {
+                let color = palette[idx as usize];
+                rgba.push((color >> 24) as u8);
+                rgba.push((color >> 16) as u8);
+                rgba.push((color >> 8) as u8);
+                rgba.push(color as u8);
+            }
+            rgba
+        } else {
+            guard.as_ref().to_vec()
+        };
+        drop(guard);
+        Some(PreviewFrame {
+            width: w as u32,
+            height: h as u32,
+            rgba,
+        })
+    }
+
+    pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Identity { reply: reply_tx })
+            .map_err(|_| {
+                log::warn!("canonical_media_identity: emu thread unavailable");
+            })
+            .ok()?;
+        match reply_rx.recv() {
+            Ok(Ok(identity)) => Some(identity),
+            Ok(Err(e)) => {
+                log::warn!("canonical_media_identity: core error: {e}");
+                None
+            }
+            Err(_) => {
+                log::warn!("canonical_media_identity: reply channel closed");
+                None
+            }
+        }
     }
 
     pub fn import_state(&self, bytes: &[u8]) -> Result<(), EmuCoreError> {

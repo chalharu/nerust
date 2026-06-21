@@ -18,7 +18,7 @@ use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_persistence::sidecar::SidecarPaths;
 use nerust_screen_video::FrameBuffer;
-use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
+use nerust_screen_video::VideoRenderProfile;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -42,7 +42,6 @@ pub struct SessionSnapshot {
     pub system_id: Option<nerust_input_schema::SystemId>,
     pub metrics: ConsoleMetrics,
     pub input_topology: Option<nerust_input_schema::InputTopologyDescriptor>,
-    pub video_frame: Option<VideoFrameHandle>,
     pub slots: Arc<[StateSlotSummary]>,
     pub active_slot_id: Option<u64>,
 }
@@ -134,7 +133,6 @@ impl SessionHandle {
             system_id: Some(self.descriptor.system_id),
             metrics: core_snapshot.metrics,
             input_topology: Some(self.descriptor.input_topology.clone()),
-            video_frame: core_snapshot.video_frame,
             slots: Arc::from(self.persistence.slots.clone()),
             active_slot_id: self.persistence.active_slot_id,
         }
