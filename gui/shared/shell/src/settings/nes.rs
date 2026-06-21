@@ -24,7 +24,7 @@ fn build_registry() -> AudioBackendRegistry {
 /// probe results so that `supported_rates()` is only queried once.
 pub fn audio_registry() -> &'static AudioBackendRegistry {
     static REGISTRY: OnceLock<AudioBackendRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(|| build_registry())
+    REGISTRY.get_or_init(build_registry)
 }
 
 pub fn build_speaker(settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend> {
