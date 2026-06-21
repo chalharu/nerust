@@ -8,9 +8,9 @@ use gtk::glib::variant::{StaticVariantType, ToVariant};
 use gtk::prelude::*;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_shell::session::KeyboardShortcut;
+use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
 use std::path::Path;
@@ -683,8 +683,8 @@ fn rebuild_slot_menu(
 #[cfg(test)]
 mod tests {
     use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
-    use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
     use nerust_gui_settings::input::KeyboardKey;
+    use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
     use std::cell::RefCell;
 
     #[derive(Default)]

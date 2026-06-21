@@ -1,12 +1,9 @@
+use crate::emu_core::EmuCore;
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::settings::i18n::{UiText, text};
-use crate::settings::nes::{build_speaker, effective_load_options};
-use nerust_console::state::RuntimeStateExport;
-use nerust_console::{Console, ConsoleMetrics};
+use crate::settings::nes::{build_speaker, effective_load_options, filter_type};
 use nerust_contract_core::options::Mmc3IrqVariant;
-use nerust_contract_core::persistence::CanonicalMediaIdentity;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
-use nerust_gui_session::core::SessionCore;
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
 use nerust_input_nes::codec::{decode_input_state, encode_input_state};
@@ -15,21 +12,13 @@ use nerust_input_nes::topology::input_topology_descriptor;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_input_schema::{DigitalInputEvent, InputTopologyDescriptor, SystemId};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::FrameBuffer;
-use nerust_screen_video::{VideoFrameHandle, VideoRenderProfile};
-
 use std::borrow::Cow;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
     pub system_id: SystemId,
     pub input_topology: InputTopologyDescriptor,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RuntimeHostServices {
-    pub host_backend: HostBackendIdentity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -76,37 +65,6 @@ pub struct SystemSettingsChoiceOption {
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct SystemRuntimeSnapshot {
-    pub metrics: ConsoleMetrics,
-    pub video_frame: Option<VideoFrameHandle>,
-    pub video_profile: Option<VideoRenderProfile>,
-}
-
-pub trait SystemDefinition: Send + Sync {
-    fn descriptor(&self) -> SystemDescriptor;
-    fn probe_media(&self, media: &MediaObject) -> bool;
-    fn default_load_options(&self) -> SystemLoadOptions;
-    fn resolve_load_request(
-        &self,
-        settings: &SettingsSnapshot,
-        options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, String>;
-    fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel;
-    fn apply_settings_choice(
-        &self,
-        settings: &mut SettingsSnapshot,
-        field: &SystemSettingsFieldId,
-        choice: &SystemSettingsChoiceId,
-    ) -> Result<(), String>;
-    fn create_input_adapter(&self, settings: &SettingsSnapshot) -> Box<dyn SystemInputAdapter>;
-    fn create_runtime(
-        &self,
-        host: &RuntimeHostServices,
-        settings: &SettingsSnapshot,
-    ) -> Result<Box<dyn SystemRuntime>, String>;
-}
-
 pub trait SystemInputAdapter: Send {
     fn apply_event(&mut self, event: DigitalInputEvent);
     fn clear(&mut self);
@@ -114,256 +72,18 @@ pub trait SystemInputAdapter: Send {
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, String>;
 }
 
-pub trait SystemRuntime: Send {
-    fn snapshot(&self) -> SystemRuntimeSnapshot;
-    fn load(&mut self, media: &MediaObject, request: &ResolvedLoadRequest) -> Result<(), String>;
-    fn unload(&mut self) -> Result<bool, String>;
-    fn reset(&self) -> Result<(), String>;
-    fn pause(&mut self);
-    fn resume(&mut self);
-
-    /// 再生音量を 0.0〜1.0 の範囲で設定する (session rebuild 不要)。
-    fn set_volume(&mut self, _volume: f32) {}
-    fn export_state(&self) -> Result<RuntimeStateExport, String>;
-    fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String>;
-    fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String>;
-    fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String>;
-    fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity>;
-
-    /// 最新フレームを表示バッファに引き取る。描画前に呼ぶこと。
-    fn swap_frame_buffer(&mut self) {}
-
-    /// Provide access to the current frame buffer without allocating a per-frame copy.
-    /// The closure is invoked while holding a read lock on the shared frame buffer.
-    /// Implementations should call the closure synchronously and not retain the byte slice.
-    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8]));
-
-    /// 表示バッファへの参照を返す。`swap_frame_buffer` の後に呼ぶこと。
-    fn frame_buffer(&self) -> &FrameBuffer;
-}
-
-struct NesSystemDefinition {
-    input_cell: OnceLock<Arc<NesInputCell>>,
-}
-
-impl NesSystemDefinition {
-    fn new() -> Self {
-        Self {
-            input_cell: OnceLock::new(),
-        }
-    }
-}
-
 #[derive(Debug)]
-struct NesAdapter {
+pub(crate) struct NesAdapter {
     input: NesInputState,
     cell: Arc<NesInputCell>,
 }
 
 impl NesAdapter {
-    fn new(cell: Arc<NesInputCell>) -> Self {
+    pub(crate) fn new(cell: Arc<NesInputCell>) -> Self {
         Self {
             input: NesInputState::default(),
             cell,
         }
-    }
-}
-
-struct NesRuntime {
-    core: SessionCore,
-}
-
-const FILTER_FIELD: &str = "video.filter";
-const MMC3_FIELD: &str = "core.mmc3_irq_variant";
-
-pub fn default_system_definition() -> Box<dyn SystemDefinition> {
-    Box::new(NesSystemDefinition::new())
-}
-
-pub fn default_input_topology_descriptor() -> InputTopologyDescriptor {
-    NesSystemDefinition::new().descriptor().input_topology
-}
-
-pub fn default_system_settings_page_model(settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-    NesSystemDefinition::new().settings_page(settings)
-}
-
-pub fn apply_default_system_settings_choice(
-    settings: &mut SettingsSnapshot,
-    field: &SystemSettingsFieldId,
-    choice: &SystemSettingsChoiceId,
-) -> Result<(), String> {
-    NesSystemDefinition::new().apply_settings_choice(settings, field, choice)
-}
-
-impl NesSystemDefinition {
-    fn build_console(&self, settings: &SettingsSnapshot) -> Result<Console, String> {
-        let speaker = build_speaker(&settings.local);
-        let filter_type = crate::settings::nes::filter_type(&settings.shared);
-        let cell = self
-            .input_cell
-            .get_or_init(|| Arc::new(NesInputCell::new()))
-            .clone();
-        let device = NesPadDevice::new(SharedNesInputCell(cell));
-        Ok(Console::new_gpu(
-            speaker,
-            filter_type,
-            nerust_screen_video::LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            Box::new(device),
-        ))
-    }
-}
-
-impl SystemDefinition for NesSystemDefinition {
-    fn descriptor(&self) -> SystemDescriptor {
-        SystemDescriptor {
-            system_id: SystemId::Nes,
-            input_topology: input_topology_descriptor(),
-        }
-    }
-
-    fn probe_media(&self, _media: &MediaObject) -> bool {
-        true
-    }
-
-    fn default_load_options(&self) -> SystemLoadOptions {
-        SystemLoadOptions::default()
-    }
-
-    fn resolve_load_request(
-        &self,
-        settings: &SettingsSnapshot,
-        options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, String> {
-        let resolved = effective_load_options(&settings.shared, options);
-        Ok(ResolvedLoadRequest {
-            system_id: SystemId::Nes,
-            options: resolved,
-            core_options: resolved.into_core_options(),
-        })
-    }
-
-    fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        let language = settings.shared.general.language;
-        let current = system_settings(settings);
-        SystemSettingsPageModel {
-            fields: Arc::from([
-                SystemSettingsFieldModel {
-                    id: SystemSettingsFieldId(Cow::Borrowed(FILTER_FIELD)),
-                    label: text(language, UiText::Filter).to_string(),
-                    kind: SystemSettingsFieldKind::Choice {
-                        selected: SystemSettingsChoiceId(Cow::Borrowed(
-                            match current.video.filter {
-                                NesVideoFilter::None => "none",
-                                NesVideoFilter::NtscComposite => "ntsc_composite",
-                                NesVideoFilter::NtscSVideo => "ntsc_svideo",
-                                NesVideoFilter::NtscRgb => "ntsc_rgb",
-                            },
-                        )),
-                        options: Arc::from([
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("none")),
-                                label: text(language, UiText::None).to_string(),
-                            },
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_composite")),
-                                label: text(language, UiText::NtscComposite).to_string(),
-                            },
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_svideo")),
-                                label: text(language, UiText::NtscSVideo).to_string(),
-                            },
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_rgb")),
-                                label: text(language, UiText::NtscRgb).to_string(),
-                            },
-                        ]),
-                    },
-                },
-                SystemSettingsFieldModel {
-                    id: SystemSettingsFieldId(Cow::Borrowed(MMC3_FIELD)),
-                    label: text(language, UiText::Mmc3IrqVariant).to_string(),
-                    kind: SystemSettingsFieldKind::Choice {
-                        selected: SystemSettingsChoiceId(Cow::Borrowed(
-                            match current.core.mmc3_irq_variant {
-                                None => "auto",
-                                Some(Mmc3IrqVariant::Sharp) => "sharp",
-                                Some(Mmc3IrqVariant::Nec) => "nec",
-                            },
-                        )),
-                        options: Arc::from([
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("auto")),
-                                label: text(language, UiText::Auto).to_string(),
-                            },
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("sharp")),
-                                label: text(language, UiText::Sharp).to_string(),
-                            },
-                            SystemSettingsChoiceOption {
-                                id: SystemSettingsChoiceId(Cow::Borrowed("nec")),
-                                label: text(language, UiText::Nec).to_string(),
-                            },
-                        ]),
-                    },
-                },
-            ]),
-        }
-    }
-
-    fn apply_settings_choice(
-        &self,
-        settings: &mut SettingsSnapshot,
-        field: &SystemSettingsFieldId,
-        choice: &SystemSettingsChoiceId,
-    ) -> Result<(), String> {
-        let current = system_settings_mut(settings);
-        match field.as_str() {
-            FILTER_FIELD => {
-                current.video.filter = match choice.as_str() {
-                    "none" => NesVideoFilter::None,
-                    "ntsc_composite" => NesVideoFilter::NtscComposite,
-                    "ntsc_svideo" => NesVideoFilter::NtscSVideo,
-                    "ntsc_rgb" => NesVideoFilter::NtscRgb,
-                    other => return Err(format!("unsupported filter choice: {other}")),
-                };
-                Ok(())
-            }
-            MMC3_FIELD => {
-                current.core.mmc3_irq_variant = match choice.as_str() {
-                    "auto" => None,
-                    "sharp" => Some(Mmc3IrqVariant::Sharp),
-                    "nec" => Some(Mmc3IrqVariant::Nec),
-                    other => return Err(format!("unsupported mmc3 choice: {other}")),
-                };
-                Ok(())
-            }
-            other => Err(format!("unsupported system settings field: {other}")),
-        }
-    }
-
-    fn create_input_adapter(&self, _settings: &SettingsSnapshot) -> Box<dyn SystemInputAdapter> {
-        // 通常は build_console が先に呼ばれて cell が初期化されているが、
-        // テスト等で単独で呼ばれる場合もあるので、その時は新規作成する。
-        let arc = self.input_cell.get().cloned().unwrap_or_else(|| {
-            let cell = Arc::new(NesInputCell::new());
-            let _ = self.input_cell.set(cell.clone());
-            cell
-        });
-        Box::new(NesAdapter::new(arc))
-    }
-
-    fn create_runtime(
-        &self,
-        _host: &RuntimeHostServices,
-        settings: &SettingsSnapshot,
-    ) -> Result<Box<dyn SystemRuntime>, String> {
-        Ok(Box::new(NesRuntime {
-            core: SessionCore::from_console(self.build_console(settings)?),
-        }))
     }
 }
 
@@ -399,83 +119,154 @@ impl SystemInputAdapter for NesAdapter {
     }
 }
 
-impl SystemRuntime for NesRuntime {
-    fn snapshot(&self) -> SystemRuntimeSnapshot {
-        SystemRuntimeSnapshot {
-            metrics: self.core.metrics(),
-            video_frame: Some(self.core.video_frame_handle()),
-            video_profile: Some(self.core.video_render_profile()),
+const FILTER_FIELD: &str = "video.filter";
+const MMC3_FIELD: &str = "core.mmc3_irq_variant";
+
+pub fn default_system_descriptor() -> SystemDescriptor {
+    SystemDescriptor {
+        system_id: SystemId::Nes,
+        input_topology: input_topology_descriptor(),
+    }
+}
+
+pub fn default_input_topology_descriptor() -> InputTopologyDescriptor {
+    input_topology_descriptor()
+}
+
+pub fn probe_nes_media(_media: &MediaObject) -> bool {
+    true
+}
+
+pub fn default_nes_load_options() -> SystemLoadOptions {
+    SystemLoadOptions::default()
+}
+
+pub fn resolve_nes_load_request(
+    settings: &SettingsSnapshot,
+    options: SystemLoadOptions,
+) -> Result<ResolvedLoadRequest, String> {
+    let resolved = effective_load_options(&settings.shared, options);
+    Ok(ResolvedLoadRequest {
+        system_id: SystemId::Nes,
+        options: resolved,
+        core_options: resolved.into_core_options(),
+    })
+}
+
+pub fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPageModel {
+    let language = settings.shared.general.language;
+    let current = system_settings(settings);
+    SystemSettingsPageModel {
+        fields: Arc::from([
+            SystemSettingsFieldModel {
+                id: SystemSettingsFieldId(Cow::Borrowed(FILTER_FIELD)),
+                label: text(language, UiText::Filter).to_string(),
+                kind: SystemSettingsFieldKind::Choice {
+                    selected: SystemSettingsChoiceId(Cow::Borrowed(match current.video.filter {
+                        NesVideoFilter::None => "none",
+                        NesVideoFilter::NtscComposite => "ntsc_composite",
+                        NesVideoFilter::NtscSVideo => "ntsc_svideo",
+                        NesVideoFilter::NtscRgb => "ntsc_rgb",
+                    })),
+                    options: Arc::from([
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("none")),
+                            label: text(language, UiText::None).to_string(),
+                        },
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_composite")),
+                            label: text(language, UiText::NtscComposite).to_string(),
+                        },
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_svideo")),
+                            label: text(language, UiText::NtscSVideo).to_string(),
+                        },
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_rgb")),
+                            label: text(language, UiText::NtscRgb).to_string(),
+                        },
+                    ]),
+                },
+            },
+            SystemSettingsFieldModel {
+                id: SystemSettingsFieldId(Cow::Borrowed(MMC3_FIELD)),
+                label: text(language, UiText::Mmc3IrqVariant).to_string(),
+                kind: SystemSettingsFieldKind::Choice {
+                    selected: SystemSettingsChoiceId(Cow::Borrowed(
+                        match current.core.mmc3_irq_variant {
+                            None => "auto",
+                            Some(Mmc3IrqVariant::Sharp) => "sharp",
+                            Some(Mmc3IrqVariant::Nec) => "nec",
+                        },
+                    )),
+                    options: Arc::from([
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("auto")),
+                            label: text(language, UiText::Auto).to_string(),
+                        },
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("sharp")),
+                            label: text(language, UiText::Sharp).to_string(),
+                        },
+                        SystemSettingsChoiceOption {
+                            id: SystemSettingsChoiceId(Cow::Borrowed("nec")),
+                            label: text(language, UiText::Nec).to_string(),
+                        },
+                    ]),
+                },
+            },
+        ]),
+    }
+}
+
+pub fn apply_nes_settings_choice(
+    settings: &mut SettingsSnapshot,
+    field: &SystemSettingsFieldId,
+    choice: &SystemSettingsChoiceId,
+) -> Result<(), String> {
+    let current = system_settings_mut(settings);
+    match field.as_str() {
+        FILTER_FIELD => {
+            current.video.filter = match choice.as_str() {
+                "none" => NesVideoFilter::None,
+                "ntsc_composite" => NesVideoFilter::NtscComposite,
+                "ntsc_svideo" => NesVideoFilter::NtscSVideo,
+                "ntsc_rgb" => NesVideoFilter::NtscRgb,
+                other => return Err(format!("unsupported filter choice: {other}")),
+            };
+            Ok(())
         }
+        MMC3_FIELD => {
+            current.core.mmc3_irq_variant = match choice.as_str() {
+                "auto" => None,
+                "sharp" => Some(Mmc3IrqVariant::Sharp),
+                "nec" => Some(Mmc3IrqVariant::Nec),
+                other => return Err(format!("unsupported mmc3 choice: {other}")),
+            };
+            Ok(())
+        }
+        other => Err(format!("unsupported system settings field: {other}")),
     }
+}
 
-    fn swap_frame_buffer(&mut self) {
-        self.core.swap_frame_buffer();
-    }
-
-    fn load(&mut self, media: &MediaObject, request: &ResolvedLoadRequest) -> Result<(), String> {
-        self.core
-            .load_rom(media.bytes.as_ref().to_vec(), request.core_options)
-            .map_err(|error| error.to_string())
-    }
-
-    fn unload(&mut self) -> Result<bool, String> {
-        self.core
-            .unload_rom()
-            .map(|_| true)
-            .map_err(|error| error.to_string())
-    }
-
-    fn reset(&self) -> Result<(), String> {
-        self.core.reset().map_err(|error| error.to_string())
-    }
-
-    fn pause(&mut self) {
-        self.core.pause();
-    }
-
-    fn resume(&mut self) {
-        self.core.resume();
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-        self.core.set_volume(volume);
-    }
-
-    fn export_state(&self) -> Result<RuntimeStateExport, String> {
-        self.core.export_state().map_err(|error| error.to_string())
-    }
-
-    fn import_state(&mut self, state_blob: &[u8]) -> Result<(), String> {
-        self.core
-            .import_state(state_blob.to_vec())
-            .map_err(|error| error.to_string())?;
-        self.core.sync_paused_from_console();
-        Ok(())
-    }
-
-    fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
-        self.core
-            .export_mapper_save()
-            .map_err(|error| error.to_string())
-    }
-
-    fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String> {
-        self.core
-            .import_mapper_save(bytes)
-            .map_err(|error| error.to_string())
-    }
-
-    fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
-        self.core.canonical_media_identity().ok()
-    }
-
-    fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        f(self.core.frame_buffer().as_ref());
-    }
-
-    fn frame_buffer(&self) -> &FrameBuffer {
-        self.core.frame_buffer()
-    }
+pub(crate) fn create_core_and_adapter(
+    settings: &SettingsSnapshot,
+) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+    let speaker = build_speaker(&settings.local);
+    let filter = filter_type(&settings.shared);
+    let cell = Arc::new(NesInputCell::new());
+    let device = NesPadDevice::new(SharedNesInputCell(cell.clone()));
+    let core = EmuCore::new_gpu(
+        speaker,
+        filter,
+        nerust_screen_video::LogicalSize {
+            width: 256,
+            height: 240,
+        },
+        Box::new(device),
+    );
+    let adapter = Box::new(NesAdapter::new(cell));
+    Ok((core, adapter))
 }
 
 fn system_settings(settings: &SettingsSnapshot) -> NesSettings {
@@ -503,10 +294,9 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
 #[cfg(test)]
 mod tests {
     use super::{
-        SystemSettingsChoiceId, SystemSettingsFieldId, default_input_topology_descriptor,
-        default_system_definition,
+        SystemSettingsChoiceId, SystemSettingsFieldId, apply_nes_settings_choice,
+        default_input_topology_descriptor, nes_settings_page,
     };
-    use crate::load::SystemLoadOptions;
     use crate::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
@@ -583,35 +373,33 @@ mod tests {
 
     #[test]
     fn resolved_load_request_uses_saved_defaults() {
-        let definition = default_system_definition();
+        use super::resolve_nes_load_request;
+        use crate::load::SystemLoadOptions;
         let settings = snapshot();
 
-        let resolved = definition
-            .resolve_load_request(
-                &settings,
-                SystemLoadOptions {
-                    mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
-                },
-            )
-            .unwrap();
+        let resolved = resolve_nes_load_request(
+            &settings,
+            SystemLoadOptions {
+                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+            },
+        )
+        .unwrap();
 
         assert_eq!(resolved.options.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]
     fn system_page_choice_writeback_updates_snapshot() {
-        let definition = default_system_definition();
         let mut settings = snapshot();
 
-        definition
-            .apply_settings_choice(
-                &mut settings,
-                &SystemSettingsFieldId(Cow::Borrowed("core.mmc3_irq_variant")),
-                &SystemSettingsChoiceId(Cow::Borrowed("sharp")),
-            )
-            .unwrap();
+        apply_nes_settings_choice(
+            &mut settings,
+            &SystemSettingsFieldId(Cow::Borrowed("core.mmc3_irq_variant")),
+            &SystemSettingsChoiceId(Cow::Borrowed("sharp")),
+        )
+        .unwrap();
 
-        let page = definition.settings_page(&settings);
+        let page = nes_settings_page(&settings);
         assert_eq!(page.fields.len(), 2);
     }
 }

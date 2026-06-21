@@ -1,0 +1,327 @@
+use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::session::metrics::ConsoleMetrics;
+use nerust_contract_core::audio::AudioBackend;
+use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
+use nerust_contract_emuthread::EmuThread;
+use nerust_nes_core::console_core::NesConsoleCore;
+use nerust_nes_core::controller::Controller;
+use nerust_screen_video::FilterType;
+use nerust_screen_video::LogicalSize;
+use nerust_screen_video::VideoRenderProfile;
+use nerust_screen_video::{FrameBuffer, PixelFormat};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub(crate) enum EmuCoreError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Reply(String),
+}
+
+pub(crate) struct EmuCore {
+    emu: EmuThread,
+    render_profile: VideoRenderProfile,
+    shared_fb: Arc<Mutex<FrameBuffer>>,
+    disp_fb: FrameBuffer,
+    frame_ready: Arc<AtomicBool>,
+    metrics: Arc<Mutex<ConsoleMetrics>>,
+}
+
+impl EmuCore {
+    pub fn new_gpu(
+        speaker: Box<dyn AudioBackend + Send>,
+        filter_type: FilterType,
+        source_logical_size: LogicalSize,
+        controller: Box<dyn Controller + Send>,
+    ) -> Self {
+        let layout = filter_type.layout(source_logical_size);
+        let assets = filter_type.palette_console_video_assets();
+        let ntsc_packed_rgba8 = assets
+            .packed_ntsc_rgba8()
+            .map(|data| data.to_vec().into_boxed_slice());
+        let render_profile = VideoRenderProfile {
+            source_logical_size: layout.source_logical_size,
+            logical_size: layout.logical_size,
+            physical_size: layout.physical_size,
+            frame_format: nerust_screen_video::VideoFrameFormat::Palette,
+            ntsc_packed_rgba8,
+        };
+        let mut palette = [0u32; 256];
+        let rgba8 = assets.palette_rgba8();
+        for (i, entry) in palette.iter_mut().enumerate().take(64) {
+            let pos = i * 4;
+            *entry = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
+        let pixel_format = PixelFormat::PaletteIndex {
+            palette: Box::new(palette),
+        };
+        let src_w = source_logical_size.width;
+        let src_h = source_logical_size.height;
+
+        Self::build(
+            speaker,
+            render_profile,
+            pixel_format,
+            src_w,
+            src_h,
+            controller,
+        )
+    }
+
+    fn build(
+        speaker: Box<dyn AudioBackend + Send>,
+        render_profile: VideoRenderProfile,
+        pixel_format: PixelFormat,
+        src_w: usize,
+        src_h: usize,
+        controller: Box<dyn Controller + Send>,
+    ) -> Self {
+        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            src_w,
+            src_h,
+            pixel_format.clone(),
+        )));
+        if let Ok(mut guard) = shared_fb.lock() {
+            guard.resize(src_w, src_h);
+            guard.resize_data(src_w * src_h);
+        }
+
+        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+        disp_fb.resize(src_w, src_h);
+        disp_fb.resize_data(src_w * src_h);
+
+        let metrics = Arc::new(Mutex::new(ConsoleMetrics {
+            paused: true,
+            ..ConsoleMetrics::default()
+        }));
+
+        let mut speaker = speaker;
+        speaker.start();
+        let core = NesConsoleCore::new_empty(controller, speaker);
+        let frame_ready = Arc::new(AtomicBool::new(false));
+        let palette = match &pixel_format {
+            PixelFormat::PaletteIndex { palette } => palette.clone(),
+            PixelFormat::Rgba => Box::new([0u32; 256]),
+        };
+        let emu = EmuThread::spawn(
+            Box::new(core),
+            Arc::clone(&shared_fb),
+            Arc::clone(&frame_ready),
+            palette,
+        );
+
+        Self {
+            emu,
+            render_profile,
+            shared_fb,
+            disp_fb,
+            frame_ready,
+            metrics,
+        }
+    }
+
+    pub fn render_profile(&self) -> &VideoRenderProfile {
+        &self.render_profile
+    }
+
+    pub fn swap_frame_buffer(&mut self) {
+        if self.frame_ready.load(Ordering::Relaxed)
+            && let Ok(mut guard) = self.shared_fb.lock()
+            && self.frame_ready.swap(false, Ordering::AcqRel)
+        {
+            std::mem::swap(&mut *guard, &mut self.disp_fb);
+        }
+        if let Ok(mut guard) = self.metrics.lock() {
+            guard.frame_counter = self.emu.frame_count();
+        } else {
+            log::warn!("metrics lock poisoned in swap_frame_buffer");
+        }
+    }
+
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        &self.disp_fb
+    }
+
+    // metrics() のみ into_inner() で回復する理由: レンダリングパスで毎フレーム呼ばれ、
+    // 常に最新の metrics を返す必要がある。他のメソッド(swap, pause, load 等)の metrics
+    // 更新は副次的な副作用であり、poison 時に諦めても動作に影響しない。
+    pub fn metrics(&self) -> ConsoleMetrics {
+        let mut guard = self.metrics.lock().unwrap_or_else(|e| {
+            log::warn!("metrics mutex poisoned, recovering");
+            e.into_inner()
+        });
+        guard.frame_counter = self.emu.frame_count();
+        guard.emulation_fps = self.emu.fps();
+        *guard
+    }
+
+    pub fn set_volume(&self, volume: f32) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::SetVolume(volume))
+            .map_err(|_| EmuCoreError::WorkerUnavailable)
+    }
+
+    pub fn resume(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Resume)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.paused = false,
+            Err(e) => log::warn!("metrics lock poisoned in resume: {e}"),
+        }
+        Ok(())
+    }
+
+    pub fn pause(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Pause)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.paused = true,
+            Err(e) => log::warn!("metrics lock poisoned in pause: {e}"),
+        }
+        Ok(())
+    }
+
+    // TODO: CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
+    // 現状は NesConsoleCore::load も config を無視する。blocked on NesConsoleCore::load
+    // が &CoreConfig を受け取るように変更されること。
+    pub fn load(
+        &self,
+        media: &MediaObject,
+        _request: &ResolvedLoadRequest,
+    ) -> Result<(), EmuCoreError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Load(Box::new(LoadCommand {
+                rom: media.bytes.as_ref().to_vec(),
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                },
+                reply: reply_tx,
+            })))
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        let result = reply_rx
+            .recv()
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Reply(e.to_string()));
+        if result.is_ok() {
+            match self.metrics.lock() {
+                Ok(mut guard) => {
+                    guard.loaded = true;
+                    guard.paused = true;
+                }
+                Err(e) => log::warn!("metrics lock poisoned in load: {e}"),
+            }
+        }
+        result
+    }
+
+    pub fn unload(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Unload)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.loaded = false,
+            Err(e) => log::warn!("metrics lock poisoned in unload: {e}"),
+        }
+        Ok(())
+    }
+
+    pub fn reset(&self) -> Result<(), EmuCoreError> {
+        self.emu
+            .send(EmuCommand::Reset)
+            .map_err(|_| EmuCoreError::WorkerUnavailable)
+    }
+
+    pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::MapperSave { reply: reply_tx })
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+    }
+
+    pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
+                data: bytes,
+                reply: reply_tx,
+            })))
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+    }
+
+    /// Raw state save: Send SaveState, return core bytes (no header, no preview).
+    pub fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::SaveState { reply: reply_tx })
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+    }
+
+    /// Generate a preview frame from the EmuThread's shared frame buffer.
+    pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+        crate::state::generate_preview(&self.emu)
+    }
+
+    pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Identity { reply: reply_tx })
+            .map_err(|_| {
+                log::warn!("canonical_media_identity: emu thread unavailable");
+            })
+            .ok()?;
+        match reply_rx.recv() {
+            Ok(Ok(identity)) => Some(identity),
+            Ok(Err(e)) => {
+                log::warn!("canonical_media_identity: core error: {e}");
+                None
+            }
+            Err(_) => {
+                log::warn!("canonical_media_identity: reply channel closed");
+                None
+            }
+        }
+    }
+
+    /// Raw state load: Send LoadState with raw core bytes. No format fallback.
+    pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::LoadState(Box::new(StateDataCommand {
+                data,
+                reply: reply_tx,
+            })))
+            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+        reply_rx
+            .recv()
+            .map_err(|_| EmuCoreError::NoReply)?
+            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+    }
+}

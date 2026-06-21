@@ -9,16 +9,17 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_gui_session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_session::core::WindowSize;
 use nerust_gui_settings::input::KeyboardKey;
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::descriptor::SystemSettingsPageModel;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot};
+use nerust_gui_shell::session::WindowSize;
+use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::VideoRenderProfile;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -40,10 +41,6 @@ impl State {
         }
     }
 
-    pub(crate) fn snapshot(&self) -> SessionSnapshot {
-        self.session.snapshot()
-    }
-
     pub(crate) fn swap_frame_buffer(&mut self) {
         self.session.swap_frame_buffer();
     }
@@ -58,6 +55,10 @@ impl State {
 
     pub(crate) fn input_topology_descriptor(&self) -> nerust_input_schema::InputTopologyDescriptor {
         self.session.input_topology_descriptor()
+    }
+
+    pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
+        self.session.render_profile()
     }
 
     pub(crate) fn window_size(&self) -> WindowSize {
@@ -95,7 +96,7 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().unwrap_or(false)
+        self.session.unload().is_ok()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {

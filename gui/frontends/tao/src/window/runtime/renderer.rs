@@ -11,14 +11,10 @@ pub(crate) struct WgpuRenderer {
 
 impl WgpuRenderer {
     pub(crate) fn new(window: Arc<TaoWindow>, session: &SessionHandle) -> Self {
-        let snapshot = session.snapshot();
-        let profile = snapshot
-            .video_profile
-            .expect("session should publish a render profile");
         let backend = WgpuBackend::new(
             SurfaceTarget::new(window.clone(), session.window_size()),
             SurfaceSize::new(window.inner_size().width, window.inner_size().height),
-            &profile,
+            session.render_profile(),
             PresentationOptions {
                 vsync: session.settings_snapshot().local.video.presentation.vsync,
             },
