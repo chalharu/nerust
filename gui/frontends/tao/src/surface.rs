@@ -1,5 +1,5 @@
 use nerust_backend_wgpu::RenderSurfaceTarget;
-use nerust_gui_session::core::WindowSize;
+use nerust_gui_shell::session::WindowSize;
 use nerust_screen_wgpu::surface::SurfaceSize;
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 #[cfg(not(any(

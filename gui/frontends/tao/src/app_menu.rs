@@ -1,5 +1,5 @@
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_session::commands::SessionCommand;
+use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
 use tao::window::Window as TaoWindow;
 

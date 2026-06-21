@@ -16,9 +16,9 @@ use jni::jni_str;
 use nerust_backend_wgpu::RenderResult;
 use nerust_gui_runtime::settings::HostBackendIdentity;
 use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_session::commands::SessionCommand;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::SessionHandle;
+use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_gui_shell::touch::{
     PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
 };

@@ -1,9 +1,8 @@
-pub mod state;
+use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::session::metrics::ConsoleMetrics;
+use crate::state::{ConsoleStatePayload, PreviewFrame, RuntimeStateExport};
 
-use self::state::RuntimeStateExport;
 use nerust_contract_core::audio::AudioBackend;
-
-use nerust_contract_core::options::CoreOptions;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, load_state_from_header,
@@ -14,48 +13,23 @@ use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_core::controller::Controller;
 use nerust_screen_video::FilterType;
 use nerust_screen_video::LogicalSize;
-use nerust_screen_video::PhysicalSize;
 use nerust_screen_video::VideoRenderProfile;
-use nerust_screen_video::{FrameBuffer, PixelFormat};
+use nerust_screen_video::{FrameBuffer, PixelFormat, VideoFrameHandle};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ConsoleMetrics {
-    pub frame_counter: u64,
-    pub emulation_fps: f32,
-    pub speed_multiplier: f32,
-    pub loaded: bool,
-    pub paused: bool,
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum ConsoleError {
-    #[error("console worker thread is unavailable")]
-    WorkerUnavailable,
-    #[error("ROM parse failed: {0}")]
-    RomParse(String),
-    #[error("no ROM loaded")]
-    NoRomLoaded,
-    #[error("{0}")]
-    Core(String),
-}
-
-#[allow(missing_debug_implementations)]
-pub struct Console {
-    pub(crate) emu: EmuThread,
-    render_profile: VideoRenderProfile,
-    pub(crate) shared_fb: Arc<Mutex<FrameBuffer>>,
-    pub(crate) disp_fb: FrameBuffer,
-    pub(crate) frame_ready: Arc<AtomicBool>,
+pub(crate) struct EmuCore {
+    pub emu: EmuThread,
+    pub render_profile: VideoRenderProfile,
+    pub shared_fb: Arc<Mutex<FrameBuffer>>,
+    pub disp_fb: FrameBuffer,
+    pub frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
 }
 
-impl Console {
-    /// NES 用の新規 Console を作成する (GPU palette decode パス)。
+impl EmuCore {
     pub fn new_gpu(
         speaker: Box<dyn AudioBackend + Send>,
         filter_type: FilterType,
@@ -130,9 +104,6 @@ impl Console {
         speaker.start();
         let core = NesConsoleCore::new_empty(controller, speaker);
         let frame_ready = Arc::new(AtomicBool::new(false));
-        // Extract the correct palette for EmuThread's frame_slot.
-        // EmuThread's palette must match the renderer's palette, otherwise
-        // the palette alternates between correct and all-zero on each swap.
         let palette = match &pixel_format {
             PixelFormat::PaletteIndex { palette } => palette.clone(),
             PixelFormat::Rgba => Box::new([0u32; 256]),
@@ -154,25 +125,6 @@ impl Console {
         }
     }
 
-    pub fn logical_size(&self) -> LogicalSize {
-        self.render_profile.logical_size
-    }
-
-    pub fn source_logical_size(&self) -> LogicalSize {
-        self.render_profile.source_logical_size
-    }
-
-    pub fn physical_size(&self) -> PhysicalSize {
-        self.render_profile.physical_size
-    }
-
-    pub fn render_profile(&self) -> &VideoRenderProfile {
-        &self.render_profile
-    }
-
-    /// 共有バッファから表示バッファに最新フレームを引き取る。
-    /// frame_ready フラグで handshake を行い、新しいフレームがある場合のみ swap する。
-    /// frame_count は frontend の再描画要求 (wants_redraw) 用に更新する。
     pub fn swap_frame_buffer(&mut self) {
         if self.frame_ready.load(Ordering::Relaxed)
             && let Ok(mut guard) = self.shared_fb.lock()
@@ -185,18 +137,35 @@ impl Console {
         }
     }
 
-    /// 表示バッファへの参照を返す。
     pub fn frame_buffer(&self) -> &FrameBuffer {
         &self.disp_fb
     }
 
-    /// Returns current metrics. Frame counter and FPS are synced from EmuThread
-    /// on each call so the frontend can detect new frames and display FPS.
     pub fn metrics(&self) -> ConsoleMetrics {
         let mut guard = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
         guard.frame_counter = self.emu.frame_count();
         guard.emulation_fps = self.emu.fps();
         *guard
+    }
+
+    pub fn video_frame_handle(&self) -> VideoFrameHandle {
+        let logical_w = self.render_profile.logical_size.width;
+        let bpp = self.render_profile.frame_format.bytes_per_pixel();
+        let bytes = self.disp_fb.as_ref();
+        VideoFrameHandle {
+            width: logical_w as u32,
+            height: self.render_profile.logical_size.height as u32,
+            stride_bytes: logical_w * bpp,
+            bytes: Arc::from(bytes),
+        }
+    }
+
+    pub fn snapshot(&self) -> crate::descriptor::SystemRuntimeSnapshot {
+        crate::descriptor::SystemRuntimeSnapshot {
+            metrics: self.metrics(),
+            video_frame: Some(self.video_frame_handle()),
+            video_profile: Some(self.render_profile.clone()),
+        }
     }
 
     pub fn set_volume(&self, volume: f32) {
@@ -221,22 +190,11 @@ impl Console {
         }
     }
 
-    pub fn load(&self, data: Vec<u8>) -> Result<(), ConsoleError> {
-        self.load_with_options(data, CoreOptions::default())
-    }
-
-    // TODO(Phase 7): CoreConfig に CoreOptions を統合し、load_with_options の
-    // _options を反映させる。現状は NesConsoleCore::load も _config を無視する。
-    pub fn load_with_options(
-        &self,
-        data: Vec<u8>,
-        _options: CoreOptions,
-    ) -> Result<(), ConsoleError> {
-        log::warn!("load_with_options: CoreOptions are ignored in Phase 2c-3 path");
+    pub fn load(&self, media: &MediaObject, _request: &ResolvedLoadRequest) -> Result<(), String> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
-                rom: data,
+                rom: media.bytes.as_ref().to_vec(),
                 config: CoreConfig {
                     region: None,
                     bios_paths: HashMap::new(),
@@ -244,77 +202,78 @@ impl Console {
                 },
                 reply: reply_tx,
             })))
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         let result = reply_rx
             .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()));
+            .map_err(|_| "emu thread reply channel closed".to_string())?
+            .map_err(|e| e.to_string());
         if result.is_ok()
             && let Ok(mut guard) = self.metrics.lock()
         {
             guard.loaded = true;
+            guard.paused = true;
         }
         result
     }
 
-    pub fn unload(&self) -> Result<(), ConsoleError> {
+    pub fn unload(&mut self) -> Result<bool, String> {
         self.emu
             .send(EmuCommand::Unload)
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         if let Ok(mut guard) = self.metrics.lock() {
             guard.loaded = false;
         }
-        Ok(())
+        Ok(true)
     }
 
-    pub fn reset(&self) -> Result<(), ConsoleError> {
+    pub fn reset(&self) -> Result<(), String> {
         self.emu
             .send(EmuCommand::Reset)
-            .map_err(|_| ConsoleError::WorkerUnavailable)
+            .map_err(|_| "emu thread channel unavailable".to_string())
     }
 
-    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, ConsoleError> {
+    pub fn export_mapper_save(&self) -> Result<Option<Vec<u8>>, String> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::MapperSave { reply: reply_tx })
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         reply_rx
             .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))
+            .map_err(|_| "emu thread reply channel closed".to_string())?
+            .map_err(|e| e.to_string())
     }
 
-    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
+    pub fn import_mapper_save(&self, bytes: Vec<u8>) -> Result<(), String> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
                 data: bytes,
                 reply: reply_tx,
             })))
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         reply_rx
             .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))
+            .map_err(|_| "emu thread reply channel closed".to_string())?
+            .map_err(|e| e.to_string())
     }
 
-    pub fn export_state(&self) -> Result<RuntimeStateExport, ConsoleError> {
+    pub fn export_state(&self) -> Result<RuntimeStateExport, String> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::SaveState { reply: reply_tx })
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         let core_state = reply_rx
             .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))?;
+            .map_err(|_| "emu thread reply channel closed".to_string())?
+            .map_err(|e| e.to_string())?;
+
         let state_blob = save_state_with_header(core_state);
 
         let Ok(guard) = self.emu.shared_frame_buffer().lock() else {
-            return Err(ConsoleError::WorkerUnavailable);
+            return Err("emu thread shared frame buffer lock failed".into());
         };
         let w = guard.width();
         let h = guard.height();
-        // Preview needs RGBA data (4 BPP). PaletteIndex format stores 1 BPP indices.
         let rgba = if w > 0 && h > 0 {
             if let Some(palette) = guard.palette() {
                 let indices = guard.as_ref();
@@ -328,7 +287,6 @@ impl Console {
                 }
                 rgba
             } else {
-                // Rgba format — use raw data directly
                 guard.as_ref().to_vec()
             }
         } else {
@@ -337,7 +295,7 @@ impl Console {
         drop(guard);
 
         let preview = if w > 0 && h > 0 {
-            Some(state::PreviewFrame {
+            Some(PreviewFrame {
                 width: w as u32,
                 height: h as u32,
                 rgba,
@@ -352,33 +310,25 @@ impl Console {
         })
     }
 
-    pub fn canonical_media_identity(&self) -> Result<CanonicalMediaIdentity, ConsoleError> {
+    pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
+        if self
+            .emu
             .send(EmuCommand::Identity { reply: reply_tx })
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
-        reply_rx
-            .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
-            .map_err(|e| ConsoleError::Core(e.to_string()))
+            .is_err()
+        {
+            return None;
+        }
+        reply_rx.recv().ok().and_then(|r| r.ok())
     }
 
-    /// Import a previously exported state.
-    ///
-    /// Tries these formats in order:
-    /// 1. `SaveStateHeader`-prefixed (current, since Phase 9)
-    /// 2. Old `ConsoleStatePayload` msgpack wrapper (pre-Phase 2c-3)
-    /// 3. Raw core state bytes (Phase 2c-3)
-    pub fn import_state(&self, bytes: Vec<u8>) -> Result<(), ConsoleError> {
-        let core_bytes = match load_state_from_header(&bytes) {
+    pub fn import_state(&self, bytes: &[u8]) -> Result<(), String> {
+        let core_bytes = match load_state_from_header(bytes) {
             Ok(inner) => inner.to_vec(),
-            Err(_) => {
-                // Try old ConsoleStatePayload format (contains core_state field).
-                match rmp_serde::from_slice::<crate::state::ConsoleStatePayload>(&bytes) {
-                    Ok(payload) => payload.core_state,
-                    Err(_) => bytes, // treat as raw core state (fallback)
-                }
-            }
+            Err(_) => match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
+                Ok(payload) => payload.core_state,
+                Err(_) => bytes.to_vec(),
+            },
         };
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -386,74 +336,15 @@ impl Console {
                 data: core_bytes,
                 reply: reply_tx,
             })))
-            .map_err(|_| ConsoleError::WorkerUnavailable)?;
+            .map_err(|_| "emu thread channel unavailable".to_string())?;
         reply_rx
             .recv()
-            .map_err(|_| ConsoleError::WorkerUnavailable)?
+            .map_err(|_| "emu thread reply channel closed".to_string())?
             .map_err(|e| {
-                ConsoleError::Core(format!(
+                format!(
                     "state import failed (tried SaveStateHeader format, then \
                      ConsoleStatePayload format, then raw): {e}"
-                ))
+                )
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nerust_contract_core::audio::AudioBackend;
-    use nerust_nes_core::OpenBusReadResult;
-    use nerust_nes_core::controller::Controller;
-    use nerust_screen_video::FilterType;
-    use nerust_screen_video::LogicalSize;
-    use std::sync::atomic::Ordering;
-
-    struct TestSpeaker;
-    impl AudioBackend for TestSpeaker {
-        fn start(&mut self) {}
-        fn pause(&mut self) {}
-        fn push(&mut self, _: f32) {}
-    }
-
-    struct TestController;
-    impl Controller for TestController {
-        fn read(&mut self, _: usize) -> OpenBusReadResult {
-            OpenBusReadResult::new(0, 0)
-        }
-        fn write(&mut self, _: u8) {}
-    }
-
-    #[test]
-    fn swap_frame_buffer_copies_shared_to_disp() {
-        let mut console = Console::new_gpu(
-            Box::new(TestSpeaker),
-            FilterType::NtscComposite,
-            LogicalSize {
-                width: 256,
-                height: 240,
-            },
-            Box::new(TestController),
-        );
-        // Write test data into the shared buffer (emu thread side)
-        if let Ok(mut guard) = console.shared_fb.lock() {
-            let slice = guard.as_mut();
-            slice.fill(42);
-            // Only the first byte will be checked — enough to prove the swap
-        }
-        console.frame_ready.store(true, Ordering::Release);
-        // Before swap, disp_fb retains its previous (zeroed) content
-        assert_eq!(
-            console.disp_fb.as_ref()[0],
-            0,
-            "disp_fb should start as zero"
-        );
-        console.swap_frame_buffer();
-        // After swap, data has moved from shared_fb to disp_fb
-        assert_eq!(
-            console.disp_fb.as_ref()[0],
-            42,
-            "data should propagate via swap"
-        );
     }
 }

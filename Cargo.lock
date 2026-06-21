@@ -3060,7 +3060,6 @@ dependencies = [
  "log",
  "nerust_backend_wgpu",
  "nerust_gui_runtime",
- "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
@@ -3093,21 +3092,6 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_contract_core",
  "nerust_nes_core",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nerust_console"
-version = "0.1.0-dev"
-dependencies = [
- "log",
- "nerust_contract_core",
- "nerust_contract_emuthread",
- "nerust_nes_core",
- "nerust_screen_video",
- "rmp-serde",
- "serde",
- "serde_bytes",
  "thiserror 2.0.18",
 ]
 
@@ -3152,7 +3136,6 @@ dependencies = [
  "log",
  "nerust_backend_opengl",
  "nerust_gui_runtime",
- "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
@@ -3170,29 +3153,14 @@ dependencies = [
  "crc",
  "directories",
  "log",
- "nerust_console",
  "nerust_contract_core",
- "nerust_gui_session",
  "nerust_gui_settings",
- "nerust_input_nes_runtime",
  "nerust_input_schema",
- "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_video",
  "serde",
  "serde_yaml",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nerust_gui_session"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_console",
- "nerust_contract_core",
- "nerust_input_nes_runtime",
- "nerust_nes_device",
- "nerust_screen_video",
 ]
 
 [[package]]
@@ -3210,19 +3178,22 @@ name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_console",
  "nerust_contract_core",
+ "nerust_contract_emuthread",
  "nerust_gui_runtime",
- "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_input_nes",
  "nerust_input_nes_runtime",
  "nerust_input_schema",
+ "nerust_nes_core",
  "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_video",
  "nerust_sound_cpal",
  "nerust_sound_openal",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
 ]
 
 [[package]]
@@ -3394,7 +3365,6 @@ dependencies = [
  "nerust_backend_wgpu",
  "nerust_contract_core",
  "nerust_gui_runtime",
- "nerust_gui_session",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
