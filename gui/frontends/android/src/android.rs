@@ -15,6 +15,9 @@ use self::storage::AndroidStorage;
 use jni::jni_str;
 use nerust_backend_wgpu::RenderResult;
 use nerust_factory_nes::NesFactory;
+use nerust_factory_nes::touch::{
+    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+};
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_shell::factory::CoreFactory;
@@ -23,9 +26,6 @@ use nerust_gui_shell::session::SessionHandle;
 use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
-};
-use nerust_gui_shell::touch::{
-    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
 };
 use std::collections::HashMap;
 use std::ffi::c_void;

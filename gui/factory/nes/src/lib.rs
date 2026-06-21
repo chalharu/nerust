@@ -11,6 +11,8 @@ use nerust_gui_shell::emu_core::EmuCore;
 use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_input_schema::SystemId;
 
+pub mod touch;
+
 pub use nerust_gui_shell::factory::CoreFactory;
 
 pub struct NesFactory;
