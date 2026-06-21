@@ -69,10 +69,10 @@ pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<()
             "master volume must be between 0 and 100",
         )));
     }
-    if !matches!(sample_rate, 22_050 | 44_100 | 48_000) {
+    if !(1..=192_000).contains(&sample_rate) {
         return Err(SettingsError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "sample rate must be 22050, 44100, or 48000",
+            "sample rate must be between 1 and 192000",
         )));
     }
     if !(10..=200).contains(&latency) {
