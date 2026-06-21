@@ -14,6 +14,7 @@ gtk.workspace = true
 libc.workspace = true
 log.workspace = true
 nerust_backend_opengl.workspace = true
+nerust_factory_nes.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true

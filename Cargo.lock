@@ -3059,6 +3059,7 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_backend_wgpu",
+ "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
@@ -3116,6 +3117,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_factory_nes"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_contract_core",
+ "nerust_contract_emuthread",
+ "nerust_gui_runtime",
+ "nerust_gui_settings",
+ "nerust_gui_shell",
+ "nerust_input_nes",
+ "nerust_input_nes_runtime",
+ "nerust_input_schema",
+ "nerust_nes_core",
+ "nerust_nes_device",
+ "nerust_screen_video",
+ "nerust_sound_cpal",
+ "nerust_sound_openal",
+]
+
+[[package]]
 name = "nerust_glwrap"
 version = "0.1.0-dev"
 dependencies = [
@@ -3135,6 +3156,7 @@ dependencies = [
  "libc",
  "log",
  "nerust_backend_opengl",
+ "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
@@ -3183,10 +3205,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_input_nes",
- "nerust_input_nes_runtime",
  "nerust_input_schema",
- "nerust_nes_core",
- "nerust_nes_device",
  "nerust_persistence",
  "nerust_screen_video",
  "nerust_sound_cpal",
@@ -3365,6 +3384,7 @@ dependencies = [
  "muda",
  "nerust_backend_wgpu",
  "nerust_contract_core",
+ "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",

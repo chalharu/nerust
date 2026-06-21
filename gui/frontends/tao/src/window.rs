@@ -41,15 +41,14 @@ pub struct Window {
 impl Window {
     pub fn new() -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new(LoadRequest::Auto)),
+            runtime: Box::new(WindowRuntime::new()),
         }
     }
 
     pub fn with_load_options(options: WindowLoadOptions) -> Self {
+        let _ = options;
         Self {
-            runtime: Box::new(WindowRuntime::new(system_load_request_from_window_options(
-                options,
-            ))),
+            runtime: Box::new(WindowRuntime::new()),
         }
     }
 

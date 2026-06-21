@@ -1,15 +1,10 @@
-use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
-use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::persistence::CanonicalMediaIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
-use nerust_nes_core::console_core::NesConsoleCore;
-use nerust_nes_core::controller::Controller;
-use nerust_screen_video::FilterType;
-use nerust_screen_video::LogicalSize;
+use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::VideoRenderProfile;
-use nerust_screen_video::{FrameBuffer, PixelFormat};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -17,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub(crate) enum EmuCoreError {
+pub enum EmuCoreError {
     #[error("emu thread channel unavailable")]
     WorkerUnavailable,
     #[error("emu thread reply channel closed")]
@@ -26,7 +21,7 @@ pub(crate) enum EmuCoreError {
     Reply(String),
 }
 
-pub(crate) struct EmuCore {
+pub struct EmuCore {
     emu: EmuThread,
     render_profile: VideoRenderProfile,
     shared_fb: Arc<Mutex<FrameBuffer>>,
@@ -36,91 +31,18 @@ pub(crate) struct EmuCore {
 }
 
 impl EmuCore {
-    pub fn new_gpu(
-        speaker: Box<dyn AudioBackend + Send>,
-        filter_type: FilterType,
-        source_logical_size: LogicalSize,
-        controller: Box<dyn Controller + Send>,
-    ) -> Self {
-        let layout = filter_type.layout(source_logical_size);
-        let assets = filter_type.palette_console_video_assets();
-        let ntsc_packed_rgba8 = assets
-            .packed_ntsc_rgba8()
-            .map(|data| data.to_vec().into_boxed_slice());
-        let render_profile = VideoRenderProfile {
-            source_logical_size: layout.source_logical_size,
-            logical_size: layout.logical_size,
-            physical_size: layout.physical_size,
-            frame_format: nerust_screen_video::VideoFrameFormat::Palette,
-            ntsc_packed_rgba8,
-        };
-        let mut palette = [0u32; 256];
-        let rgba8 = assets.palette_rgba8();
-        for (i, entry) in palette.iter_mut().enumerate().take(64) {
-            let pos = i * 4;
-            *entry = u32::from(rgba8[pos]) << 24
-                | u32::from(rgba8[pos + 1]) << 16
-                | u32::from(rgba8[pos + 2]) << 8
-                | u32::from(rgba8[pos + 3]);
-        }
-        let pixel_format = PixelFormat::PaletteIndex {
-            palette: Box::new(palette),
-        };
-        let src_w = source_logical_size.width;
-        let src_h = source_logical_size.height;
-
-        Self::build(
-            speaker,
-            render_profile,
-            pixel_format,
-            src_w,
-            src_h,
-            controller,
-        )
-    }
-
-    fn build(
-        speaker: Box<dyn AudioBackend + Send>,
+    #[doc(hidden)]
+    pub fn new(
+        emu: EmuThread,
         render_profile: VideoRenderProfile,
-        pixel_format: PixelFormat,
-        src_w: usize,
-        src_h: usize,
-        controller: Box<dyn Controller + Send>,
+        shared_fb: Arc<Mutex<FrameBuffer>>,
+        disp_fb: FrameBuffer,
+        frame_ready: Arc<AtomicBool>,
     ) -> Self {
-        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-            src_w,
-            src_h,
-            pixel_format.clone(),
-        )));
-        if let Ok(mut guard) = shared_fb.lock() {
-            guard.resize(src_w, src_h);
-            guard.resize_data(src_w * src_h);
-        }
-
-        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-        disp_fb.resize(src_w, src_h);
-        disp_fb.resize_data(src_w * src_h);
-
         let metrics = Arc::new(Mutex::new(ConsoleMetrics {
             paused: true,
             ..ConsoleMetrics::default()
         }));
-
-        let mut speaker = speaker;
-        speaker.start();
-        let core = NesConsoleCore::new_empty(controller, speaker);
-        let frame_ready = Arc::new(AtomicBool::new(false));
-        let palette = match &pixel_format {
-            PixelFormat::PaletteIndex { palette } => palette.clone(),
-            PixelFormat::Rgba => Box::new([0u32; 256]),
-        };
-        let emu = EmuThread::spawn(
-            Box::new(core),
-            Arc::clone(&shared_fb),
-            Arc::clone(&frame_ready),
-            palette,
-        );
-
         Self {
             emu,
             render_profile,
@@ -194,14 +116,9 @@ impl EmuCore {
         Ok(())
     }
 
-    // TODO: CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
-    // 現状は NesConsoleCore::load も config を無視する。blocked on NesConsoleCore::load
+    // TODO: CoreConfig に CoreOptions を統合する。blocked on NesConsoleCore::load
     // が &CoreConfig を受け取るように変更されること。
-    pub fn load(
-        &self,
-        media: &MediaObject,
-        _request: &ResolvedLoadRequest,
-    ) -> Result<(), EmuCoreError> {
+    pub fn load(&self, media: &MediaObject) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {

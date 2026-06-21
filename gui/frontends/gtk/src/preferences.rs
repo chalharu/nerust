@@ -1,15 +1,15 @@
 use crate::State;
 use gtk::glib;
 use gtk::prelude::*;
+use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
 use nerust_gui_settings::input::KeyboardKey;
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_settings::shared::StoragePolicy;
-use nerust_gui_shell::descriptor::{
-    SystemSettingsFieldKind, default_input_topology_descriptor, nes_settings_page,
-};
+use nerust_gui_shell::descriptor::SystemSettingsFieldKind;
+use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_sections, shortcut_descriptors,
@@ -22,6 +22,7 @@ use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_input_schema::InputTopologyDescriptor;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct InputRow {
@@ -50,6 +51,7 @@ pub(crate) fn present_preferences_dialog(
     let finish = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
+    let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
@@ -182,7 +184,7 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
     ));
     let sample_rate_combo = {
-        let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
+        let rates = nerust_gui_shell::settings::audio_registry().supported_rates();
         let rates: &[u32] = if rates.is_empty() {
             &[44_100, 48_000]
         } else {
@@ -205,7 +207,8 @@ pub(crate) fn present_preferences_dialog(
         &latency_spin,
     ));
 
-    let system_page_model = state.borrow().system_settings_page_model();
+    let _snapshot = state.borrow().settings_snapshot().clone();
+    let system_page_model = state.borrow().settings_page();
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
     let filter_combo = combo_from_optional_system_field(filter_field);
     system_page.append(&labeled_row(
@@ -313,6 +316,7 @@ pub(crate) fn present_preferences_dialog(
     );
     connect_local_updates(
         &draft,
+        &factory,
         &fullscreen_check,
         &scaling_combo,
         &vsync_check,
@@ -670,6 +674,7 @@ fn connect_general_updates(
 #[allow(clippy::too_many_arguments)]
 fn connect_local_updates(
     draft: &Rc<RefCell<SettingsSnapshot>>,
+    factory: &Arc<dyn CoreFactory>,
     fullscreen_check: &gtk::CheckButton,
     scaling_combo: &gtk::ComboBoxText,
     vsync_check: &gtk::CheckButton,
@@ -750,10 +755,11 @@ fn connect_local_updates(
     {
         let draft = draft.clone();
         let widgets = widgets.clone();
+        let factory = factory.clone();
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_nes_settings_choice(
+                let _ = factory.apply_settings_choice(
                     &mut snapshot,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
                     &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
@@ -771,10 +777,11 @@ fn connect_local_updates(
     {
         let draft = draft.clone();
         let widgets = widgets.clone();
+        let factory = factory.clone();
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::descriptor::apply_nes_settings_choice(
+                let _ = factory.apply_settings_choice(
                     &mut snapshot,
                     &nerust_gui_shell::descriptor::SystemSettingsFieldId(
                         "core.mmc3_irq_variant".into(),
@@ -801,10 +808,14 @@ fn refresh_validation(
     storage_error_label: &gtk::Label,
     input_conflict_label: &gtk::Label,
 ) {
+    let factory = NesFactory;
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared, &default_input_topology_descriptor());
+    let conflicts = conflicting_keys(
+        &snapshot.shared,
+        &factory.system_descriptor().input_topology,
+    );
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -827,11 +838,15 @@ fn refresh_validation(
 }
 
 fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
+    let factory = NesFactory;
     let mut errors = Vec::new();
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    for (key, labels) in conflicting_keys(&snapshot.shared, &default_input_topology_descriptor()) {
+    for (key, labels) in conflicting_keys(
+        &snapshot.shared,
+        &factory.system_descriptor().input_topology,
+    ) {
         errors.push(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -899,7 +914,8 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = nes_settings_page(snapshot);
+    let factory = NesFactory;
+    let system_page = factory.settings_page(snapshot);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 

@@ -2,7 +2,6 @@ use crate::session::{KeyboardShortcut, SessionHandle};
 use crate::settings::bindings::events::controller::controller_event_for_key;
 use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_nes::input::persisted::digital_event_from_persisted_ids;
 use nerust_input_schema::DigitalInputEvent;
 
 impl SessionHandle {
@@ -29,7 +28,10 @@ impl SessionHandle {
             system_id,
             key,
             pressed,
-            digital_event_from_persisted_ids,
+            |attachment, control, pressed| {
+                self.input_adapter
+                    .decode_persisted_input(attachment, control, pressed)
+            },
         ) {
             self.apply_input_event(controller_input)?;
         }
