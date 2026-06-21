@@ -10,14 +10,14 @@ use nerust_contract_core::{
 };
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_input_schema::SystemId;
+
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_video::{
     FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile,
 };
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -102,7 +102,7 @@ impl ConsoleCore for MockConsoleCore {
         Ok(())
     }
     fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
-        self.identity.clone().ok_or(CoreError::NoRomLoaded)
+        self.identity.ok_or(CoreError::NoRomLoaded)
     }
 }
 
