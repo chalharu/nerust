@@ -516,8 +516,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 #[cfg(test)]
 mod tests {
     use super::*;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use std::sync::OnceLock;
+    use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::app_state::DesktopAppState;
     use nerust_gui_settings::local::HostBackendLocalSettings;
     use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
