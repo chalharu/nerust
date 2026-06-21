@@ -19,6 +19,7 @@ use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle, SessionSnapshot
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::VideoRenderProfile;
 use nerust_sound_openal::prepare_macos_runtime;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -60,6 +61,10 @@ impl State {
         self.session.input_topology_descriptor()
     }
 
+    pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
+        self.session.render_profile()
+    }
+
     pub(crate) fn window_size(&self) -> WindowSize {
         self.session.window_size()
     }
@@ -95,7 +100,7 @@ impl State {
     }
 
     pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().unwrap_or(false)
+        self.session.unload().is_ok()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {

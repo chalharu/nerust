@@ -37,11 +37,7 @@ impl GtkGlRenderer {
 
         let mut view = GlBackend::new();
         view.use_vao(true);
-        let snapshot = state.snapshot();
-        let profile = snapshot
-            .video_profile
-            .expect("session should publish a render profile");
-        view.on_load(&profile).unwrap();
+        view.on_load(state.render_profile()).unwrap();
         self.view = Some(view);
         self.resize(
             gl_area,

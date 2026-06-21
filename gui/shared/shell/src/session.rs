@@ -43,7 +43,6 @@ pub struct SessionSnapshot {
     pub metrics: ConsoleMetrics,
     pub input_topology: Option<nerust_input_schema::InputTopologyDescriptor>,
     pub video_frame: Option<VideoFrameHandle>,
-    pub video_profile: Option<VideoRenderProfile>,
     pub slots: Arc<[StateSlotSummary]>,
     pub active_slot_id: Option<u64>,
 }
@@ -136,10 +135,13 @@ impl SessionHandle {
             metrics: core_snapshot.metrics,
             input_topology: Some(self.descriptor.input_topology.clone()),
             video_frame: core_snapshot.video_frame,
-            video_profile: core_snapshot.video_profile,
             slots: Arc::from(self.persistence.slots.clone()),
             active_slot_id: self.persistence.active_slot_id,
         }
+    }
+
+    pub fn render_profile(&self) -> &VideoRenderProfile {
+        self.emu_core.render_profile()
     }
 
     pub fn swap_frame_buffer(&mut self) {
