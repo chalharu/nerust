@@ -103,6 +103,9 @@ impl UiState {
         let cache = placeholder.into_cache();
 
         // Step 2: Process messages (mutate instance state).
+        // Note: SettingsAppState::update() always returns Task::none().
+        // If a future handler returns a non-empty Task, it must be executed
+        // (e.g., via block_on) rather than discarded here.
         for msg in messages {
             let _task = self.instance.update(msg);
         }
@@ -276,7 +279,9 @@ impl SettingsWindowHandle {
             self.scale_factor,
         );
 
-        // update() with RedrawRequested to refresh widget status (hover state)
+        // update() with RedrawRequested to refresh widget status (hover state).
+        // Messages produced here (if any) are discarded; no standard iced widget
+        // generates messages on RedrawRequested.
         let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         ));
@@ -326,80 +331,101 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        use tao::event::WindowEvent;
-        let iced_event = match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                let logical = position.to_logical::<f64>(self.scale_factor as f64);
-                let point = Point::new(logical.x as f32, logical.y as f32);
-                self.cursor = mouse::Cursor::Available(point);
-                Event::Mouse(mouse::Event::CursorMoved { position: point })
-            }
-            WindowEvent::CursorLeft { .. } => {
-                self.cursor = mouse::Cursor::Unavailable;
-                return;
-            }
-            WindowEvent::KeyboardInput { event: ke, .. } => {
-                let modifiers = self.modifiers;
-                let iced_key = tao_key_to_iced_key(&ke.logical_key);
-                let physical_key =
-                    keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
-                match ke.state {
-                    tao::event::ElementState::Pressed => {
-                        Event::Keyboard(keyboard::Event::KeyPressed {
-                            key: iced_key.clone(),
-                            modified_key: iced_key.clone(),
-                            physical_key,
-                            modifiers,
-                            location: keyboard::Location::Standard,
-                            text: ke.text.map(SmolStr::new),
-                            repeat: ke.repeat,
-                        })
-                    }
-                    tao::event::ElementState::Released => {
-                        Event::Keyboard(keyboard::Event::KeyReleased {
-                            key: iced_key.clone(),
-                            modified_key: iced_key,
-                            physical_key,
-                            modifiers,
-                            location: keyboard::Location::Standard,
-                        })
-                    }
-                    _ => return,
-                }
-            }
-            WindowEvent::MouseInput { button, state, .. } => {
-                let btn = match button {
-                    tao::event::MouseButton::Left => mouse::Button::Left,
-                    tao::event::MouseButton::Right => mouse::Button::Right,
-                    tao::event::MouseButton::Middle => mouse::Button::Middle,
-                    _ => return,
-                };
-                match state {
-                    tao::event::ElementState::Pressed => {
-                        Event::Mouse(mouse::Event::ButtonPressed(btn))
-                    }
-                    tao::event::ElementState::Released => {
-                        Event::Mouse(mouse::Event::ButtonReleased(btn))
-                    }
-                    _ => return,
-                }
-            }
-            WindowEvent::ModifiersChanged(state) => {
-                self.set_modifiers(state);
-                return;
-            }
-            WindowEvent::CloseRequested => {
-                self.should_close
-                    .store(true, std::sync::atomic::Ordering::Release);
-                return;
-            }
-            // Touch, IME, axis motion, and other platform-specific events
-            // are not needed for the settings UI.
-            _ => return,
-        };
-        self.handle_event(iced_event);
+        if let Some(iced_event) = convert_tao_window_event(
+            event,
+            &mut self.cursor,
+            self.scale_factor,
+            &mut self.modifiers,
+            &self.should_close,
+        ) {
+            self.handle_event(iced_event);
+        }
     }
+}
 
+/// Convert Tao WindowEvent to iced Event, updating cursor/modifiers/should_close.
+/// Returns Some(event) for events that should be forwarded to handle_event(),
+/// None for events that are fully handled here (CursorLeft, CloseRequested, etc.).
+#[allow(deprecated)]
+fn convert_tao_window_event(
+    event: tao::event::WindowEvent,
+    cursor: &mut mouse::Cursor,
+    scale_factor: f32,
+    modifiers: &mut keyboard::Modifiers,
+    should_close: &AtomicBool,
+) -> Option<iced::Event> {
+    use tao::event::WindowEvent;
+    match event {
+        WindowEvent::CursorMoved { position, .. } => {
+            let logical = position.to_logical::<f64>(scale_factor as f64);
+            let point = Point::new(logical.x as f32, logical.y as f32);
+            *cursor = mouse::Cursor::Available(point);
+            Some(Event::Mouse(mouse::Event::CursorMoved { position: point }))
+        }
+        WindowEvent::CursorLeft { .. } => {
+            *cursor = mouse::Cursor::Unavailable;
+            None
+        }
+        WindowEvent::KeyboardInput { event: ke, .. } => {
+            let iced_key = tao_key_to_iced_key(&ke.logical_key);
+            let physical_key =
+                keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
+            match ke.state {
+                tao::event::ElementState::Pressed => {
+                    Some(Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced_key.clone(),
+                        modified_key: iced_key.clone(),
+                        physical_key,
+                        modifiers: *modifiers,
+                        location: keyboard::Location::Standard,
+                        text: ke.text.map(SmolStr::new),
+                        repeat: ke.repeat,
+                    }))
+                }
+                tao::event::ElementState::Released => {
+                    Some(Event::Keyboard(keyboard::Event::KeyReleased {
+                        key: iced_key.clone(),
+                        modified_key: iced_key,
+                        physical_key,
+                        modifiers: *modifiers,
+                        location: keyboard::Location::Standard,
+                    }))
+                }
+                _ => None,
+            }
+        }
+        WindowEvent::MouseInput { button, state, .. } => {
+            let btn = match button {
+                tao::event::MouseButton::Left => mouse::Button::Left,
+                tao::event::MouseButton::Right => mouse::Button::Right,
+                tao::event::MouseButton::Middle => mouse::Button::Middle,
+                _ => return None,
+            };
+            match state {
+                tao::event::ElementState::Pressed => {
+                    Some(Event::Mouse(mouse::Event::ButtonPressed(btn)))
+                }
+                tao::event::ElementState::Released => {
+                    Some(Event::Mouse(mouse::Event::ButtonReleased(btn)))
+                }
+                _ => None,
+            }
+        }
+        WindowEvent::ModifiersChanged(state) => {
+            *modifiers = tao_modifiers_to_iced(state);
+            None
+        }
+        WindowEvent::CloseRequested => {
+            should_close.store(true, std::sync::atomic::Ordering::Release);
+            None
+        }
+        // Touch, IME, axis motion, and other platform-specific events
+        // are not needed for the settings UI.
+        _ => None,
+    }
+}
+
+impl SettingsWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
         self.viewport = Size::new(
@@ -409,5 +435,115 @@ impl SettingsWindowHandle {
         self.renderer
             .compositor
             .configure_surface(&mut self.renderer.surface, width, height);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tao::dpi::PhysicalPosition;
+    use tao::event::WindowEvent;
+
+    fn initial_cursor() -> mouse::Cursor {
+        mouse::Cursor::Available(Point::new(0.0, 0.0))
+    }
+
+    // Helper: Tao's MouseInput/CursorMoved/etc require a deprecated modifiers field.
+    fn dummy_mods() -> tao::keyboard::ModifiersState {
+        tao::keyboard::ModifiersState::default()
+    }
+
+    #[test]
+    fn cursor_moved_updates_cursor_and_returns_event() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CursorMoved {
+            device_id: unsafe { tao::event::DeviceId::dummy() },
+            position: PhysicalPosition::new(200.0, 300.0),
+            modifiers: dummy_mods(),
+        };
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.unwrap(),
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+        ));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn cursor_left_sets_unavailable() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CursorLeft {
+            device_id: unsafe { tao::event::DeviceId::dummy() },
+        };
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_none());
+        assert!(matches!(cursor, mouse::Cursor::Unavailable));
+    }
+
+    #[test]
+    fn close_requested_sets_flag() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CloseRequested;
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_none());
+        assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn mouse_input_pressed() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::MouseInput {
+            device_id: unsafe { tao::event::DeviceId::dummy() },
+            state: tao::event::ElementState::Pressed,
+            button: tao::event::MouseButton::Left,
+            modifiers: dummy_mods(),
+        };
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.unwrap(),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+        ));
+    }
+
+    #[test]
+    fn mouse_other_button_ignored() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::MouseInput {
+            device_id: unsafe { tao::event::DeviceId::dummy() },
+            state: tao::event::ElementState::Pressed,
+            button: tao::event::MouseButton::Other(5),
+            modifiers: dummy_mods(),
+        };
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn unhandled_events_return_none() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        // Focused is not handled by settings UI (falls through to _ => None)
+        let event = WindowEvent::Focused(true);
+        let result =
+            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        assert!(result.is_none());
     }
 }
