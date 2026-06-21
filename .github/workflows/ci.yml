@@ -21,7 +21,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
           components: rustfmt, clippy
       - name: Restore Cargo registry cache
         id: cargo-cache
@@ -73,7 +73,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Restore Cargo registry cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -114,7 +114,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Restore Cargo registry cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -155,7 +155,7 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           targets: aarch64-linux-android
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Install cargo-ndk
         run: |
           chmod +x packaging/android/install-cargo-ndk.sh
@@ -233,7 +233,7 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           targets: x86_64-linux-android
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Install cargo-ndk
         run: |
           chmod +x packaging/android/install-cargo-ndk.sh
