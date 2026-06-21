@@ -153,14 +153,12 @@ impl SessionHandle {
         Ok(())
     }
 
-    pub fn unload(&mut self) -> Result<bool, String> {
+    pub fn unload(&mut self) -> Result<(), String> {
         self.flush_mapper_save()?;
-        let unloaded = self.emu_core.unload().map_err(|e| e.to_string())?;
-        if unloaded {
-            self.loaded_media = None;
-            self.persistence = Default::default();
-        }
-        Ok(unloaded)
+        self.emu_core.unload().map_err(|e| e.to_string())?;
+        self.loaded_media = None;
+        self.persistence = Default::default();
+        Ok(())
     }
 
     pub fn flush_before_exit(&mut self) {

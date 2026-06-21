@@ -35,7 +35,6 @@ pub(crate) enum EmuCoreError {
 pub struct SystemRuntimeSnapshot {
     pub metrics: ConsoleMetrics,
     pub video_frame: Option<VideoFrameHandle>,
-    pub video_profile: Option<VideoRenderProfile>,
 }
 
 pub(crate) struct EmuCore {
@@ -156,6 +155,8 @@ impl EmuCore {
         }
         if let Ok(mut guard) = self.metrics.lock() {
             guard.frame_counter = self.emu.frame_count();
+        } else {
+            log::warn!("metrics lock poisoned in swap_frame_buffer");
         }
     }
 
@@ -189,7 +190,6 @@ impl EmuCore {
         SystemRuntimeSnapshot {
             metrics: self.metrics(),
             video_frame: Some(self.video_frame_handle()),
-            video_profile: Some(self.render_profile.clone()),
         }
     }
 
@@ -200,25 +200,31 @@ impl EmuCore {
     }
 
     pub fn resume(&self) {
-        if self.emu.send(EmuCommand::Resume).is_ok()
-            && let Ok(mut guard) = self.metrics.lock()
-        {
-            guard.paused = false;
+        if self.emu.send(EmuCommand::Resume).is_err() {
+            return;
+        }
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.paused = false,
+            Err(e) => log::warn!("metrics lock poisoned in resume: {e}"),
         }
     }
 
     pub fn pause(&self) {
-        if self.emu.send(EmuCommand::Pause).is_ok()
-            && let Ok(mut guard) = self.metrics.lock()
-        {
-            guard.paused = true;
+        if self.emu.send(EmuCommand::Pause).is_err() {
+            return;
+        }
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.paused = true,
+            Err(e) => log::warn!("metrics lock poisoned in pause: {e}"),
         }
     }
 
+    // TODO(Phase 12): CoreConfig に CoreOptions を統合し、request.core_options を反映させる。
+    // 現状は NesConsoleCore::load も config を無視する。
     pub fn load(
         &self,
         media: &MediaObject,
-        _request: &ResolvedLoadRequest,
+        request: &ResolvedLoadRequest,
     ) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -236,23 +242,27 @@ impl EmuCore {
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
             .map_err(|e| EmuCoreError::Core(e.to_string()));
-        if result.is_ok()
-            && let Ok(mut guard) = self.metrics.lock()
-        {
-            guard.loaded = true;
-            guard.paused = true;
+        if result.is_ok() {
+            match self.metrics.lock() {
+                Ok(mut guard) => {
+                    guard.loaded = true;
+                    guard.paused = true;
+                }
+                Err(e) => log::warn!("metrics lock poisoned in load: {e}"),
+            }
         }
         result
     }
 
-    pub fn unload(&mut self) -> Result<bool, EmuCoreError> {
+    pub fn unload(&self) -> Result<(), EmuCoreError> {
         self.emu
             .send(EmuCommand::Unload)
             .map_err(|_| EmuCoreError::WorkerUnavailable)?;
-        if let Ok(mut guard) = self.metrics.lock() {
-            guard.loaded = false;
+        match self.metrics.lock() {
+            Ok(mut guard) => guard.loaded = false,
+            Err(e) => log::warn!("metrics lock poisoned in unload: {e}"),
         }
-        Ok(true)
+        Ok(())
     }
 
     pub fn reset(&self) -> Result<(), EmuCoreError> {

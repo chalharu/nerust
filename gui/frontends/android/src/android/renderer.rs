@@ -14,15 +14,11 @@ pub(crate) struct WgpuRenderer {
 
 impl WgpuRenderer {
     pub(crate) fn new(window: Arc<Window>, session: &SessionHandle) -> Result<Self, String> {
-        let snapshot = session.snapshot();
-        let profile = snapshot
-            .video_profile
-            .expect("session should publish a render profile");
         let size = window.inner_size();
         let backend = WgpuBackend::new_with_device_limit_profile(
             SurfaceTarget::new(window.clone()),
             SurfaceSize::new(size.width, size.height),
-            &profile,
+            session.render_profile(),
             DeviceLimitProfile::DownlevelWebGl2,
             PresentationOptions {
                 vsync: session.settings_snapshot().local.video.presentation.vsync,
