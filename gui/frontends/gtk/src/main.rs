@@ -97,9 +97,10 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         let media = MediaObject::new(rom_path, data);
-        let snapshot = self.session.settings_snapshot().clone();
         let options = self.factory.default_load_options();
-        if let Ok(resolved) = self.factory.resolve_load_request(&snapshot, options)
+        if let Ok(resolved) = self
+            .factory
+            .resolve_load_request(self.session.settings_snapshot(), options)
             && self.session.load_resolved(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
