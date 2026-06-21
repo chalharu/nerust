@@ -13,7 +13,7 @@
 //!   returned by [`AudioBackend::sample_rate`].
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use nerust_contract_core::audio::AudioBackend;
+use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -145,13 +145,57 @@ impl AudioBackend for CpalAudio {
     }
 }
 
-/// Factory function for [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
-///
-/// Attempts to create a [`CpalAudio`] instance. Returns `None` if no output
-/// device or stream can be opened.
-pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
-    let latency = u16::try_from(latency_ms).unwrap_or(u16::MAX);
-    CpalAudio::new(sample_rate, latency)
-        .ok()
-        .map(|a| Box::new(a) as Box<dyn AudioBackend>)
+/// Factory for creating and probing CPAL audio backends.
+pub struct CpalFactory;
+
+impl AudioBackendFactory for CpalFactory {
+    fn name(&self) -> &'static str {
+        "CPAL"
+    }
+
+    fn probe(&self) -> Vec<u32> {
+        const COMMON: [u32; 6] = [22_050, 24_000, 44_100, 48_000, 88_200, 96_000];
+        #[cfg(not(target_os = "android"))]
+        {
+            // Desktop: trust supported_output_configs() range matching.
+            let device = match cpal::default_host().default_output_device() {
+                Some(d) => d,
+                None => return vec![],
+            };
+            let configs: Vec<_> = match device.supported_output_configs() {
+                Ok(c) => c.collect(),
+                Err(_) => return vec![],
+            };
+            COMMON
+                .iter()
+                .copied()
+                .filter(|&rate| {
+                    configs
+                        .iter()
+                        .any(|cfg| rate >= cfg.min_sample_rate() && rate <= cfg.max_sample_rate())
+                })
+                .collect()
+        }
+        #[cfg(target_os = "android")]
+        {
+            // Android (OpenSL ES) returns a single wide range (e.g. 8000-48000)
+            // that includes rates which don't actually work.
+            // Verify by creating a short-lived backend for each candidate.
+            COMMON
+                .iter()
+                .copied()
+                .filter(|&rate| CpalAudio::new(rate, 10).is_ok())
+                .collect()
+        }
+    }
+
+    fn build(&self, sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
+        let latency = u16::try_from(latency_ms).unwrap_or(u16::MAX);
+        CpalAudio::new(sample_rate, latency)
+            .ok()
+            .map(|a| Box::new(a) as Box<dyn AudioBackend>)
+    }
 }
+
+/// Static singleton for use with [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+pub static CPAL: CpalFactory = CpalFactory;

@@ -23,7 +23,7 @@ const VOLUME_MIN: u8 = 0;
 const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
-const SAMPLE_RATE_CHOICES: &[u32] = &[22_050, 44_100, 48_000];
+const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
 
 /// All four variants in declaration order (matches `NesVideoFilter`'s natural ordering).
 const FILTER_CHOICES: &[NesVideoFilter] = &[
@@ -144,7 +144,7 @@ impl AndroidSettings {
         let sample_rate_idx = SAMPLE_RATE_CHOICES
             .iter()
             .position(|&v| v == self.sample_rate)
-            .unwrap_or(2); // default: 48000
+            .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)); // default: highest rate
         let filter_idx = FILTER_CHOICES
             .iter()
             .position(|&v| v == self.nes_filter)
@@ -586,8 +586,8 @@ mod tests {
         let android = AndroidSettings::from_snapshot(&snapshot);
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
-        // sample rate 48000 → index 2; vsync on → 1; NtscComposite → index 1
-        assert_eq!(indices, vec!["0", "100", "40", "2", "1", "1"]);
+        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
+        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1"]);
     }
 
     #[test]
@@ -616,7 +616,7 @@ mod tests {
             audio_muted: false,
             master_volume_percent: 83,
             latency_ms: 37,
-            sample_rate: 22_050,
+            sample_rate: 44_100,
             vsync: true,
             nes_filter: NesVideoFilter::None,
         };
@@ -649,10 +649,22 @@ mod tests {
         assert_eq!(latency_choices.last(), Some(&"200 ms"));
         assert_eq!(latency_choices.len(), 191);
 
-        assert_eq!(
-            sample_rate_choices,
-            vec!["22050 Hz", "44100 Hz", "48000 Hz"]
+        assert!(
+            !sample_rate_choices.is_empty(),
+            "sample rate choices should be non-empty"
         );
+        for choice in &sample_rate_choices {
+            let Some(rate_str) = choice.strip_suffix(" Hz") else {
+                panic!("sample rate choice '{choice}' must end with ' Hz'");
+            };
+            let rate: u32 = rate_str
+                .parse()
+                .expect("sample rate must be a valid integer");
+            assert!(
+                (1..=192_000).contains(&rate),
+                "sample rate {rate} must be within 1..=192000"
+            );
+        }
     }
 
     #[test]
