@@ -1,5 +1,5 @@
 use alto::*;
-use nerust_contract_core::audio::AudioBackend;
+use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
@@ -531,22 +531,34 @@ fn nearest_power_of_two(value: usize) -> usize {
     }
 }
 
-/// Factory function for [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
-///
-/// Creates an [`OpenAl`] backend. Buffer parameters are derived from the
-/// requested sample rate and latency.
-pub fn factory(sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
-    let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
-        .div_ceil(1_000)
-        .max(1);
-    let raw_buffer_width = (target_total_frames / 16).max(1);
-    let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
-    let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
-        .unwrap_or(32)
-        .clamp(4, 32);
-    let sr = sample_rate as i32;
-    Some(Box::new(OpenAl::with_gain(sr, buffer_width, buffer_count)) as Box<dyn AudioBackend>)
+/// Factory for creating and probing OpenAL audio backends.
+pub struct OpenAlFactory;
+
+impl AudioBackendFactory for OpenAlFactory {
+    fn name(&self) -> &'static str {
+        "OpenAL"
+    }
+
+    fn probe(&self) -> Vec<u32> {
+        vec![44_100, 48_000]
+    }
+
+    fn build(&self, sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
+        let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+            .div_ceil(1_000)
+            .max(1);
+        let raw_buffer_width = (target_total_frames / 16).max(1);
+        let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
+        let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
+            .unwrap_or(32)
+            .clamp(4, 32);
+        let sr = sample_rate as i32;
+        Some(Box::new(OpenAl::with_gain(sr, buffer_width, buffer_count)) as Box<dyn AudioBackend>)
+    }
 }
+
+/// Static singleton for use with [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+pub static OPENAL: OpenAlFactory = OpenAlFactory;
 
 impl Drop for OpenAl {
     fn drop(&mut self) {

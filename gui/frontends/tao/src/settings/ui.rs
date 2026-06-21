@@ -742,21 +742,22 @@ fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
     ]
 }
 
+const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
+
 fn sample_rate_options() -> Vec<Choice<u32>> {
-    vec![
-        Choice {
-            value: 22_050,
-            label: "22050".to_string(),
-        },
-        Choice {
-            value: 44_100,
-            label: "44100".to_string(),
-        },
-        Choice {
-            value: 48_000,
-            label: "48000".to_string(),
-        },
-    ]
+    let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
+    let rates = if rates.is_empty() {
+        &FALLBACK_SAMPLE_RATES
+    } else {
+        rates
+    };
+    rates
+        .iter()
+        .map(|&r| Choice {
+            value: r,
+            label: format!("{r}"),
+        })
+        .collect()
 }
 
 fn input_topology() -> InputTopologyDescriptor {
