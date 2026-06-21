@@ -159,28 +159,35 @@ impl AudioBackendFactory for CpalFactory {
             Some(d) => d,
             None => return vec![],
         };
-        let configs: Vec<_> = match device.supported_output_configs() {
-            Ok(c) => c.collect(),
-            Err(_) => return vec![],
-        };
-        // Prefer exact-supported rates (min == max) when available.
-        // These are common on ALSA, CoreAudio, WASAPI.
-        let exact: Vec<u32> = configs
-            .iter()
-            .filter(|cfg| cfg.min_sample_rate() == cfg.max_sample_rate())
-            .map(|cfg| cfg.min_sample_rate())
-            .filter(|&r| COMMON.contains(&r))
-            .collect();
-        if !exact.is_empty() {
-            return exact;
+        #[cfg(not(target_os = "android"))]
+        {
+            // Desktop: trust supported_output_configs() range matching.
+            // ALSA/CoreAudio/WASAPI return per-rate configs that are reliable.
+            let configs: Vec<_> = match device.supported_output_configs() {
+                Ok(c) => c.collect(),
+                Err(_) => return vec![],
+            };
+            COMMON
+                .iter()
+                .copied()
+                .filter(|&rate| {
+                    configs
+                        .iter()
+                        .any(|cfg| rate >= cfg.min_sample_rate() && rate <= cfg.max_sample_rate())
+                })
+                .collect()
         }
-        // No exact configs (e.g. Android OpenSL ES with a single wide range):
-        // probe by actually creating a short-lived backend for each candidate.
-        COMMON
-            .iter()
-            .copied()
-            .filter(|&rate| CpalAudio::new(rate, 10).is_ok())
-            .collect()
+        #[cfg(target_os = "android")]
+        {
+            // Android (OpenSL ES) returns a single wide range (e.g. 8000-48000)
+            // that includes rates which don't actually work.
+            // Verify by creating a short-lived backend for each candidate.
+            COMMON
+                .iter()
+                .copied()
+                .filter(|&rate| CpalAudio::new(rate, 10).is_ok())
+                .collect()
+        }
     }
 
     fn build(&self, sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
