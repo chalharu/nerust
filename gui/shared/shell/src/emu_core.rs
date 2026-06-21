@@ -224,7 +224,7 @@ impl EmuCore {
     pub fn load(
         &self,
         media: &MediaObject,
-        request: &ResolvedLoadRequest,
+        _request: &ResolvedLoadRequest,
     ) -> Result<(), EmuCoreError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
