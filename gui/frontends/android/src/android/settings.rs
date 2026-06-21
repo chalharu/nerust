@@ -23,7 +23,17 @@ const VOLUME_MIN: u8 = 0;
 const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
-const SAMPLE_RATE_CHOICES: &[u32] = &[22_050, 44_100, 48_000];
+fn sample_rate_choices() -> &'static [u32] {
+    static CHOICES: OnceLock<Vec<u32>> = OnceLock::new();
+    CHOICES.get_or_init(|| {
+        let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
+        if rates.is_empty() {
+            vec![44_100, 48_000]
+        } else {
+            rates.to_vec()
+        }
+    })
+}
 
 /// All four variants in declaration order (matches `NesVideoFilter`'s natural ordering).
 const FILTER_CHOICES: &[NesVideoFilter] = &[
@@ -127,7 +137,7 @@ impl AndroidSettings {
             join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
             join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
             join_tab_labels(
-                SAMPLE_RATE_CHOICES
+                sample_rate_choices()
                     .iter()
                     .map(|value| format!("{value} Hz")),
             ),
@@ -141,10 +151,11 @@ impl AndroidSettings {
         let volume_idx = usize::from(self.master_volume_percent.min(VOLUME_MAX));
         let latency_idx =
             usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN);
-        let sample_rate_idx = SAMPLE_RATE_CHOICES
+        let choices = sample_rate_choices();
+        let sample_rate_idx = choices
             .iter()
             .position(|&v| v == self.sample_rate)
-            .unwrap_or(2); // default: 48000
+            .unwrap_or(choices.len().saturating_sub(1)); // default: highest rate
         let filter_idx = FILTER_CHOICES
             .iter()
             .position(|&v| v == self.nes_filter)
@@ -189,7 +200,7 @@ impl AndroidSettings {
             .ok()
             .filter(|value| *value <= LATENCY_MAX - LATENCY_MIN)
             .map(|value| value + LATENCY_MIN)?;
-        let sample_rate = *SAMPLE_RATE_CHOICES.get(indices[3])?;
+        let sample_rate = *sample_rate_choices().get(indices[3])?;
         let vsync = match indices[4] {
             0 => false,
             1 => true,
@@ -505,7 +516,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use std::sync::OnceLock;
     use nerust_gui_settings::app_state::DesktopAppState;
     use nerust_gui_settings::local::HostBackendLocalSettings;
     use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};

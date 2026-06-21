@@ -181,8 +181,16 @@ pub(crate) fn present_preferences_dialog(
         text(language, UiText::MasterVolume),
         &volume_spin,
     ));
-    let sample_rate_combo =
-        combo_box(&[("22050", "22050"), ("44100", "44100"), ("48000", "48000")]);
+    let sample_rate_combo = {
+        let rates = nerust_gui_shell::settings::nes::audio_registry().supported_rates();
+        let rates: &[u32] = if rates.is_empty() { &[44_100, 48_000] } else { rates };
+        let combo = gtk::ComboBoxText::new();
+        for &rate in rates {
+            let id = format!("{rate}");
+            combo.append(Some(&id), &id);
+        }
+        combo
+    };
     audio_page.append(&labeled_row(
         text(language, UiText::SampleRate),
         &sample_rate_combo,
@@ -884,11 +892,8 @@ fn apply_snapshot_to_widgets(
     vsync_check.set_active(snapshot.local.video.presentation.vsync);
     mute_check.set_active(snapshot.local.audio.muted);
     volume_spin.set_value(f64::from(snapshot.local.audio.master_volume_percent));
-    sample_rate_combo.set_active_id(Some(match snapshot.local.audio.sample_rate {
-        22_050 => "22050",
-        44_100 => "44100",
-        _ => "48000",
-    }));
+    let active = format!("{}", snapshot.local.audio.sample_rate);
+    sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
     let system_page = default_system_settings_page_model(snapshot);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
