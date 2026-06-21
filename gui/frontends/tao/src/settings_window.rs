@@ -146,7 +146,28 @@ pub(crate) struct SettingsWindowHandle {
 pub(crate) struct SettingsRenderer {
     compositor: Compositor,
     surface: Surface,
-    renderer: Renderer,
+    backend: Renderer,
+}
+
+impl SettingsRenderer {
+    fn present(
+        &mut self,
+        viewport: &Viewport,
+        background_color: iced::Color,
+    ) -> Result<(), iced_tiny_skia::graphics::compositor::SurfaceError> {
+        self.compositor.present(
+            &mut self.backend,
+            &mut self.surface,
+            viewport,
+            background_color,
+            || {},
+        )
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.compositor
+            .configure_surface(&mut self.surface, width, height);
+    }
 }
 
 impl SettingsWindowHandle {
@@ -216,7 +237,7 @@ impl SettingsWindowHandle {
             renderer: SettingsRenderer {
                 compositor,
                 surface,
-                renderer,
+                backend: renderer,
             },
             viewport,
             viewport_physical,
@@ -251,7 +272,7 @@ impl SettingsWindowHandle {
         self.ui_state.ui_mut().update(
             &[mapped],
             self.cursor,
-            &mut self.renderer.renderer,
+            &mut self.renderer.backend,
             &mut self.clipboard,
             &mut messages,
         );
@@ -266,7 +287,7 @@ impl SettingsWindowHandle {
                 messages,
                 self.window_id,
                 bounds,
-                &mut self.renderer.renderer,
+                &mut self.renderer.backend,
             );
         }
     }
@@ -288,12 +309,12 @@ impl SettingsWindowHandle {
         let _ = self.ui_state.ui_mut().update(
             &[redraw_event],
             self.cursor,
-            &mut self.renderer.renderer,
+            &mut self.renderer.backend,
             &mut self.clipboard,
             &mut std::vec::Vec::new(),
         );
         self.ui_state.ui_mut().draw(
-            &mut self.renderer.renderer,
+            &mut self.renderer.backend,
             &theme,
             &renderer::Style {
                 text_color: style.text_color,
@@ -301,13 +322,7 @@ impl SettingsWindowHandle {
             self.cursor,
         );
 
-        if let Err(e) = self.renderer.compositor.present(
-            &mut self.renderer.renderer,
-            &mut self.renderer.surface,
-            &vp,
-            iced::Color::BLACK,
-            || {},
-        ) {
+        if let Err(e) = self.renderer.present(&vp, iced::Color::BLACK) {
             log::warn!("settings render present failed: {e:?}");
         }
     }
@@ -432,9 +447,7 @@ impl SettingsWindowHandle {
             width as f32 / self.scale_factor,
             height as f32 / self.scale_factor,
         );
-        self.renderer
-            .compositor
-            .configure_surface(&mut self.renderer.surface, width, height);
+        self.renderer.resize(width, height);
     }
 }
 
@@ -453,13 +466,19 @@ mod tests {
         tao::keyboard::ModifiersState::default()
     }
 
+    // SAFETY: Tao's DeviceId::dummy() is unsafe but stable across versions.
+    // We call it once here rather than inlining unsafe in every test.
+    fn dummy_dev() -> tao::event::DeviceId {
+        unsafe { tao::event::DeviceId::dummy() }
+    }
+
     #[test]
     fn cursor_moved_updates_cursor_and_returns_event() {
         let mut cursor = initial_cursor();
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::CursorMoved {
-            device_id: unsafe { tao::event::DeviceId::dummy() },
+            device_id: dummy_dev(),
             position: PhysicalPosition::new(200.0, 300.0),
             modifiers: dummy_mods(),
         };
@@ -479,7 +498,7 @@ mod tests {
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::CursorLeft {
-            device_id: unsafe { tao::event::DeviceId::dummy() },
+            device_id: dummy_dev(),
         };
         let result =
             convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
@@ -505,7 +524,7 @@ mod tests {
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::MouseInput {
-            device_id: unsafe { tao::event::DeviceId::dummy() },
+            device_id: dummy_dev(),
             state: tao::event::ElementState::Pressed,
             button: tao::event::MouseButton::Left,
             modifiers: dummy_mods(),
@@ -525,7 +544,7 @@ mod tests {
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::MouseInput {
-            device_id: unsafe { tao::event::DeviceId::dummy() },
+            device_id: dummy_dev(),
             state: tao::event::ElementState::Pressed,
             button: tao::event::MouseButton::Other(5),
             modifiers: dummy_mods(),
