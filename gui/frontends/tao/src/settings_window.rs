@@ -328,14 +328,11 @@ impl SettingsWindowHandle {
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
         use tao::event::WindowEvent;
         let iced_event = match event {
-            // CursorMoved: cursor tracking only. Hover state is updated in
-            // render() via update(RedrawRequested). Skipping handle_event here
-            // avoids unnecessary widget tree traversal on every mouse move.
             WindowEvent::CursorMoved { position, .. } => {
                 let logical = position.to_logical::<f64>(self.scale_factor as f64);
-                self.cursor =
-                    mouse::Cursor::Available(Point::new(logical.x as f32, logical.y as f32));
-                return;
+                let point = Point::new(logical.x as f32, logical.y as f32);
+                self.cursor = mouse::Cursor::Available(point);
+                Event::Mouse(mouse::Event::CursorMoved { position: point })
             }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor = mouse::Cursor::Unavailable;
