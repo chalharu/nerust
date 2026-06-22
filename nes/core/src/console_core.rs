@@ -87,7 +87,7 @@ impl ConsoleCore for NesConsoleCore {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
         let mut port_io = PortIo {
-            device: DeviceKind::NONE,
+            device: DeviceKind::None,
             input: Vec::new(),
             output: Vec::new(),
         };
@@ -165,7 +165,7 @@ impl ConsoleCore for NesConsoleCore {
         self.core_ref()?
             .rom_identity()
             .into_system_identity()
-            .map_err(|e| CoreError::Core(e))
+            .map_err(CoreError::Core)
     }
 }
 

@@ -70,7 +70,7 @@ fn resolve_current_persistence_paths(
             Ok(resolve_central_storage_paths(
                 &paths.central_storage_root,
                 system,
-                &identity,
+                identity,
             ))
         }
         StoragePolicy::CustomDirectory => {
@@ -79,7 +79,7 @@ fn resolve_current_persistence_paths(
                 .storage_directory
                 .as_deref()
                 .ok_or(SettingsError::MissingCustomStorageDirectory)?;
-            Ok(resolve_central_storage_paths(root, system, &identity))
+            Ok(resolve_central_storage_paths(root, system, identity))
         }
     }
 }
@@ -103,14 +103,14 @@ fn maybe_auto_import_storage(
         StoragePolicy::Sidecar => {
             if let Some(paths) = paths {
                 let app_shared =
-                    resolve_central_storage_paths(&paths.central_storage_root, system, &identity);
+                    resolve_central_storage_paths(&paths.central_storage_root, system, identity);
                 if !storage_is_empty(&app_shared)? {
                     copy_storage_contents(&app_shared, destination)?;
                     return Ok(());
                 }
             }
             if let Some(root) = shared.persistence.storage_directory.as_deref() {
-                let custom = resolve_central_storage_paths(root, system, &identity);
+                let custom = resolve_central_storage_paths(root, system, identity);
                 if !storage_is_empty(&custom)? {
                     copy_storage_contents(&custom, destination)?;
                 }
@@ -125,7 +125,7 @@ fn maybe_auto_import_storage(
             match shared.persistence.storage_policy {
                 StoragePolicy::AppSharedData => {
                     if let Some(root) = shared.persistence.storage_directory.as_deref() {
-                        let custom = resolve_central_storage_paths(root, system, &identity);
+                        let custom = resolve_central_storage_paths(root, system, identity);
                         if !storage_is_empty(&custom)? {
                             copy_storage_contents(&custom, destination)?;
                         }
@@ -136,7 +136,7 @@ fn maybe_auto_import_storage(
                         let app_shared = resolve_central_storage_paths(
                             &paths.central_storage_root,
                             system,
-                            &identity,
+                            identity,
                         );
                         if !storage_is_empty(&app_shared)? {
                             copy_storage_contents(&app_shared, destination)?;
