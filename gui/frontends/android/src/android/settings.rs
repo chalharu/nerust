@@ -7,10 +7,10 @@ use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::refs::Global;
 use jni::sys::jobject;
 use jni::{JavaVM, jni_sig, jni_str};
+use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
-use nerust_contract_input::SystemId;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
@@ -57,7 +57,7 @@ impl AndroidSettings {
         let nes_filter = snapshot
             .shared
             .systems
-            .get(&SystemId::Nes)
+            .get(&SystemId::new("nes"))
             .map(|s| match s {
                 SystemSettings::Nes(n) => n.video.filter,
             })
@@ -86,7 +86,7 @@ impl AndroidSettings {
         let system = snapshot
             .shared
             .systems
-            .entry(SystemId::Nes)
+            .entry(SystemId::new("nes"))
             .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
         let SystemSettings::Nes(nes) = system;
         nes.video.filter = self.nes_filter;
@@ -505,18 +505,19 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_contract_input::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::app_state::DesktopAppState;
     use nerust_gui_settings::local::HostBackendLocalSettings;
     use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
     use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-    use nerust_contract_input::SystemId;
 
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();
-        shared
-            .systems
-            .insert(SystemId::Nes, SystemSettings::Nes(NesSettings::default()));
+        shared.systems.insert(
+            SystemId::new("nes"),
+            SystemSettings::Nes(NesSettings::default()),
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -550,7 +551,11 @@ mod tests {
     #[test]
     fn from_snapshot_extracts_nes_filter() {
         let mut snapshot = default_snapshot();
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
         let android = AndroidSettings::from_snapshot(&snapshot);
@@ -576,7 +581,7 @@ mod tests {
         assert_eq!(snapshot.local.audio.latency_ms, 75);
         assert_eq!(snapshot.local.audio.sample_rate, 44_100);
         assert!(!snapshot.local.video.presentation.vsync);
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::new("nes")).unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);
     }
 

@@ -1,7 +1,6 @@
 mod runtime;
 
 use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
-use nerust_contract_input::SystemId;
 use runtime::WindowRuntime;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +22,6 @@ fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRe
         None => Vec::new(),
     };
     LoadRequest::Explicit {
-        system_id: SystemId::Nes,
         options: SystemLoadOptions { options_bytes },
     }
 }
@@ -82,18 +80,17 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
-    use nerust_gui_shell::load::LoadRequest;
     use nerust_contract_input::SystemId;
+    use nerust_gui_shell::load::LoadRequest;
 
     #[test]
     fn window_load_options_translate_to_system_load_request() {
         let request = system_load_request_from_window_options(WindowLoadOptions {
             mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
         });
-        let LoadRequest::Explicit { system_id, options } = request else {
+        let LoadRequest::Explicit { options } = request else {
             panic!("expected Explicit load request");
         };
-        assert_eq!(system_id, SystemId::Nes);
         assert!(!options.options_bytes.is_empty());
     }
 }

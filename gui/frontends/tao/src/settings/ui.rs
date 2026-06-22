@@ -6,6 +6,7 @@ use iced::widget::{
 };
 use iced::{Font, Length, Task, Theme};
 use iced_winit::program::Program;
+use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
@@ -26,7 +27,6 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
-use nerust_contract_input::InputTopologyDescriptor;
 use rfd::FileDialog;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -209,7 +209,11 @@ impl SettingsAppState {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        for (key, labels) in conflicting_keys(&self.draft.shared, &input_topology(self)) {
+        for (key, labels) in conflicting_keys(
+            &self.draft.shared,
+            &input_topology(self),
+            self.factory.system_id(),
+        ) {
             errors.push(format!(
                 "{}: {}",
                 keyboard_key_label(key),
@@ -226,9 +230,13 @@ impl SettingsAppState {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology(self))
-            .into_iter()
-            .next()?;
+        let (key, labels) = conflicting_keys(
+            &self.draft.shared,
+            &input_topology(self),
+            self.factory.system_id(),
+        )
+        .into_iter()
+        .next()?;
         Some(format!(
             "{}: {}",
             keyboard_key_label(key),
@@ -420,7 +428,7 @@ impl SettingsAppState {
             content = content.push(text(conflict));
         }
 
-        let sections = keyboard_binding_sections(&input_topology(self));
+        let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(

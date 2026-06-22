@@ -1,3 +1,4 @@
+use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
@@ -8,7 +9,6 @@ use nerust_gui_shell::descriptor::{
 use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_contract_input::SystemId;
 use nerust_nes_core::core_options::CoreOptions;
 use nerust_nes_core::core_options::Mmc3IrqVariant;
 use nerust_screen_video::FilterType;
@@ -32,7 +32,7 @@ pub(crate) fn filter_type(
 fn system_settings(settings: &nerust_gui_settings::shared::DesktopSharedSettings) -> NesSettings {
     settings
         .systems
-        .get(&SystemId::Nes)
+        .get(&SystemId::new("nes"))
         .map(|settings| match settings {
             SystemSettings::Nes(nes) => nes.clone(),
         })
@@ -43,7 +43,7 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
     let current = settings
         .shared
         .systems
-        .entry(SystemId::Nes)
+        .entry(SystemId::new("nes"))
         .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
     match current {
         SystemSettings::Nes(nes) => nes,
@@ -90,7 +90,6 @@ pub(crate) fn resolve_nes_load_request(
     let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
         .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
     Ok(ResolvedLoadRequest {
-        system_id: SystemId::Nes,
         options: resolved,
         core_options_bytes: core_opts.into_bytes(),
     })
@@ -209,6 +208,7 @@ mod tests {
         resolve_nes_load_request,
     };
     use crate::NesFactory;
+    use nerust_contract_input::ControlDescriptor;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
     use nerust_gui_shell::factory::CoreFactory;
@@ -216,14 +216,13 @@ mod tests {
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
+    use nerust_nes_core::core_options::CoreOptions;
+    use nerust_nes_core::core_options::Mmc3IrqVariant;
     use nerust_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
-    use nerust_contract_input::ControlDescriptor;
-    use nerust_nes_core::core_options::CoreOptions;
-    use nerust_nes_core::core_options::Mmc3IrqVariant;
     use std::borrow::Cow;
 
     fn snapshot() -> SettingsSnapshot {
@@ -332,7 +331,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_contract_input::SystemId::Nes)
+            .get_mut(&nerust_contract_input::SystemId::new("nes"))
             .unwrap();
         nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
@@ -348,7 +347,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_contract_input::SystemId::Nes)
+            .get_mut(&nerust_contract_input::SystemId::new("nes"))
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 

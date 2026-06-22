@@ -1,10 +1,9 @@
-use nerust_contract_input::{InputTopologyDescriptor, SystemId};
+use nerust_contract_input::InputTopologyDescriptor;
 use std::borrow::Cow;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {
-    pub system_id: SystemId,
     pub input_topology: InputTopologyDescriptor,
 }
 

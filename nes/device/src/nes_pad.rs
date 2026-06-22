@@ -1,10 +1,10 @@
 use nerust_contract_core::input::InputState;
-use nerust_nes_runtime::{
-    ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
-};
 use nerust_nes_core::OpenBusReadResult;
 use nerust_nes_core::controller::Controller;
 use nerust_nes_core::input_types::Buttons;
+use nerust_nes_runtime::{
+    ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
+};
 
 /// NES パッドの Device 実装。
 ///

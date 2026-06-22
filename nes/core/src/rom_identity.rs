@@ -25,6 +25,6 @@ pub struct RomIdentity {
 impl RomIdentity {
     pub fn into_system_identity(self) -> Result<SystemIdentity, String> {
         let identity_bytes = rmp_serde::to_vec_named(&self).map_err(|e| e.to_string())?;
-        Ok(SystemIdentity::new(SystemId::Nes, identity_bytes))
+        Ok(SystemIdentity::new(SystemId::new("nes"), identity_bytes))
     }
 }

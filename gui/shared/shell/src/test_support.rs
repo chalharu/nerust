@@ -1,7 +1,7 @@
 use nerust_contract_input::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
     DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, DigitalInputState,
-    InputTopologyDescriptor, PortDescriptor, PortId, SystemId,
+    InputTopologyDescriptor, PortDescriptor, PortId,
 };
 
 // Shared test constants for input topology construction.
@@ -16,7 +16,6 @@ pub const TEST_CTRL_MIC: DigitalControlId = DigitalControlId::new("nes.control.m
 /// Single-port single-device topology (player 1 only).
 pub fn single_port_topology() -> InputTopologyDescriptor {
     InputTopologyDescriptor {
-        system: SystemId::Nes,
         ports: vec![PortDescriptor {
             id: PortId::new("test.port1"),
             label: "Port 1",
@@ -49,7 +48,6 @@ pub fn single_port_topology() -> InputTopologyDescriptor {
 /// Dual-port dual-device topology (player 1 + player 2 with microphone).
 pub fn dual_port_topology() -> InputTopologyDescriptor {
     InputTopologyDescriptor {
-        system: SystemId::Nes,
         ports: vec![
             PortDescriptor {
                 id: PortId::new("test.port1"),

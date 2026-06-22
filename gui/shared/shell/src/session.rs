@@ -20,7 +20,6 @@ use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsError, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_contract_input::SystemId;
 use nerust_persistence::error::PersistenceError;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
@@ -36,7 +35,6 @@ pub(super) struct LoadedMedia {
 
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
-    pub system_id: Option<nerust_contract_input::SystemId>,
     pub metrics: ConsoleMetrics,
     pub input_topology: Option<nerust_contract_input::InputTopologyDescriptor>,
     pub slots: Arc<[StateSlotSummary]>,
@@ -95,7 +93,6 @@ impl SessionHandle {
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
-            system_id: Some(self.descriptor.system_id),
             metrics: self.emu_core.metrics(),
             input_topology: Some(self.descriptor.input_topology.clone()),
             slots: Arc::from(self.persistence.slots().to_vec()),
@@ -150,6 +147,4 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
-    #[error("unsupported system: {0:?}")]
-    UnsupportedSystem(SystemId),
 }

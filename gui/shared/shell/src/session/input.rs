@@ -1,8 +1,8 @@
 use crate::session::{KeyboardShortcut, SessionHandle};
 use crate::settings::bindings::events::controller::controller_event_for_key;
 use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_contract_input::DigitalInputEvent;
+use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 
 impl SessionHandle {
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
@@ -21,7 +21,7 @@ impl SessionHandle {
             false
         };
 
-        let system_id = self.descriptor.system_id;
+        let system_id = self.factory.system_id();
         if let Some(controller_input) = controller_event_for_key(
             &self.settings_snapshot.shared,
             system_id,
