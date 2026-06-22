@@ -3,7 +3,7 @@ use nerust_contract_emuthread::EmuThread;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum EmuCoreError {
+pub enum OperationError {
     #[error("emu thread channel unavailable")]
     WorkerUnavailable,
     #[error("emu thread reply channel closed")]

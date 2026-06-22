@@ -1,4 +1,4 @@
-use crate::state::EmuCoreError;
+use crate::state::OperationError;
 use crate::state::resolve_state_format;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::save_state_with_header;
@@ -19,12 +19,12 @@ use std::path::{Path, PathBuf};
 
 /// The persistence-relevant subset of EmuCore's interface.
 pub(crate) trait CorePersistence {
-    fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError>;
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError>;
+    fn save_state_raw(&self) -> Result<Vec<u8>, OperationError>;
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError>;
     fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
     fn canonical_media_identity(&self) -> Option<SystemIdentity>;
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError>;
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError>;
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError>;
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError>;
 }
 
 /// Platform abstraction for all file I/O (Desktop fs / Android SAF).

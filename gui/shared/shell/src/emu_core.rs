@@ -1,7 +1,7 @@
 use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
 use crate::session::persistence::CorePersistence;
-use crate::state::EmuCoreError;
+use crate::state::OperationError;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
@@ -79,16 +79,16 @@ impl EmuCore {
         *guard
     }
 
-    pub fn set_volume(&self, volume: f32) -> Result<(), EmuCoreError> {
+    pub fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::SetVolume(volume))
-            .map_err(|_| EmuCoreError::WorkerUnavailable)
+            .map_err(|_| OperationError::WorkerUnavailable)
     }
 
-    pub fn resume(&self) -> Result<(), EmuCoreError> {
+    pub fn resume(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::Resume)
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
             Ok(mut guard) => guard.paused = false,
             Err(e) => log::warn!("metrics lock poisoned in resume: {e}"),
@@ -96,10 +96,10 @@ impl EmuCore {
         Ok(())
     }
 
-    pub fn pause(&self) -> Result<(), EmuCoreError> {
+    pub fn pause(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::Pause)
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
             Ok(mut guard) => guard.paused = true,
             Err(e) => log::warn!("metrics lock poisoned in pause: {e}"),
@@ -109,7 +109,7 @@ impl EmuCore {
 
     // TODO: CoreConfig に CoreOptions を統合する。blocked on NesConsoleCore::load
     // が &CoreConfig を受け取るように変更されること。
-    pub fn load(&self, media: &MediaObject) -> Result<(), EmuCoreError> {
+    pub fn load(&self, media: &MediaObject) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -121,11 +121,11 @@ impl EmuCore {
                 },
                 reply: reply_tx,
             })))
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         let result = reply_rx
             .recv()
-            .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()));
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(|e| OperationError::Reply(e.to_string()));
         if result.is_ok() {
             match self.metrics.lock() {
                 Ok(mut guard) => {
@@ -138,10 +138,10 @@ impl EmuCore {
         result
     }
 
-    pub fn unload(&self) -> Result<(), EmuCoreError> {
+    pub fn unload(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::Unload)
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
             Ok(mut guard) => guard.loaded = false,
             Err(e) => log::warn!("metrics lock poisoned in unload: {e}"),
@@ -149,47 +149,47 @@ impl EmuCore {
         Ok(())
     }
 
-    pub fn reset(&self) -> Result<(), EmuCoreError> {
+    pub fn reset(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::Reset)
-            .map_err(|_| EmuCoreError::WorkerUnavailable)
+            .map_err(|_| OperationError::WorkerUnavailable)
     }
 
-    pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
+    pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::MapperSave { reply: reply_tx })
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(|e| OperationError::Reply(e.to_string()))
     }
 
-    pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
+    pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
                 data: bytes,
                 reply: reply_tx,
             })))
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(|e| OperationError::Reply(e.to_string()))
     }
 
     /// Raw state save: Send SaveState, return core bytes (no header, no preview).
-    pub fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError> {
+    pub fn save_state_raw(&self) -> Result<Vec<u8>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::SaveState { reply: reply_tx })
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(|e| OperationError::Reply(e.to_string()))
     }
 
     /// Generate a preview frame from the EmuThread's shared frame buffer.
@@ -219,27 +219,27 @@ impl EmuCore {
     }
 
     /// Raw state load: Send LoadState with raw core bytes. No format fallback.
-    pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError> {
+    pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::LoadState(Box::new(StateDataCommand {
                 data,
                 reply: reply_tx,
             })))
-            .map_err(|_| EmuCoreError::WorkerUnavailable)?;
+            .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx
             .recv()
-            .map_err(|_| EmuCoreError::NoReply)?
-            .map_err(|e| EmuCoreError::Reply(e.to_string()))
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(|e| OperationError::Reply(e.to_string()))
     }
 }
 
 impl CorePersistence for EmuCore {
-    fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError> {
+    fn save_state_raw(&self) -> Result<Vec<u8>, OperationError> {
         self.save_state_raw()
     }
 
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError> {
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError> {
         self.load_state_raw(data)
     }
 
@@ -251,11 +251,11 @@ impl CorePersistence for EmuCore {
         self.canonical_media_identity()
     }
 
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
         self.save_mapper_raw()
     }
 
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError> {
         self.load_mapper_raw(bytes)
     }
 }
