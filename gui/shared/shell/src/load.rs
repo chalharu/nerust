@@ -40,14 +40,6 @@ pub enum LoadRequest {
     Explicit { options: SystemLoadOptions },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedLoadRequest {
-    pub options: SystemLoadOptions,
-    /// Opaque options blob for the emulator core.
-    /// Interpreted by the CoreFactory / system core implementation.
-    pub core_options_bytes: Vec<u8>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::{LoadRequest, MediaObject, SystemLoadOptions};

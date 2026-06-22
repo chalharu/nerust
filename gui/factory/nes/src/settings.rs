@@ -7,7 +7,7 @@ use nerust_gui_shell::descriptor::{
     SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
 };
 use nerust_gui_shell::factory::FactoryError;
-use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
+use nerust_gui_shell::load::SystemLoadOptions;
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_nes_core::core_options::CoreOptions;
 use nerust_nes_core::core_options::Mmc3IrqVariant;
@@ -85,14 +85,11 @@ pub(crate) fn effective_load_options(
 pub(crate) fn resolve_nes_load_request(
     settings: &SettingsSnapshot,
     options: SystemLoadOptions,
-) -> Result<ResolvedLoadRequest, FactoryError> {
+) -> Result<(), FactoryError> {
     let resolved = effective_load_options(&settings.shared, options);
-    let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
+    CoreOptions::from_bytes(&resolved.options_bytes)
         .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
-    Ok(ResolvedLoadRequest {
-        options: resolved,
-        core_options_bytes: core_opts.into_bytes(),
-    })
+    Ok(())
 }
 
 pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPageModel {
@@ -299,14 +296,12 @@ mod tests {
     }
 
     #[test]
-    fn resolved_load_request_uses_saved_defaults() {
+    fn resolved_load_request_validates_core_options() {
         let settings = snapshot();
 
-        let resolved = resolve_nes_load_request(&settings, nec_options()).unwrap();
-
-        let core_opts =
-            CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
-        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
+        // valid options should pass
+        assert!(resolve_nes_load_request(&settings, nec_options()).is_ok());
+        assert!(resolve_nes_load_request(&settings, SystemLoadOptions::default()).is_ok());
     }
 
     #[test]
