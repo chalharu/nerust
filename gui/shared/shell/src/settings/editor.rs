@@ -126,8 +126,8 @@ mod tests {
                 &snapshot,
                 &CaptureTarget::Binding {
                     system: SystemId::Nes,
-                    attachment: TEST_ATT_P1.as_str().into(),
-                    control: TEST_CTRL_A.as_str().into(),
+                    attachment: TEST_ATT_P1.as_str().to_string(),
+                    control: TEST_CTRL_A.as_str().to_string(),
                 }
             ),
             Some(KeyboardKey::KeyZ)
@@ -139,8 +139,8 @@ mod tests {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
             system: SystemId::Nes,
-            attachment: TEST_ATT_P1.as_str().into(),
-            control: TEST_CTRL_A.as_str().into(),
+            attachment: TEST_ATT_P1.as_str().to_string(),
+            control: TEST_CTRL_A.as_str().to_string(),
         };
 
         apply_capture_target(&mut snapshot, &target, Some(KeyboardKey::KeyA));
