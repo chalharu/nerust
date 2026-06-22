@@ -1,6 +1,5 @@
 pub mod audio;
 pub mod channel;
-pub mod device;
 pub mod identity;
 pub mod input;
 pub mod persistence;
@@ -150,10 +149,6 @@ pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError>;
-
-    // -- peripherals --
-    fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);
-    fn detach_device(&mut self, port: usize);
 
     // -- lifecycle --
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError>;

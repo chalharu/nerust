@@ -47,13 +47,7 @@ impl ConsoleCore for MockConsoleCore {
             commands: Vec::new(),
         })
     }
-    fn attach_device(
-        &mut self,
-        _port: usize,
-        _device: Box<dyn nerust_contract_core::device::Device>,
-    ) {
-    }
-    fn detach_device(&mut self, _port: usize) {}
+
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
         self.loaded = true;
         self.paused = true;
