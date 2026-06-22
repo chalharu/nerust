@@ -1,4 +1,3 @@
-use crate::emu_core::OperationError;
 use crate::state::resolve_state_format;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::save_state_with_header;
@@ -16,15 +15,27 @@ use nerust_persistence::thumbnail::ThumbnailSource;
 use nerust_persistence::time::latest_saved_slot_id;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+/// Errors from core operations invoked by the persistence layer.
+#[derive(Debug, Error)]
+pub(crate) enum CorePersistenceError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Core(String),
+}
 
 /// The persistence-relevant subset of EmuCore's interface.
 pub(crate) trait CorePersistence {
-    fn save_state_raw(&self) -> Result<Vec<u8>, OperationError>;
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError>;
+    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
     fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
     fn canonical_media_identity(&self) -> Option<SystemIdentity>;
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError>;
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError>;
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
 }
 
 /// Platform abstraction for all file I/O (Desktop fs / Android SAF).

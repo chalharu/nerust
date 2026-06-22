@@ -206,7 +206,11 @@ impl AndroidFrontend {
             .session
             .factory()
             .resolve_load_request(self.session.settings_snapshot(), options);
-        match resolved.and_then(|r| self.session.load_resolved(media, r).map_err(|e| e.to_string())) {
+        match resolved.and_then(|r| {
+            self.session
+                .load_resolved(media, r)
+                .map_err(|e| e.to_string())
+        }) {
             Ok(()) => {}
             Err(error) => return Err(format!("failed to start ROM {id} from library: {error}")),
         }
@@ -271,7 +275,11 @@ impl AndroidFrontend {
             .session
             .factory()
             .resolve_load_request(self.session.settings_snapshot(), options);
-        if let Err(error) = resolved.and_then(|r| self.session.load_resolved(media, r).map_err(|e| e.to_string())) {
+        if let Err(error) = resolved.and_then(|r| {
+            self.session
+                .load_resolved(media, r)
+                .map_err(|e| e.to_string())
+        }) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
                     "failed to roll back Android ROM import {} after load error: {remove_error}",
