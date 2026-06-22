@@ -7,4 +7,4 @@ pub mod settings;
 pub mod state;
 
 #[cfg(test)]
-pub mod test_support;
+pub(crate) mod test_support;
