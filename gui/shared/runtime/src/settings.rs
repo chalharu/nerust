@@ -271,7 +271,7 @@ mod tests {
     use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
     use nerust_gui_settings::{
         language::AppLanguage,
-        nes::{NesSettings, NesVideoFilter},
+        nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter},
     };
     use nerust_input_schema::SystemId;
     use nerust_persistence::sidecar::resolve_sidecars;
@@ -664,7 +664,7 @@ video:
         };
         let mut after = before.clone();
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
-        nes.core.mmc3_irq_variant = Some("sharp".to_string());
+        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 
