@@ -117,9 +117,7 @@ impl EmuCore {
         Ok(())
     }
 
-    // TODO: CoreConfig に CoreOptions を統合する。blocked on emu thread command protocol
-    // が CoreOptions を含む CoreConfig を送信できるように変更されること。
-    pub fn load(&self, media: &MediaObject) -> Result<(), OperationError> {
+    pub fn load(&self, media: &MediaObject, core_options: Vec<u8>) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -128,6 +126,7 @@ impl EmuCore {
                     region: None,
                     bios_paths: HashMap::new(),
                     controllers: HashMap::new(),
+                    core_options,
                 },
                 reply: reply_tx,
             })))
