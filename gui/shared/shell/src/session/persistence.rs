@@ -1,5 +1,5 @@
-use crate::emu_core::EmuCoreError;
 use crate::state::resolve_state_format;
+use crate::state::EmuCoreError;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::save_state_with_header;
 use nerust_persistence::error::PersistenceError;
@@ -208,11 +208,11 @@ impl PersistenceManager {
         make_active: bool,
     ) {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::info!("save_slot: no states_dir configured; cannot save slot {slot_id}");
+            log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
             return;
         };
         let Some(identity) = emu.canonical_media_identity() else {
-            log::info!("save_slot: no persistence identity available; cannot save slot {slot_id}");
+            log::warn!("save_slot: no persistence identity available; cannot save slot {slot_id}");
             return;
         };
         log::info!(
@@ -250,7 +250,7 @@ impl PersistenceManager {
 
     pub(super) fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::info!("save_active_slot_or_new: no states_dir configured; cannot save state");
+            log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
             return;
         };
         let slot_id = self.active_slot_id.or_else(|| {
@@ -275,6 +275,7 @@ impl PersistenceManager {
 
     pub(super) fn create_slot(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("create_slot: no states_dir configured; cannot create slot");
             return;
         };
         match self.backend.allocate_next_id(dir) {
@@ -285,6 +286,7 @@ impl PersistenceManager {
 
     pub(super) fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return false;
         };
         match self.backend.read_slot(dir, slot_id) {
@@ -314,6 +316,7 @@ impl PersistenceManager {
 
     pub(super) fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
             return;
         };
         match self.backend.delete_slot(dir, slot_id) {
@@ -433,6 +436,7 @@ impl PersistenceManager {
 
     pub(super) fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
         };
         let Some(identity) = emu.canonical_media_identity() else {
@@ -458,6 +462,7 @@ impl PersistenceManager {
 
     pub(super) fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
         };
         let Some(identity) = emu.canonical_media_identity() else {
@@ -497,6 +502,7 @@ impl PersistenceManager {
 
     pub(super) fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
+            log::warn!("clear_hidden: no states_dir configured; cannot clear hidden lifecycle state");
             return;
         };
         let _ = self.backend.delete_autosave(dir);

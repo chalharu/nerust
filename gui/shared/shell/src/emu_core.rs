@@ -1,6 +1,7 @@
 use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
 use crate::session::persistence::CorePersistence;
+use crate::state::EmuCoreError;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
@@ -10,17 +11,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum EmuCoreError {
-    #[error("emu thread channel unavailable")]
-    WorkerUnavailable,
-    #[error("emu thread reply channel closed")]
-    NoReply,
-    #[error("{0}")]
-    Reply(String),
-}
 
 pub struct EmuCore {
     emu: EmuThread,

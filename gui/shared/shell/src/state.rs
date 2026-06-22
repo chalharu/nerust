@@ -1,5 +1,16 @@
 use nerust_contract_core::load_state_from_header;
 use nerust_contract_emuthread::EmuThread;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EmuCoreError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Reply(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewFrame {
