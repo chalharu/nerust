@@ -262,6 +262,7 @@ mod tests {
     use super::store::merge_with_defaults;
     use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
     use nerust_contract_core::identity::SystemIdentity;
+    use nerust_contract_input::SystemId;
     use nerust_gui_settings::app_state::{DesktopAppState, RememberedWindowSize};
     use nerust_gui_settings::input::{
         IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
@@ -273,7 +274,6 @@ mod tests {
         language::AppLanguage,
         nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter},
     };
-    use nerust_contract_input::SystemId;
     use nerust_persistence::sidecar::resolve_sidecars;
     use serde_yaml::{Mapping, Value};
     use std::collections::BTreeMap;
@@ -282,12 +282,15 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_system_identity() -> SystemIdentity {
-        SystemIdentity::new(SystemId::Nes, vec![4, 1, 0x11, 0x22, 0x33])
+        SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])
     }
 
     fn test_shared_defaults() -> DesktopSharedSettings {
         DesktopSharedSettings {
-            systems: BTreeMap::from([(SystemId::Nes, SystemSettings::Nes(NesSettings::default()))]),
+            systems: BTreeMap::from([(
+                SystemId::new("nes"),
+                SystemSettings::Nes(NesSettings::default()),
+            )]),
             ..Default::default()
         }
     }
@@ -319,20 +322,20 @@ mod tests {
 
         let decoded: DesktopSharedSettings = serde_yaml::from_value(merged).unwrap();
         assert_eq!(decoded.general.language, AppLanguage::English);
-        assert!(decoded.systems.contains_key(&SystemId::Nes));
+        assert!(decoded.systems.contains_key(&SystemId::new("nes")));
     }
 
     #[test]
     fn central_storage_paths_use_system_and_identity_not_rom_path() {
         let root = PathBuf::from("/base");
         let identity = test_system_identity();
-        let first = resolve_central_storage_paths(&root, SystemId::Nes, &identity);
-        let second = resolve_central_storage_paths(&root, SystemId::Nes, &identity);
+        let first = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
+        let second = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
 
         assert_eq!(first, second);
         assert!(first.mapper_save_path.ends_with("mapper.sav"));
         assert!(first.states_dir.ends_with("states"));
-        assert!(!system_storage_key(SystemId::Nes, &identity).is_empty());
+        assert!(!system_storage_key(SystemId::new("nes"), &identity).is_empty());
     }
 
     #[test]
@@ -356,7 +359,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
-            SystemId::Nes,
+            SystemId::new("nes"),
             Some(&rom_path),
             &identity,
         )
@@ -382,7 +385,7 @@ mod tests {
 
         let central_root = root.join("central");
         let identity = test_system_identity();
-        let central = resolve_central_storage_paths(&central_root, SystemId::Nes, &identity);
+        let central = resolve_central_storage_paths(&central_root, SystemId::new("nes"), &identity);
         fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&central.mapper_save_path, b"central").unwrap();
 
@@ -394,7 +397,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
-            SystemId::Nes,
+            SystemId::new("nes"),
             Some(&rom_path),
             &identity,
         )
@@ -413,7 +416,7 @@ mod tests {
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let custom_root = root.join("custom");
         let identity = test_system_identity();
-        let custom = resolve_central_storage_paths(&custom_root, SystemId::Nes, &identity);
+        let custom = resolve_central_storage_paths(&custom_root, SystemId::new("nes"), &identity);
         fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&custom.mapper_save_path, b"custom").unwrap();
 
@@ -432,7 +435,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             Some(&paths),
-            SystemId::Nes,
+            SystemId::new("nes"),
             Some(&rom_path),
             &test_system_identity(),
         )
@@ -466,7 +469,7 @@ mod tests {
     fn merge_serialized_value_preserves_unknown_fields_inside_sequence_items() {
         let mut shared = test_shared_defaults();
         shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::Nes, {
+            systems: BTreeMap::from([(SystemId::new("nes"), {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
@@ -647,7 +650,7 @@ video:
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
         let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
@@ -663,7 +666,7 @@ video:
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
@@ -732,7 +735,7 @@ video:
         );
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::Nes, {
+            systems: BTreeMap::from([(SystemId::new("nes"), {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
@@ -778,7 +781,11 @@ video:
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.general.language = AppLanguage::Japanese;
         snapshot.local.audio.muted = true;
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
         manager.save_snapshot(snapshot.clone()).unwrap();
 

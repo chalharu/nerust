@@ -1,3 +1,4 @@
+use nerust_contract_input::{DigitalControlId, SystemId};
 use nerust_gui_settings::app_state::DesktopAppState;
 use nerust_gui_settings::input::{
     IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardKey, PersistedControlId, ShortcutAction,
@@ -6,7 +7,6 @@ use nerust_gui_settings::input::{
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::nes::NesSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-use nerust_contract_input::{DigitalControlId, SystemId};
 use std::collections::BTreeMap;
 
 const P1: &str = "nes.attachment.player1";
@@ -21,7 +21,10 @@ const RIGHT: DigitalControlId = DigitalControlId::new("nes.control.right");
 
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
-        systems: BTreeMap::from([(SystemId::Nes, SystemSettings::Nes(NesSettings::default()))]),
+        systems: BTreeMap::from([(
+            SystemId::new("nes"),
+            SystemSettings::Nes(NesSettings::default()),
+        )]),
         ..Default::default()
     };
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
@@ -39,7 +42,10 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
         .or_default();
-    settings.input.systems.insert(SystemId::Nes, nes_input);
+    settings
+        .input
+        .systems
+        .insert(SystemId::new("nes"), nes_input);
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
@@ -106,13 +112,13 @@ mod tests {
         assert!(
             settings
                 .systems
-                .contains_key(&nerust_contract_input::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::new("nes"))
         );
         assert!(
             settings
                 .input
                 .systems
-                .contains_key(&nerust_contract_input::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::new("nes"))
         );
         assert!(
             settings
@@ -126,7 +132,7 @@ mod tests {
             !settings
                 .input
                 .systems
-                .get(&nerust_contract_input::SystemId::Nes)
+                .get(&nerust_contract_input::SystemId::new("nes"))
                 .unwrap()
                 .implicit_keyboard_profile()
                 .unwrap()

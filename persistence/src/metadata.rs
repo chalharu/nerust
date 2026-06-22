@@ -176,7 +176,7 @@ pub(crate) fn convert_v1_to_v2(
 }
 
 const fn default_system_id() -> SystemId {
-    SystemId::Nes
+    SystemId::new("nes")
 }
 
 // ---------------------------------------------------------------------------

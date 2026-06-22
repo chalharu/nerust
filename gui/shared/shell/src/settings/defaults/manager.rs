@@ -47,7 +47,7 @@ mod tests {
             current_or_default(&manager)
                 .shared
                 .systems
-                .contains_key(&nerust_contract_input::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::new("nes"))
         );
     }
 }
