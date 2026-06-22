@@ -1,5 +1,5 @@
-use crate::state::resolve_state_format;
 use crate::state::EmuCoreError;
+use crate::state::resolve_state_format;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::save_state_with_header;
 use nerust_persistence::error::PersistenceError;
@@ -502,7 +502,9 @@ impl PersistenceManager {
 
     pub(super) fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("clear_hidden: no states_dir configured; cannot clear hidden lifecycle state");
+            log::warn!(
+                "clear_hidden: no states_dir configured; cannot clear hidden lifecycle state"
+            );
             return;
         };
         let _ = self.backend.delete_autosave(dir);
