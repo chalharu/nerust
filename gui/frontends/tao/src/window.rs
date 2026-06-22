@@ -1,7 +1,7 @@
 mod runtime;
 
 use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use runtime::WindowRuntime;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +83,7 @@ impl Default for Window {
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
     use nerust_gui_shell::load::LoadRequest;
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
 
     #[test]
     fn window_load_options_translate_to_system_load_request() {

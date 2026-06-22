@@ -1,4 +1,4 @@
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

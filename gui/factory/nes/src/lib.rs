@@ -11,7 +11,7 @@ use nerust_gui_shell::descriptor::{
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 pub mod touch;
 
@@ -39,7 +39,7 @@ impl CoreFactory for NesFactory {
     fn system_descriptor(&self) -> SystemDescriptor {
         SystemDescriptor {
             system_id: SystemId::Nes,
-            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
+            input_topology: nerust_nes_runtime::topology::input_topology_descriptor(),
         }
     }
 

@@ -3,7 +3,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
@@ -107,7 +107,7 @@ mod tests {
     use crate::test_support::{TEST_ATT_P1, TEST_CTRL_A};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {

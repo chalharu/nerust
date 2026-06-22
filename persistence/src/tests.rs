@@ -7,7 +7,7 @@ use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
 
 use crate::time::unix_millis;
 use nerust_contract_core::identity::SystemIdentity;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use std::env;
 use std::fs;
 use std::path::PathBuf;

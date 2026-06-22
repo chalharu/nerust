@@ -8,7 +8,7 @@ use nerust_gui_shell::descriptor::{
 use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use nerust_nes_core::core_options::CoreOptions;
 use nerust_nes_core::core_options::Mmc3IrqVariant;
 use nerust_screen_video::FilterType;
@@ -216,12 +216,12 @@ mod tests {
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_input_nes_runtime::topology::{
+    use nerust_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
-    use nerust_input_schema::ControlDescriptor;
+    use nerust_contract_input::ControlDescriptor;
     use nerust_nes_core::core_options::CoreOptions;
     use nerust_nes_core::core_options::Mmc3IrqVariant;
     use std::borrow::Cow;
@@ -332,7 +332,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_input_schema::SystemId::Nes)
+            .get_mut(&nerust_contract_input::SystemId::Nes)
             .unwrap();
         nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
@@ -348,7 +348,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_input_schema::SystemId::Nes)
+            .get_mut(&nerust_contract_input::SystemId::Nes)
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 

@@ -2,7 +2,7 @@ use super::{SettingsError, SettingsPaths};
 use crc::{CRC_32_ISO_HDLC, Crc};
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
 use std::fs;
 use std::path::Path;

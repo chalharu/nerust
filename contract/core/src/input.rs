@@ -66,7 +66,7 @@ impl<const N: usize> InputSink<N> for std::sync::Arc<InputCell<N>> {
     }
 }
 
-use nerust_input_schema::DigitalInputEvent;
+use nerust_contract_input::DigitalInputEvent;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

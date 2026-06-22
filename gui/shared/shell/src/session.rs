@@ -20,7 +20,7 @@ use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsError, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use nerust_persistence::error::PersistenceError;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
@@ -36,9 +36,9 @@ pub(super) struct LoadedMedia {
 
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
-    pub system_id: Option<nerust_input_schema::SystemId>,
+    pub system_id: Option<nerust_contract_input::SystemId>,
     pub metrics: ConsoleMetrics,
-    pub input_topology: Option<nerust_input_schema::InputTopologyDescriptor>,
+    pub input_topology: Option<nerust_contract_input::InputTopologyDescriptor>,
     pub slots: Arc<[StateSlotSummary]>,
     pub active_slot_id: Option<u64>,
 }

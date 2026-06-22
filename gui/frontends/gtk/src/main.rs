@@ -22,7 +22,7 @@ use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_contract_input::InputTopologyDescriptor;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::VideoRenderProfile;

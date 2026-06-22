@@ -1,5 +1,5 @@
 use nerust_contract_core::input::InputState;
-use nerust_input_nes_runtime::{
+use nerust_nes_runtime::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
 use nerust_nes_core::OpenBusReadResult;

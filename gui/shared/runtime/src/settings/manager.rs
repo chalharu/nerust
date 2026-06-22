@@ -14,7 +14,7 @@ use nerust_gui_settings::local::{
     HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
 };
 use nerust_gui_settings::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use nerust_persistence::sidecar::SidecarPaths;
 use serde_yaml::Value;
 use std::path::Path;

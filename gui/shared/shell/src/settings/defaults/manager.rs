@@ -47,7 +47,7 @@ mod tests {
             current_or_default(&manager)
                 .shared
                 .systems
-                .contains_key(&nerust_input_schema::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::Nes)
         );
     }
 }

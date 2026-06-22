@@ -10,7 +10,7 @@ use jni::{JavaVM, jni_sig, jni_str};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
@@ -510,7 +510,7 @@ mod tests {
     use nerust_gui_settings::local::HostBackendLocalSettings;
     use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
     use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
 
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();

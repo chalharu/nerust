@@ -4,7 +4,7 @@ pub mod keys;
 
 use nerust_gui_settings::input::KeyboardKey;
 use nerust_gui_settings::shared::DesktopSharedSettings;
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_contract_input::InputTopologyDescriptor;
 use std::collections::BTreeMap;
 
 pub fn conflicting_keys(
