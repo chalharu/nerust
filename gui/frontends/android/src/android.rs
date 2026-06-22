@@ -148,6 +148,7 @@ impl AndroidFrontend {
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
         let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
             session,
@@ -164,9 +165,13 @@ impl AndroidFrontend {
             foreground_retry_at: None,
             last_foreground_error: None,
             lifecycle_auto_paused: false,
-            lifecycle_restore_pending: false,
+            lifecycle_restore_pending: restore_pending,
         };
-        // Skip automatic last-ROM restore on cold start; restore will happen on warm resume.
+        if frontend.lifecycle_restore_pending {
+            log::info!(
+                "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
+            );
+        }
         frontend.refresh_dialog_caches();
         log::info!("AndroidFrontend::new: ready");
         frontend
@@ -372,8 +377,10 @@ impl AndroidFrontend {
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
+            self.storage.clear_restore_pending();
             log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
         } else {
+            self.storage.touch_restore_pending();
             log::info!("save_lifecycle_state: hidden lifecycle state saved");
         }
         self.session.flush_before_exit();
@@ -523,6 +530,7 @@ impl AndroidFrontend {
         }
         self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
+        self.storage.clear_restore_pending();
         if let Err(error) = self.session.run_command(SessionCommand::Resume) {
             log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
         }
@@ -622,6 +630,7 @@ impl AndroidFrontend {
                             if self.storage.rom_library.rom_path(&id).is_none() {
                                 log::warn!("try_resume_foreground: stored ROM id={id} is missing");
                                 self.session.clear_hidden_lifecycle_state();
+                                self.storage.clear_restore_pending();
                                 self.lifecycle_restore_pending = false;
                             } else {
                                 match self.load_from_library_with_autosave(event_loop, &id, true) {
@@ -635,6 +644,7 @@ impl AndroidFrontend {
                                         log::warn!(
                                             "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
                                         );
+                                        self.storage.clear_restore_pending();
                                         self.lifecycle_restore_pending = false;
                                         self.session.clear_hidden_lifecycle_state();
                                     }
@@ -644,6 +654,7 @@ impl AndroidFrontend {
                         Ok(None) => {
                             log::info!("try_resume_foreground: no last ROM recorded");
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                         Err(error) => {
@@ -651,6 +662,7 @@ impl AndroidFrontend {
                                 "try_resume_foreground: failed to read last ROM id: {error}"
                             );
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                     }
