@@ -1,4 +1,4 @@
-use crate::state::OperationError;
+use crate::emu_core::OperationError;
 use crate::state::resolve_state_format;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::save_state_with_header;
