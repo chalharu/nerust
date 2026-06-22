@@ -274,7 +274,6 @@ mod tests {
         nes::{NesSettings, NesVideoFilter},
     };
     use nerust_input_schema::SystemId;
-    use nerust_nes_core::core_options::Mmc3IrqVariant;
     use nerust_persistence::sidecar::resolve_sidecars;
     use serde_yaml::{Mapping, Value};
     use std::collections::BTreeMap;
@@ -665,7 +664,7 @@ video:
         };
         let mut after = before.clone();
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::Nes).unwrap();
-        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+        nes.core.mmc3_irq_variant = Some("sharp".to_string());
 
         let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
 

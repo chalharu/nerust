@@ -3168,7 +3168,6 @@ dependencies = [
  "nerust_contract_core",
  "nerust_gui_settings",
  "nerust_input_schema",
- "nerust_nes_core",
  "nerust_persistence",
  "nerust_screen_video",
  "serde",
@@ -3182,7 +3181,6 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_contract_core",
  "nerust_input_schema",
- "nerust_nes_core",
  "serde",
  "serde_yaml",
 ]
@@ -3369,7 +3367,6 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_schema",
- "nerust_nes_core",
  "nerust_persistence",
  "nerust_screen_wgpu",
  "nerust_sound_openal",
