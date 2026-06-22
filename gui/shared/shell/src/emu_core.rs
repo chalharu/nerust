@@ -76,6 +76,10 @@ impl EmuCore {
         &self.disp_fb
     }
 
+    pub fn clear_display(&mut self) {
+        self.disp_fb.clear();
+    }
+
     // metrics() のみ into_inner() で回復する理由: レンダリングパスで毎フレーム呼ばれ、
     // 常に最新の metrics を返す必要がある。他のメソッド(swap, pause, load 等)の metrics
     // 更新は副次的な副作用であり、poison 時に諦めても動作に影響しない。

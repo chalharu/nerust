@@ -471,10 +471,8 @@ impl AndroidFrontend {
                     self.storage.clear_restore_pending();
                     let _ = self.session.unload();
                 }
+                self.session.clear_display();
                 self.request_redraw();
-                // Show the ROM library so the user can pick a new game;
-                // otherwise the stale last frame remains on screen.
-                self.request_library_dialog();
             }
             MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
             MenuAction::OpenLibrary => self.request_library_dialog(),
