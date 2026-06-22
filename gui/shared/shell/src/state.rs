@@ -14,17 +14,14 @@ pub struct RuntimeStateExport {
     pub preview: Option<PreviewFrame>,
 }
 
-/// Console-owned save-state wrapper (old format, retained for backward compatibility).
+/// Pre-Phase-7b save-state format. No longer written, but existing
+/// archives must remain loadable. Only `core_state` is extracted;
+/// all other fields (`rom_identity`, `options`, etc.) are ignored
+/// by serde's default unknown-field handling.
 #[derive(serde::Deserialize)]
 struct ConsoleStatePayload {
     #[serde(default)]
     core_state: Vec<u8>,
-    #[serde(default)]
-    _rom_identity: Vec<u8>,
-    #[serde(default)]
-    _options: Vec<u8>,
-    #[serde(default)]
-    _source_frame: Vec<u8>,
 }
 
 /// Generate a preview frame from the EmuThread's shared frame buffer.
