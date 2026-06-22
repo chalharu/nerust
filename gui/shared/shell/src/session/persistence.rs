@@ -386,7 +386,10 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn flush_mapper_save(&mut self, emu: &impl CorePersistence) -> Result<(), PersistenceError> {
+    pub(super) fn flush_mapper_save(
+        &mut self,
+        emu: &impl CorePersistence,
+    ) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(());
         };
@@ -394,13 +397,16 @@ impl PersistenceManager {
             if self.mapper_save_recovery_written {
                 return Ok(());
             }
-            if let Some(bytes) = emu.save_mapper_raw().map_err(|e| {
-                log::warn!("mapper save failed: {e}");
-                e
-            }).ok().flatten() {
-                let recovery_path = self
-                    .backend
-                    .write_recovery_mapper_save(path, &bytes)?;
+            if let Some(bytes) = emu
+                .save_mapper_raw()
+                .map_err(|e| {
+                    log::warn!("mapper save failed: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            {
+                let recovery_path = self.backend.write_recovery_mapper_save(path, &bytes)?;
                 self.mapper_save_recovery_written = true;
                 log::warn!(
                     "mapper save auto-load failed earlier; wrote recovery save to {}",

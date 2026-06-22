@@ -145,7 +145,10 @@ impl SystemInputAdapter for MockAdapter {
     }
 }
 impl InputStatePersistence for MockAdapter {
-    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), nerust_contract_core::input::InputError> {
+    fn sync_from_runtime_state(
+        &mut self,
+        _: &[u8],
+    ) -> Result<(), nerust_contract_core::input::InputError> {
         Ok(())
     }
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_contract_core::input::InputError> {
@@ -234,15 +237,13 @@ fn unique_temp_dir(label: &str) -> PathBuf {
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
     assert_eq!(
-        session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         Some(KeyboardShortcut::Session(
             nerust_gui_settings::input::ShortcutAction::TogglePause
         )),
     );
     assert_eq!(
-        session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         None
     );
 }
@@ -428,9 +429,10 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 #[test]
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
-    session
-        .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
-    let plan = session.set_fullscreen_default(true).expect("set_fullscreen_default should succeed");
+    session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+    let plan = session
+        .set_fullscreen_default(true)
+        .expect("set_fullscreen_default should succeed");
     assert_eq!(
         plan,
         SettingsApplyPlan {
@@ -447,6 +449,8 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
             .window
             .fullscreen_default
     );
-    let second = session.set_fullscreen_default(true).expect("second set_fullscreen_default should succeed");
+    let second = session
+        .set_fullscreen_default(true)
+        .expect("second set_fullscreen_default should succeed");
     assert_eq!(second, SettingsApplyPlan::default());
 }
