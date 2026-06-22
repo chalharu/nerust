@@ -1,6 +1,3 @@
-use std::array;
-
-use crate::device::{Device, DeviceKind, PortIo};
 use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{
@@ -10,8 +7,6 @@ use nerust_contract_core::{
 
 use crate::cartridge_rom::CartridgeData;
 use crate::{Controller, Core};
-
-const NUM_PORTS: usize = 2;
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
 /// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
@@ -30,7 +25,6 @@ pub struct NesConsoleCore {
     core: SendCore,
     controller: Box<dyn Controller + Send>,
     audio: Box<dyn AudioBackend>,
-    devices: [Option<Box<dyn Device>>; NUM_PORTS],
     paused: bool,
 }
 
@@ -45,7 +39,6 @@ impl NesConsoleCore {
             core: SendCore(Some(core)),
             controller,
             audio,
-            devices: array::from_fn(|_| None),
             paused: false,
         })
     }
@@ -57,7 +50,6 @@ impl NesConsoleCore {
             core: SendCore(None),
             controller,
             audio,
-            devices: array::from_fn(|_| None),
             paused: false,
         }
     }
@@ -85,17 +77,6 @@ impl ConsoleCore for NesConsoleCore {
 
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
-
-        let mut port_io = PortIo {
-            device: DeviceKind::None,
-            input: Vec::new(),
-            output: Vec::new(),
-        };
-        for device in self.devices.iter_mut().flatten() {
-            port_io.device = device.kind();
-            device.cycle(&mut port_io);
-        }
-
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(GpuCommandList {

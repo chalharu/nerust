@@ -16,6 +16,11 @@ pub mod touch;
 
 pub use nerust_gui_shell::factory::CoreFactory;
 
+/// Opaque option bytes for MMC3 IRQ variant: "sharp".
+pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
+/// Opaque option bytes for MMC3 IRQ variant: "nec".
+pub const MMC3_OPTION_NEC: &[u8] = b"nec";
+
 pub struct NesFactory;
 
 impl CoreFactory for NesFactory {

@@ -24,8 +24,14 @@ impl MediaObject {
     }
 }
 
+/// System-specific load options, opaque to the shell.
+///
+/// The contents are interpreted by the `CoreFactory` implementation.
+/// For NES: serialized `CoreOptions` bytes for the emulator core.
+/// For other systems: defined by their respective factory.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SystemLoadOptions {
+    /// Opaque blob; contract between frontend and CoreFactory.
     pub options_bytes: Vec<u8>,
 }
 
@@ -42,6 +48,8 @@ pub enum LoadRequest {
 pub struct ResolvedLoadRequest {
     pub system_id: SystemId,
     pub options: SystemLoadOptions,
+    /// Opaque options blob for the emulator core.
+    /// Interpreted by the CoreFactory / system core implementation.
     pub core_options_bytes: Vec<u8>,
 }
 

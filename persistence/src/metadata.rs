@@ -30,12 +30,12 @@ pub(crate) struct StateArchiveMetadata {
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
+#[serde(default)]
 struct StateArchiveMetadataV1 {
     schema_version: u32,
     slot_id: u64,
     saved_at_unix_ms: u64,
     has_thumbnail: bool,
-    #[serde(default = "default_system_id")]
     system_id: SystemId,
     mapper_type: u32,
     sub_mapper_type: u32,
@@ -55,6 +55,35 @@ struct StateArchiveMetadataV1 {
     save_prg_ram_len: u64,
     chr_ram_len: u64,
     save_chr_ram_len: u64,
+}
+
+impl Default for StateArchiveMetadataV1 {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            slot_id: 0,
+            saved_at_unix_ms: 0,
+            has_thumbnail: false,
+            system_id: default_system_id(),
+            mapper_type: 0,
+            sub_mapper_type: 0,
+            prg_rom_crc64: 0,
+            chr_rom_crc64: 0,
+            trainer_crc64: 0,
+            emulator_version: String::new(),
+            rom_format: 0,
+            mirror_mode_kind: 0,
+            mirror_mode_custom_lut: Vec::new(),
+            has_battery: false,
+            trainer_len: 0,
+            prg_rom_len: 0,
+            chr_rom_len: 0,
+            prg_ram_len: 0,
+            save_prg_ram_len: 0,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        }
+    }
 }
 
 #[derive(serde::Serialize)]

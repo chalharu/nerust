@@ -18,8 +18,8 @@ pub enum WindowMmc3IrqVariant {
 
 fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRequest {
     let options_bytes = match options.mmc3_irq_variant {
-        Some(WindowMmc3IrqVariant::Sharp) => b"sharp".to_vec(),
-        Some(WindowMmc3IrqVariant::Nec) => b"nec".to_vec(),
+        Some(WindowMmc3IrqVariant::Sharp) => nerust_factory_nes::MMC3_OPTION_SHARP.to_vec(),
+        Some(WindowMmc3IrqVariant::Nec) => nerust_factory_nes::MMC3_OPTION_NEC.to_vec(),
         None => Vec::new(),
     };
     LoadRequest::Explicit {

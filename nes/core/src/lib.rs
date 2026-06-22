@@ -3,8 +3,6 @@
     reason = "emulator components include future mapper/APU hooks"
 )]
 
-pub mod device;
-
 mod apu;
 mod cart_device;
 mod cartridge;
