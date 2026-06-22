@@ -4,10 +4,10 @@ use crate::interrupt::{Interrupt, IrqSource};
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::MappingMode;
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::mirror::MirrorMode;
 use crate::persistence_codec::{decode_payload, encode_payload};
 use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuBusEvent;
-use nerust_contract_core::mirror::MirrorMode;
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 

@@ -1,6 +1,6 @@
 use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
-use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
 use nerust_screen_video::FrameBuffer;
@@ -206,7 +206,7 @@ impl EmuCore {
         crate::state::generate_preview(&self.emu)
     }
 
-    pub fn canonical_media_identity(&self) -> Option<CanonicalMediaIdentity> {
+    pub fn canonical_media_identity(&self) -> Option<SystemIdentity> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Identity { reply: reply_tx })

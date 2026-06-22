@@ -1,5 +1,5 @@
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_contract_core::rom::RomFormat;
+use crate::mirror::MirrorMode;
+use crate::rom_format::RomFormat;
 
 #[derive(Debug, Clone)]
 pub struct CartridgeDataParts {
