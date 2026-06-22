@@ -2,7 +2,6 @@ pub mod audio;
 pub mod channel;
 pub mod identity;
 pub mod input;
-pub mod persistence;
 pub mod save_state;
 
 pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
