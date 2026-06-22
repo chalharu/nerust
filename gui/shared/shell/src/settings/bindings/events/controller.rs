@@ -39,6 +39,11 @@ mod tests {
         AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState, SystemId,
     };
 
+    const TEST_ATTACHMENT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
+    const TEST_ATTACHMENT_P2: &str = "nes.attachment.player2";
+    const TEST_CONTROL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
+    const TEST_CONTROL_MIC: &str = "nes.control.microphone";
+
     fn test_resolve(attachment: &str, control: &str, pressed: bool) -> Option<DigitalInputEvent> {
         Some(DigitalInputEvent::new(
             AttachmentId::new(Box::leak(attachment.to_string().into_boxed_str())),
@@ -63,11 +68,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            event.attachment,
-            AttachmentId::new("nes.attachment.player1")
-        );
-        assert_eq!(event.control, DigitalControlId::new("nes.control.a"));
+        assert_eq!(event.attachment, TEST_ATTACHMENT_P1);
+        assert_eq!(event.control, TEST_CONTROL_A);
     }
 
     #[test]
@@ -82,9 +84,9 @@ mod tests {
             .bindings
             .push(KeyboardBinding {
                 attachment: nerust_gui_settings::input::PersistedAttachmentId::new(
-                    "nes.attachment.player2",
+                    TEST_ATTACHMENT_P2,
                 ),
-                control: PersistedControlId::digital("nes.control.microphone"),
+                control: PersistedControlId::digital(TEST_CONTROL_MIC),
                 key: KeyboardKey::KeyM,
             });
         let event = controller_event_for_key(
@@ -96,13 +98,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            event.attachment,
-            AttachmentId::new("nes.attachment.player2")
-        );
-        assert_eq!(
-            event.control,
-            DigitalControlId::new("nes.control.microphone")
-        );
+        assert_eq!(event.attachment, AttachmentId::new(TEST_ATTACHMENT_P2));
+        assert_eq!(event.control, DigitalControlId::new(TEST_CONTROL_MIC));
     }
 }
