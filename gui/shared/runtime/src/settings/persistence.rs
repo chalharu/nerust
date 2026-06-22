@@ -1,8 +1,8 @@
 use super::{SettingsError, SettingsPaths};
 use crc::{CRC_32_ISO_HDLC, Crc};
 use nerust_contract_core::identity::SystemIdentity;
+use nerust_contract_input::SystemId;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
-use nerust_input_schema::SystemId;
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
 use std::fs;
 use std::path::Path;
@@ -151,11 +151,16 @@ fn maybe_auto_import_storage(
 }
 
 fn system_id_slug(system: SystemId) -> &'static str {
-    match system {
-        SystemId::Nes => "nes",
-        SystemId::Snes => "snes",
-        SystemId::Ps1 => "ps1",
-        SystemId::MegaDrive => "megadrive",
+    if system == SystemId::new("nes") {
+        "nes"
+    } else if system == SystemId::new("snes") {
+        "snes"
+    } else if system == SystemId::new("ps1") {
+        "ps1"
+    } else if system == SystemId::new("megadrive") {
+        "megadrive"
+    } else {
+        panic!("unknown system id: {system}")
     }
 }
 

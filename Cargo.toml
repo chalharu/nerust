@@ -75,8 +75,8 @@ nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }
 nerust_gui_shell = { path = "gui/shared/shell" }
-nerust_input_schema = { path = "input/schema" }
-nerust_input_nes_runtime = { path = "input/nes_runtime" }
+nerust_contract_input = { path = "contract/input" }
+nerust_nes_runtime = { path = "nes/runtime" }
 nerust_persistence = { path = "persistence" }
 nerust_rom_test = { path = "rom_test" }
 nerust_backend_opengl = { path = "backend/opengl" }

@@ -233,7 +233,7 @@ impl Aggregate {
     }
 }
 
-use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
+use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 
 struct PerfRunner {
     core: Core,

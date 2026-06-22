@@ -4,6 +4,7 @@ use crate::descriptor::{
 use crate::emu_core::EmuCore;
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_contract_core::input::SystemInputAdapter;
+use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use thiserror::Error;
 
@@ -22,6 +23,12 @@ pub enum FactoryError {
 /// frontend はこの trait を通じてのみシステムと対話する。
 /// 各システムの実装は `gui/factory/{nes,snes}/` クレートで行う。
 pub trait CoreFactory {
+    /// この factory が扱うシステムの識別子を返す。
+    fn system_id(&self) -> SystemId;
+
+    /// この factory が扱うシステムの UI 表示名を返す。
+    fn display_name(&self) -> &'static str;
+
     /// コアと入力アダプタを構築する（rebuild 時にも使用）。
     fn create_core_and_adapter(
         &self,

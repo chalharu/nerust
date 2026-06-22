@@ -1,7 +1,7 @@
 use crate::mirror::MirrorMode;
 use crate::rom_format::RomFormat;
 use nerust_contract_core::identity::SystemIdentity;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomIdentity {
@@ -25,6 +25,6 @@ pub struct RomIdentity {
 impl RomIdentity {
     pub fn into_system_identity(self) -> Result<SystemIdentity, String> {
         let identity_bytes = rmp_serde::to_vec_named(&self).map_err(|e| e.to_string())?;
-        Ok(SystemIdentity::new(SystemId::Nes, identity_bytes))
+        Ok(SystemIdentity::new(SystemId::new("nes"), identity_bytes))
     }
 }

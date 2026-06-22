@@ -1,4 +1,3 @@
-use nerust_input_schema::SystemId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -38,15 +37,11 @@ pub struct SystemLoadOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadRequest {
     Auto,
-    Explicit {
-        system_id: SystemId,
-        options: SystemLoadOptions,
-    },
+    Explicit { options: SystemLoadOptions },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedLoadRequest {
-    pub system_id: SystemId,
     pub options: SystemLoadOptions,
     /// Opaque options blob for the emulator core.
     /// Interpreted by the CoreFactory / system core implementation.
@@ -56,7 +51,6 @@ pub struct ResolvedLoadRequest {
 #[cfg(test)]
 mod tests {
     use super::{LoadRequest, MediaObject, SystemLoadOptions};
-    use nerust_input_schema::SystemId;
     use std::path::PathBuf;
 
     #[test]
@@ -68,14 +62,12 @@ mod tests {
     }
 
     #[test]
-    fn explicit_load_requests_preserve_selected_system() {
+    fn explicit_load_requests_preserve_options() {
         assert_eq!(
             LoadRequest::Explicit {
-                system_id: SystemId::Nes,
                 options: SystemLoadOptions::default(),
             },
             LoadRequest::Explicit {
-                system_id: SystemId::Nes,
                 options: SystemLoadOptions::default(),
             }
         );

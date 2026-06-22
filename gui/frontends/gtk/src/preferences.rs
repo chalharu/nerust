@@ -1,6 +1,8 @@
 use crate::State;
 use gtk::glib;
 use gtk::prelude::*;
+use nerust_contract_input::InputTopologyDescriptor;
+use nerust_contract_input::SystemId;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::settings::apply::validate_shared_settings;
@@ -20,7 +22,6 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_input_schema::InputTopologyDescriptor;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -157,7 +158,7 @@ pub(crate) fn present_preferences_dialog(
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
     let topology = state.borrow().input_topology_descriptor();
-    let input_rows = build_input_rows(language, &input_page, &topology);
+    let input_rows = build_input_rows(language, &input_page, &topology, factory.system_id());
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -810,12 +811,14 @@ fn refresh_validation(
     input_conflict_label: &gtk::Label,
 ) {
     let factory = NesFactory;
+    let system = factory.system_id();
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
     let conflicts = conflicting_keys(
         &snapshot.shared,
         &factory.system_descriptor().input_topology,
+        system,
     );
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
@@ -847,6 +850,7 @@ fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
         &factory.system_descriptor().input_topology,
+        factory.system_id(),
     ) {
         errors.push(format!(
             "{}: {}",
@@ -934,6 +938,7 @@ fn build_input_rows(
     language: AppLanguage,
     input_page: &gtk::Box,
     topology: &InputTopologyDescriptor,
+    system: SystemId,
 ) -> Vec<InputRow> {
     let input_stack = gtk::Stack::new();
     input_stack.set_hexpand(true);
@@ -945,7 +950,7 @@ fn build_input_rows(
     input_page.append(&input_stack);
 
     let mut rows = Vec::new();
-    for section in keyboard_binding_sections(topology) {
+    for section in keyboard_binding_sections(topology, system) {
         let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
         section_page.set_hexpand(true);
         let grid = gtk::Grid::new();

@@ -1,9 +1,9 @@
 use crate::settings::bindings::keys::keyboard_key_label;
+use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
-use nerust_input_schema::SystemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
@@ -105,9 +105,9 @@ mod tests {
         default_app_state, default_local_settings, default_shared_settings,
     };
     use crate::test_support::{TEST_ATT_P1, TEST_CTRL_A};
+    use nerust_contract_input::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-    use nerust_input_schema::SystemId;
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
@@ -125,7 +125,7 @@ mod tests {
             current_binding_key(
                 &snapshot,
                 &CaptureTarget::Binding {
-                    system: SystemId::Nes,
+                    system: SystemId::new("nes"),
                     attachment: TEST_ATT_P1.as_str().to_string(),
                     control: TEST_CTRL_A.as_str().to_string(),
                 }
@@ -138,7 +138,7 @@ mod tests {
     fn updates_existing_control_binding() {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
-            system: SystemId::Nes,
+            system: SystemId::new("nes"),
             attachment: TEST_ATT_P1.as_str().to_string(),
             control: TEST_CTRL_A.as_str().to_string(),
         };

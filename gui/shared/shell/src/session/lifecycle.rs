@@ -111,11 +111,8 @@ impl SessionHandle {
     pub fn load_resolved(
         &mut self,
         media: MediaObject,
-        resolved: ResolvedLoadRequest,
+        _resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        if resolved.system_id != self.descriptor.system_id {
-            return Err(SessionError::UnsupportedSystem(resolved.system_id));
-        }
         self.persistence.flush_mapper_save(&self.emu_core)?;
         self.emu_core.load(&media)?;
         self.loaded_media = Some(super::LoadedMedia {

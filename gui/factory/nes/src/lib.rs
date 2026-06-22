@@ -4,6 +4,7 @@ mod input_state;
 mod settings;
 
 use nerust_contract_core::input::SystemInputAdapter;
+use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
@@ -11,7 +12,6 @@ use nerust_gui_shell::descriptor::{
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use nerust_input_schema::SystemId;
 
 pub mod touch;
 
@@ -25,6 +25,14 @@ pub const MMC3_OPTION_NEC: &[u8] = b"nec";
 pub struct NesFactory;
 
 impl CoreFactory for NesFactory {
+    fn system_id(&self) -> SystemId {
+        SystemId::new("nes")
+    }
+
+    fn display_name(&self) -> &'static str {
+        "NES"
+    }
+
     fn create_core_and_adapter(
         &self,
         settings: &SettingsSnapshot,
@@ -38,8 +46,7 @@ impl CoreFactory for NesFactory {
 
     fn system_descriptor(&self) -> SystemDescriptor {
         SystemDescriptor {
-            system_id: SystemId::Nes,
-            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
+            input_topology: nerust_nes_runtime::topology::input_topology_descriptor(),
         }
     }
 
