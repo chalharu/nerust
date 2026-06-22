@@ -1,7 +1,7 @@
 use std::array;
 
+use crate::device::{Device, DeviceKind, PortIo};
 use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::device::{Device, DeviceKind, PortIo};
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, GpuCommand, GpuCommandList,
@@ -87,7 +87,7 @@ impl ConsoleCore for NesConsoleCore {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
         let mut port_io = PortIo {
-            device: DeviceKind::None,
+            device: DeviceKind::NONE,
             input: Vec::new(),
             output: Vec::new(),
         };
@@ -96,35 +96,11 @@ impl ConsoleCore for NesConsoleCore {
             device.cycle(&mut port_io);
         }
 
-        // `core_mut()` は `&mut self` を返すため、`self.controller` / `self.audio`
-        // の同時借用と競合する。このため直接 `self.core.0.as_mut()` を使う。
-        // attach_deviceで追加された Device は Phase 7 までコントローラとして使えない
-        //（trait upcasting 制約のため）。
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(GpuCommandList {
             commands: vec![GpuCommand::PaletteDecode { slot: 0 }],
         })
-    }
-
-    /// デバイスを指定 port に取り付ける。
-    ///
-    /// 注: Phase 7 までは Device → Controller bridging が未実装のため、
-    /// 取り付けられた Device は cycle() の呼び出し対象にはなるが、
-    /// run_frame に渡す controller はコンストラクタのものが使われ続ける。
-    /// Pad1/Pad2 はコンストラクタ経由で接続される。
-    fn attach_device(&mut self, port: usize, device: Box<dyn Device>) {
-        if let Some(slot) = self.devices.get_mut(port) {
-            *slot = Some(device);
-        } else {
-            log::warn!("NesConsoleCore: port {port} out of range (max {NUM_PORTS})");
-        }
-    }
-
-    fn detach_device(&mut self, port: usize) {
-        if let Some(slot) = self.devices.get_mut(port) {
-            *slot = None;
-        }
     }
 
     // TODO(Phase 7): `CoreConfig` から `CoreOptions` を抽出し、

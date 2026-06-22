@@ -10,13 +10,8 @@ pub struct PortIo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceKind {
-    None,
-    NesPad,
-    NesZapper,
-    SnesPad,
-    SnesMouse,
-    GbLinkCable,
-    Ps1MemoryCard,
-    Ps1DualShock,
+pub struct DeviceKind(pub u16);
+
+impl DeviceKind {
+    pub const NONE: Self = Self(0);
 }
