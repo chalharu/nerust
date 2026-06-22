@@ -85,8 +85,6 @@ impl ConsoleCore for NesConsoleCore {
         })
     }
 
-    // TODO(Phase 7): `CoreConfig` から `CoreOptions` を抽出し、
-    // `Core::new_with_options(cartridge_data, options)` を使う。
     // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
         let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(cartridge_error_to_core)?;
