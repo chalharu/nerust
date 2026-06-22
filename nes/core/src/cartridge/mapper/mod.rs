@@ -33,7 +33,7 @@ use self::uxrom::UxRom;
 use crate::cart_device::Cartridge;
 use crate::cartridge_error::CartridgeError;
 use crate::cartridge_rom::CartridgeData;
-use nerust_contract_core::options::Mmc3IrqVariant;
+use crate::core_options::Mmc3IrqVariant;
 
 pub(crate) fn try_from(
     data: CartridgeData,

@@ -3,8 +3,8 @@ use std::cmp;
 use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_error::CartridgeError;
 use crate::cartridge_rom::CartridgeData;
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_contract_core::rom::RomFormat;
+use crate::mirror::MirrorMode;
+use crate::rom_format::RomFormat;
 
 /// Raw ROM バイト列をパースして CartridgeData を生成する。
 /// iNES または NES 2.0 を自動判別する。

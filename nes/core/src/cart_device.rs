@@ -3,9 +3,9 @@ use crate::cartridge_runtime_state::CartridgeRuntimeState;
 use crate::interrupt::Interrupt;
 use crate::mapper::Mapper;
 use crate::mapper_state::MappingMode;
+use crate::mirror::MirrorMode;
 use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuReadAccess;
-use nerust_contract_core::mirror::MirrorMode;
 use std::cmp;
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {

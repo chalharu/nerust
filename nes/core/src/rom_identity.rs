@@ -1,19 +1,7 @@
 use crate::mirror::MirrorMode;
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RomFormat {
-    INes,
-    Nes20,
-}
-
-impl RomFormat {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::INes => "iNES",
-            Self::Nes20 => "NES 2.0",
-        }
-    }
-}
+use crate::rom_format::RomFormat;
+use nerust_contract_core::identity::SystemIdentity;
+use nerust_input_schema::SystemId;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomIdentity {
@@ -32,4 +20,11 @@ pub struct RomIdentity {
     pub prg_rom_crc64: u64,
     pub chr_rom_crc64: u64,
     pub trainer_crc64: u64,
+}
+
+impl RomIdentity {
+    pub fn into_system_identity(self) -> Result<SystemIdentity, String> {
+        let identity_bytes = rmp_serde::to_vec_named(&self).map_err(|e| e.to_string())?;
+        Ok(SystemIdentity::new(SystemId::Nes, identity_bytes))
+    }
 }

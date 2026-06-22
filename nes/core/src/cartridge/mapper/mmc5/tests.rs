@@ -4,11 +4,11 @@ use crate::cartridge_data_parts::CartridgeDataParts;
 use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::{Interrupt, IrqSource};
 use crate::mapper::Mapper;
+use crate::mirror::MirrorMode;
 use crate::ppu::Core as PpuCore;
 use crate::ppu_memory_access::PpuReadAccess;
 use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_contract_core::rom::RomFormat;
+use crate::rom_format::RomFormat;
 
 fn test_data() -> CartridgeData {
     CartridgeData::new(CartridgeDataParts {

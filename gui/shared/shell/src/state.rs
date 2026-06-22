@@ -1,6 +1,4 @@
 use nerust_contract_core::load_state_from_header;
-use nerust_contract_core::options::CoreOptions;
-use nerust_contract_core::rom::RomIdentity;
 use nerust_contract_emuthread::EmuThread;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,20 +14,14 @@ pub struct RuntimeStateExport {
     pub preview: Option<PreviewFrame>,
 }
 
-/// Console-owned save-state wrapper (old format, retained for backward compatibility).
-#[derive(serde::Serialize, serde::Deserialize)]
-pub(crate) struct ConsoleStatePayload {
-    pub(crate) schema_version: u32,
-    #[serde(with = "serde_bytes")]
-    pub(crate) core_state: Vec<u8>,
-    pub(crate) frame_counter: u64,
-    pub(crate) paused: bool,
-    #[serde(with = "serde_bytes")]
-    pub(crate) controller_state: Vec<u8>,
-    pub(crate) rom_identity: RomIdentity,
-    pub(crate) options: CoreOptions,
-    #[serde(with = "serde_bytes")]
-    pub(crate) source_frame: Vec<u8>,
+/// Pre-Phase-7b save-state format. No longer written, but existing
+/// archives must remain loadable. Only `core_state` is extracted;
+/// all other fields (`rom_identity`, `options`, etc.) are ignored
+/// by serde's default unknown-field handling.
+#[derive(serde::Deserialize)]
+struct ConsoleStatePayload {
+    #[serde(default)]
+    core_state: Vec<u8>,
 }
 
 /// Generate a preview frame from the EmuThread's shared frame buffer.
@@ -72,8 +64,8 @@ pub fn resolve_state_format(bytes: &[u8]) -> Vec<u8> {
     match load_state_from_header(bytes) {
         Ok(inner) => inner.to_vec(),
         Err(_) => match rmp_serde::from_slice::<ConsoleStatePayload>(bytes) {
-            Ok(payload) => payload.core_state,
-            Err(_) => bytes.to_vec(),
+            Ok(payload) if !payload.core_state.is_empty() => payload.core_state,
+            _ => bytes.to_vec(),
         },
     }
 }

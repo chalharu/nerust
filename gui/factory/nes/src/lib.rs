@@ -1,5 +1,6 @@
 mod adapter;
 mod builder;
+mod input_state;
 mod settings;
 
 use nerust_contract_core::input::SystemInputAdapter;
@@ -14,6 +15,11 @@ use nerust_input_schema::SystemId;
 pub mod touch;
 
 pub use nerust_gui_shell::factory::CoreFactory;
+
+/// Opaque option bytes for MMC3 IRQ variant: "sharp".
+pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
+/// Opaque option bytes for MMC3 IRQ variant: "nec".
+pub const MMC3_OPTION_NEC: &[u8] = b"nec";
 
 pub struct NesFactory;
 
@@ -32,7 +38,7 @@ impl CoreFactory for NesFactory {
     fn system_descriptor(&self) -> SystemDescriptor {
         SystemDescriptor {
             system_id: SystemId::Nes,
-            input_topology: nerust_input_nes::topology::input_topology_descriptor(),
+            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
         }
     }
 

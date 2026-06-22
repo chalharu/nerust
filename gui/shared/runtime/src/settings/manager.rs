@@ -6,7 +6,7 @@ use super::store::{
     save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
 };
 use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
-use nerust_contract_core::rom::RomIdentity;
+use nerust_contract_core::identity::SystemIdentity;
 use nerust_gui_settings::app_state::{
     DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
 };
@@ -309,7 +309,7 @@ impl SettingsManager {
         &self,
         system: SystemId,
         rom_path: Option<&Path>,
-        rom_identity: RomIdentity,
+        identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
         let snapshot = self.snapshot()?;
         resolve_persistence_paths(
@@ -317,7 +317,7 @@ impl SettingsManager {
             self.paths()?.as_ref(),
             system,
             rom_path,
-            rom_identity,
+            identity,
         )
     }
 
@@ -325,7 +325,7 @@ impl SettingsManager {
         &self,
         system: SystemId,
         rom_path: Option<&Path>,
-        rom_identity: RomIdentity,
+        identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
         let snapshot = self.snapshot()?;
         let paths = self.paths()?;
@@ -334,7 +334,7 @@ impl SettingsManager {
             paths.as_ref(),
             system,
             rom_path,
-            rom_identity,
+            identity,
         )
     }
 }

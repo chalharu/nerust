@@ -4,10 +4,10 @@ use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC2};
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::mirror::MirrorMode;
 use crate::persistence_codec::{decode_payload, encode_payload};
 use crate::persistence_error::PersistenceError;
 use crate::ppu_memory_access::PpuBusEvent;
-use nerust_contract_core::mirror::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -276,9 +276,9 @@ mod tests {
     use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
+    use crate::mirror::MirrorMode;
     use crate::ppu_memory_access::PpuBusEvent;
-    use nerust_contract_core::mirror::MirrorMode;
-    use nerust_contract_core::rom::RomFormat;
+    use crate::rom_format::RomFormat;
 
     fn test_data(mapper_type: u16) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

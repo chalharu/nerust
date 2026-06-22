@@ -3,11 +3,9 @@ use crate::factory::CoreFactory;
 use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
 use nerust_contract_core::ConsoleCore;
+use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::input::SystemInputAdapter;
-use nerust_contract_core::options::Mmc3IrqVariant;
-use nerust_contract_core::{
-    CoreCapabilities, CoreConfig, CoreError, GpuCommandList, persistence::CanonicalMediaIdentity,
-};
+use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError, GpuCommandList};
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 
@@ -24,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct MockConsoleCore {
     loaded: bool,
     paused: bool,
-    identity: Option<CanonicalMediaIdentity>,
+    identity: Option<SystemIdentity>,
 }
 
 impl MockConsoleCore {
@@ -49,39 +47,13 @@ impl ConsoleCore for MockConsoleCore {
             commands: Vec::new(),
         })
     }
-    fn attach_device(
-        &mut self,
-        _port: usize,
-        _device: Box<dyn nerust_contract_core::device::Device>,
-    ) {
-    }
-    fn detach_device(&mut self, _port: usize) {}
+
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
         self.loaded = true;
         self.paused = true;
-        let mapper = if rom.len() > 6 {
-            (rom[6] >> 4) as u16
-        } else {
-            0
-        };
-        self.identity = Some(CanonicalMediaIdentity::rom(
-            nerust_contract_core::rom::RomIdentity {
-                format: nerust_contract_core::rom::RomFormat::INes,
-                mapper_type: mapper,
-                sub_mapper_type: 0,
-                mirror_mode: nerust_contract_core::mirror::MirrorMode::Horizontal,
-                has_battery: false,
-                trainer_len: 0,
-                prg_rom_len: 0x8000,
-                chr_rom_len: 0x2000,
-                prg_ram_len: 0,
-                save_prg_ram_len: 0,
-                chr_ram_len: 0,
-                save_chr_ram_len: 0,
-                prg_rom_crc64: 0,
-                chr_rom_crc64: 0,
-                trainer_crc64: 0,
-            },
+        self.identity = Some(SystemIdentity::new(
+            nerust_input_schema::SystemId::Nes,
+            rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
     }
@@ -101,8 +73,8 @@ impl ConsoleCore for MockConsoleCore {
     fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
         Ok(())
     }
-    fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
-        self.identity.ok_or(CoreError::NoRomLoaded)
+    fn identity(&self) -> Result<SystemIdentity, CoreError> {
+        self.identity.clone().ok_or(CoreError::NoRomLoaded)
     }
 }
 
@@ -193,7 +165,7 @@ impl CoreFactory for MockFactory {
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
         crate::descriptor::SystemDescriptor {
             system_id: nerust_input_schema::SystemId::Nes,
-            input_topology: nerust_input_nes::topology::input_topology_descriptor(),
+            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
         }
     }
     fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {
@@ -214,10 +186,11 @@ impl CoreFactory for MockFactory {
         _: &SettingsSnapshot,
         options: SystemLoadOptions,
     ) -> Result<crate::load::ResolvedLoadRequest, String> {
+        let bytes = options.options_bytes.clone();
         Ok(crate::load::ResolvedLoadRequest {
             system_id: nerust_input_schema::SystemId::Nes,
             options,
-            core_options: options.into_core_options(),
+            core_options_bytes: bytes,
         })
     }
     fn default_load_options(&self) -> SystemLoadOptions {
@@ -279,12 +252,7 @@ fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
     let resolved = session
         .factory()
-        .resolve_load_request(
-            session.settings_snapshot(),
-            SystemLoadOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-            },
-        )
+        .resolve_load_request(session.settings_snapshot(), SystemLoadOptions::default())
         .unwrap();
     assert!(
         session

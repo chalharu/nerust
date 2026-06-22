@@ -1,11 +1,7 @@
 pub mod audio;
 pub mod channel;
-pub mod device;
+pub mod identity;
 pub mod input;
-pub mod mirror;
-pub mod options;
-pub mod persistence;
-pub mod rom;
 pub mod save_state;
 
 pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
@@ -140,7 +136,7 @@ pub enum EmuCommand {
     },
     ImportMapperSave(Box<StateDataCommand>),
     Identity {
-        reply: Sender<Result<persistence::CanonicalMediaIdentity, CoreError>>,
+        reply: Sender<Result<identity::SystemIdentity, CoreError>>,
     },
 }
 
@@ -152,10 +148,6 @@ pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError>;
-
-    // -- peripherals --
-    fn attach_device(&mut self, port: usize, device: Box<dyn device::Device>);
-    fn detach_device(&mut self, port: usize);
 
     // -- lifecycle --
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError>;
@@ -182,7 +174,7 @@ pub trait ConsoleCore: Send {
     }
 
     // -- identity --
-    fn identity(&self) -> Result<persistence::CanonicalMediaIdentity, CoreError> {
+    fn identity(&self) -> Result<identity::SystemIdentity, CoreError> {
         Err(CoreError::NoRomLoaded)
     }
 

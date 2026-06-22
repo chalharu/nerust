@@ -154,8 +154,8 @@ mod tests {
     };
     use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::mapper::Mapper;
-    use nerust_contract_core::mirror::MirrorMode;
-    use nerust_contract_core::rom::RomFormat;
+    use crate::mirror::MirrorMode;
+    use crate::rom_format::RomFormat;
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {
