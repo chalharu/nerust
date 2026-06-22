@@ -3088,15 +3088,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_cartridge_data"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_core",
- "nerust_nes_core",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "nerust_contract_core"
 version = "0.1.0-dev"
 dependencies = [
@@ -3290,7 +3281,6 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "crc",
- "nerust_cartridge_data",
  "nerust_contract_core",
  "nerust_input_nes_runtime",
  "nerust_nes_core",

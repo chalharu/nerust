@@ -5,10 +5,10 @@ use crate::manifest::{RomCase, load_default_manifest, read_rom};
 use crate::results::{CaseOutcome, ValidationOptions};
 use crate::runner::validate_case;
 use clap::{Arg, ArgAction, Command};
-use nerust_cartridge_data::parse_cartridge_bytes;
 use nerust_contract_core::audio::AudioBackend;
 use nerust_nes_core::Core;
 use nerust_nes_core::input_types::Buttons;
+use nerust_nes_core::rom_parse;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
 use std::sync::Arc;
@@ -251,7 +251,7 @@ struct PerfRunner {
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
         let cartridge_data =
-            parse_cartridge_bytes(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
+            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             })?;

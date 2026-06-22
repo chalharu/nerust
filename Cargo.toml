@@ -3,7 +3,7 @@ resolver = "3"
 members = [
   "backend/opengl",
   "backend/wgpu",
-  "cartridge/data",
+
   "contract/core",
   "contract/emuthread",
   "gui/factory/nes",
@@ -67,7 +67,6 @@ lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.32", default-features = false }
 muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
-nerust_cartridge_data = { path = "cartridge/data" }
 nerust_contract_core = { path = "contract/core" }
 nerust_contract_emuthread = { path = "contract/emuthread" }
 nerust_factory_nes = { path = "gui/factory/nes" }
