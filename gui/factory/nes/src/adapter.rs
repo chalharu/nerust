@@ -60,6 +60,7 @@ impl InputStatePersistence for NesAdapter {
     }
 
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, InputError> {
-        encode_input_state(self.input.current_frame()).map_err(|e| InputError::Encode(e.to_string()))
+        encode_input_state(self.input.current_frame())
+            .map_err(|e| InputError::Encode(e.to_string()))
     }
 }

@@ -1,8 +1,8 @@
 use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::session::SessionError;
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::title::window_title;
-use crate::session::SessionError;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,9 +299,8 @@ impl SessionHandle {
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let (rebuilt_core, rebuilt_adapter) = self
-            .factory
-            .create_core_and_adapter(next_settings)?;
+        let (rebuilt_core, rebuilt_adapter) =
+            self.factory.create_core_and_adapter(next_settings)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media)?;

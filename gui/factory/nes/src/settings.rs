@@ -175,7 +175,11 @@ pub(crate) fn apply_nes_settings_choice(
                 "ntsc_composite" => NesVideoFilter::NtscComposite,
                 "ntsc_svideo" => NesVideoFilter::NtscSVideo,
                 "ntsc_rgb" => NesVideoFilter::NtscRgb,
-                other => return Err(FactoryError::InvalidChoice(format!("unsupported filter choice: {other}"))),
+                other => {
+                    return Err(FactoryError::InvalidChoice(format!(
+                        "unsupported filter choice: {other}"
+                    )));
+                }
             };
             Ok(())
         }
@@ -184,11 +188,17 @@ pub(crate) fn apply_nes_settings_choice(
                 "auto" => None,
                 "sharp" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp),
                 "nec" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec),
-                other => return Err(FactoryError::InvalidChoice(format!("unsupported mmc3 choice: {other}"))),
+                other => {
+                    return Err(FactoryError::InvalidChoice(format!(
+                        "unsupported mmc3 choice: {other}"
+                    )));
+                }
             };
             Ok(())
         }
-        other => Err(FactoryError::InvalidChoice(format!("unsupported system settings field: {other}"))),
+        other => Err(FactoryError::InvalidChoice(format!(
+            "unsupported system settings field: {other}"
+        ))),
     }
 }
 
