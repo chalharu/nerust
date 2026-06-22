@@ -49,6 +49,7 @@ pub(crate) struct HostState {
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
+    auto_paused: bool,
 }
 
 impl HostState {
@@ -75,6 +76,7 @@ impl HostState {
             resume_after_settings: false,
             pending_fullscreen_sync: None,
             active: true,
+            auto_paused: false,
         }
     }
 
@@ -92,6 +94,22 @@ impl HostState {
 
     pub(crate) fn resume_session(&mut self) {
         let _ = self.session.run_command(SessionCommand::Resume);
+    }
+
+    pub(crate) fn pause_session(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Pause);
+    }
+
+    pub(crate) fn auto_paused(&self) -> bool {
+        self.auto_paused
+    }
+
+    pub(crate) fn set_auto_paused(&mut self) {
+        self.auto_paused = true;
+    }
+
+    pub(crate) fn clear_auto_paused(&mut self) {
+        self.auto_paused = false;
     }
 
     pub(crate) fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
@@ -294,9 +312,7 @@ impl HostState {
                     .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
             }
-            RenderResult::Skipped | RenderResult::Error => {
-                self.request_redraw();
-            }
+            RenderResult::Skipped | RenderResult::Error => {}
         }
     }
 
