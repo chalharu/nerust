@@ -449,17 +449,21 @@ impl AndroidFrontend {
                 // Finish the activity so the app exits cleanly and is not
                 // restored on next launch (no swipe-kill scenario).
                 let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                let _ = vm.attach_current_thread(|env| {
+                if let Err(error) = vm.attach_current_thread(|env| {
                     let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                     let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-                    let _ = env.call_method(
+                    if let Err(error) = env.call_method(
                         &activity,
                         jni_str!("finishAndRemoveTask"),
                         jni_sig!("()V"),
                         &[],
-                    );
+                    ) {
+                        log::warn!("failed to call finishAndRemoveTask: {error}");
+                    }
                     Ok::<_, jni::errors::Error>(())
-                });
+                }) {
+                    log::warn!("failed to attach JNI thread for exit: {error}");
+                }
             }
             MenuAction::Unload => {
                 if self.session.loaded() {
@@ -676,9 +680,9 @@ impl AndroidFrontend {
                                         log::warn!(
                                             "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
                                         );
+                                        self.session.clear_hidden_lifecycle_state();
                                         self.storage.clear_restore_pending();
                                         self.lifecycle_restore_pending = false;
-                                        self.session.clear_hidden_lifecycle_state();
                                     }
                                 }
                             }

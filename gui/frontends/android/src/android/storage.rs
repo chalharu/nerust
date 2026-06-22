@@ -31,13 +31,21 @@ impl AndroidStorage {
 
     pub(crate) fn touch_restore_pending(&self) {
         if let Some(parent) = self.restore_pending_file.parent() {
-            let _ = fs::create_dir_all(parent);
+            if let Err(error) = fs::create_dir_all(parent) {
+                log::warn!("failed to create restore pending dir: {error}");
+            }
         }
-        let _ = fs::write(&self.restore_pending_file, &[]);
+        if let Err(error) = fs::write(&self.restore_pending_file, &[]) {
+            log::warn!("failed to write restore pending file: {error}");
+        }
     }
 
     pub(crate) fn clear_restore_pending(&self) {
-        let _ = fs::remove_file(&self.restore_pending_file);
+        if let Err(error) = fs::remove_file(&self.restore_pending_file) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("failed to clear restore pending file: {error}");
+            }
+        }
     }
 
     pub(crate) fn load_last_rom_id(&self) -> Result<Option<String>, String> {
