@@ -34,27 +34,9 @@ where
 mod tests {
     use super::controller_event_for_key;
     use crate::settings::defaults::seed::default_shared_settings;
+    use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_A, TEST_CTRL_MIC, test_resolve};
     use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
-    use nerust_input_schema::{
-        AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState, SystemId,
-    };
-
-    const TEST_ATTACHMENT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
-    const TEST_ATTACHMENT_P2: &str = "nes.attachment.player2";
-    const TEST_CONTROL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
-    const TEST_CONTROL_MIC: &str = "nes.control.microphone";
-
-    fn test_resolve(attachment: &str, control: &str, pressed: bool) -> Option<DigitalInputEvent> {
-        Some(DigitalInputEvent::new(
-            AttachmentId::new(Box::leak(attachment.to_string().into_boxed_str())),
-            DigitalControlId::new(Box::leak(control.to_string().into_boxed_str())),
-            if pressed {
-                DigitalInputState::Pressed
-            } else {
-                DigitalInputState::Released
-            },
-        ))
-    }
+    use nerust_input_schema::SystemId;
 
     #[test]
     fn keyboard_bindings_resolve_to_nes_input_events() {
@@ -68,8 +50,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(event.attachment, TEST_ATTACHMENT_P1);
-        assert_eq!(event.control, TEST_CONTROL_A);
+        assert_eq!(event.attachment, TEST_ATT_P1);
+        assert_eq!(event.control, TEST_CTRL_A);
     }
 
     #[test]
@@ -84,9 +66,9 @@ mod tests {
             .bindings
             .push(KeyboardBinding {
                 attachment: nerust_gui_settings::input::PersistedAttachmentId::new(
-                    TEST_ATTACHMENT_P2,
+                    TEST_ATT_P2.as_str(),
                 ),
-                control: PersistedControlId::digital(TEST_CONTROL_MIC),
+                control: PersistedControlId::digital(TEST_CTRL_MIC.as_str()),
                 key: KeyboardKey::KeyM,
             });
         let event = controller_event_for_key(
@@ -98,7 +80,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(event.attachment, AttachmentId::new(TEST_ATTACHMENT_P2));
-        assert_eq!(event.control, DigitalControlId::new(TEST_CONTROL_MIC));
+        assert_eq!(event.attachment, TEST_ATT_P2);
+        assert_eq!(event.control, TEST_CTRL_MIC);
     }
 }
