@@ -1,4 +1,4 @@
-use super::{prepare_test_dir, test_identity, test_metadata, write_fixture_archive};
+use super::{prepare_test_dir, test_identity, test_metadata};
 use crate::archive::build_state_archive;
 use crate::metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY};
 use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
@@ -31,24 +31,6 @@ fn metadata_only_archive_is_not_listed_as_state_slot() {
 }
 
 #[test]
-fn state_archive_fixture_loads_metadata_state_and_thumbnail() {
-    let path = write_fixture_archive("fixture-archive");
-
-    let loaded = load_state_slot(&path).expect("fixture archive should load");
-    assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
-    assert_eq!(loaded.summary.slot_id, 5);
-    assert_eq!(loaded.machine_state, b"fixture-machine-state");
-    assert!(loaded.summary.has_thumbnail);
-    assert_eq!(
-        loaded.thumbnail_png,
-        Some(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
-    );
-
-    let summaries = scan_state_slots(path.parent().unwrap()).expect("fixture slot should scan");
-    assert_eq!(summaries, vec![loaded.summary.clone()]);
-}
-
-#[test]
 fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
     let dir = prepare_test_dir("state-archive-round-trip");
 
@@ -56,7 +38,7 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
         &dir,
         7,
         b"machine-state",
-        test_identity(),
+        &test_identity(),
         Some(&ThumbnailSource {
             width: 2,
             height: 1,

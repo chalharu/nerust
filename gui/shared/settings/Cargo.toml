@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 nerust_contract_core.workspace = true
 nerust_input_schema.workspace = true
+nerust_nes_core.workspace = true
 serde = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

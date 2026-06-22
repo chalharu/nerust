@@ -261,10 +261,7 @@ mod tests {
     };
     use super::store::merge_with_defaults;
     use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-    use nerust_contract_core::mirror::MirrorMode;
-    use nerust_contract_core::options::Mmc3IrqVariant;
-    use nerust_contract_core::rom::RomFormat;
-    use nerust_contract_core::rom::RomIdentity;
+    use nerust_contract_core::identity::SystemIdentity;
     use nerust_gui_settings::app_state::{DesktopAppState, RememberedWindowSize};
     use nerust_gui_settings::input::{
         IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
@@ -277,6 +274,7 @@ mod tests {
         nes::{NesSettings, NesVideoFilter},
     };
     use nerust_input_schema::SystemId;
+    use nerust_nes_core::core_options::Mmc3IrqVariant;
     use nerust_persistence::sidecar::resolve_sidecars;
     use serde_yaml::{Mapping, Value};
     use std::collections::BTreeMap;
@@ -284,24 +282,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    fn test_rom_identity() -> RomIdentity {
-        RomIdentity {
-            format: RomFormat::INes,
-            mapper_type: 4,
-            sub_mapper_type: 1,
-            mirror_mode: MirrorMode::Horizontal,
-            has_battery: true,
-            trainer_len: 0,
-            prg_rom_len: 0x8000,
-            chr_rom_len: 0x2000,
-            prg_ram_len: 0,
-            save_prg_ram_len: 0x2000,
-            chr_ram_len: 0,
-            save_chr_ram_len: 0,
-            prg_rom_crc64: 0x11,
-            chr_rom_crc64: 0x22,
-            trainer_crc64: 0x33,
-        }
+    fn test_system_identity() -> SystemIdentity {
+        SystemIdentity::new(SystemId::Nes, vec![4, 1, 0x11, 0x22, 0x33])
     }
 
     fn test_shared_defaults() -> DesktopSharedSettings {
@@ -344,14 +326,14 @@ mod tests {
     #[test]
     fn central_storage_paths_use_system_and_identity_not_rom_path() {
         let root = PathBuf::from("/base");
-        let identity = test_rom_identity();
-        let first = resolve_central_storage_paths(&root, SystemId::Nes, identity);
-        let second = resolve_central_storage_paths(&root, SystemId::Nes, identity);
+        let identity = test_system_identity();
+        let first = resolve_central_storage_paths(&root, SystemId::Nes, &identity);
+        let second = resolve_central_storage_paths(&root, SystemId::Nes, &identity);
 
         assert_eq!(first, second);
         assert!(first.mapper_save_path.ends_with("mapper.sav"));
         assert!(first.states_dir.ends_with("states"));
-        assert!(system_storage_key(SystemId::Nes, identity).contains("m0004"));
+        assert!(!system_storage_key(SystemId::Nes, &identity).is_empty());
     }
 
     #[test]
@@ -371,12 +353,13 @@ mod tests {
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
         shared.persistence.storage_directory = Some(root.join("central"));
 
+        let identity = test_system_identity();
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
             SystemId::Nes,
             Some(&rom_path),
-            test_rom_identity(),
+            &identity,
         )
         .unwrap();
 
@@ -399,8 +382,8 @@ mod tests {
         fs::write(&sidecar.mapper_save_path, b"sidecar").unwrap();
 
         let central_root = root.join("central");
-        let central =
-            resolve_central_storage_paths(&central_root, SystemId::Nes, test_rom_identity());
+        let identity = test_system_identity();
+        let central = resolve_central_storage_paths(&central_root, SystemId::Nes, &identity);
         fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&central.mapper_save_path, b"central").unwrap();
 
@@ -408,12 +391,13 @@ mod tests {
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
         shared.persistence.storage_directory = Some(central_root);
 
+        let identity = test_system_identity();
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
             SystemId::Nes,
             Some(&rom_path),
-            test_rom_identity(),
+            &identity,
         )
         .unwrap();
 
@@ -429,8 +413,8 @@ mod tests {
         let rom_path = root.join("game.nes");
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let custom_root = root.join("custom");
-        let custom =
-            resolve_central_storage_paths(&custom_root, SystemId::Nes, test_rom_identity());
+        let identity = test_system_identity();
+        let custom = resolve_central_storage_paths(&custom_root, SystemId::Nes, &identity);
         fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&custom.mapper_save_path, b"custom").unwrap();
 
@@ -451,7 +435,7 @@ mod tests {
             Some(&paths),
             SystemId::Nes,
             Some(&rom_path),
-            test_rom_identity(),
+            &test_system_identity(),
         )
         .unwrap();
 

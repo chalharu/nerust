@@ -11,6 +11,7 @@ bitflags.workspace = true
 crc.workspace = true
 log.workspace = true
 nerust_contract_core.workspace = true
+nerust_input_schema.workspace = true
 nerust_screen_video.workspace = true
 nerust_soundfilter.workspace = true
 nerust_serialize.workspace = true

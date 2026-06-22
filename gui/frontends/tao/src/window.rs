@@ -17,20 +17,23 @@ pub enum WindowMmc3IrqVariant {
 }
 
 fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRequest {
+    let options_bytes = options
+        .mmc3_irq_variant
+        .map(|v| {
+            let core_opts = nerust_nes_core::core_options::CoreOptions {
+                mmc3_irq_variant: Some(match v {
+                    WindowMmc3IrqVariant::Sharp => {
+                        nerust_nes_core::core_options::Mmc3IrqVariant::Sharp
+                    }
+                    WindowMmc3IrqVariant::Nec => nerust_nes_core::core_options::Mmc3IrqVariant::Nec,
+                }),
+            };
+            core_opts.into_bytes()
+        })
+        .unwrap_or_default();
     LoadRequest::Explicit {
         system_id: SystemId::Nes,
-        options: SystemLoadOptions {
-            mmc3_irq_variant: options.mmc3_irq_variant.map(shell_mmc3_irq_variant),
-        },
-    }
-}
-
-fn shell_mmc3_irq_variant(
-    variant: WindowMmc3IrqVariant,
-) -> nerust_contract_core::options::Mmc3IrqVariant {
-    match variant {
-        WindowMmc3IrqVariant::Sharp => nerust_contract_core::options::Mmc3IrqVariant::Sharp,
-        WindowMmc3IrqVariant::Nec => nerust_contract_core::options::Mmc3IrqVariant::Nec,
+        options: SystemLoadOptions { options_bytes },
     }
 }
 
@@ -88,22 +91,18 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
-    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
     use nerust_input_schema::SystemId;
 
     #[test]
     fn window_load_options_translate_to_system_load_request() {
-        assert_eq!(
-            system_load_request_from_window_options(WindowLoadOptions {
-                mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
-            }),
-            LoadRequest::Explicit {
-                system_id: SystemId::Nes,
-                options: SystemLoadOptions {
-                    mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-                },
-            }
-        );
+        let request = system_load_request_from_window_options(WindowLoadOptions {
+            mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
+        });
+        let LoadRequest::Explicit { system_id, options } = request else {
+            panic!("expected Explicit load request");
+        };
+        assert_eq!(system_id, SystemId::Nes);
+        assert!(!options.options_bytes.is_empty());
     }
 }

@@ -1,7 +1,7 @@
 use super::error::RomTestError;
 use super::events::RomEvent;
-use nerust_contract_core::options::CoreOptions;
-use nerust_contract_core::options::Mmc3IrqVariant;
+use nerust_nes_core::core_options::CoreOptions;
+use nerust_nes_core::core_options::Mmc3IrqVariant;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;

@@ -1,5 +1,3 @@
-use nerust_contract_core::options::CoreOptions;
-use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_schema::SystemId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,23 +24,9 @@ impl MediaObject {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SystemLoadOptions {
-    pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
-}
-
-impl SystemLoadOptions {
-    pub fn with_mmc3_irq_variant(self, mmc3_irq_variant: Option<Mmc3IrqVariant>) -> Self {
-        Self {
-            mmc3_irq_variant: self.mmc3_irq_variant.or(mmc3_irq_variant),
-        }
-    }
-
-    pub fn into_core_options(self) -> CoreOptions {
-        CoreOptions {
-            mmc3_irq_variant: self.mmc3_irq_variant,
-        }
-    }
+    pub options_bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,18 +38,16 @@ pub enum LoadRequest {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedLoadRequest {
     pub system_id: SystemId,
     pub options: SystemLoadOptions,
-    pub core_options: CoreOptions,
+    pub core_options_bytes: Vec<u8>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{LoadRequest, MediaObject, SystemLoadOptions};
-    use nerust_contract_core::options::CoreOptions;
-    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_input_schema::SystemId;
     use std::path::PathBuf;
 
@@ -75,19 +57,6 @@ mod tests {
 
         assert_eq!(media.extension.as_deref(), Some("nes"));
         assert_eq!(media.bytes.as_ref(), [1, 2, 3]);
-    }
-
-    #[test]
-    fn load_options_translate_to_core_options() {
-        assert_eq!(
-            SystemLoadOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-            }
-            .into_core_options(),
-            CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
-            }
-        );
     }
 
     #[test]

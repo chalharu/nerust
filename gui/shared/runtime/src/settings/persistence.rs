@@ -1,7 +1,6 @@
 use super::{SettingsError, SettingsPaths};
 use crc::{CRC_32_ISO_HDLC, Crc};
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_contract_core::rom::RomIdentity;
+use nerust_contract_core::identity::SystemIdentity;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_input_schema::SystemId;
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
@@ -16,9 +15,9 @@ pub fn resolve_persistence_paths(
     paths: Option<&SettingsPaths>,
     system: SystemId,
     rom_path: Option<&Path>,
-    rom_identity: RomIdentity,
+    identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
-    resolve_current_persistence_paths(shared, paths, system, rom_path, rom_identity)
+    resolve_current_persistence_paths(shared, paths, system, rom_path, identity)
 }
 
 pub fn resolve_persistence_paths_with_import(
@@ -26,36 +25,26 @@ pub fn resolve_persistence_paths_with_import(
     paths: Option<&SettingsPaths>,
     system: SystemId,
     rom_path: Option<&Path>,
-    rom_identity: RomIdentity,
+    identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
-    let resolved =
-        resolve_current_persistence_paths(shared, paths, system, rom_path, rom_identity)?;
-    maybe_auto_import_storage(shared, paths, system, rom_path, rom_identity, &resolved)?;
+    let resolved = resolve_current_persistence_paths(shared, paths, system, rom_path, identity)?;
+    maybe_auto_import_storage(shared, paths, system, rom_path, identity, &resolved)?;
     Ok(resolved)
 }
 
-pub fn system_storage_key(system: SystemId, rom_identity: RomIdentity) -> String {
-    let canonical = canonical_rom_identity(system, rom_identity);
-    let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(canonical.as_bytes());
-    format!(
-        "m{:04x}-s{:02x}-p{:016x}-c{:016x}-t{:016x}-{:08x}",
-        rom_identity.mapper_type,
-        rom_identity.sub_mapper_type,
-        rom_identity.prg_rom_crc64,
-        rom_identity.chr_rom_crc64,
-        rom_identity.trainer_crc64,
-        checksum
-    )
+pub fn system_storage_key(_system: SystemId, identity: &SystemIdentity) -> String {
+    let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&identity.identity_bytes);
+    format!("{:08x}-{:08x}", identity.identity_bytes.len(), checksum)
 }
 
 pub fn resolve_central_storage_paths(
     root: &Path,
     system: SystemId,
-    rom_identity: RomIdentity,
+    identity: &SystemIdentity,
 ) -> SidecarPaths {
     let base = root
         .join(system_id_slug(system))
-        .join(system_storage_key(system, rom_identity));
+        .join(system_storage_key(system, identity));
     SidecarPaths {
         mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME),
         states_dir: base.join(STATES_DIR_NAME),
@@ -67,7 +56,7 @@ fn resolve_current_persistence_paths(
     paths: Option<&SettingsPaths>,
     system: SystemId,
     rom_path: Option<&Path>,
-    rom_identity: RomIdentity,
+    identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
     match shared.persistence.storage_policy {
         StoragePolicy::Sidecar => {
@@ -81,7 +70,7 @@ fn resolve_current_persistence_paths(
             Ok(resolve_central_storage_paths(
                 &paths.central_storage_root,
                 system,
-                rom_identity,
+                &identity,
             ))
         }
         StoragePolicy::CustomDirectory => {
@@ -90,7 +79,7 @@ fn resolve_current_persistence_paths(
                 .storage_directory
                 .as_deref()
                 .ok_or(SettingsError::MissingCustomStorageDirectory)?;
-            Ok(resolve_central_storage_paths(root, system, rom_identity))
+            Ok(resolve_central_storage_paths(root, system, &identity))
         }
     }
 }
@@ -100,7 +89,7 @@ fn maybe_auto_import_storage(
     paths: Option<&SettingsPaths>,
     system: SystemId,
     rom_path: Option<&Path>,
-    rom_identity: RomIdentity,
+    identity: &SystemIdentity,
     destination: &SidecarPaths,
 ) -> Result<(), SettingsError> {
     let Some(rom_path) = rom_path else {
@@ -113,18 +102,15 @@ fn maybe_auto_import_storage(
     match shared.persistence.storage_policy {
         StoragePolicy::Sidecar => {
             if let Some(paths) = paths {
-                let app_shared = resolve_central_storage_paths(
-                    &paths.central_storage_root,
-                    system,
-                    rom_identity,
-                );
+                let app_shared =
+                    resolve_central_storage_paths(&paths.central_storage_root, system, &identity);
                 if !storage_is_empty(&app_shared)? {
                     copy_storage_contents(&app_shared, destination)?;
                     return Ok(());
                 }
             }
             if let Some(root) = shared.persistence.storage_directory.as_deref() {
-                let custom = resolve_central_storage_paths(root, system, rom_identity);
+                let custom = resolve_central_storage_paths(root, system, &identity);
                 if !storage_is_empty(&custom)? {
                     copy_storage_contents(&custom, destination)?;
                 }
@@ -139,7 +125,7 @@ fn maybe_auto_import_storage(
             match shared.persistence.storage_policy {
                 StoragePolicy::AppSharedData => {
                     if let Some(root) = shared.persistence.storage_directory.as_deref() {
-                        let custom = resolve_central_storage_paths(root, system, rom_identity);
+                        let custom = resolve_central_storage_paths(root, system, &identity);
                         if !storage_is_empty(&custom)? {
                             copy_storage_contents(&custom, destination)?;
                         }
@@ -150,7 +136,7 @@ fn maybe_auto_import_storage(
                         let app_shared = resolve_central_storage_paths(
                             &paths.central_storage_root,
                             system,
-                            rom_identity,
+                            &identity,
                         );
                         if !storage_is_empty(&app_shared)? {
                             copy_storage_contents(&app_shared, destination)?;
@@ -162,45 +148,6 @@ fn maybe_auto_import_storage(
         }
     }
     Ok(())
-}
-
-fn canonical_rom_identity(system: SystemId, rom_identity: RomIdentity) -> String {
-    format!(
-        "v1|{}|{:04x}|{:02x}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:016x}|{:016x}|{:016x}",
-        system_id_slug(system),
-        rom_identity.mapper_type,
-        rom_identity.sub_mapper_type,
-        rom_identity.format,
-        rom_identity.has_battery,
-        rom_identity.trainer_len,
-        rom_identity.prg_rom_len,
-        rom_identity.chr_rom_len,
-        rom_identity.prg_ram_len,
-        rom_identity.save_prg_ram_len,
-        rom_identity.chr_ram_len,
-        rom_identity.save_chr_ram_len,
-        mirror_mode_slug(rom_identity.mirror_mode),
-        rom_identity.prg_rom_crc64,
-        rom_identity.chr_rom_crc64,
-        rom_identity.trainer_crc64,
-    )
-}
-
-fn mirror_mode_slug(mode: MirrorMode) -> String {
-    match mode {
-        MirrorMode::Horizontal => "horizontal".to_string(),
-        MirrorMode::Vertical => "vertical".to_string(),
-        MirrorMode::Single0 => "single0".to_string(),
-        MirrorMode::Single1 => "single1".to_string(),
-        MirrorMode::Four => "four".to_string(),
-        MirrorMode::Custom(lut) => {
-            let mut text = "custom".to_string();
-            for value in lut {
-                text.push_str(format!("-{value}").as_str());
-            }
-            text
-        }
-    }
 }
 
 fn system_id_slug(system: SystemId) -> &'static str {

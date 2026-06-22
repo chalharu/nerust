@@ -29,8 +29,8 @@ pub fn parse_cartridge_bytes(data: &[u8]) -> Result<CartridgeData, CartridgePars
 #[cfg(test)]
 mod tests {
     use super::parse_cartridge_bytes;
-    use nerust_contract_core::mirror::MirrorMode;
-    use nerust_contract_core::rom::RomFormat;
+    use nerust_nes_core::mirror::MirrorMode;
+    use nerust_nes_core::rom_format::RomFormat;
 
     #[test]
     fn parses_ines_metadata() {

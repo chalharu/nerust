@@ -12,6 +12,7 @@ log.workspace = true
 nerust_contract_core.workspace = true
 nerust_gui_settings.workspace = true
 nerust_input_schema.workspace = true
+nerust_nes_core.workspace = true
 nerust_persistence.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true

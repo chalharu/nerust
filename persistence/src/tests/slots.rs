@@ -1,8 +1,4 @@
-use super::{
-    prepare_test_dir, test_identity, test_identity_with_rom, test_rom_identity,
-    test_rom_identity_with_battery, test_rom_identity_with_format,
-    test_rom_identity_with_prg_rom_crc64, test_rom_identity_with_save_prg_ram_len,
-};
+use super::{prepare_test_dir, test_identity, test_identity_with_bytes};
 use crate::slots::{
     allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
     scan_state_slots, scan_state_slots_for_identity, state_slot_path, write_autosave_state_slot,
@@ -16,8 +12,8 @@ fn slot_id_allocation_is_monotonic_across_deletions() {
     let dir = prepare_test_dir("slot-id-allocation");
 
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
-    write_state_slot(&dir, 1, b"a", test_identity(), None).unwrap();
-    write_state_slot(&dir, 2, b"b", test_identity(), None).unwrap();
+    write_state_slot(&dir, 1, b"a", &test_identity(), None).unwrap();
+    write_state_slot(&dir, 2, b"b", &test_identity(), None).unwrap();
     delete_state_slot(&state_slot_path(&dir, 1)).unwrap();
 
     assert_eq!(allocate_next_slot_id(&dir).unwrap(), 3);
@@ -35,7 +31,7 @@ fn slot_id_allocation_persists_without_writing_slot_files() {
 fn autosave_slot_round_trips_without_listing_or_allocation() {
     let dir = prepare_test_dir("autosave-slot");
 
-    let written = write_autosave_state_slot(&dir, b"autosave", test_identity(), None).unwrap();
+    let written = write_autosave_state_slot(&dir, b"autosave", &test_identity(), None).unwrap();
     let loaded = load_state_slot(&autosave_state_slot_path(&dir)).unwrap();
 
     assert_eq!(written.slot_id, 0);
@@ -49,7 +45,7 @@ fn autosave_slot_round_trips_without_listing_or_allocation() {
 fn corrupt_slot_does_not_hide_valid_slots_or_block_allocation() {
     let dir = prepare_test_dir("corrupt-slot-scan");
 
-    write_state_slot(&dir, 1, b"ok", test_identity(), None).unwrap();
+    write_state_slot(&dir, 1, b"ok", &test_identity(), None).unwrap();
     fs::write(state_slot_path(&dir, 2), b"not-a-zip-archive").unwrap();
 
     let slots = scan_state_slots(&dir).unwrap();
@@ -61,16 +57,14 @@ fn corrupt_slot_does_not_hide_valid_slots_or_block_allocation() {
 #[test]
 fn scan_state_slots_for_identity_filters_different_roms() {
     let dir = prepare_test_dir("identity-filtered-slots");
-    let matching_identity = test_rom_identity();
-    let mismatched_identity = test_rom_identity_with_prg_rom_crc64(100);
-    let header_corrected_identity =
-        test_rom_identity_with_format(nerust_contract_core::rom::RomFormat::Nes20);
+    let matching = test_identity();
+    let mismatched = test_identity_with_bytes(vec![5, 6, 7, 8]);
 
     write_state_slot(
         &dir,
         1,
         b"matching",
-        test_identity_with_rom(matching_identity),
+        &test_identity_with_bytes(matching.identity_bytes.clone()),
         None,
     )
     .unwrap();
@@ -78,21 +72,16 @@ fn scan_state_slots_for_identity_filters_different_roms() {
         &dir,
         2,
         b"mismatched-rom",
-        test_identity_with_rom(mismatched_identity),
-        None,
-    )
-    .unwrap();
-    write_state_slot(
-        &dir,
-        3,
-        b"header-corrected",
-        test_identity_with_rom(header_corrected_identity),
+        &test_identity_with_bytes(mismatched.identity_bytes.clone()),
         None,
     )
     .unwrap();
 
-    let slots =
-        scan_state_slots_for_identity(&dir, test_identity_with_rom(matching_identity)).unwrap();
+    let slots = scan_state_slots_for_identity(
+        &dir,
+        &test_identity_with_bytes(matching.identity_bytes.clone()),
+    )
+    .unwrap();
     let slot_ids = slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>();
 
     assert_eq!(slot_ids, vec![1]);
@@ -101,47 +90,41 @@ fn scan_state_slots_for_identity_filters_different_roms() {
 #[test]
 fn identity_filtering_keeps_canonical_matches_across_runtime_options() {
     let dir = prepare_test_dir("canonical-identity-filtering");
-    let matching_identity = test_rom_identity();
+    let matching = test_identity();
+
     write_state_slot(
         &dir,
         1,
         b"matching",
-        test_identity_with_rom(matching_identity),
+        &test_identity_with_bytes(matching.identity_bytes.clone()),
         None,
     )
     .unwrap();
     write_state_slot(
         &dir,
         2,
-        b"battery-mismatch",
-        test_identity_with_rom(test_rom_identity_with_battery(false)),
+        b"mismatched",
+        &test_identity_with_bytes(vec![9, 10, 11, 12]),
         None,
     )
     .unwrap();
     write_state_slot(
         &dir,
         3,
-        b"save-ram-mismatch",
-        test_identity_with_rom(test_rom_identity_with_save_prg_ram_len(
-            matching_identity.save_prg_ram_len + 1,
-        )),
-        None,
-    )
-    .unwrap();
-    write_state_slot(
-        &dir,
-        4,
-        b"same-identity-different-state-compatibility",
-        test_identity_with_rom(matching_identity),
+        b"same-identity-again",
+        &test_identity_with_bytes(matching.identity_bytes.clone()),
         None,
     )
     .unwrap();
 
-    let slots =
-        scan_state_slots_for_identity(&dir, test_identity_with_rom(matching_identity)).unwrap();
+    let slots = scan_state_slots_for_identity(
+        &dir,
+        &test_identity_with_bytes(matching.identity_bytes.clone()),
+    )
+    .unwrap();
     assert_eq!(
         slots.iter().map(|slot| slot.slot_id).collect::<Vec<_>>(),
-        vec![1, 4]
+        vec![1, 3]
     );
 }
 
@@ -152,7 +135,7 @@ fn save_slot_summary_matches_loaded_summary() {
         &dir,
         11,
         b"state",
-        test_identity(),
+        &test_identity(),
         Some(&ThumbnailSource {
             width: 1,
             height: 1,

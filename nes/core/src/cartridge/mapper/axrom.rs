@@ -5,7 +5,7 @@ use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
-use nerust_contract_core::mirror::MirrorMode;
+use crate::mirror::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct AxRom {

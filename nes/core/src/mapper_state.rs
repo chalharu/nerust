@@ -1,4 +1,4 @@
-use nerust_contract_core::mirror::MirrorMode;
+use crate::mirror::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 pub(crate) enum MappingMode {

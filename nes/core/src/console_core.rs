@@ -2,7 +2,7 @@ use std::array;
 
 use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::device::{Device, DeviceKind, PortIo};
-use nerust_contract_core::persistence::CanonicalMediaIdentity;
+use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, GpuCommand, GpuCommandList,
     PixelFormat, VideoSignalKind,
@@ -185,8 +185,11 @@ impl ConsoleCore for NesConsoleCore {
             .map_err(|e| CoreError::Core(e.to_string()))
     }
 
-    fn identity(&self) -> Result<CanonicalMediaIdentity, CoreError> {
-        Ok(CanonicalMediaIdentity::Rom(self.core_ref()?.rom_identity()))
+    fn identity(&self) -> Result<SystemIdentity, CoreError> {
+        self.core_ref()?
+            .rom_identity()
+            .into_system_identity()
+            .map_err(|e| CoreError::Core(e))
     }
 }
 
