@@ -9,7 +9,7 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 crc.workspace = true
-nerust_cartridge_data.workspace = true
+
 nerust_contract_core.workspace = true
 nerust_nes_core.workspace = true
 # Buttons from nerust_nes_core::input_types
