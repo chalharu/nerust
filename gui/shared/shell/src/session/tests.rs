@@ -260,13 +260,13 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 #[test]
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), SystemLoadOptions::default())
         .unwrap();
     assert!(
         session
-            .load_resolved(MediaObject::new(None, test_rom()), resolved)
+            .load_resolved(MediaObject::new(None, test_rom()))
             .is_ok()
     );
 }
@@ -275,12 +275,12 @@ fn system_load_options_flow_into_session_load() {
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .load_resolved(MediaObject::new(None, test_rom()))
         .unwrap();
     assert!(session.loaded());
 
@@ -299,12 +299,12 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()))
         .unwrap();
 
     let mapper_save_path = session
@@ -330,12 +330,12 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()))
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -367,12 +367,12 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom()))
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
@@ -397,15 +397,12 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let resolved = session
+    let _resolved = session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
     session
-        .load_resolved(
-            MediaObject::new(Some(rom_path.clone()), test_rom()),
-            resolved,
-        )
+        .load_resolved(MediaObject::new(Some(rom_path.clone()), test_rom()))
         .unwrap();
     assert!(session.save_hidden_lifecycle_state());
 
@@ -420,15 +417,12 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session2 = test_session();
     let options = session2.factory().default_load_options();
-    let resolved = session2
+    let _resolved = session2
         .factory()
         .resolve_load_request(session2.settings_snapshot(), options)
         .unwrap();
     session2
-        .load_resolved(
-            MediaObject::new(Some(rom_path), test_rom_with_mapper4()),
-            resolved,
-        )
+        .load_resolved(MediaObject::new(Some(rom_path), test_rom_with_mapper4()))
         .unwrap();
     assert!(!session2.load_hidden_lifecycle_state());
     assert!(!autosave_path.exists());
