@@ -1,5 +1,4 @@
 use nerust_input_schema::SystemId;
-use nerust_nes_core::core_options::Mmc3IrqVariant;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -220,8 +219,6 @@ pub mod input {
 }
 
 pub mod nes {
-    use super::Mmc3IrqVariant;
-
     #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct NesSettings {
@@ -238,7 +235,8 @@ pub mod nes {
     #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
     pub struct NesCoreSettings {
-        pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
+        /// "sharp" or "nec" (empty = auto). Opaque string; only the NES factory interprets this.
+        pub mmc3_irq_variant: Option<String>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]

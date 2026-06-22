@@ -17,20 +17,11 @@ pub enum WindowMmc3IrqVariant {
 }
 
 fn system_load_request_from_window_options(options: WindowLoadOptions) -> LoadRequest {
-    let options_bytes = options
-        .mmc3_irq_variant
-        .map(|v| {
-            let core_opts = nerust_nes_core::core_options::CoreOptions {
-                mmc3_irq_variant: Some(match v {
-                    WindowMmc3IrqVariant::Sharp => {
-                        nerust_nes_core::core_options::Mmc3IrqVariant::Sharp
-                    }
-                    WindowMmc3IrqVariant::Nec => nerust_nes_core::core_options::Mmc3IrqVariant::Nec,
-                }),
-            };
-            core_opts.into_bytes()
-        })
-        .unwrap_or_default();
+    let options_bytes = match options.mmc3_irq_variant {
+        Some(WindowMmc3IrqVariant::Sharp) => b"sharp".to_vec(),
+        Some(WindowMmc3IrqVariant::Nec) => b"nec".to_vec(),
+        None => Vec::new(),
+    };
     LoadRequest::Explicit {
         system_id: SystemId::Nes,
         options: SystemLoadOptions { options_bytes },

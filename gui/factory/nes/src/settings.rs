@@ -49,20 +49,32 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
     }
 }
 
+fn mmc3_from_string(s: &str) -> Option<Mmc3IrqVariant> {
+    match s {
+        "sharp" => Some(Mmc3IrqVariant::Sharp),
+        "nec" => Some(Mmc3IrqVariant::Nec),
+        _ => None,
+    }
+}
+
+fn mmc3_from_optional(s: Option<String>) -> Option<Mmc3IrqVariant> {
+    s.as_deref().and_then(mmc3_from_string)
+}
+
 pub(crate) fn effective_load_options(
     settings: &nerust_gui_settings::shared::DesktopSharedSettings,
     explicit: SystemLoadOptions,
 ) -> SystemLoadOptions {
-    let mmc3 = system_settings(settings).core.mmc3_irq_variant;
+    let saved = mmc3_from_optional(system_settings(settings).core.mmc3_irq_variant);
     let explicit_val = if explicit.options_bytes.is_empty() {
         None
     } else {
-        CoreOptions::from_bytes(&explicit.options_bytes)
+        std::str::from_utf8(&explicit.options_bytes)
             .ok()
-            .and_then(|o| o.mmc3_irq_variant)
+            .and_then(mmc3_from_string)
     };
     let core_opts = CoreOptions {
-        mmc3_irq_variant: explicit_val.or(mmc3),
+        mmc3_irq_variant: explicit_val.or(saved),
     };
     SystemLoadOptions {
         options_bytes: core_opts.into_bytes(),
@@ -123,10 +135,11 @@ pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPa
                 label: text(language, UiText::Mmc3IrqVariant).to_string(),
                 kind: SystemSettingsFieldKind::Choice {
                     selected: SystemSettingsChoiceId(Cow::Borrowed(
-                        match current.core.mmc3_irq_variant {
+                        match current.core.mmc3_irq_variant.as_deref() {
                             None => "auto",
-                            Some(Mmc3IrqVariant::Sharp) => "sharp",
-                            Some(Mmc3IrqVariant::Nec) => "nec",
+                            Some("sharp") => "sharp",
+                            Some("nec") => "nec",
+                            _ => "auto",
                         },
                     )),
                     options: Arc::from([
@@ -169,8 +182,8 @@ pub(crate) fn apply_nes_settings_choice(
         MMC3_FIELD => {
             current.core.mmc3_irq_variant = match choice.as_str() {
                 "auto" => None,
-                "sharp" => Some(Mmc3IrqVariant::Sharp),
-                "nec" => Some(Mmc3IrqVariant::Nec),
+                "sharp" => Some("sharp".to_string()),
+                "nec" => Some("nec".to_string()),
                 other => return Err(format!("unsupported mmc3 choice: {other}")),
             };
             Ok(())
@@ -272,10 +285,7 @@ mod tests {
 
     fn nec_options() -> SystemLoadOptions {
         SystemLoadOptions {
-            options_bytes: CoreOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
-            }
-            .into_bytes(),
+            options_bytes: b"nec".to_vec(),
         }
     }
 
@@ -314,7 +324,7 @@ mod tests {
             .systems
             .get_mut(&nerust_input_schema::SystemId::Nes)
             .unwrap();
-        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+        nes.core.mmc3_irq_variant = Some("sharp".to_string());
 
         let resolved = effective_load_options(&settings, nec_options());
 
