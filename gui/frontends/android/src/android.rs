@@ -12,7 +12,7 @@ use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
-use jni::jni_str;
+use jni::{jni_sig, jni_str};
 use nerust_backend_wgpu::RenderResult;
 use nerust_factory_nes::NesFactory;
 use nerust_factory_nes::touch::{
@@ -437,6 +437,38 @@ impl AndroidFrontend {
     fn handle_menu_action(&mut self, action: MenuAction) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
+            MenuAction::Exit => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    if let Err(error) = self.session.unload() {
+                        log::warn!("failed to unload session on exit: {error}");
+                    }
+                }
+                self.session.flush_before_exit();
+                // Finish the activity so the app exits cleanly and is not
+                // restored on next launch (no swipe-kill scenario).
+                let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+                let _ = vm.attach_current_thread(|env| {
+                    let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
+                    let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+                    let _ = env.call_method(
+                        &activity,
+                        jni_str!("finishAndRemoveTask"),
+                        jni_sig!("()V"),
+                        &[],
+                    );
+                    Ok::<_, jni::errors::Error>(())
+                });
+            }
+            MenuAction::Unload => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    let _ = self.session.unload();
+                }
+                self.request_redraw();
+            }
             MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
             MenuAction::OpenLibrary => self.request_library_dialog(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
