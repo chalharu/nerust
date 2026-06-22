@@ -10,8 +10,8 @@ pub struct PortIo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceKind(pub u16);
-
-impl DeviceKind {
-    pub const NONE: Self = Self(0);
+pub enum DeviceKind {
+    None,
+    Gamepad,
+    Zapper,
 }

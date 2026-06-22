@@ -91,7 +91,7 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
-    use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
+    use nerust_gui_shell::load::LoadRequest;
     use nerust_input_schema::SystemId;
 
     #[test]
