@@ -4,7 +4,7 @@ use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
 use nerust_contract_core::ConsoleCore;
 use nerust_contract_core::identity::SystemIdentity;
-use nerust_contract_core::input::SystemInputAdapter;
+use nerust_contract_core::input::{InputStatePersistence, SystemInputAdapter};
 use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError, GpuCommandList};
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -135,12 +135,6 @@ struct MockAdapter;
 impl SystemInputAdapter for MockAdapter {
     fn apply_event(&mut self, _: nerust_input_schema::DigitalInputEvent) {}
     fn clear(&mut self) {}
-    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), String> {
-        Ok(())
-    }
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
-    }
     fn decode_persisted_input(
         &self,
         _: &str,
@@ -148,6 +142,14 @@ impl SystemInputAdapter for MockAdapter {
         _: bool,
     ) -> Option<nerust_input_schema::DigitalInputEvent> {
         None
+    }
+}
+impl InputStatePersistence for MockAdapter {
+    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), nerust_contract_core::input::InputError> {
+        Ok(())
+    }
+    fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_contract_core::input::InputError> {
+        Ok(Vec::new())
     }
 }
 
