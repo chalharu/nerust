@@ -157,12 +157,11 @@ impl HostState {
     fn load_inner(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
         let media = MediaObject::new(rom_path, data);
         let options = self.session.default_load_options();
-        if self
+        if let Ok(resolved) = self
             .session
             .factory()
             .resolve_load_request(self.session.settings_snapshot(), options)
-            .is_ok()
-            && self.session.load_resolved(media).is_ok()
+            && self.session.load_resolved(media, resolved).is_ok()
         {
             let _ = self.session.run_command(SessionCommand::Resume);
             self.after_rom_load();

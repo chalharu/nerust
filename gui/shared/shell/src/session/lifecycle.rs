@@ -1,4 +1,4 @@
-use crate::load::MediaObject;
+use crate::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::SessionError;
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
@@ -108,7 +108,11 @@ impl SessionHandle {
         Ok(plan)
     }
 
-    pub fn load_resolved(&mut self, media: MediaObject) -> Result<(), SessionError> {
+    pub fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        _resolved: ResolvedLoadRequest,
+    ) -> Result<(), SessionError> {
         self.persistence.flush_mapper_save(&self.emu_core)?;
         self.emu_core.load(&media)?;
         self.loaded_media = Some(super::LoadedMedia {
