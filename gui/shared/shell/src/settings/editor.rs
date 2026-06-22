@@ -104,9 +104,9 @@ mod tests {
     use crate::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
+    use crate::test_support::{TEST_ATT_P1, TEST_CTRL_A};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-    use nerust_input_nes_runtime::topology::{NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A};
     use nerust_input_schema::SystemId;
 
     fn snapshot() -> SettingsSnapshot {
@@ -126,8 +126,8 @@ mod tests {
                 &snapshot,
                 &CaptureTarget::Binding {
                     system: SystemId::Nes,
-                    attachment: NES_ATTACHMENT_PLAYER_ONE.as_str().into(),
-                    control: NES_CONTROL_A.as_str().into(),
+                    attachment: TEST_ATT_P1.as_str().to_string(),
+                    control: TEST_CTRL_A.as_str().to_string(),
                 }
             ),
             Some(KeyboardKey::KeyZ)
@@ -139,8 +139,8 @@ mod tests {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
             system: SystemId::Nes,
-            attachment: NES_ATTACHMENT_PLAYER_ONE.as_str().into(),
-            control: NES_CONTROL_A.as_str().into(),
+            attachment: TEST_ATT_P1.as_str().to_string(),
+            control: TEST_CTRL_A.as_str().to_string(),
         };
 
         apply_capture_target(&mut snapshot, &target, Some(KeyboardKey::KeyA));

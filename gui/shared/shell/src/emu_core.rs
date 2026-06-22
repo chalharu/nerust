@@ -117,8 +117,8 @@ impl EmuCore {
         Ok(())
     }
 
-    // TODO: CoreConfig に CoreOptions を統合する。blocked on NesConsoleCore::load
-    // が &CoreConfig を受け取るように変更されること。
+    // TODO: CoreConfig に CoreOptions を統合する。blocked on emu thread command protocol
+    // が CoreOptions を含む CoreConfig を送信できるように変更されること。
     pub fn load(&self, media: &MediaObject) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu

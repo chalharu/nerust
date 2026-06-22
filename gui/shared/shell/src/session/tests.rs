@@ -19,6 +19,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::test_support::single_port_topology;
+use nerust_input_schema::SystemId;
+
 struct MockConsoleCore {
     loaded: bool,
     paused: bool,
@@ -169,8 +172,8 @@ impl CoreFactory for MockFactory {
     }
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
         crate::descriptor::SystemDescriptor {
-            system_id: nerust_input_schema::SystemId::Nes,
-            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
+            system_id: SystemId::Nes,
+            input_topology: single_port_topology(),
         }
     }
     fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {

@@ -96,8 +96,8 @@ fn default_control_binding(
 #[cfg(test)]
 mod tests {
     use super::default_shared_settings;
+    use crate::test_support::TEST_CTRL_MIC;
     use nerust_gui_settings::input::ShortcutAction;
-    use nerust_input_nes_runtime::topology::FAMICOM_P2_CONTROL_MICROPHONE;
 
     #[test]
     fn default_settings_seed_nes_bindings_and_system_settings() {
@@ -132,7 +132,7 @@ mod tests {
                 .unwrap()
                 .bindings
                 .iter()
-                .any(|binding| binding.control.as_str() == FAMICOM_P2_CONTROL_MICROPHONE.as_str())
+                .any(|binding| binding.control.as_str() == TEST_CTRL_MIC.as_str())
         );
     }
 }

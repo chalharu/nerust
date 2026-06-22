@@ -106,24 +106,20 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 #[cfg(test)]
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use nerust_input_nes_runtime::topology::{
-        FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
-    };
+    use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections = keyboard_binding_sections(
-            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
-        );
+        let sections = keyboard_binding_sections(&dual_port_topology());
 
         assert_eq!(sections.len(), 2);
-        assert_eq!(sections[0].attachment, NES_ATTACHMENT_PLAYER_ONE);
-        assert_eq!(sections[1].attachment, NES_ATTACHMENT_PLAYER_TWO);
+        assert_eq!(sections[0].attachment, TEST_ATT_P1);
+        assert_eq!(sections[1].attachment, TEST_ATT_P2);
         assert!(
             sections[1]
                 .bindings
                 .iter()
-                .any(|binding| binding.control == FAMICOM_P2_CONTROL_MICROPHONE)
+                .any(|binding| binding.control == TEST_CTRL_MIC)
         );
     }
 

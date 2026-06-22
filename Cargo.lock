@@ -3193,7 +3193,6 @@ dependencies = [
  "nerust_contract_emuthread",
  "nerust_gui_runtime",
  "nerust_gui_settings",
- "nerust_input_nes_runtime",
  "nerust_input_schema",
  "nerust_persistence",
  "nerust_screen_video",
