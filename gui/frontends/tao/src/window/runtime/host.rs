@@ -294,9 +294,7 @@ impl HostState {
                     .on_frame_presented(self.session.metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
             }
-            RenderResult::Skipped | RenderResult::Error => {
-                self.request_redraw();
-            }
+            RenderResult::Skipped | RenderResult::Error => {}
         }
     }
 
