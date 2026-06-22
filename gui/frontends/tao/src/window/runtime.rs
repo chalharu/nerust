@@ -81,10 +81,18 @@ impl WindowRuntime {
                 }
                 WindowEvent::Focused(true) => {
                     self.host.active = true;
+                    if self.host.auto_paused() {
+                        self.host.resume_session();
+                        self.host.clear_auto_paused();
+                    }
                     self.host.request_redraw();
                 }
                 WindowEvent::Focused(false) => {
                     self.host.active = false;
+                    if self.host.session().can_pause() {
+                        self.host.pause_session();
+                        self.host.set_auto_paused();
+                    }
                     self.host.clear_keys();
                 }
                 WindowEvent::Resized(_) => {
