@@ -1,6 +1,6 @@
 use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
-use crate::session::persistence::CorePersistence;
+use crate::session::persistence::{CorePersistence, CorePersistenceError};
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
@@ -245,12 +245,12 @@ impl EmuCore {
 }
 
 impl CorePersistence for EmuCore {
-    fn save_state_raw(&self) -> Result<Vec<u8>, OperationError> {
-        self.save_state_raw()
+    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
+        self.save_state_raw().map_err(op_to_persistence)
     }
 
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError> {
-        self.load_state_raw(data)
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError> {
+        self.load_state_raw(data).map_err(op_to_persistence)
     }
 
     fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
@@ -261,11 +261,19 @@ impl CorePersistence for EmuCore {
         self.canonical_media_identity()
     }
 
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
-        self.save_mapper_raw()
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError> {
+        self.save_mapper_raw().map_err(op_to_persistence)
     }
 
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError> {
-        self.load_mapper_raw(bytes)
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
+        self.load_mapper_raw(bytes).map_err(op_to_persistence)
+    }
+}
+
+fn op_to_persistence(e: OperationError) -> CorePersistenceError {
+    match e {
+        OperationError::WorkerUnavailable => CorePersistenceError::WorkerUnavailable,
+        OperationError::NoReply => CorePersistenceError::NoReply,
+        OperationError::Reply(s) => CorePersistenceError::Core(s),
     }
 }
