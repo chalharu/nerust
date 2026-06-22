@@ -299,10 +299,8 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
 
     let mapper_save_path = session
         .persistence
-        .sidecars
-        .as_ref()
-        .expect("load should configure sidecars")
-        .mapper_save_path
+        .mapper_save_path()
+        .expect("load should configure mapper_save_path")
         .clone();
     fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
 
@@ -332,12 +330,10 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
 
     assert!(session.save_hidden_lifecycle_state());
     let autosave_path = autosave_state_slot_path(
-        &session
+        session
             .persistence
-            .sidecars
-            .as_ref()
-            .expect("load should configure sidecars")
-            .states_dir,
+            .states_dir()
+            .expect("load should configure states_dir"),
     );
     assert!(autosave_path.is_file());
     assert!(session.slots().is_empty());
@@ -371,12 +367,10 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
 
     assert!(session.save_hidden_lifecycle_state());
     let autosave_path = autosave_state_slot_path(
-        &session
+        session
             .persistence
-            .sidecars
-            .as_ref()
-            .expect("load should configure sidecars")
-            .states_dir,
+            .states_dir()
+            .expect("load should configure states_dir"),
     );
     assert!(autosave_path.is_file());
 
@@ -406,12 +400,10 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     assert!(session.save_hidden_lifecycle_state());
 
     let autosave_path = autosave_state_slot_path(
-        &session
+        session
             .persistence
-            .sidecars
-            .as_ref()
-            .expect("load should configure sidecars")
-            .states_dir,
+            .states_dir()
+            .expect("load should configure states_dir"),
     );
     assert!(autosave_path.is_file());
     drop(session);

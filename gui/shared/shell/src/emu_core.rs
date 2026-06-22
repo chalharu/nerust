@@ -1,5 +1,6 @@
 use crate::load::MediaObject;
 use crate::session::metrics::ConsoleMetrics;
+use crate::session::persistence::CorePersistence;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
 use nerust_contract_emuthread::EmuThread;
@@ -240,5 +241,31 @@ impl EmuCore {
             .recv()
             .map_err(|_| EmuCoreError::NoReply)?
             .map_err(|e| EmuCoreError::Reply(e.to_string()))
+    }
+}
+
+impl CorePersistence for EmuCore {
+    fn save_state_raw(&self) -> Result<Vec<u8>, EmuCoreError> {
+        self.save_state_raw()
+    }
+
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), EmuCoreError> {
+        self.load_state_raw(data)
+    }
+
+    fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+        self.generate_preview()
+    }
+
+    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
+        self.canonical_media_identity()
+    }
+
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, EmuCoreError> {
+        self.save_mapper_raw()
+    }
+
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), EmuCoreError> {
+        self.load_mapper_raw(bytes)
     }
 }

@@ -2,6 +2,7 @@ pub mod commands;
 pub mod input;
 mod lifecycle;
 pub mod metrics;
+pub mod persistence;
 #[cfg(test)]
 mod tests;
 pub mod title;
@@ -13,12 +14,12 @@ use crate::emu_core::EmuCore;
 use crate::factory::CoreFactory;
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::session::metrics::ConsoleMetrics;
+use crate::session::persistence::PersistenceManager;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::model::StateSlotSummary;
-use nerust_persistence::sidecar::SidecarPaths;
 use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::VideoRenderProfile;
 use std::collections::BTreeSet;
@@ -27,15 +28,6 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct PersistenceState {
-    pub(super) sidecars: Option<SidecarPaths>,
-    pub(super) mapper_save_flush_allowed: bool,
-    pub(super) mapper_save_recovery_written: bool,
-    pub(super) slots: Vec<StateSlotSummary>,
-    pub(super) active_slot_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,7 +55,7 @@ pub struct SessionHandle {
     pub(super) settings_snapshot: SettingsSnapshot,
     pub(super) pressed_keys: BTreeSet<KeyboardKey>,
     pub(super) loaded_media: Option<LoadedMedia>,
-    pub(super) persistence: PersistenceState,
+    pub(super) persistence: PersistenceManager,
 }
 
 impl SessionHandle {
@@ -93,7 +85,7 @@ impl SessionHandle {
             settings_snapshot,
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
-            persistence: PersistenceState::default(),
+            persistence: PersistenceManager::new(),
         }
     }
 
@@ -102,8 +94,8 @@ impl SessionHandle {
             system_id: Some(self.descriptor.system_id),
             metrics: self.emu_core.metrics(),
             input_topology: Some(self.descriptor.input_topology.clone()),
-            slots: Arc::from(self.persistence.slots.clone()),
-            active_slot_id: self.persistence.active_slot_id,
+            slots: Arc::from(self.persistence.slots().to_vec()),
+            active_slot_id: self.persistence.active_slot_id(),
         }
     }
 
