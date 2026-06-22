@@ -112,6 +112,14 @@ mod tests {
         PortId, SystemId,
     };
 
+    const TEST_ATT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
+    const TEST_ATT_P2: AttachmentId = AttachmentId::new("nes.attachment.player2");
+    const TEST_DEV_P1: DeviceKindId = DeviceKindId::new("nes.device.player1_pad");
+    const TEST_DEV_P2: DeviceKindId = DeviceKindId::new("nes.device.player2_famicom_pad");
+    const TEST_CTRL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
+    const TEST_CTRL_B: DigitalControlId = DigitalControlId::new("nes.control.b");
+    const TEST_CTRL_MIC: DigitalControlId = DigitalControlId::new("nes.control.microphone");
+
     fn test_topology() -> InputTopologyDescriptor {
         InputTopologyDescriptor {
             system: SystemId::Nes,
@@ -120,9 +128,9 @@ mod tests {
                     id: PortId::new("test.port1"),
                     label: "Port 1",
                     attachments: vec![AttachmentSlotDescriptor {
-                        id: AttachmentId::new("nes.attachment.player1"),
+                        id: TEST_ATT_P1,
                         label: "Player 1",
-                        device: DeviceKindId::new("nes.device.player1_pad"),
+                        device: TEST_DEV_P1,
                         supported_devices: vec![],
                     }],
                 },
@@ -130,41 +138,41 @@ mod tests {
                     id: PortId::new("test.port2"),
                     label: "Port 2",
                     attachments: vec![AttachmentSlotDescriptor {
-                        id: AttachmentId::new("nes.attachment.player2"),
+                        id: TEST_ATT_P2,
                         label: "Player 2",
-                        device: DeviceKindId::new("nes.device.player2_famicom_pad"),
+                        device: TEST_DEV_P2,
                         supported_devices: vec![],
                     }],
                 },
             ],
             devices: vec![
                 DeviceDescriptor {
-                    kind: DeviceKindId::new("nes.device.player1_pad"),
+                    kind: TEST_DEV_P1,
                     label: "NES Pad",
                     controls: vec![
                         ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: DigitalControlId::new("nes.control.a"),
+                            id: TEST_CTRL_A,
                             label: "A",
                             description: "",
                         }),
                         ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: DigitalControlId::new("nes.control.b"),
+                            id: TEST_CTRL_B,
                             label: "B",
                             description: "",
                         }),
                     ],
                 },
                 DeviceDescriptor {
-                    kind: DeviceKindId::new("nes.device.player2_famicom_pad"),
+                    kind: TEST_DEV_P2,
                     label: "Famicom Pad",
                     controls: vec![
                         ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: DigitalControlId::new("nes.control.a"),
+                            id: TEST_CTRL_A,
                             label: "A",
                             description: "",
                         }),
                         ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: DigitalControlId::new("nes.control.microphone"),
+                            id: TEST_CTRL_MIC,
                             label: "Microphone",
                             description: "",
                         }),
@@ -179,19 +187,13 @@ mod tests {
         let sections = keyboard_binding_sections(&test_topology());
 
         assert_eq!(sections.len(), 2);
-        assert_eq!(
-            sections[0].attachment,
-            AttachmentId::new("nes.attachment.player1")
-        );
-        assert_eq!(
-            sections[1].attachment,
-            AttachmentId::new("nes.attachment.player2")
-        );
+        assert_eq!(sections[0].attachment, TEST_ATT_P1);
+        assert_eq!(sections[1].attachment, TEST_ATT_P2);
         assert!(
             sections[1]
                 .bindings
                 .iter()
-                .any(|binding| binding.control == DigitalControlId::new("nes.control.microphone"))
+                .any(|binding| binding.control == TEST_CTRL_MIC)
         );
     }
 

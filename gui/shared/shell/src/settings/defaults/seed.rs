@@ -98,6 +98,8 @@ mod tests {
     use super::default_shared_settings;
     use nerust_gui_settings::input::ShortcutAction;
 
+    const TEST_CONTROL_MICROPHONE: &str = "nes.control.microphone";
+
     #[test]
     fn default_settings_seed_nes_bindings_and_system_settings() {
         let settings = default_shared_settings();
@@ -131,7 +133,7 @@ mod tests {
                 .unwrap()
                 .bindings
                 .iter()
-                .any(|binding| binding.control.as_str() == "nes.control.microphone")
+                .any(|binding| binding.control.as_str() == TEST_CONTROL_MICROPHONE)
         );
     }
 }

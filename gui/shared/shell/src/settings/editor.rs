@@ -108,6 +108,9 @@ mod tests {
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
     use nerust_input_schema::{AttachmentId, DigitalControlId, SystemId};
 
+    const TEST_ATTACHMENT: AttachmentId = AttachmentId::new("nes.attachment.player1");
+    const TEST_CONTROL: DigitalControlId = DigitalControlId::new("nes.control.a");
+
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
             shared: default_shared_settings(),
@@ -125,8 +128,8 @@ mod tests {
                 &snapshot,
                 &CaptureTarget::Binding {
                     system: SystemId::Nes,
-                    attachment: AttachmentId::new("nes.attachment.player1").as_str().into(),
-                    control: DigitalControlId::new("nes.control.a").as_str().into(),
+                    attachment: TEST_ATTACHMENT.as_str().into(),
+                    control: TEST_CONTROL.as_str().into(),
                 }
             ),
             Some(KeyboardKey::KeyZ)
@@ -138,8 +141,8 @@ mod tests {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
             system: SystemId::Nes,
-            attachment: AttachmentId::new("nes.attachment.player1").as_str().into(),
-            control: DigitalControlId::new("nes.control.a").as_str().into(),
+            attachment: TEST_ATTACHMENT.as_str().into(),
+            control: TEST_CONTROL.as_str().into(),
         };
 
         apply_capture_target(&mut snapshot, &target, Some(KeyboardKey::KeyA));
