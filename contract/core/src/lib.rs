@@ -97,6 +97,9 @@ pub struct CoreConfig {
     pub region: Option<Region>,
     pub bios_paths: HashMap<String, PathBuf>,
     pub controllers: HashMap<usize, ControllerKind>,
+    /// System-specific options (e.g. serialized `CoreOptions` for NES).
+    /// Interpreted by the `ConsoleCore` implementation.
+    pub core_options: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------

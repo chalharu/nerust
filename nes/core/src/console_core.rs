@@ -6,6 +6,7 @@ use nerust_contract_core::{
 };
 
 use crate::cartridge_rom::CartridgeData;
+use crate::core_options::CoreOptions;
 use crate::{Controller, Core};
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
@@ -87,9 +88,15 @@ impl ConsoleCore for NesConsoleCore {
     // TODO(Phase 7): `CoreConfig` から `CoreOptions` を抽出し、
     // `Core::new_with_options(cartridge_data, options)` を使う。
     // `region` フィールドは NES PAL 対応時に使用する。
-    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+    fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
         let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(cartridge_error_to_core)?;
-        let core = Core::new(cartridge_data).map_err(|e| CoreError::Core(e.to_string()))?;
+        let options = if config.core_options.is_empty() {
+            CoreOptions::default()
+        } else {
+            CoreOptions::from_bytes(&config.core_options).unwrap_or_default()
+        };
+        let core = Core::new_with_options(cartridge_data, options)
+            .map_err(|e| CoreError::Core(e.to_string()))?;
         self.core = SendCore(Some(core));
         self.paused = false;
         Ok(())
@@ -215,6 +222,7 @@ mod tests {
             region: None,
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
+            core_options: Vec::new(),
         };
 
         // load should succeed via trait method
