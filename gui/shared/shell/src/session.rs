@@ -12,7 +12,7 @@ pub use lifecycle::WindowSize;
 use crate::descriptor::{SystemDescriptor, SystemSettingsPageModel};
 use crate::emu_core::EmuCore;
 use crate::factory::CoreFactory;
-use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::metrics::ConsoleMetrics;
 use crate::session::persistence::PersistenceManager;
 use nerust_contract_core::input::SystemInputAdapter;
@@ -129,14 +129,6 @@ impl SessionHandle {
 
     pub fn default_load_options(&self) -> SystemLoadOptions {
         self.factory.default_load_options()
-    }
-
-    pub fn resolve_load_request(
-        &self,
-        settings: &SettingsSnapshot,
-        options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, String> {
-        self.factory.resolve_load_request(settings, options)
     }
 
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {

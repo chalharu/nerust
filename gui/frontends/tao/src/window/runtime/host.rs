@@ -159,6 +159,7 @@ impl HostState {
         let options = self.session.default_load_options();
         if let Ok(resolved) = self
             .session
+            .factory()
             .resolve_load_request(self.session.settings_snapshot(), options)
             && self.session.load_resolved(media, resolved).is_ok()
         {

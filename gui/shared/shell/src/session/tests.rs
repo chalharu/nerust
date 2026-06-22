@@ -1,5 +1,5 @@
 use crate::emu_core::EmuCore;
-use crate::factory::CoreFactory;
+use crate::factory::{CoreFactory, FactoryError};
 use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
 use nerust_contract_core::ConsoleCore;
@@ -158,7 +158,7 @@ impl CoreFactory for MockFactory {
     fn create_core_and_adapter(
         &self,
         _: &SettingsSnapshot,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
         Ok(build_test_core_and_adapter())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {
@@ -180,14 +180,14 @@ impl CoreFactory for MockFactory {
         _: &mut SettingsSnapshot,
         _: &crate::descriptor::SystemSettingsFieldId,
         _: &crate::descriptor::SystemSettingsChoiceId,
-    ) -> Result<(), String> {
+    ) -> Result<(), FactoryError> {
         Ok(())
     }
     fn resolve_load_request(
         &self,
         _: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<crate::load::ResolvedLoadRequest, String> {
+    ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
         let bytes = options.options_bytes.clone();
         Ok(crate::load::ResolvedLoadRequest {
             system_id: nerust_input_schema::SystemId::Nes,
