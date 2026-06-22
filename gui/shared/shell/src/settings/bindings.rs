@@ -77,7 +77,7 @@ mod tests {
 
         let conflicts = conflicting_keys(
             &settings,
-            &nerust_input_nes::topology::input_topology_descriptor(),
+            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
         );
         assert!(conflicts.contains_key(&KeyboardKey::KeyZ));
     }

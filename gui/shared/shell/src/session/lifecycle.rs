@@ -277,7 +277,8 @@ impl SessionHandle {
         match self.emu_core.save_state_raw() {
             Ok(core_bytes) => {
                 let state_blob = save_state_with_header(core_bytes);
-                match write_autosave_state_slot(&sidecars.states_dir, &state_blob, identity, None) {
+                match write_autosave_state_slot(&sidecars.states_dir, &state_blob, &identity, None)
+                {
                     Ok(_) => true,
                     Err(error) => {
                         log::warn!("saving hidden lifecycle state failed: {error}");
@@ -303,7 +304,7 @@ impl SessionHandle {
             return false;
         };
         let path = autosave_state_slot_path(&sidecars.states_dir);
-        match load_state_slot_for_identity(&path, identity) {
+        match load_state_slot_for_identity(&path, &identity) {
             Ok(Some(slot)) => {
                 if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
                     log::warn!(
@@ -350,14 +351,8 @@ impl SessionHandle {
         clear_hidden_lifecycle_state_path(&path);
     }
 
-    pub fn persistence_identity(
-        &self,
-    ) -> Option<nerust_contract_core::persistence::PersistenceIdentity> {
-        let media = self.emu_core.canonical_media_identity()?;
-        Some(nerust_contract_core::persistence::PersistenceIdentity {
-            system_id: self.descriptor.system_id,
-            media,
-        })
+    pub fn persistence_identity(&self) -> Option<nerust_contract_core::identity::SystemIdentity> {
+        self.emu_core.canonical_media_identity()
     }
 
     fn rebuild_for_settings(
@@ -411,7 +406,7 @@ impl SessionHandle {
                 loaded_media.media.path.as_deref(),
                 identity_opt
             );
-            let persistence_paths = identity_opt.and_then(|identity| {
+            let persistence_paths = identity_opt.as_ref().and_then(|identity| {
                 let resolved = self.resolve_persistence_paths(loaded_media.media.path.as_deref(), identity);
                 if resolved.is_none() {
                     log::info!(
@@ -436,18 +431,15 @@ impl SessionHandle {
     fn resolve_persistence_paths(
         &self,
         rom_path: Option<&Path>,
-        identity: nerust_contract_core::persistence::PersistenceIdentity,
+        identity: &nerust_contract_core::identity::SystemIdentity,
     ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
-        match identity.media {
-            nerust_contract_core::persistence::CanonicalMediaIdentity::Rom(rom_identity) => self
-                .settings
-                .resolve_persistence_paths_with_import(identity.system_id, rom_path, rom_identity)
-                .map_err(|error| {
-                    log::warn!("failed to resolve persistence paths: {error}");
-                    error
-                })
-                .ok(),
-        }
+        self.settings
+            .resolve_persistence_paths_with_import(identity.system_id, rom_path, identity)
+            .map_err(|error| {
+                log::warn!("failed to resolve persistence paths: {error}");
+                error
+            })
+            .ok()
     }
 
     fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
@@ -523,7 +515,7 @@ impl SessionHandle {
             self.persistence.sidecars.as_ref(),
             self.persistence_identity(),
         ) {
-            match scan_state_slots_for_identity(&sidecars.states_dir, identity) {
+            match scan_state_slots_for_identity(&sidecars.states_dir, &identity) {
                 Ok(slots) => slots,
                 Err(error) => {
                     log::warn!("slot scan failed: {error}");
@@ -617,7 +609,7 @@ impl SessionHandle {
                     &sidecars.states_dir,
                     slot_id,
                     &state_blob,
-                    identity,
+                    &identity,
                     preview.as_ref(),
                 ) {
                     Ok(_) => {

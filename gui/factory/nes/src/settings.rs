@@ -1,4 +1,3 @@
-use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_gui_settings::shared::SystemSettings;
@@ -9,6 +8,8 @@ use nerust_gui_shell::descriptor::{
 use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_input_schema::SystemId;
+use nerust_nes_core::core_options::CoreOptions;
+use nerust_nes_core::core_options::Mmc3IrqVariant;
 use nerust_screen_video::FilterType;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -48,11 +49,36 @@ fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
     }
 }
 
+fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
+    match v {
+        nerust_gui_settings::nes::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
+        nerust_gui_settings::nes::Mmc3IrqVariant::Nec => Mmc3IrqVariant::Nec,
+    }
+}
+
 pub(crate) fn effective_load_options(
     settings: &nerust_gui_settings::shared::DesktopSharedSettings,
     explicit: SystemLoadOptions,
 ) -> SystemLoadOptions {
-    explicit.with_mmc3_irq_variant(system_settings(settings).core.mmc3_irq_variant)
+    let saved = system_settings(settings)
+        .core
+        .mmc3_irq_variant
+        .map(convert_mmc3);
+    let explicit_val = if explicit.options_bytes.is_empty() {
+        None
+    } else if explicit.options_bytes == crate::MMC3_OPTION_SHARP {
+        Some(Mmc3IrqVariant::Sharp)
+    } else if explicit.options_bytes == crate::MMC3_OPTION_NEC {
+        Some(Mmc3IrqVariant::Nec)
+    } else {
+        None
+    };
+    let core_opts = CoreOptions {
+        mmc3_irq_variant: explicit_val.or(saved),
+    };
+    SystemLoadOptions {
+        options_bytes: core_opts.into_bytes(),
+    }
 }
 
 pub(crate) fn resolve_nes_load_request(
@@ -60,10 +86,12 @@ pub(crate) fn resolve_nes_load_request(
     options: SystemLoadOptions,
 ) -> Result<ResolvedLoadRequest, String> {
     let resolved = effective_load_options(&settings.shared, options);
+    let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
+        .map_err(|e| format!("failed to decode core options: {e}"))?;
     Ok(ResolvedLoadRequest {
         system_id: SystemId::Nes,
         options: resolved,
-        core_options: resolved.into_core_options(),
+        core_options_bytes: core_opts.into_bytes(),
     })
 }
 
@@ -109,8 +137,8 @@ pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPa
                     selected: SystemSettingsChoiceId(Cow::Borrowed(
                         match current.core.mmc3_irq_variant {
                             None => "auto",
-                            Some(Mmc3IrqVariant::Sharp) => "sharp",
-                            Some(Mmc3IrqVariant::Nec) => "nec",
+                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
+                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
                         },
                     )),
                     options: Arc::from([
@@ -153,8 +181,8 @@ pub(crate) fn apply_nes_settings_choice(
         MMC3_FIELD => {
             current.core.mmc3_irq_variant = match choice.as_str() {
                 "auto" => None,
-                "sharp" => Some(Mmc3IrqVariant::Sharp),
-                "nec" => Some(Mmc3IrqVariant::Nec),
+                "sharp" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp),
+                "nec" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec),
                 other => return Err(format!("unsupported mmc3 choice: {other}")),
             };
             Ok(())
@@ -170,7 +198,6 @@ mod tests {
         resolve_nes_load_request,
     };
     use crate::NesFactory;
-    use nerust_contract_core::options::Mmc3IrqVariant;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
     use nerust_gui_shell::factory::CoreFactory;
@@ -178,12 +205,14 @@ mod tests {
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_input_nes::topology::{
+    use nerust_input_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
     use nerust_input_schema::ControlDescriptor;
+    use nerust_nes_core::core_options::CoreOptions;
+    use nerust_nes_core::core_options::Mmc3IrqVariant;
     use std::borrow::Cow;
 
     fn snapshot() -> SettingsSnapshot {
@@ -253,19 +282,21 @@ mod tests {
         }));
     }
 
+    fn nec_options() -> SystemLoadOptions {
+        SystemLoadOptions {
+            options_bytes: b"nec".to_vec(),
+        }
+    }
+
     #[test]
     fn resolved_load_request_uses_saved_defaults() {
         let settings = snapshot();
 
-        let resolved = resolve_nes_load_request(
-            &settings,
-            SystemLoadOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
-            },
-        )
-        .unwrap();
+        let resolved = resolve_nes_load_request(&settings, nec_options()).unwrap();
 
-        assert_eq!(resolved.options.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
+        let core_opts =
+            CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]
@@ -292,16 +323,13 @@ mod tests {
             .systems
             .get_mut(&nerust_input_schema::SystemId::Nes)
             .unwrap();
-        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+        nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
-        let resolved = effective_load_options(
-            &settings,
-            SystemLoadOptions {
-                mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
-            },
-        );
+        let resolved = effective_load_options(&settings, nec_options());
 
-        assert_eq!(resolved.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
+        let core_opts =
+            CoreOptions::from_bytes(&resolved.options_bytes).expect("valid core options");
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]
@@ -317,5 +345,40 @@ mod tests {
             filter_type(&settings),
             nerust_screen_video::FilterType::NtscSVideo
         ));
+    }
+
+    #[test]
+    fn mmc3_irq_variant_conversion_covers_all_variants() {
+        use nerust_gui_settings::nes::Mmc3IrqVariant as SettingsVariant;
+        use nerust_nes_core::core_options::Mmc3IrqVariant as CoreVariant;
+
+        assert_eq!(
+            super::convert_mmc3(SettingsVariant::Sharp),
+            CoreVariant::Sharp
+        );
+        assert_eq!(super::convert_mmc3(SettingsVariant::Nec), CoreVariant::Nec);
+    }
+
+    #[test]
+    fn mmc3_irq_variant_round_trips_via_load_options() {
+        let settings = default_shared_settings();
+
+        let resolved = effective_load_options(
+            &settings,
+            SystemLoadOptions {
+                options_bytes: crate::MMC3_OPTION_SHARP.to_vec(),
+            },
+        );
+        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
+
+        let resolved = effective_load_options(
+            &settings,
+            SystemLoadOptions {
+                options_bytes: crate::MMC3_OPTION_NEC.to_vec(),
+            },
+        );
+        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 }

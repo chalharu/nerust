@@ -13,14 +13,19 @@ pub mod cartridge_rom;
 mod cartridge_runtime_state;
 pub mod console_core;
 pub mod controller;
+pub mod core_options;
 mod cpu;
+pub mod input_types;
 mod interrupt;
 mod mapper;
 mod mapper_state;
+pub(crate) mod mirror;
 mod persistence_codec;
 mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
+pub(crate) mod rom_format;
+pub(crate) mod rom_identity;
 pub mod rom_parse;
 
 use self::apu::Core as Apu;
@@ -36,14 +41,14 @@ use self::persistence_codec::{
 };
 use self::persistence_error::PersistenceError;
 use self::ppu::Core as Ppu;
+use crate::core_options::CoreOptions;
+#[cfg(test)]
+use crate::core_options::Mmc3IrqVariant;
+use crate::mirror::MirrorMode;
+use crate::rom_format::RomFormat;
+use crate::rom_identity::RomIdentity;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::mirror::MirrorMode;
-use nerust_contract_core::options::CoreOptions;
-#[cfg(test)]
-use nerust_contract_core::options::Mmc3IrqVariant;
-use nerust_contract_core::rom::RomFormat;
-use nerust_contract_core::rom::RomIdentity;
 use nerust_screen_video::FrameBuffer;
 use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
 use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};

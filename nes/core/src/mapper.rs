@@ -3,8 +3,8 @@ use crate::cartridge_rom::CartridgeData;
 use crate::interrupt::Interrupt;
 use crate::mapper_state::MapperStateDao;
 use crate::mapper_state::MappingMode;
+use crate::mirror::MirrorMode;
 use crate::ppu_memory_access::PpuBusEvent;
-use nerust_contract_core::mirror::MirrorMode;
 
 pub(crate) trait CartridgeDataDao {
     fn data_mut(&mut self) -> &mut CartridgeData;

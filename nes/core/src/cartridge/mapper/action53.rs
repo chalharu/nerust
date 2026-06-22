@@ -4,9 +4,9 @@ use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_ACTION53
 use crate::interrupt::Interrupt;
 use crate::mapper::{CartridgeDataDao, Mapper};
 use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::mirror::MirrorMode;
 use crate::persistence_codec::{decode_payload, encode_payload};
 use crate::persistence_error::PersistenceError;
-use nerust_contract_core::mirror::MirrorMode;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Action53RuntimeState {
@@ -224,8 +224,8 @@ mod tests {
     use crate::cartridge_rom::CartridgeData;
     use crate::interrupt::Interrupt;
     use crate::mapper::Mapper;
-    use nerust_contract_core::mirror::MirrorMode;
-    use nerust_contract_core::rom::RomFormat;
+    use crate::mirror::MirrorMode;
+    use crate::rom_format::RomFormat;
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

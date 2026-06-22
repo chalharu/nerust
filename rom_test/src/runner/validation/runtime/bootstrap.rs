@@ -2,10 +2,10 @@ use super::ValidationRuntime;
 use crate::error::RomTestError;
 use crate::manifest::RomCase;
 use crate::media::{HashingMixer, validation_screen_buffer};
-use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_input_nes::frame::Buttons;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::Core;
+use nerust_nes_core::input_types::Buttons;
+use nerust_nes_core::rom_parse;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ impl ValidationRuntime {
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
         let cartridge_data =
-            parse_cartridge_bytes(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
+            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             })?;

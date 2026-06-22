@@ -1,4 +1,3 @@
-use nerust_contract_core::options::Mmc3IrqVariant;
 use nerust_input_schema::SystemId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -220,7 +219,13 @@ pub mod input {
 }
 
 pub mod nes {
-    use super::Mmc3IrqVariant;
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Mmc3IrqVariant {
+        #[default]
+        Sharp,
+        Nec,
+    }
 
     #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(default)]
