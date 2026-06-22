@@ -1,5 +1,5 @@
 use nerust_gui_settings::input::ShortcutAction;
-use nerust_input_schema::{
+use nerust_contract_input::{
     AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor, SystemId,
 };
 

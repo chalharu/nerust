@@ -1,4 +1,4 @@
-use nerust_input_schema::{
+use nerust_contract_input::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
     DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, DigitalInputState,
     InputTopologyDescriptor, PortDescriptor, PortId, SystemId,

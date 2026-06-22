@@ -1,4 +1,4 @@
-use nerust_input_schema::{InputTopologyDescriptor, SystemId};
+use nerust_contract_input::{InputTopologyDescriptor, SystemId};
 use std::borrow::Cow;
 use std::sync::Arc;
 

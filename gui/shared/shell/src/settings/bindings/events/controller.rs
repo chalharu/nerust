@@ -1,6 +1,6 @@
 use nerust_gui_settings::input::KeyboardKey;
 use nerust_gui_settings::shared::DesktopSharedSettings;
-use nerust_input_schema::{DigitalInputEvent, SystemId};
+use nerust_contract_input::{DigitalInputEvent, SystemId};
 
 pub fn controller_event_for_key<F>(
     settings: &DesktopSharedSettings,
@@ -36,7 +36,7 @@ mod tests {
     use crate::settings::defaults::seed::default_shared_settings;
     use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_A, TEST_CTRL_MIC, test_resolve};
     use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
 
     #[test]
     fn keyboard_bindings_resolve_to_nes_input_events() {

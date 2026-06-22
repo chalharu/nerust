@@ -1,4 +1,4 @@
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -56,7 +56,7 @@ pub struct ResolvedLoadRequest {
 #[cfg(test)]
 mod tests {
     use super::{LoadRequest, MediaObject, SystemLoadOptions};
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
     use std::path::PathBuf;
 
     #[test]

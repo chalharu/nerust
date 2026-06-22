@@ -273,7 +273,7 @@ mod tests {
         language::AppLanguage,
         nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter},
     };
-    use nerust_input_schema::SystemId;
+    use nerust_contract_input::SystemId;
     use nerust_persistence::sidecar::resolve_sidecars;
     use serde_yaml::{Mapping, Value};
     use std::collections::BTreeMap;

@@ -6,7 +6,7 @@ use nerust_gui_settings::input::{
 use nerust_gui_settings::local::HostBackendLocalSettings;
 use nerust_gui_settings::nes::NesSettings;
 use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
-use nerust_input_schema::{DigitalControlId, SystemId};
+use nerust_contract_input::{DigitalControlId, SystemId};
 use std::collections::BTreeMap;
 
 const P1: &str = "nes.attachment.player1";
@@ -106,13 +106,13 @@ mod tests {
         assert!(
             settings
                 .systems
-                .contains_key(&nerust_input_schema::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::Nes)
         );
         assert!(
             settings
                 .input
                 .systems
-                .contains_key(&nerust_input_schema::SystemId::Nes)
+                .contains_key(&nerust_contract_input::SystemId::Nes)
         );
         assert!(
             settings
@@ -126,7 +126,7 @@ mod tests {
             !settings
                 .input
                 .systems
-                .get(&nerust_input_schema::SystemId::Nes)
+                .get(&nerust_contract_input::SystemId::Nes)
                 .unwrap()
                 .implicit_keyboard_profile()
                 .unwrap()

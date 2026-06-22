@@ -26,7 +26,7 @@ use nerust_gui_shell::settings::editor::{
     CaptureTarget, apply_capture_target, current_binding_label,
 };
 use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
-use nerust_input_schema::InputTopologyDescriptor;
+use nerust_contract_input::InputTopologyDescriptor;
 use rfd::FileDialog;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};

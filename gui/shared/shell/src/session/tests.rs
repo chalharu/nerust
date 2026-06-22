@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::test_support::single_port_topology;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 struct MockConsoleCore {
     loaded: bool,
@@ -55,7 +55,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            nerust_input_schema::SystemId::Nes,
+            nerust_contract_input::SystemId::Nes,
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -136,14 +136,14 @@ fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
 
 struct MockAdapter;
 impl SystemInputAdapter for MockAdapter {
-    fn apply_event(&mut self, _: nerust_input_schema::DigitalInputEvent) {}
+    fn apply_event(&mut self, _: nerust_contract_input::DigitalInputEvent) {}
     fn clear(&mut self) {}
     fn decode_persisted_input(
         &self,
         _: &str,
         _: &str,
         _: bool,
-    ) -> Option<nerust_input_schema::DigitalInputEvent> {
+    ) -> Option<nerust_contract_input::DigitalInputEvent> {
         None
     }
 }
@@ -196,7 +196,7 @@ impl CoreFactory for MockFactory {
     ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
         let bytes = options.options_bytes.clone();
         Ok(crate::load::ResolvedLoadRequest {
-            system_id: nerust_input_schema::SystemId::Nes,
+            system_id: nerust_contract_input::SystemId::Nes,
             options,
             core_options_bytes: bytes,
         })

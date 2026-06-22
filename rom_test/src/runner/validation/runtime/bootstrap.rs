@@ -2,7 +2,7 @@ use super::ValidationRuntime;
 use crate::error::RomTestError;
 use crate::manifest::RomCase;
 use crate::media::{HashingMixer, validation_screen_buffer};
-use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
+use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::Core;
 use nerust_nes_core::input_types::Buttons;
 use nerust_nes_core::rom_parse;
