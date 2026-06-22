@@ -19,13 +19,13 @@ pub mod input_types;
 mod interrupt;
 mod mapper;
 mod mapper_state;
-pub mod mirror;
+pub(crate) mod mirror;
 mod persistence_codec;
 mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
-pub mod rom_format;
-pub mod rom_identity;
+pub(crate) mod rom_format;
+pub(crate) mod rom_identity;
 pub mod rom_parse;
 
 use self::apu::Core as Apu;
