@@ -1,7 +1,6 @@
-use nerust_input_schema::{
+use nerust_contract_input::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
     DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor, PortId,
-    SystemId,
 };
 
 pub const NES_PORT_ONE: PortId = PortId::new("nes.port1");
@@ -36,7 +35,6 @@ fn digital_control(
 
 pub fn input_topology_descriptor() -> InputTopologyDescriptor {
     InputTopologyDescriptor {
-        system: SystemId::Nes,
         ports: vec![
             PortDescriptor {
                 id: NES_PORT_ONE,
@@ -102,7 +100,7 @@ mod tests {
         NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD, NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
         input_topology_descriptor,
     };
-    use nerust_input_schema::ControlDescriptor;
+    use nerust_contract_input::ControlDescriptor;
 
     #[test]
     fn nes_topology_reports_distinct_player_devices() {

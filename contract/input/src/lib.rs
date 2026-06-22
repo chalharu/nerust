@@ -1,11 +1,54 @@
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum SystemId {
-    Nes,
-    Snes,
-    Ps1,
-    MegaDrive,
+use serde::de::{self, Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+
+/// システム識別子。CoreFactory impl のみが生成する。
+/// 比較は `Eq` 経由のみ。生文字列の取り出しは不可。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SystemId(&'static str);
+
+impl SystemId {
+    pub const fn new(id: &'static str) -> Self {
+        Self(id)
+    }
+}
+
+impl fmt::Display for SystemId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl Serialize for SystemId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SystemId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(SystemIdVisitor)
+    }
+}
+
+struct SystemIdVisitor;
+
+impl<'de> Visitor<'de> for SystemIdVisitor {
+    type Value = SystemId;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a system identifier string")
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<SystemId, E> {
+        Ok(SystemId(match v {
+            "Nes" | "nes" => "nes",
+            "Snes" | "snes" => "snes",
+            "Ps1" | "ps1" => "ps1",
+            "MegaDrive" | "megadrive" => "megadrive",
+            other => return Err(E::invalid_value(Unexpected::Str(other), &self)),
+        }))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,7 +124,6 @@ pub enum ControlId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputTopologyDescriptor {
-    pub system: SystemId,
     pub ports: Vec<PortDescriptor>,
     pub devices: Vec<DeviceDescriptor>,
 }
@@ -203,7 +245,6 @@ mod tests {
         let attachment = AttachmentId::new("test.pad1");
         let device = DeviceKindId::new("test.gamepad");
         let topology = InputTopologyDescriptor {
-            system: SystemId::Nes,
             ports: vec![PortDescriptor {
                 id: PortId::new("test.port1"),
                 label: "Port 1",

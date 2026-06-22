@@ -1,4 +1,4 @@
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemIdentity {

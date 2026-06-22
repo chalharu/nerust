@@ -1,7 +1,7 @@
-use nerust_gui_settings::input::ShortcutAction;
-use nerust_input_schema::{
+use nerust_contract_input::{
     AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor, SystemId,
 };
+use nerust_gui_settings::input::ShortcutAction;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyboardBindingDescriptor {
@@ -60,7 +60,8 @@ const SHORTCUT_DESCRIPTORS: &[ShortcutDescriptor] = &[
 pub fn keyboard_binding_descriptors(
     topology: &InputTopologyDescriptor,
 ) -> Vec<KeyboardBindingDescriptor> {
-    keyboard_binding_sections(topology)
+    // system ID is irrelevant for pure binding descriptors (sections carry the system)
+    keyboard_binding_sections(topology, SystemId::new("nes"))
         .into_iter()
         .flat_map(|section| section.bindings)
         .collect()
@@ -68,6 +69,7 @@ pub fn keyboard_binding_descriptors(
 
 pub fn keyboard_binding_sections(
     topology: &InputTopologyDescriptor,
+    system: SystemId,
 ) -> Vec<KeyboardBindingSectionDescriptor> {
     topology
         .ports
@@ -80,7 +82,7 @@ pub fn keyboard_binding_sections(
                 .iter()
                 .filter_map(|control| match control {
                     ControlDescriptor::Digital(control) => Some(KeyboardBindingDescriptor {
-                        system: topology.system,
+                        system,
                         attachment: attachment.id,
                         attachment_label: attachment.label,
                         control: control.id,
@@ -90,7 +92,7 @@ pub fn keyboard_binding_sections(
                 })
                 .collect::<Vec<_>>();
             Some(KeyboardBindingSectionDescriptor {
-                system: topology.system,
+                system,
                 attachment: attachment.id,
                 attachment_label: attachment.label,
                 bindings,
@@ -107,10 +109,11 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
     use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};
+    use nerust_contract_input::SystemId;
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections = keyboard_binding_sections(&dual_port_topology());
+        let sections = keyboard_binding_sections(&dual_port_topology(), SystemId::new("nes"));
 
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].attachment, TEST_ATT_P1);

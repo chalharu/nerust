@@ -7,7 +7,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_input_schema.workspace = true
+nerust_contract_input.workspace = true
 serde = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

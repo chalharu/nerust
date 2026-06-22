@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::test_support::single_port_topology;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 
 struct MockConsoleCore {
     loaded: bool,
@@ -55,7 +55,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            nerust_input_schema::SystemId::Nes,
+            nerust_contract_input::SystemId::new("nes"),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -136,14 +136,14 @@ fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
 
 struct MockAdapter;
 impl SystemInputAdapter for MockAdapter {
-    fn apply_event(&mut self, _: nerust_input_schema::DigitalInputEvent) {}
+    fn apply_event(&mut self, _: nerust_contract_input::DigitalInputEvent) {}
     fn clear(&mut self) {}
     fn decode_persisted_input(
         &self,
         _: &str,
         _: &str,
         _: bool,
-    ) -> Option<nerust_input_schema::DigitalInputEvent> {
+    ) -> Option<nerust_contract_input::DigitalInputEvent> {
         None
     }
 }
@@ -161,6 +161,14 @@ impl InputStatePersistence for MockAdapter {
 
 struct MockFactory;
 impl CoreFactory for MockFactory {
+    fn system_id(&self) -> SystemId {
+        SystemId::new("nes")
+    }
+
+    fn display_name(&self) -> &'static str {
+        "NES (test)"
+    }
+
     fn create_core_and_adapter(
         &self,
         _: &SettingsSnapshot,
@@ -172,7 +180,6 @@ impl CoreFactory for MockFactory {
     }
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
         crate::descriptor::SystemDescriptor {
-            system_id: SystemId::Nes,
             input_topology: single_port_topology(),
         }
     }
@@ -196,7 +203,6 @@ impl CoreFactory for MockFactory {
     ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
         let bytes = options.options_bytes.clone();
         Ok(crate::load::ResolvedLoadRequest {
-            system_id: nerust_input_schema::SystemId::Nes,
             options,
             core_options_bytes: bytes,
         })

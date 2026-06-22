@@ -3,7 +3,7 @@ use crate::topology::{
     NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT, NES_CONTROL_RIGHT,
     NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
-use nerust_input_schema::{DigitalInputEvent, DigitalInputState};
+use nerust_contract_input::{DigitalInputEvent, DigitalInputState};
 
 pub fn digital_event_from_persisted_ids(
     attachment_id: &str,

@@ -1,5 +1,5 @@
 [package]
-name = "nerust_input_schema"
+name = "nerust_contract_input"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -7,4 +7,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }

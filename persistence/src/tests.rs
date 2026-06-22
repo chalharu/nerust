@@ -7,7 +7,7 @@ use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
 
 use crate::time::unix_millis;
 use nerust_contract_core::identity::SystemIdentity;
-use nerust_input_schema::SystemId;
+use nerust_contract_input::SystemId;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -21,11 +21,11 @@ fn prepare_test_dir(name: &str) -> PathBuf {
 }
 
 fn test_identity() -> SystemIdentity {
-    SystemIdentity::new(SystemId::Nes, vec![1, 2, 3, 4])
+    SystemIdentity::new(SystemId::new("nes"), vec![1, 2, 3, 4])
 }
 
 fn test_identity_with_bytes(bytes: Vec<u8>) -> SystemIdentity {
-    SystemIdentity::new(SystemId::Nes, bytes)
+    SystemIdentity::new(SystemId::new("nes"), bytes)
 }
 
 fn test_metadata(slot_id: u64, has_thumbnail: bool) -> StateArchiveMetadata {
@@ -34,7 +34,7 @@ fn test_metadata(slot_id: u64, has_thumbnail: bool) -> StateArchiveMetadata {
         slot_id,
         saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
         has_thumbnail,
-        system_id: SystemId::Nes,
+        system_id: SystemId::new("nes"),
         identity_bytes: vec![1, 2, 3, 4],
         options_bytes: Vec::new(),
         emulator_version: "test".into(),
