@@ -2,6 +2,7 @@ use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::emu_core::EmuCore;
+use nerust_gui_shell::factory::FactoryError;
 use nerust_input_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;
@@ -13,7 +14,7 @@ use crate::adapter::NesAdapter;
 
 pub(crate) fn create_core_and_adapter(
     settings: &SettingsSnapshot,
-) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
     let speaker = nerust_gui_shell::settings::build_speaker(&settings.local);
     let filter = crate::settings::filter_type(&settings.shared);
     let cell = Arc::new(NesInputCell::new());
@@ -28,7 +29,7 @@ fn build_emu_core(
     speaker: Box<dyn nerust_contract_core::audio::AudioBackend + Send>,
     filter_type: FilterType,
     controller: Box<dyn nerust_nes_core::controller::Controller + Send>,
-) -> Result<EmuCore, String> {
+) -> Result<EmuCore, FactoryError> {
     let source_logical_size = LogicalSize {
         width: 256,
         height: 240,

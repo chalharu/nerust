@@ -202,10 +202,17 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
         let options = self.session.default_load_options();
-        let resolved = self
+        let resolved = match self
             .session
-            .resolve_load_request(self.session.settings_snapshot(), options);
-        if let Err(error) = resolved.and_then(|r| self.session.load_resolved(media, r)) {
+            .factory()
+            .resolve_load_request(self.session.settings_snapshot(), options)
+        {
+            Ok(r) => r,
+            Err(error) => {
+                return Err(format!("failed to start ROM {id} from library: {error}"));
+            }
+        };
+        if let Err(error) = self.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
         self.finish_rom_load(event_loop, id, restore_hidden_state);
@@ -265,10 +272,20 @@ impl AndroidFrontend {
             })?;
         let media = MediaObject::new(Some(path), bytes);
         let options = self.session.default_load_options();
-        let resolved = self
+        let resolved = match self
             .session
-            .resolve_load_request(self.session.settings_snapshot(), options);
-        if let Err(error) = resolved.and_then(|r| self.session.load_resolved(media, r)) {
+            .factory()
+            .resolve_load_request(self.session.settings_snapshot(), options)
+        {
+            Ok(r) => r,
+            Err(error) => {
+                return Err(format!(
+                    "failed to load imported Android ROM {}: {error}",
+                    entry.display_name
+                ));
+            }
+        };
+        if let Err(error) = self.session.load_resolved(media, resolved) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
                     "failed to roll back Android ROM import {} after load error: {remove_error}",
@@ -350,13 +367,7 @@ impl AndroidFrontend {
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
         }
-        if let Err(error) = self.session.clear_input() {
-            log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
-            self.lifecycle_restore_pending = false;
-            self.session.clear_hidden_lifecycle_state();
-            self.session.flush_before_exit();
-            return;
-        }
+        self.session.clear_input();
         self.active_touches.clear();
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
@@ -800,7 +811,7 @@ impl ApplicationHandler for AndroidFrontend {
             }
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
-                let _ = self.session.clear_input();
+                self.session.clear_input();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);

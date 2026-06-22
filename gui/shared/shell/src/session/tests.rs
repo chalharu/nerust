@@ -1,10 +1,10 @@
 use crate::emu_core::EmuCore;
-use crate::factory::CoreFactory;
+use crate::factory::{CoreFactory, FactoryError};
 use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::{KeyboardShortcut, SessionHandle};
 use nerust_contract_core::ConsoleCore;
 use nerust_contract_core::identity::SystemIdentity;
-use nerust_contract_core::input::SystemInputAdapter;
+use nerust_contract_core::input::{InputStatePersistence, SystemInputAdapter};
 use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError, GpuCommandList};
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -135,12 +135,6 @@ struct MockAdapter;
 impl SystemInputAdapter for MockAdapter {
     fn apply_event(&mut self, _: nerust_input_schema::DigitalInputEvent) {}
     fn clear(&mut self) {}
-    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), String> {
-        Ok(())
-    }
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
-    }
     fn decode_persisted_input(
         &self,
         _: &str,
@@ -150,13 +144,24 @@ impl SystemInputAdapter for MockAdapter {
         None
     }
 }
+impl InputStatePersistence for MockAdapter {
+    fn sync_from_runtime_state(
+        &mut self,
+        _: &[u8],
+    ) -> Result<(), nerust_contract_core::input::InputError> {
+        Ok(())
+    }
+    fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_contract_core::input::InputError> {
+        Ok(Vec::new())
+    }
+}
 
 struct MockFactory;
 impl CoreFactory for MockFactory {
     fn create_core_and_adapter(
         &self,
         _: &SettingsSnapshot,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
         Ok(build_test_core_and_adapter())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {
@@ -178,14 +183,14 @@ impl CoreFactory for MockFactory {
         _: &mut SettingsSnapshot,
         _: &crate::descriptor::SystemSettingsFieldId,
         _: &crate::descriptor::SystemSettingsChoiceId,
-    ) -> Result<(), String> {
+    ) -> Result<(), FactoryError> {
         Ok(())
     }
     fn resolve_load_request(
         &self,
         _: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<crate::load::ResolvedLoadRequest, String> {
+    ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
         let bytes = options.options_bytes.clone();
         Ok(crate::load::ResolvedLoadRequest {
             system_id: nerust_input_schema::SystemId::Nes,
@@ -232,17 +237,13 @@ fn unique_temp_dir(label: &str) -> PathBuf {
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
     assert_eq!(
-        session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
-            .unwrap(),
+        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         Some(KeyboardShortcut::Session(
             nerust_gui_settings::input::ShortcutAction::TogglePause
         )),
     );
     assert_eq!(
-        session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
-            .unwrap(),
+        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         None
     );
 }
@@ -428,10 +429,10 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 #[test]
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
-    session
-        .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
-        .unwrap();
-    let plan = session.set_fullscreen_default(true).unwrap();
+    session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+    let plan = session
+        .set_fullscreen_default(true)
+        .expect("set_fullscreen_default should succeed");
     assert_eq!(
         plan,
         SettingsApplyPlan {
@@ -448,6 +449,8 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
             .window
             .fullscreen_default
     );
-    let second = session.set_fullscreen_default(true).unwrap();
+    let second = session
+        .set_fullscreen_default(true)
+        .expect("second set_fullscreen_default should succeed");
     assert_eq!(second, SettingsApplyPlan::default());
 }

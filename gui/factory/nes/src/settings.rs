@@ -5,6 +5,7 @@ use nerust_gui_shell::descriptor::{
     SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
     SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
 };
+use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_input_schema::SystemId;
@@ -84,10 +85,10 @@ pub(crate) fn effective_load_options(
 pub(crate) fn resolve_nes_load_request(
     settings: &SettingsSnapshot,
     options: SystemLoadOptions,
-) -> Result<ResolvedLoadRequest, String> {
+) -> Result<ResolvedLoadRequest, FactoryError> {
     let resolved = effective_load_options(&settings.shared, options);
     let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
-        .map_err(|e| format!("failed to decode core options: {e}"))?;
+        .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
     Ok(ResolvedLoadRequest {
         system_id: SystemId::Nes,
         options: resolved,
@@ -165,7 +166,7 @@ pub(crate) fn apply_nes_settings_choice(
     settings: &mut SettingsSnapshot,
     field: &SystemSettingsFieldId,
     choice: &SystemSettingsChoiceId,
-) -> Result<(), String> {
+) -> Result<(), FactoryError> {
     let current = system_settings_mut(settings);
     match field.as_str() {
         FILTER_FIELD => {
@@ -174,7 +175,11 @@ pub(crate) fn apply_nes_settings_choice(
                 "ntsc_composite" => NesVideoFilter::NtscComposite,
                 "ntsc_svideo" => NesVideoFilter::NtscSVideo,
                 "ntsc_rgb" => NesVideoFilter::NtscRgb,
-                other => return Err(format!("unsupported filter choice: {other}")),
+                other => {
+                    return Err(FactoryError::InvalidChoice(format!(
+                        "unsupported filter choice: {other}"
+                    )));
+                }
             };
             Ok(())
         }
@@ -183,11 +188,17 @@ pub(crate) fn apply_nes_settings_choice(
                 "auto" => None,
                 "sharp" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp),
                 "nec" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec),
-                other => return Err(format!("unsupported mmc3 choice: {other}")),
+                other => {
+                    return Err(FactoryError::InvalidChoice(format!(
+                        "unsupported mmc3 choice: {other}"
+                    )));
+                }
             };
             Ok(())
         }
-        other => Err(format!("unsupported system settings field: {other}")),
+        other => Err(FactoryError::InvalidChoice(format!(
+            "unsupported system settings field: {other}"
+        ))),
     }
 }
 
