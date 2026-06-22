@@ -11,19 +11,23 @@ pub use lifecycle::WindowSize;
 
 use crate::descriptor::{SystemDescriptor, SystemSettingsPageModel};
 use crate::emu_core::EmuCore;
-use crate::factory::CoreFactory;
+use crate::emu_core::OperationError;
+use crate::factory::{CoreFactory, FactoryError};
 use crate::load::{MediaObject, SystemLoadOptions};
 use crate::session::metrics::ConsoleMetrics;
 use crate::session::persistence::PersistenceManager;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::manager::SettingsManager;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsError, SettingsSnapshot};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_input_schema::SystemId;
+use nerust_persistence::error::PersistenceError;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::FrameBuffer;
 use nerust_screen_video::VideoRenderProfile;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use thiserror::Error;
 
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
@@ -134,4 +138,18 @@ impl SessionHandle {
     pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
         f(self.emu_core.frame_buffer().as_ref());
     }
+}
+
+#[derive(Debug, Error)]
+pub enum SessionError {
+    #[error("operation: {0}")]
+    Operation(#[from] OperationError),
+    #[error("settings: {0}")]
+    Settings(#[from] SettingsError),
+    #[error("persistence: {0}")]
+    Persistence(#[from] PersistenceError),
+    #[error("factory: {0}")]
+    Factory(#[from] FactoryError),
+    #[error("unsupported system: {0:?}")]
+    UnsupportedSystem(SystemId),
 }

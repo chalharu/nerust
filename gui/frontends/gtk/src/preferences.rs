@@ -10,6 +10,7 @@ use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::descriptor::SystemSettingsFieldKind;
 use nerust_gui_shell::factory::CoreFactory;
+use nerust_gui_shell::session::SessionError;
 use nerust_gui_shell::settings::bindings::conflicting_keys;
 use nerust_gui_shell::settings::bindings::descriptors::{
     keyboard_binding_sections, shortcut_descriptors,
@@ -495,7 +496,7 @@ pub(crate) fn present_preferences_dialog(
                         run_finish_callback(&finish_for_response);
                     }
                     Err(error) => {
-                        error_label.set_text(&error);
+                        error_label.set_text(&error.to_string());
                     }
                 }
             } else {
@@ -537,14 +538,14 @@ trait SettingsApplier {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String>;
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError>;
 }
 
 impl SettingsApplier for State {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         State::apply_settings(self, settings)
     }
 }
@@ -552,7 +553,7 @@ impl SettingsApplier for State {
 fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     state: &RefCell<T>,
     snapshot: SettingsSnapshot,
-) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
     state.borrow_mut().apply_settings(snapshot)
 }
 
@@ -1161,6 +1162,7 @@ fn run_finish_callback(finish: &FinishCallback) {
 mod tests {
     use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
     use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_shell::session::SessionError;
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
@@ -1176,7 +1178,7 @@ mod tests {
         fn apply_settings(
             &mut self,
             _settings: SettingsSnapshot,
-        ) -> Result<SettingsApplyPlan, String> {
+        ) -> Result<SettingsApplyPlan, SessionError> {
             self.apply_calls += 1;
             Ok(SettingsApplyPlan::default())
         }

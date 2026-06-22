@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_gui_shell::session::KeyboardShortcut;
+use nerust_gui_shell::session::{KeyboardShortcut, SessionError};
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_persistence::model::StateSlotSummary;
 use std::cell::RefCell;
@@ -635,7 +635,7 @@ fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
     window.set_fullscreened(fullscreen);
 }
 
-fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, String> {
+fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, SessionError> {
     let state = window.state();
     Ok(state
         .borrow_mut()
