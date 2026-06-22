@@ -5,16 +5,15 @@ use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_input_schema::DigitalInputEvent;
 
 impl SessionHandle {
-    pub fn apply_input_event(&mut self, event: DigitalInputEvent) -> Result<(), String> {
+    pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
         self.input_adapter.apply_event(event);
-        Ok(())
     }
 
     pub fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,
         pressed: bool,
-    ) -> Result<Option<KeyboardShortcut>, String> {
+    ) -> Option<KeyboardShortcut> {
         let first_press = if pressed {
             self.pressed_keys.insert(key)
         } else {
@@ -33,26 +32,23 @@ impl SessionHandle {
                     .decode_persisted_input(attachment, control, pressed)
             },
         ) {
-            self.apply_input_event(controller_input)?;
+            self.apply_input_event(controller_input);
         }
 
         if first_press {
-            return Ok(
-                shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
-                    if matches!(action, ShortcutAction::ToggleFullscreen) {
-                        KeyboardShortcut::ToggleFullscreen
-                    } else {
-                        KeyboardShortcut::Session(action)
-                    }
-                }),
-            );
+            return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
+                if matches!(action, ShortcutAction::ToggleFullscreen) {
+                    KeyboardShortcut::ToggleFullscreen
+                } else {
+                    KeyboardShortcut::Session(action)
+                }
+            });
         }
-        Ok(None)
+        None
     }
 
-    pub fn clear_input(&mut self) -> Result<(), String> {
+    pub fn clear_input(&mut self) {
         self.pressed_keys.clear();
         self.input_adapter.clear();
-        Ok(())
     }
 }

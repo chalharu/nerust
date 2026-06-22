@@ -386,7 +386,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn flush_mapper_save(&mut self, emu: &impl CorePersistence) -> Result<(), String> {
+    pub(super) fn flush_mapper_save(&mut self, emu: &impl CorePersistence) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(());
         };
@@ -394,11 +394,13 @@ impl PersistenceManager {
             if self.mapper_save_recovery_written {
                 return Ok(());
             }
-            if let Some(bytes) = emu.save_mapper_raw().map_err(|e| e.to_string())? {
+            if let Some(bytes) = emu.save_mapper_raw().map_err(|e| {
+                log::warn!("mapper save failed: {e}");
+                e
+            }).ok().flatten() {
                 let recovery_path = self
                     .backend
-                    .write_recovery_mapper_save(path, &bytes)
-                    .map_err(|error| error.to_string())?;
+                    .write_recovery_mapper_save(path, &bytes)?;
                 self.mapper_save_recovery_written = true;
                 log::warn!(
                     "mapper save auto-load failed earlier; wrote recovery save to {}",
@@ -407,24 +409,28 @@ impl PersistenceManager {
             }
             return Ok(());
         }
-        match emu.save_mapper_raw().map_err(|e| e.to_string())? {
-            Some(bytes) => self
-                .backend
-                .write_mapper_save(path, &bytes)
-                .map_err(|error| error.to_string()),
-            None => Ok(()),
+        match emu.save_mapper_raw() {
+            Ok(Some(bytes)) => self.backend.write_mapper_save(path, &bytes)?,
+            Ok(None) => {}
+            Err(e) => log::warn!("mapper save failed: {e}"),
         }
+        Ok(())
     }
 
     pub(super) fn load_mapper_save_if_needed(
         &mut self,
         emu: &impl CorePersistence,
-    ) -> Result<(), String> {
+    ) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(());
         };
         match self.backend.read_mapper_save(path) {
-            Ok(Some(bytes)) => emu.load_mapper_raw(bytes).map_err(|e| e.to_string()),
+            Ok(Some(bytes)) => {
+                if let Err(e) = emu.load_mapper_raw(bytes) {
+                    log::warn!("mapper save load failed: {e}");
+                }
+                Ok(())
+            }
             Ok(None) => Ok(()),
             Err(error) => {
                 self.mapper_save_flush_allowed = false;

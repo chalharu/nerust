@@ -17,7 +17,7 @@ use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::load::MediaObject;
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionError, SessionHandle};
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
@@ -136,14 +136,11 @@ impl State {
         key: KeyboardKey,
         pressed: bool,
     ) -> Option<KeyboardShortcut> {
-        self.session
-            .handle_keyboard_key(key, pressed)
-            .ok()
-            .flatten()
+        self.session.handle_keyboard_key(key, pressed)
     }
 
     pub(crate) fn clear_input(&mut self) {
-        let _ = self.session.clear_input();
+        self.session.clear_input();
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {
@@ -161,7 +158,7 @@ impl State {
     pub(crate) fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<SettingsApplyPlan, String> {
+    ) -> Result<SettingsApplyPlan, SessionError> {
         let plan = self.session.apply_settings(settings)?;
         if plan.session_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
@@ -172,7 +169,7 @@ impl State {
     pub(crate) fn set_fullscreen_default(
         &mut self,
         fullscreen: bool,
-    ) -> Result<SettingsApplyPlan, String> {
+    ) -> Result<SettingsApplyPlan, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         if plan.session_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;

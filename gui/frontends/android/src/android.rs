@@ -352,13 +352,7 @@ impl AndroidFrontend {
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
         }
-        if let Err(error) = self.session.clear_input() {
-            log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
-            self.lifecycle_restore_pending = false;
-            self.session.clear_hidden_lifecycle_state();
-            self.session.flush_before_exit();
-            return;
-        }
+        self.session.clear_input();
         self.active_touches.clear();
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
@@ -802,7 +796,7 @@ impl ApplicationHandler for AndroidFrontend {
             }
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
-                let _ = self.session.clear_input();
+                self.session.clear_input();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);

@@ -235,16 +235,14 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
     assert_eq!(
         session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
-            .unwrap(),
+            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         Some(KeyboardShortcut::Session(
             nerust_gui_settings::input::ShortcutAction::TogglePause
         )),
     );
     assert_eq!(
         session
-            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true)
-            .unwrap(),
+            .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
         None
     );
 }
@@ -431,9 +429,8 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
     session
-        .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true)
-        .unwrap();
-    let plan = session.set_fullscreen_default(true).unwrap();
+        .handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+    let plan = session.set_fullscreen_default(true).expect("set_fullscreen_default should succeed");
     assert_eq!(
         plan,
         SettingsApplyPlan {
@@ -450,6 +447,6 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
             .window
             .fullscreen_default
     );
-    let second = session.set_fullscreen_default(true).unwrap();
+    let second = session.set_fullscreen_default(true).expect("second set_fullscreen_default should succeed");
     assert_eq!(second, SettingsApplyPlan::default());
 }
