@@ -56,6 +56,7 @@ pub fn conflicting_keys(
 mod tests {
     use super::conflicting_keys;
     use crate::settings::defaults::seed::default_shared_settings;
+    use crate::test_support::single_port_topology;
     use nerust_gui_settings::input::KeyboardKey;
 
     #[test]
@@ -75,10 +76,7 @@ mod tests {
             .unwrap()
             .key = Some(KeyboardKey::KeyZ);
 
-        let conflicts = conflicting_keys(
-            &settings,
-            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
-        );
+        let conflicts = conflicting_keys(&settings, &single_port_topology());
         assert!(conflicts.contains_key(&KeyboardKey::KeyZ));
     }
 }
