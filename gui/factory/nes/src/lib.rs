@@ -11,7 +11,7 @@ use nerust_gui_shell::descriptor::{
 };
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_gui_shell::factory::FactoryError;
-use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use nerust_gui_shell::load::{MediaObject, SystemLoadOptions};
 
 pub mod touch;
 
@@ -67,8 +67,9 @@ impl CoreFactory for NesFactory {
         &self,
         settings: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, FactoryError> {
-        settings::resolve_nes_load_request(settings, options)
+    ) -> Result<(), FactoryError> {
+        let _ = settings::resolve_nes_load_request(settings, options)?;
+        Ok(())
     }
 
     fn default_load_options(&self) -> SystemLoadOptions {

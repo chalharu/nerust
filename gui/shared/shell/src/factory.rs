@@ -2,7 +2,7 @@ use crate::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::emu_core::EmuCore;
-use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use crate::load::{MediaObject, SystemLoadOptions};
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -52,12 +52,12 @@ pub trait CoreFactory {
         choice: &SystemSettingsChoiceId,
     ) -> Result<(), FactoryError>;
 
-    /// load request を解決する。
+    /// load request を解決・検証する。
     fn resolve_load_request(
         &self,
         settings: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, FactoryError>;
+    ) -> Result<(), FactoryError>;
 
     /// デフォルトの load options を返す。
     fn default_load_options(&self) -> SystemLoadOptions;

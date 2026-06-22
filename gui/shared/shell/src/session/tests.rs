@@ -199,13 +199,9 @@ impl CoreFactory for MockFactory {
     fn resolve_load_request(
         &self,
         _: &SettingsSnapshot,
-        options: SystemLoadOptions,
-    ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
-        let bytes = options.options_bytes.clone();
-        Ok(crate::load::ResolvedLoadRequest {
-            options,
-            core_options_bytes: bytes,
-        })
+        _: SystemLoadOptions,
+    ) -> Result<(), FactoryError> {
+        Ok(())
     }
     fn default_load_options(&self) -> SystemLoadOptions {
         SystemLoadOptions::default()
@@ -260,7 +256,7 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 #[test]
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), SystemLoadOptions::default())
         .unwrap();
@@ -275,7 +271,7 @@ fn system_load_options_flow_into_session_load() {
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
@@ -299,7 +295,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
@@ -330,7 +326,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
@@ -367,7 +363,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
@@ -397,7 +393,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session = test_session();
     let options = session.factory().default_load_options();
-    let _resolved = session
+    session
         .factory()
         .resolve_load_request(session.settings_snapshot(), options)
         .unwrap();
@@ -417,7 +413,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session2 = test_session();
     let options = session2.factory().default_load_options();
-    let _resolved = session2
+    session2
         .factory()
         .resolve_load_request(session2.settings_snapshot(), options)
         .unwrap();
