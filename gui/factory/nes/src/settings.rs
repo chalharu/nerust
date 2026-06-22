@@ -66,12 +66,12 @@ pub(crate) fn effective_load_options(
         .map(convert_mmc3);
     let explicit_val = if explicit.options_bytes.is_empty() {
         None
+    } else if explicit.options_bytes == crate::MMC3_OPTION_SHARP {
+        Some(Mmc3IrqVariant::Sharp)
+    } else if explicit.options_bytes == crate::MMC3_OPTION_NEC {
+        Some(Mmc3IrqVariant::Nec)
     } else {
-        match std::str::from_utf8(&explicit.options_bytes) {
-            Ok("sharp") => Some(Mmc3IrqVariant::Sharp),
-            Ok("nec") => Some(Mmc3IrqVariant::Nec),
-            _ => None,
-        }
+        None
     };
     let core_opts = CoreOptions {
         mmc3_irq_variant: explicit_val.or(saved),
