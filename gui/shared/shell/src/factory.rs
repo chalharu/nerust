@@ -5,6 +5,17 @@ use crate::emu_core::EmuCore;
 use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum FactoryError {
+    #[error("core creation failed: {0}")]
+    Create(String),
+    #[error("invalid settings choice: {0}")]
+    InvalidChoice(String),
+    #[error("load request resolution failed: {0}")]
+    Resolve(String),
+}
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。
 ///
@@ -15,7 +26,7 @@ pub trait CoreFactory {
     fn create_core_and_adapter(
         &self,
         settings: &SettingsSnapshot,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String>;
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError>;
 
     /// この factory が処理可能なメディアかを判定する。
     fn probe_media(&self, media: &MediaObject) -> bool;
@@ -32,14 +43,14 @@ pub trait CoreFactory {
         settings: &mut SettingsSnapshot,
         field: &SystemSettingsFieldId,
         choice: &SystemSettingsChoiceId,
-    ) -> Result<(), String>;
+    ) -> Result<(), FactoryError>;
 
     /// load request を解決する。
     fn resolve_load_request(
         &self,
         settings: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, String>;
+    ) -> Result<ResolvedLoadRequest, FactoryError>;
 
     /// デフォルトの load options を返す。
     fn default_load_options(&self) -> SystemLoadOptions;

@@ -9,6 +9,7 @@ use nerust_gui_shell::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use nerust_gui_shell::emu_core::EmuCore;
+use nerust_gui_shell::factory::FactoryError;
 use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_input_schema::SystemId;
 
@@ -27,7 +28,7 @@ impl CoreFactory for NesFactory {
     fn create_core_and_adapter(
         &self,
         settings: &SettingsSnapshot,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
         builder::create_core_and_adapter(settings)
     }
 
@@ -51,7 +52,7 @@ impl CoreFactory for NesFactory {
         settings: &mut SettingsSnapshot,
         field: &SystemSettingsFieldId,
         choice: &SystemSettingsChoiceId,
-    ) -> Result<(), String> {
+    ) -> Result<(), FactoryError> {
         settings::apply_nes_settings_choice(settings, field, choice)
     }
 
@@ -59,7 +60,7 @@ impl CoreFactory for NesFactory {
         &self,
         settings: &SettingsSnapshot,
         options: SystemLoadOptions,
-    ) -> Result<ResolvedLoadRequest, String> {
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
         settings::resolve_nes_load_request(settings, options)
     }
 
@@ -70,7 +71,7 @@ impl CoreFactory for NesFactory {
 
 pub fn create_test_core_and_adapter(
     settings: &SettingsSnapshot,
-) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), String> {
+) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
     let factory = NesFactory;
     factory.create_core_and_adapter(settings)
 }
