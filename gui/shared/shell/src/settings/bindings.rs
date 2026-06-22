@@ -56,49 +56,8 @@ pub fn conflicting_keys(
 mod tests {
     use super::conflicting_keys;
     use crate::settings::defaults::seed::default_shared_settings;
+    use crate::test_support::single_port_topology;
     use nerust_gui_settings::input::KeyboardKey;
-    use nerust_input_schema::{
-        AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
-        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
-        PortId, SystemId,
-    };
-
-    const TEST_ATT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
-    const TEST_DEV_P1: DeviceKindId = DeviceKindId::new("nes.device.player1_pad");
-    const TEST_CTRL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
-    const TEST_CTRL_B: DigitalControlId = DigitalControlId::new("nes.control.b");
-
-    fn test_topology() -> InputTopologyDescriptor {
-        InputTopologyDescriptor {
-            system: SystemId::Nes,
-            ports: vec![PortDescriptor {
-                id: PortId::new("test.port1"),
-                label: "Port 1",
-                attachments: vec![AttachmentSlotDescriptor {
-                    id: TEST_ATT_P1,
-                    label: "Player 1",
-                    device: TEST_DEV_P1,
-                    supported_devices: vec![],
-                }],
-            }],
-            devices: vec![DeviceDescriptor {
-                kind: TEST_DEV_P1,
-                label: "NES Pad",
-                controls: vec![
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: TEST_CTRL_A,
-                        label: "A",
-                        description: "",
-                    }),
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: TEST_CTRL_B,
-                        label: "B",
-                        description: "",
-                    }),
-                ],
-            }],
-        }
-    }
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
@@ -117,7 +76,7 @@ mod tests {
             .unwrap()
             .key = Some(KeyboardKey::KeyZ);
 
-        let conflicts = conflicting_keys(&settings, &test_topology());
+        let conflicts = conflicting_keys(&settings, &single_port_topology());
         assert!(conflicts.contains_key(&KeyboardKey::KeyZ));
     }
 }

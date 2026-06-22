@@ -106,85 +106,11 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 #[cfg(test)]
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use nerust_input_schema::{
-        AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
-        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
-        PortId, SystemId,
-    };
-
-    const TEST_ATT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
-    const TEST_ATT_P2: AttachmentId = AttachmentId::new("nes.attachment.player2");
-    const TEST_DEV_P1: DeviceKindId = DeviceKindId::new("nes.device.player1_pad");
-    const TEST_DEV_P2: DeviceKindId = DeviceKindId::new("nes.device.player2_famicom_pad");
-    const TEST_CTRL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
-    const TEST_CTRL_B: DigitalControlId = DigitalControlId::new("nes.control.b");
-    const TEST_CTRL_MIC: DigitalControlId = DigitalControlId::new("nes.control.microphone");
-
-    fn test_topology() -> InputTopologyDescriptor {
-        InputTopologyDescriptor {
-            system: SystemId::Nes,
-            ports: vec![
-                PortDescriptor {
-                    id: PortId::new("test.port1"),
-                    label: "Port 1",
-                    attachments: vec![AttachmentSlotDescriptor {
-                        id: TEST_ATT_P1,
-                        label: "Player 1",
-                        device: TEST_DEV_P1,
-                        supported_devices: vec![],
-                    }],
-                },
-                PortDescriptor {
-                    id: PortId::new("test.port2"),
-                    label: "Port 2",
-                    attachments: vec![AttachmentSlotDescriptor {
-                        id: TEST_ATT_P2,
-                        label: "Player 2",
-                        device: TEST_DEV_P2,
-                        supported_devices: vec![],
-                    }],
-                },
-            ],
-            devices: vec![
-                DeviceDescriptor {
-                    kind: TEST_DEV_P1,
-                    label: "NES Pad",
-                    controls: vec![
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_A,
-                            label: "A",
-                            description: "",
-                        }),
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_B,
-                            label: "B",
-                            description: "",
-                        }),
-                    ],
-                },
-                DeviceDescriptor {
-                    kind: TEST_DEV_P2,
-                    label: "Famicom Pad",
-                    controls: vec![
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_A,
-                            label: "A",
-                            description: "",
-                        }),
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_MIC,
-                            label: "Microphone",
-                            description: "",
-                        }),
-                    ],
-                },
-            ],
-        }
-    }
+    use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections = keyboard_binding_sections(&test_topology());
+        let sections = keyboard_binding_sections(&dual_port_topology());
 
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].attachment, TEST_ATT_P1);

@@ -96,9 +96,8 @@ fn default_control_binding(
 #[cfg(test)]
 mod tests {
     use super::default_shared_settings;
+    use crate::test_support::TEST_CTRL_MIC;
     use nerust_gui_settings::input::ShortcutAction;
-
-    const TEST_CONTROL_MICROPHONE: &str = "nes.control.microphone";
 
     #[test]
     fn default_settings_seed_nes_bindings_and_system_settings() {
@@ -133,7 +132,7 @@ mod tests {
                 .unwrap()
                 .bindings
                 .iter()
-                .any(|binding| binding.control.as_str() == TEST_CONTROL_MICROPHONE)
+                .any(|binding| binding.control.as_str() == TEST_CTRL_MIC.as_str())
         );
     }
 }

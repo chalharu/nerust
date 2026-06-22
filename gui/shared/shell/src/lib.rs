@@ -5,3 +5,6 @@ pub mod load;
 pub mod session;
 pub mod settings;
 pub mod state;
+
+#[cfg(test)]
+pub mod test_support;

@@ -19,16 +19,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nerust_input_schema::{
-    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
-    DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor, PortId,
-    SystemId,
-};
-
-const TEST_ATT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
-const TEST_DEV_P1: DeviceKindId = DeviceKindId::new("nes.device.player1_pad");
-const TEST_CTRL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
-const TEST_CTRL_B: DigitalControlId = DigitalControlId::new("nes.control.b");
+use crate::test_support::single_port_topology;
+use nerust_input_schema::SystemId;
 
 struct MockConsoleCore {
     loaded: bool,
@@ -179,40 +171,9 @@ impl CoreFactory for MockFactory {
         true
     }
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
-        fn test_topology() -> InputTopologyDescriptor {
-            InputTopologyDescriptor {
-                system: SystemId::Nes,
-                ports: vec![PortDescriptor {
-                    id: PortId::new("test.port1"),
-                    label: "Port 1",
-                    attachments: vec![AttachmentSlotDescriptor {
-                        id: TEST_ATT_P1,
-                        label: "Player 1",
-                        device: TEST_DEV_P1,
-                        supported_devices: vec![],
-                    }],
-                }],
-                devices: vec![DeviceDescriptor {
-                    kind: TEST_DEV_P1,
-                    label: "NES Pad",
-                    controls: vec![
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_A,
-                            label: "A",
-                            description: "",
-                        }),
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_B,
-                            label: "B",
-                            description: "",
-                        }),
-                    ],
-                }],
-            }
-        }
         crate::descriptor::SystemDescriptor {
             system_id: SystemId::Nes,
-            input_topology: test_topology(),
+            input_topology: single_port_topology(),
         }
     }
     fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {
