@@ -237,7 +237,7 @@ mod tests {
         AnalogControlDescriptor, AnalogControlId, AttachmentId, AttachmentSlotDescriptor,
         ControlDescriptor, ControlId, DeviceDescriptor, DeviceKindId, DigitalControlDescriptor,
         DigitalControlId, DigitalInputEvent, DigitalInputState, InputTopologyDescriptor,
-        PortDescriptor, PortId, SystemId,
+        PortDescriptor, PortId,
     };
 
     #[test]
