@@ -2,19 +2,6 @@ use crate::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::title::window_title;
-use crate::state::resolve_state_format;
-use nerust_contract_core::save_state_with_header;
-use nerust_persistence::sidecar::{
-    load_mapper_save, write_mapper_save, write_recovery_mapper_save,
-};
-use nerust_persistence::slots::{
-    allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
-    load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
-    write_autosave_state_slot, write_state_slot,
-};
-use nerust_persistence::thumbnail::ThumbnailSource;
-use nerust_persistence::time::latest_saved_slot_id;
-use std::io::ErrorKind;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,26 +116,49 @@ impl SessionHandle {
         if resolved.system_id != self.descriptor.system_id {
             return Err(format!("unsupported system id: {:?}", resolved.system_id));
         }
-        self.flush_mapper_save()?;
+        self.persistence.flush_mapper_save(&self.emu_core)?;
         self.emu_core.load(&media).map_err(|e| e.to_string())?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
-        self.configure_persistence_for_loaded_media(true);
+
+        let sidecars = self
+            .emu_core
+            .canonical_media_identity()
+            .and_then(|identity| {
+                log::info!(
+                    "load_resolved: identity={:?} path={:?}",
+                    identity,
+                    media.path.as_deref()
+                );
+                self.resolve_persistence_paths(media.path.as_deref(), &identity)
+                    .inspect(|_| {
+                        log::info!("load_resolved: resolved persistence paths");
+                    })
+            });
+        if let Some(sidecars) = sidecars {
+            self.persistence
+                .configure(sidecars.states_dir, sidecars.mapper_save_path);
+            self.persistence.refresh_slots(&self.emu_core);
+            let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
+        } else {
+            log::info!("load_resolved: failed to resolve persistence paths");
+        }
+
         self.remember_last_successful_rom_directory(media.path.as_deref());
         Ok(())
     }
 
     pub fn unload(&mut self) -> Result<(), String> {
-        self.flush_mapper_save()?;
+        self.persistence.flush_mapper_save(&self.emu_core)?;
         self.emu_core.unload().map_err(|e| e.to_string())?;
         self.loaded_media = None;
-        self.persistence = Default::default();
+        self.persistence.reset();
         Ok(())
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Err(error) = self.flush_mapper_save() {
+        if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
             log::warn!("mapper save flush before close failed: {error}");
         }
     }
@@ -195,14 +205,14 @@ impl SessionHandle {
                 })
             }
             SessionCommand::CreateSlot => {
-                self.create_slot();
+                self.persistence.create_slot(&self.emu_core);
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
                 })
             }
             SessionCommand::SaveActiveSlotOrNew => {
-                self.save_active_slot_or_new();
+                self.persistence.save_active_slot_or_new(&self.emu_core);
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -210,21 +220,21 @@ impl SessionHandle {
             }
             SessionCommand::LoadActiveSlot => {
                 let was_paused = self.paused();
-                let executed = self.load_active_slot();
+                let executed = self.persistence.load_active_slot(&self.emu_core);
                 Ok(SessionCommandOutcome {
                     executed,
                     needs_redraw: executed && was_paused && !self.paused(),
                 })
             }
             SessionCommand::SelectActiveSlot(slot_id) => {
-                self.persistence.active_slot_id = Some(slot_id);
+                self.persistence.select_active_slot(slot_id);
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
                 })
             }
             SessionCommand::SaveSlot(slot_id) => {
-                self.save_slot(slot_id, false);
+                self.persistence.save_slot(slot_id, &self.emu_core, false);
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -232,127 +242,48 @@ impl SessionHandle {
             }
             SessionCommand::LoadSlot(slot_id) => {
                 let was_paused = self.paused();
-                let executed = self.load_slot(slot_id);
+                let executed = self.persistence.load_slot(slot_id, &self.emu_core);
                 Ok(SessionCommandOutcome {
                     executed,
                     needs_redraw: executed && was_paused && !self.paused(),
                 })
             }
             SessionCommand::DeleteSlot(slot_id) => {
-                self.delete_slot(slot_id);
+                self.persistence.delete_slot(slot_id, &self.emu_core);
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
                 })
             }
             SessionCommand::SelectNextSlot => Ok(SessionCommandOutcome {
-                executed: self.select_adjacent_slot(true).is_some(),
+                executed: self.persistence.select_adjacent_slot(true).is_some(),
                 needs_redraw: false,
             }),
             SessionCommand::SelectPreviousSlot => Ok(SessionCommandOutcome {
-                executed: self.select_adjacent_slot(false).is_some(),
+                executed: self.persistence.select_adjacent_slot(false).is_some(),
                 needs_redraw: false,
             }),
         }
     }
 
     pub fn slots(&self) -> &[nerust_persistence::model::StateSlotSummary] {
-        &self.persistence.slots
+        self.persistence.slots()
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
-        self.persistence.active_slot_id
+        self.persistence.active_slot_id()
     }
 
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
-        if !self.loaded() {
-            return false;
-        }
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return false;
-        };
-        let Some(identity) = self.persistence_identity() else {
-            return false;
-        };
-        match self.emu_core.save_state_raw() {
-            Ok(core_bytes) => {
-                let state_blob = save_state_with_header(core_bytes);
-                match write_autosave_state_slot(&sidecars.states_dir, &state_blob, &identity, None)
-                {
-                    Ok(_) => true,
-                    Err(error) => {
-                        log::warn!("saving hidden lifecycle state failed: {error}");
-                        false
-                    }
-                }
-            }
-            Err(error) => {
-                log::warn!("hidden lifecycle state export failed: {error}");
-                false
-            }
-        }
+        self.persistence.save_hidden(&self.emu_core)
     }
 
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        if !self.loaded() {
-            return false;
-        }
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return false;
-        };
-        let Some(identity) = self.persistence_identity() else {
-            return false;
-        };
-        let path = autosave_state_slot_path(&sidecars.states_dir);
-        match load_state_slot_for_identity(&path, &identity) {
-            Ok(Some(slot)) => {
-                if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
-                    log::warn!(
-                        "ignoring hidden lifecycle state from emulator version {} on {}",
-                        slot.summary.emulator_version,
-                        env!("CARGO_PKG_VERSION")
-                    );
-                    clear_hidden_lifecycle_state_path(&path);
-                    return false;
-                }
-                if let Err(error) = self
-                    .emu_core
-                    .load_state_raw(resolve_state_format(&slot.machine_state))
-                {
-                    log::warn!("hidden lifecycle state import failed: {error}");
-                    clear_hidden_lifecycle_state_path(&path);
-                    false
-                } else {
-                    true
-                }
-            }
-            Ok(None) => {
-                clear_hidden_lifecycle_state_path(&path);
-                false
-            }
-            Err(nerust_persistence::error::PersistenceError::Io(error))
-                if error.kind() == ErrorKind::NotFound =>
-            {
-                false
-            }
-            Err(error) => {
-                log::warn!("loading hidden lifecycle state failed: {error}");
-                clear_hidden_lifecycle_state_path(&path);
-                false
-            }
-        }
+        self.persistence.load_hidden(&self.emu_core)
     }
 
     pub fn clear_hidden_lifecycle_state(&mut self) {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return;
-        };
-        let path = autosave_state_slot_path(&sidecars.states_dir);
-        clear_hidden_lifecycle_state_path(&path);
-    }
-
-    pub fn persistence_identity(&self) -> Option<nerust_contract_core::identity::SystemIdentity> {
-        self.emu_core.canonical_media_identity()
+        self.persistence.clear_hidden();
     }
 
     fn rebuild_for_settings(
@@ -390,42 +321,34 @@ impl SessionHandle {
         self.emu_core = rebuilt_core;
         self.input_adapter = rebuilt_adapter;
         if was_loaded {
-            self.configure_persistence_for_loaded_media(!restored_runtime_state);
+            let rom_path = self
+                .loaded_media
+                .as_ref()
+                .and_then(|m| m.media.path.as_deref());
+            let sidecars = self
+                .emu_core
+                .canonical_media_identity()
+                .and_then(|identity| {
+                    log::info!(
+                        "rebuild_for_settings: identity={:?} path={:?}",
+                        identity,
+                        rom_path
+                    );
+                    self.resolve_persistence_paths(rom_path, &identity)
+                });
+            if let Some(sidecars) = sidecars {
+                self.persistence
+                    .configure(sidecars.states_dir, sidecars.mapper_save_path);
+                self.persistence.refresh_slots(&self.emu_core);
+            }
+            if !restored_runtime_state {
+                let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
+            }
             if was_paused {
                 self.emu_core.pause().map_err(|e| e.to_string())?;
             }
         }
         Ok(())
-    }
-
-    fn configure_persistence_for_loaded_media(&mut self, load_mapper_save: bool) {
-        if let Some(loaded_media) = self.loaded_media.clone() {
-            let identity_opt = self.persistence_identity();
-            log::info!(
-                "configure_persistence_for_loaded_media: loaded_media path={:?} persistence_identity={:?}",
-                loaded_media.media.path.as_deref(),
-                identity_opt
-            );
-            let persistence_paths = identity_opt.as_ref().and_then(|identity| {
-                let resolved = self.resolve_persistence_paths(loaded_media.media.path.as_deref(), identity);
-                if resolved.is_none() {
-                    log::info!(
-                        "configure_persistence_for_loaded_media: failed to resolve persistence paths for identity {:?} and path {:?}",
-                        identity,
-                        loaded_media.media.path.as_deref()
-                    );
-                } else {
-                    log::info!(
-                        "configure_persistence_for_loaded_media: resolved persistence paths: {:?}",
-                        resolved
-                    );
-                }
-                resolved
-            });
-            self.configure_persistence_paths(persistence_paths, load_mapper_save);
-        } else {
-            self.persistence = Default::default();
-        }
     }
 
     fn resolve_persistence_paths(
@@ -451,267 +374,5 @@ impl SessionHandle {
         if let Ok(snapshot) = self.settings.snapshot() {
             self.settings_snapshot = snapshot;
         }
-    }
-
-    fn load_mapper_save_if_available(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if let Some(bytes) =
-            load_mapper_save(&sidecars.mapper_save_path).map_err(|error| error.to_string())?
-        {
-            self.emu_core
-                .load_mapper_raw(bytes)
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn flush_mapper_save(&mut self) -> Result<(), String> {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return Ok(());
-        };
-        if !self.persistence.mapper_save_flush_allowed {
-            if self.persistence.mapper_save_recovery_written {
-                return Ok(());
-            }
-            if let Some(bytes) = self.emu_core.save_mapper_raw().map_err(|e| e.to_string())? {
-                let path = write_recovery_mapper_save(&sidecars.mapper_save_path, &bytes)
-                    .map_err(|error| error.to_string())?;
-                self.persistence.mapper_save_recovery_written = true;
-                log::warn!(
-                    "mapper save auto-load failed earlier; wrote recovery save to {}",
-                    path.display()
-                );
-            }
-            return Ok(());
-        }
-        match self.emu_core.save_mapper_raw().map_err(|e| e.to_string())? {
-            Some(bytes) => write_mapper_save(&sidecars.mapper_save_path, &bytes)
-                .map_err(|error| error.to_string()),
-            None => Ok(()),
-        }
-    }
-
-    fn configure_persistence_paths(
-        &mut self,
-        persistence_paths: Option<nerust_persistence::sidecar::SidecarPaths>,
-        load_mapper_save: bool,
-    ) {
-        self.persistence.sidecars = persistence_paths;
-        self.persistence.mapper_save_flush_allowed = true;
-        self.persistence.mapper_save_recovery_written = false;
-        self.persistence.active_slot_id = None;
-        self.refresh_slots();
-        self.persistence.active_slot_id = latest_saved_slot_id(&self.persistence.slots);
-        if load_mapper_save && let Err(error) = self.load_mapper_save_if_available() {
-            self.persistence.mapper_save_flush_allowed = false;
-            log::warn!("mapper save auto-load failed: {error}");
-        }
-    }
-
-    fn refresh_slots(&mut self) {
-        self.persistence.slots = if let (Some(sidecars), Some(identity)) = (
-            self.persistence.sidecars.as_ref(),
-            self.persistence_identity(),
-        ) {
-            match scan_state_slots_for_identity(&sidecars.states_dir, &identity) {
-                Ok(slots) => slots,
-                Err(error) => {
-                    log::warn!("slot scan failed: {error}");
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-        if self.persistence.active_slot_id.is_some_and(|slot_id| {
-            !self
-                .persistence
-                .slots
-                .iter()
-                .any(|slot| slot.slot_id == slot_id)
-        }) {
-            self.persistence.active_slot_id = None;
-        }
-    }
-
-    fn save_active_slot_or_new(&mut self) {
-        if self.persistence.sidecars.is_none() {
-            log::info!(
-                "save_active_slot_or_new: no persistence sidecars configured; cannot save state"
-            );
-            return;
-        }
-        let sidecars = self.persistence.sidecars.as_ref().unwrap();
-        let slot_id = self.persistence.active_slot_id.or_else(|| {
-            allocate_next_slot_id(&sidecars.states_dir)
-                .map_err(|error| {
-                    log::warn!("allocating state slot failed: {error}");
-                    error
-                })
-                .ok()
-        });
-        match slot_id {
-            Some(slot_id) => {
-                log::info!("save_active_slot_or_new: saving to slot {}", slot_id);
-                self.save_slot(slot_id, true);
-            }
-            None => {
-                log::warn!("save_active_slot_or_new: failed to allocate slot id");
-            }
-        }
-    }
-
-    fn create_slot(&mut self) {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return;
-        };
-        match allocate_next_slot_id(&sidecars.states_dir) {
-            Ok(slot_id) => self.save_slot(slot_id, true),
-            Err(error) => log::warn!("allocating state slot failed: {error}"),
-        }
-    }
-
-    fn save_slot(&mut self, slot_id: u64, make_active: bool) {
-        if self.persistence.sidecars.is_none() {
-            log::info!(
-                "save_slot: no persistence.sidecars configured; cannot save slot {}",
-                slot_id
-            );
-            return;
-        }
-        let sidecars = self.persistence.sidecars.as_ref().unwrap();
-        let identity_opt = self.persistence_identity();
-        if identity_opt.is_none() {
-            log::info!(
-                "save_slot: no persistence identity available; cannot save slot {}",
-                slot_id
-            );
-            return;
-        }
-        let identity = identity_opt.unwrap();
-        log::info!(
-            "save_slot: writing slot {} (make_active={}) to {}",
-            slot_id,
-            make_active,
-            sidecars.states_dir.display()
-        );
-        match self.emu_core.save_state_raw() {
-            Ok(core_bytes) => {
-                let state_blob = save_state_with_header(core_bytes);
-                let preview = self.emu_core.generate_preview().map(|p| ThumbnailSource {
-                    width: p.width,
-                    height: p.height,
-                    rgba: p.rgba,
-                });
-                match write_state_slot(
-                    &sidecars.states_dir,
-                    slot_id,
-                    &state_blob,
-                    &identity,
-                    preview.as_ref(),
-                ) {
-                    Ok(_) => {
-                        if make_active {
-                            self.persistence.active_slot_id = Some(slot_id);
-                        }
-                        self.refresh_slots();
-                        log::info!("save_slot: saved slot {}", slot_id);
-                    }
-                    Err(error) => log::warn!("saving state slot failed: {error}"),
-                }
-            }
-            Err(error) => log::warn!("state export failed: {error}"),
-        }
-    }
-
-    fn load_active_slot(&mut self) -> bool {
-        self.persistence
-            .active_slot_id
-            .is_some_and(|slot_id| self.load_slot(slot_id))
-    }
-
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return false;
-        };
-        match load_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
-            Ok(slot) => {
-                if let Err(error) = self
-                    .emu_core
-                    .load_state_raw(resolve_state_format(&slot.machine_state))
-                {
-                    log::warn!("state import failed: {error}");
-                    false
-                } else {
-                    self.persistence.active_slot_id = Some(slot_id);
-                    self.refresh_slots();
-                    true
-                }
-            }
-            Err(error) => {
-                log::warn!("loading state slot failed: {error}");
-                false
-            }
-        }
-    }
-
-    fn delete_slot(&mut self, slot_id: u64) {
-        let Some(sidecars) = self.persistence.sidecars.as_ref() else {
-            return;
-        };
-        match delete_state_slot(&state_slot_path(&sidecars.states_dir, slot_id)) {
-            Ok(()) => {
-                if self.persistence.active_slot_id == Some(slot_id) {
-                    self.persistence.active_slot_id = None;
-                }
-                self.refresh_slots();
-            }
-            Err(error) => log::warn!("deleting state slot failed: {error}"),
-        }
-    }
-
-    fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
-        let next_slot_id = adjacent_slot_id(
-            &self.persistence.slots,
-            self.persistence.active_slot_id,
-            forward,
-        )?;
-        self.persistence.active_slot_id = Some(next_slot_id);
-        Some(next_slot_id)
-    }
-}
-
-fn adjacent_slot_id(
-    slots: &[nerust_persistence::model::StateSlotSummary],
-    active_slot_id: Option<u64>,
-    forward: bool,
-) -> Option<u64> {
-    if slots.is_empty() {
-        return None;
-    }
-    let current_index = active_slot_id
-        .and_then(|active| slots.iter().position(|slot| slot.slot_id == active))
-        .unwrap_or_else(|| {
-            if forward {
-                slots.len().saturating_sub(1)
-            } else {
-                0
-            }
-        });
-    let next_index = if forward {
-        (current_index + 1) % slots.len()
-    } else if current_index == 0 {
-        slots.len() - 1
-    } else {
-        current_index - 1
-    };
-    Some(slots[next_index].slot_id)
-}
-
-fn clear_hidden_lifecycle_state_path(path: &Path) {
-    if let Err(error) = delete_state_slot(path) {
-        log::warn!("deleting hidden lifecycle state failed: {error}");
     }
 }
