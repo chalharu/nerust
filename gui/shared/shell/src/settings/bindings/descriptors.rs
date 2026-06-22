@@ -106,24 +106,92 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 #[cfg(test)]
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use nerust_input_nes_runtime::topology::{
-        FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
+    use nerust_input_schema::{
+        AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
+        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
+        PortId, SystemId,
     };
+
+    fn test_topology() -> InputTopologyDescriptor {
+        InputTopologyDescriptor {
+            system: SystemId::Nes,
+            ports: vec![
+                PortDescriptor {
+                    id: PortId::new("test.port1"),
+                    label: "Port 1",
+                    attachments: vec![AttachmentSlotDescriptor {
+                        id: AttachmentId::new("nes.attachment.player1"),
+                        label: "Player 1",
+                        device: DeviceKindId::new("nes.device.player1_pad"),
+                        supported_devices: vec![],
+                    }],
+                },
+                PortDescriptor {
+                    id: PortId::new("test.port2"),
+                    label: "Port 2",
+                    attachments: vec![AttachmentSlotDescriptor {
+                        id: AttachmentId::new("nes.attachment.player2"),
+                        label: "Player 2",
+                        device: DeviceKindId::new("nes.device.player2_famicom_pad"),
+                        supported_devices: vec![],
+                    }],
+                },
+            ],
+            devices: vec![
+                DeviceDescriptor {
+                    kind: DeviceKindId::new("nes.device.player1_pad"),
+                    label: "NES Pad",
+                    controls: vec![
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.a"),
+                            label: "A",
+                            description: "",
+                        }),
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.b"),
+                            label: "B",
+                            description: "",
+                        }),
+                    ],
+                },
+                DeviceDescriptor {
+                    kind: DeviceKindId::new("nes.device.player2_famicom_pad"),
+                    label: "Famicom Pad",
+                    controls: vec![
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.a"),
+                            label: "A",
+                            description: "",
+                        }),
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.microphone"),
+                            label: "Microphone",
+                            description: "",
+                        }),
+                    ],
+                },
+            ],
+        }
+    }
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections = keyboard_binding_sections(
-            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
-        );
+        let sections = keyboard_binding_sections(&test_topology());
 
         assert_eq!(sections.len(), 2);
-        assert_eq!(sections[0].attachment, NES_ATTACHMENT_PLAYER_ONE);
-        assert_eq!(sections[1].attachment, NES_ATTACHMENT_PLAYER_TWO);
+        assert_eq!(
+            sections[0].attachment,
+            AttachmentId::new("nes.attachment.player1")
+        );
+        assert_eq!(
+            sections[1].attachment,
+            AttachmentId::new("nes.attachment.player2")
+        );
         assert!(
             sections[1]
                 .bindings
                 .iter()
-                .any(|binding| binding.control == FAMICOM_P2_CONTROL_MICROPHONE)
+                .any(|binding| binding.control == DigitalControlId::new("nes.control.microphone"))
         );
     }
 

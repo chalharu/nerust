@@ -57,6 +57,43 @@ mod tests {
     use super::conflicting_keys;
     use crate::settings::defaults::seed::default_shared_settings;
     use nerust_gui_settings::input::KeyboardKey;
+    use nerust_input_schema::{
+        AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
+        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
+        PortId, SystemId,
+    };
+
+    fn test_topology() -> InputTopologyDescriptor {
+        InputTopologyDescriptor {
+            system: SystemId::Nes,
+            ports: vec![PortDescriptor {
+                id: PortId::new("test.port1"),
+                label: "Port 1",
+                attachments: vec![AttachmentSlotDescriptor {
+                    id: AttachmentId::new("nes.attachment.player1"),
+                    label: "Player 1",
+                    device: DeviceKindId::new("nes.device.player1_pad"),
+                    supported_devices: vec![],
+                }],
+            }],
+            devices: vec![DeviceDescriptor {
+                kind: DeviceKindId::new("nes.device.player1_pad"),
+                label: "NES Pad",
+                controls: vec![
+                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                        id: DigitalControlId::new("nes.control.a"),
+                        label: "A",
+                        description: "",
+                    }),
+                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                        id: DigitalControlId::new("nes.control.b"),
+                        label: "B",
+                        description: "",
+                    }),
+                ],
+            }],
+        }
+    }
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
@@ -75,10 +112,7 @@ mod tests {
             .unwrap()
             .key = Some(KeyboardKey::KeyZ);
 
-        let conflicts = conflicting_keys(
-            &settings,
-            &nerust_input_nes_runtime::topology::input_topology_descriptor(),
-        );
+        let conflicts = conflicting_keys(&settings, &test_topology());
         assert!(conflicts.contains_key(&KeyboardKey::KeyZ));
     }
 }

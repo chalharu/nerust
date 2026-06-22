@@ -168,9 +168,42 @@ impl CoreFactory for MockFactory {
         true
     }
     fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
+        use nerust_input_schema::{
+            AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
+            DeviceKindId, DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor,
+            PortDescriptor, PortId, SystemId,
+        };
         crate::descriptor::SystemDescriptor {
-            system_id: nerust_input_schema::SystemId::Nes,
-            input_topology: nerust_input_nes_runtime::topology::input_topology_descriptor(),
+            system_id: SystemId::Nes,
+            input_topology: InputTopologyDescriptor {
+                system: SystemId::Nes,
+                ports: vec![PortDescriptor {
+                    id: PortId::new("test.port1"),
+                    label: "Port 1",
+                    attachments: vec![AttachmentSlotDescriptor {
+                        id: AttachmentId::new("nes.attachment.player1"),
+                        label: "Player 1",
+                        device: DeviceKindId::new("nes.device.player1_pad"),
+                        supported_devices: vec![],
+                    }],
+                }],
+                devices: vec![DeviceDescriptor {
+                    kind: DeviceKindId::new("nes.device.player1_pad"),
+                    label: "NES Pad",
+                    controls: vec![
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.a"),
+                            label: "A",
+                            description: "",
+                        }),
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id: DigitalControlId::new("nes.control.b"),
+                            label: "B",
+                            description: "",
+                        }),
+                    ],
+                }],
+            },
         }
     }
     fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {
