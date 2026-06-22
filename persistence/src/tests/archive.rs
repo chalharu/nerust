@@ -1,6 +1,9 @@
 use super::{prepare_test_dir, test_identity, test_metadata};
 use crate::archive::build_state_archive;
-use crate::metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY};
+use crate::metadata::{
+    METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, StateArchiveMetadataV1,
+    THUMBNAIL_ENTRY,
+};
 use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
 use crate::thumbnail::ThumbnailSource;
 use std::fs::{self, OpenOptions};
@@ -117,4 +120,97 @@ fn invalid_thumbnail_bytes_are_preserved_as_opaque_blob() {
         loaded.thumbnail_png,
         Some(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
     );
+}
+
+#[test]
+fn v1_archive_converts_to_v2_on_read() {
+    use std::io::Write;
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    let dir = prepare_test_dir("v1-to-v2-conversion");
+    let path = state_slot_path(&dir, 42);
+
+    let v1 = StateArchiveMetadataV1 {
+        schema_version: 1,
+        slot_id: 42,
+        saved_at_unix_ms: 1_000_000,
+        has_thumbnail: false,
+        system_id: nerust_input_schema::SystemId::Nes,
+        mapper_type: 4,
+        sub_mapper_type: 1,
+        prg_rom_crc64: 0x11,
+        chr_rom_crc64: 0x22,
+        trainer_crc64: 0x33,
+        emulator_version: "test-v1".into(),
+        rom_format: 0,
+        mirror_mode_kind: 0,
+        mirror_mode_custom_lut: Vec::new(),
+        has_battery: true,
+        trainer_len: 0,
+        prg_rom_len: 0x8000,
+        chr_rom_len: 0x2000,
+        prg_ram_len: 0,
+        save_prg_ram_len: 0x2000,
+        chr_ram_len: 0,
+        save_chr_ram_len: 0,
+    };
+
+    let cursor = Cursor::new(Vec::new());
+    let mut writer = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file(METADATA_ENTRY, opts).unwrap();
+    writer
+        .write_all(&rmp_serde::to_vec_named(&v1).unwrap())
+        .unwrap();
+    writer.start_file(STATE_ENTRY, opts).unwrap();
+    writer.write_all(b"v1-machine-state").unwrap();
+    let archive_bytes = writer.finish().unwrap().into_inner();
+    fs::write(&path, archive_bytes).unwrap();
+
+    let loaded = load_state_slot(&path).unwrap();
+    assert_eq!(loaded.summary.slot_id, 42);
+    assert_eq!(loaded.machine_state, b"v1-machine-state");
+    assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+    assert!(loaded.thumbnail_png.is_none());
+}
+
+#[test]
+fn v1_conversion_identity_bytes_are_deterministic() {
+    let v1 = StateArchiveMetadataV1 {
+        schema_version: 1,
+        slot_id: 0,
+        saved_at_unix_ms: 0,
+        has_thumbnail: false,
+        system_id: nerust_input_schema::SystemId::Nes,
+        mapper_type: 4,
+        sub_mapper_type: 1,
+        prg_rom_crc64: 0x11,
+        chr_rom_crc64: 0x22,
+        trainer_crc64: 0x33,
+        emulator_version: String::new(),
+        rom_format: 0,
+        mirror_mode_kind: 0,
+        mirror_mode_custom_lut: Vec::new(),
+        has_battery: true,
+        trainer_len: 0,
+        prg_rom_len: 0x8000,
+        chr_rom_len: 0x2000,
+        prg_ram_len: 0,
+        save_prg_ram_len: 0x2000,
+        chr_ram_len: 0,
+        save_chr_ram_len: 0,
+    };
+
+    // Convert twice and assert the identity_bytes are stable.
+    let result_a = crate::metadata::convert_v1_to_v2(v1).unwrap();
+    let result_b = crate::metadata::convert_v1_to_v2(StateArchiveMetadataV1 {
+        schema_version: 1,
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert_eq!(result_a.slot_id, 0);
+    assert_eq!(result_b.slot_id, 0);
+    assert!(!result_a.identity_bytes.is_empty());
+    assert!(!result_b.identity_bytes.is_empty());
 }

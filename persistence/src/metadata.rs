@@ -29,32 +29,32 @@ pub(crate) struct StateArchiveMetadata {
 // v1 backward compat — deserialize old format and convert to v2
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-struct StateArchiveMetadataV1 {
-    schema_version: u32,
-    slot_id: u64,
-    saved_at_unix_ms: u64,
-    has_thumbnail: bool,
-    system_id: SystemId,
-    mapper_type: u32,
-    sub_mapper_type: u32,
-    prg_rom_crc64: u64,
-    chr_rom_crc64: u64,
-    trainer_crc64: u64,
-    emulator_version: String,
-    rom_format: u32,
-    mirror_mode_kind: u32,
+pub(crate) struct StateArchiveMetadataV1 {
+    pub(crate) schema_version: u32,
+    pub(crate) slot_id: u64,
+    pub(crate) saved_at_unix_ms: u64,
+    pub(crate) has_thumbnail: bool,
+    pub(crate) system_id: SystemId,
+    pub(crate) mapper_type: u32,
+    pub(crate) sub_mapper_type: u32,
+    pub(crate) prg_rom_crc64: u64,
+    pub(crate) chr_rom_crc64: u64,
+    pub(crate) trainer_crc64: u64,
+    pub(crate) emulator_version: String,
+    pub(crate) rom_format: u32,
+    pub(crate) mirror_mode_kind: u32,
     #[serde(with = "serde_bytes")]
-    mirror_mode_custom_lut: Vec<u8>,
-    has_battery: bool,
-    trainer_len: u64,
-    prg_rom_len: u64,
-    chr_rom_len: u64,
-    prg_ram_len: u64,
-    save_prg_ram_len: u64,
-    chr_ram_len: u64,
-    save_chr_ram_len: u64,
+    pub(crate) mirror_mode_custom_lut: Vec<u8>,
+    pub(crate) has_battery: bool,
+    pub(crate) trainer_len: u64,
+    pub(crate) prg_rom_len: u64,
+    pub(crate) chr_rom_len: u64,
+    pub(crate) prg_ram_len: u64,
+    pub(crate) save_prg_ram_len: u64,
+    pub(crate) chr_ram_len: u64,
+    pub(crate) save_chr_ram_len: u64,
 }
 
 impl Default for StateArchiveMetadataV1 {
@@ -123,7 +123,9 @@ struct V1RomIdentity {
     trainer_crc64: u64,
 }
 
-fn convert_v1_to_v2(v1: StateArchiveMetadataV1) -> StateArchiveMetadata {
+pub(crate) fn convert_v1_to_v2(
+    v1: StateArchiveMetadataV1,
+) -> Result<StateArchiveMetadata, PersistenceError> {
     let mirror_mode = match (v1.mirror_mode_kind, v1.mirror_mode_custom_lut.as_slice()) {
         (0, _) => MirrorModeConv::Horizontal,
         (1, _) => MirrorModeConv::Vertical,
@@ -159,16 +161,18 @@ fn convert_v1_to_v2(v1: StateArchiveMetadataV1) -> StateArchiveMetadata {
         chr_rom_crc64: v1.chr_rom_crc64,
         trainer_crc64: v1.trainer_crc64,
     };
-    StateArchiveMetadata {
+    let identity_bytes = rmp_serde::to_vec_named(&identity)
+        .map_err(|e| PersistenceError::Validation(format!("v1 identity encoding failed: {e}")))?;
+    Ok(StateArchiveMetadata {
         schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
         slot_id: v1.slot_id,
         saved_at_unix_ms: v1.saved_at_unix_ms,
         has_thumbnail: v1.has_thumbnail,
         system_id: v1.system_id,
-        identity_bytes: rmp_serde::to_vec_named(&identity).unwrap_or_default(),
+        identity_bytes,
         options_bytes: Vec::new(),
         emulator_version: v1.emulator_version,
-    }
+    })
 }
 
 const fn default_system_id() -> SystemId {
@@ -202,7 +206,7 @@ pub(crate) fn read_metadata<R: Read + Seek>(
     // Fall back to v1 conversion.
     if let Ok(v1) = rmp_serde::from_slice::<StateArchiveMetadataV1>(metadata_bytes.as_slice()) {
         if v1.schema_version == 1 {
-            return Ok(convert_v1_to_v2(v1));
+            return convert_v1_to_v2(v1);
         }
         return Err(PersistenceError::Validation(format!(
             "unsupported state archive schema version: {}",

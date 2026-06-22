@@ -346,4 +346,39 @@ mod tests {
             nerust_screen_video::FilterType::NtscSVideo
         ));
     }
+
+    #[test]
+    fn mmc3_irq_variant_conversion_covers_all_variants() {
+        use nerust_gui_settings::nes::Mmc3IrqVariant as SettingsVariant;
+        use nerust_nes_core::core_options::Mmc3IrqVariant as CoreVariant;
+
+        assert_eq!(
+            super::convert_mmc3(SettingsVariant::Sharp),
+            CoreVariant::Sharp
+        );
+        assert_eq!(super::convert_mmc3(SettingsVariant::Nec), CoreVariant::Nec);
+    }
+
+    #[test]
+    fn mmc3_irq_variant_round_trips_via_load_options() {
+        let settings = default_shared_settings();
+
+        let resolved = effective_load_options(
+            &settings,
+            SystemLoadOptions {
+                options_bytes: crate::MMC3_OPTION_SHARP.to_vec(),
+            },
+        );
+        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
+
+        let resolved = effective_load_options(
+            &settings,
+            SystemLoadOptions {
+                options_bytes: crate::MMC3_OPTION_NEC.to_vec(),
+            },
+        );
+        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
+    }
 }

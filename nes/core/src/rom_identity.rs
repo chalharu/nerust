@@ -27,8 +27,4 @@ impl RomIdentity {
         let identity_bytes = rmp_serde::to_vec_named(&self).map_err(|e| e.to_string())?;
         Ok(SystemIdentity::new(SystemId::Nes, identity_bytes))
     }
-
-    pub fn from_system_identity(identity: &SystemIdentity) -> Result<Self, String> {
-        rmp_serde::from_slice(&identity.identity_bytes).map_err(|e| e.to_string())
-    }
 }
