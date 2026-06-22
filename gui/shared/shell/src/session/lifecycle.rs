@@ -1,4 +1,5 @@
 use crate::load::{MediaObject, ResolvedLoadRequest};
+use crate::session::SessionError;
 use crate::session::SessionHandle;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::title::window_title;
@@ -49,7 +50,7 @@ impl SessionHandle {
     pub fn apply_settings(
         &mut self,
         next_settings: nerust_gui_runtime::settings::SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         let previous = self.settings_snapshot.clone();
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
             self.host_backend,
@@ -58,8 +59,7 @@ impl SessionHandle {
         );
 
         if plan.session_rebuild_required {
-            self.rebuild_for_settings(&next_settings)
-                .map_err(|error| format!("failed to apply settings: {error}"))?;
+            self.rebuild_for_settings(&next_settings)?;
         } else if plan.audio_volume_changed {
             let volume =
                 f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
@@ -75,19 +75,19 @@ impl SessionHandle {
             if plan.session_rebuild_required {
                 let _ = self.rebuild_for_settings(&previous);
             }
-            return Err(format!("failed to save settings: {error}"));
+            return Err(SessionError::Settings(error));
         }
 
         self.settings_snapshot = next_settings;
         self.pressed_keys.clear();
-        self.clear_input()?;
+        self.clear_input();
         Ok(plan)
     }
 
     pub fn set_fullscreen_default(
         &mut self,
         fullscreen: bool,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, String> {
+    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         if self.settings_snapshot.local.video.window.fullscreen_default == fullscreen {
             return Ok(nerust_gui_runtime::settings::SettingsApplyPlan::default());
         }
@@ -101,7 +101,7 @@ impl SessionHandle {
         );
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            return Err(format!("failed to save settings: {error}"));
+            return Err(SessionError::Settings(error));
         }
 
         self.settings_snapshot = next_settings;
@@ -112,12 +112,12 @@ impl SessionHandle {
         &mut self,
         media: MediaObject,
         resolved: ResolvedLoadRequest,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionError> {
         if resolved.system_id != self.descriptor.system_id {
-            return Err(format!("unsupported system id: {:?}", resolved.system_id));
+            return Err(SessionError::UnsupportedSystem(resolved.system_id));
         }
         self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.load(&media).map_err(|e| e.to_string())?;
+        self.emu_core.load(&media)?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
@@ -149,9 +149,9 @@ impl SessionHandle {
         Ok(())
     }
 
-    pub fn unload(&mut self) -> Result<(), String> {
+    pub fn unload(&mut self) -> Result<(), SessionError> {
         self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.unload().map_err(|e| e.to_string())?;
+        self.emu_core.unload()?;
         self.loaded_media = None;
         self.persistence.reset();
         Ok(())
@@ -166,13 +166,13 @@ impl SessionHandle {
     pub fn run_command(
         &mut self,
         command: SessionCommand,
-    ) -> Result<SessionCommandOutcome, String> {
+    ) -> Result<SessionCommandOutcome, SessionError> {
         match command {
             SessionCommand::Pause => {
                 if self.paused() {
                     Ok(SessionCommandOutcome::default())
                 } else {
-                    self.emu_core.pause().map_err(|e| e.to_string())?;
+                    self.emu_core.pause()?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: false,
@@ -181,7 +181,7 @@ impl SessionHandle {
             }
             SessionCommand::Resume => {
                 if self.paused() {
-                    self.emu_core.resume().map_err(|e| e.to_string())?;
+                    self.emu_core.resume()?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: self.loaded(),
@@ -198,7 +198,7 @@ impl SessionHandle {
                 }
             }
             SessionCommand::Reset => {
-                self.emu_core.reset().map_err(|e| e.to_string())?;
+                self.emu_core.reset()?;
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -289,31 +289,25 @@ impl SessionHandle {
     fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionError> {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_core_bytes = if was_loaded {
-            Some(self.emu_core.save_state_raw().map_err(|e| e.to_string())?)
+            Some(self.emu_core.save_state_raw()?)
         } else {
             None
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let (rebuilt_core, rebuilt_adapter) = self
-            .factory
-            .create_core_and_adapter(next_settings)
-            .map_err(|e| e.to_string())?;
+        let (rebuilt_core, rebuilt_adapter) =
+            self.factory.create_core_and_adapter(next_settings)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_core
-                .load(&loaded_media.media)
-                .map_err(|e| e.to_string())?;
+            rebuilt_core.load(&loaded_media.media)?;
             if let Some(core_bytes) = exported_core_bytes.as_ref() {
-                rebuilt_core
-                    .load_state_raw(core_bytes.clone())
-                    .map_err(|e| e.to_string())?;
+                rebuilt_core.load_state_raw(core_bytes.clone())?;
                 if !was_paused {
-                    rebuilt_core.resume().map_err(|e| e.to_string())?;
+                    rebuilt_core.resume()?;
                 }
             }
         }
@@ -345,7 +339,7 @@ impl SessionHandle {
                 let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
             }
             if was_paused {
-                self.emu_core.pause().map_err(|e| e.to_string())?;
+                self.emu_core.pause()?;
             }
         }
         Ok(())

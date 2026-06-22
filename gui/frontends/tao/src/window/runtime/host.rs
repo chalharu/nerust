@@ -10,7 +10,7 @@ use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::load::{LoadRequest, MediaObject};
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionError, SessionHandle};
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
@@ -159,6 +159,7 @@ impl HostState {
         let options = self.session.default_load_options();
         if let Ok(resolved) = self
             .session
+            .factory()
             .resolve_load_request(self.session.settings_snapshot(), options)
             && self.session.load_resolved(media, resolved).is_ok()
         {
@@ -231,14 +232,14 @@ impl HostState {
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = keycode_controller_input(input.physical_key)
-            && let Ok(Some(shortcut)) = self.session.handle_keyboard_key(key, pressed)
+            && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
         }
     }
 
     pub(crate) fn clear_keys(&mut self) {
-        let _ = self.session.clear_input();
+        self.session.clear_input();
     }
 
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
@@ -322,7 +323,7 @@ impl HostState {
     pub(crate) fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<SettingsApplyPlan, String> {
+    ) -> Result<SettingsApplyPlan, SessionError> {
         let plan = self.session.apply_settings(settings)?;
         let fullscreen_default = self
             .session
@@ -545,7 +546,7 @@ impl HostState {
     fn persist_fullscreen_default(
         &mut self,
         fullscreen: bool,
-    ) -> Result<SettingsApplyPlan, String> {
+    ) -> Result<SettingsApplyPlan, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
