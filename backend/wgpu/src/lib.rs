@@ -1,10 +1,11 @@
-use nerust_screen_video::VideoRenderProfile;
-use nerust_screen_video::{FrameBuffer, VideoFrameSpec, VideoPresentation};
+use nerust_screen_video::{FrameBuffer, VideoFrameSpec, VideoPresentation, VideoRenderProfile};
 use nerust_screen_wgpu::renderer::{
     DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,
 };
 use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
+
+pub use nerust_screen_video::RenderResult;
 
 /// Shell-side contract for surfaces that can host a wgpu renderer.
 ///
@@ -44,17 +45,6 @@ unsafe impl<T: RenderSurfaceTarget> SurfaceTargetSource for ShellSurfaceTarget<T
     fn raw_display_handle(&self) -> Result<Option<RawDisplayHandle>, HandleError> {
         self.0.raw_display_handle()
     }
-}
-
-/// Outcome reported to the shell after a [`WgpuBackend::render`] call.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum RenderResult {
-    /// A frame was successfully presented.
-    Presented,
-    /// The frame was skipped (surface not ready, resize in flight, etc.).
-    Skipped,
-    /// A render error occurred; the shell may log or surface this as needed.
-    Error,
 }
 
 /// App-facing wgpu render backend.

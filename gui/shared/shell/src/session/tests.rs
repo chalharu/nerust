@@ -5,7 +5,7 @@ use crate::session::{KeyboardShortcut, SessionHandle};
 use nerust_contract_core::ConsoleCore;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::input::{InputStatePersistence, SystemInputAdapter};
-use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError, GpuCommandList};
+use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError};
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 
@@ -45,10 +45,8 @@ impl ConsoleCore for MockConsoleCore {
             video_signal: nerust_contract_core::VideoSignalKind::Ntsc,
         }
     }
-    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
-        Ok(GpuCommandList {
-            commands: Vec::new(),
-        })
+    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+        Ok(())
     }
 
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
