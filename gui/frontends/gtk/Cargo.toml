@@ -7,8 +7,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-epoxy.workspace = true
 gdk.workspace = true
+gdk4-x11 = { version = "=0.11.0" }
+gdk4-wayland = { version = "=0.11.0" }
 gio.workspace = true
 gtk.workspace = true
 libc.workspace = true
@@ -22,5 +23,5 @@ nerust_contract_input.workspace = true
 nerust_screen_video.workspace = true
 nerust_persistence.workspace = true
 nerust_sound_openal.workspace = true
-shared_library.workspace = true
+raw-window-handle.workspace = true
 simple_logger.workspace = true

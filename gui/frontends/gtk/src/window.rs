@@ -1,5 +1,5 @@
 use super::build_menu_model;
-use super::glarea::{GLArea, GLAreaExtend};
+use super::glarea::{Surface, SurfaceExtend};
 use super::{State, TITLE_UPDATE_INTERVAL};
 use crate::preferences::present_preferences_dialog;
 use gtk::gio;
@@ -50,7 +50,6 @@ pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
         state_menus: StateMenus,
     ) -> Window;
@@ -175,7 +174,6 @@ impl WindowExtend for Window {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
         state_menus: StateMenus,
     ) -> Window {
@@ -214,7 +212,7 @@ impl WindowExtend for Window {
             load_slot_menu: state_menus.load_slot_menu,
             delete_slot_menu: state_menus.delete_slot_menu,
         }));
-        let _ = GLArea::bind(glarea.clone(), result.state());
+        let _ = Surface::bind(&window, result.state());
         {
             let result = result.clone();
             let _ = window.connect_realize(move |_window| result.realize());
@@ -422,7 +420,7 @@ impl WindowExtend for Window {
         result.update_actions();
         window.present();
         result.sync_fullscreen_from_settings();
-        let _ = glarea.grab_focus();
+        let _ = window.grab_focus();
         result
     }
 
