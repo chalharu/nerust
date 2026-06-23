@@ -16,7 +16,6 @@ use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::descriptor::SystemSettingsPageModel;
 use nerust_gui_shell::factory::CoreFactory;
 use nerust_gui_shell::load::MediaObject;
-use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, SessionHandle};
 use nerust_gui_shell::settings::defaults::seed::{
@@ -81,10 +80,6 @@ impl State {
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
         self.session.render_profile()
-    }
-
-    pub(crate) fn window_size(&self) -> WindowSize {
-        self.session.window_size()
     }
 
     pub(crate) fn can_pause(&self) -> bool {
