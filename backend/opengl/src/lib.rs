@@ -35,19 +35,7 @@ impl GlRenderer {
         initial_size: SurfaceSize,
         render_profile: &VideoRenderProfile,
     ) -> Result<Self, String> {
-        let preference = {
-            #[cfg(all(unix, not(target_os = "macos")))]
-            {
-                // Linux: try EGL (Wayland) first, fall back to GLX (X11).
-                DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}))
-            }
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
-            {
-                // macOS / Windows: Glx variant is accepted but unused by
-                // glutin — CGL / WGL are selected automatically.
-                DisplayApiPreference::Glx(Box::new(|_reg| {}))
-            }
-        };
+        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
 
         let display = unsafe {
             glutin::display::Display::new(display_handle, preference)
