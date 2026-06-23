@@ -1,6 +1,7 @@
 use nerust_screen_opengl::GlView;
-use nerust_screen_video::VideoRenderProfile;
-use nerust_screen_video::{FrameBuffer, VideoFrameFormat};
+use nerust_screen_video::{
+    FrameBuffer, RenderResult, Renderer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+};
 use std::os::raw::c_void;
 
 /// App-facing OpenGL render backend.
@@ -53,9 +54,16 @@ impl GlBackend {
         Ok(())
     }
 
-    /// Upload `frame_buffer` to the GPU and draw a frame.
-    pub fn on_update(&self, frame_buffer: &FrameBuffer) {
-        // PaletteIndex 形式の場合、palette texture を同期する
+    /// Release GPU resources.
+    ///
+    /// Must be called while the GL context is still current.
+    pub fn on_close(&mut self) {
+        self.view.on_close();
+    }
+}
+
+impl Renderer for GlBackend {
+    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
         if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
             self.view.update_palette_texture(&palette_rgba8);
         }
@@ -64,18 +72,12 @@ impl GlBackend {
             .get(..self.expected_frame_len)
             .expect("OpenGL backend expected a loaded frame buffer of the configured size");
         self.view.on_update(bytes.as_ptr());
+        RenderResult::Presented
     }
 
-    /// Handle a viewport resize.
-    pub fn on_resize(&mut self, scale_x: f32, scale_y: f32, width: i32, height: i32) {
-        self.view.on_resize(scale_x, scale_y, width, height);
-    }
-
-    /// Release GPU resources.
-    ///
-    /// Must be called while the GL context is still current.
-    pub fn on_close(&mut self) {
-        self.view.on_close();
+    fn reconfigure(&mut self, size: SurfaceSize) {
+        self.view
+            .on_resize(1.0, 1.0, size.width as i32, size.height as i32);
     }
 }
 
@@ -91,8 +93,6 @@ mod tests {
 
     #[test]
     fn default_constructs_without_panic() {
-        // Verify that constructing GlBackend without a GL context does not
-        // immediately panic (GPU resources are deferred to on_load).
         let _backend = GlBackend::default();
     }
 }

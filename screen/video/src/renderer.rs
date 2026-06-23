@@ -16,7 +16,7 @@ pub enum RenderResult {
 /// 実装はフレームバッファを受け取り、画面に出力する。
 /// `PixelFormat::PaletteIndex` の場合、実装は自動的に palette texture
 /// を同期し、GPU 側で RGB デコードを行う。
-pub trait Renderer {
+pub trait Renderer: std::fmt::Debug {
     /// フレームバッファを表示する。
     /// FrameBuffer は自身のサイズ・PixelFormat を知っている。
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult;

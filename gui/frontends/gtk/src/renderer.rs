@@ -3,13 +3,13 @@ use gtk::prelude::*;
 use nerust_backend_opengl::GlBackend;
 use nerust_gui_shell::session::WindowSize;
 use nerust_gui_shell::settings::scaling_factor;
-use nerust_screen_video::FrameBuffer;
+use nerust_screen_video::{FrameBuffer, Renderer, SurfaceSize};
 use shared_library::dynamic_library::DynamicLibrary;
 use std::ptr;
 
 #[derive(Debug, Default)]
 pub(crate) struct GtkGlRenderer {
-    view: Option<GlBackend>,
+    view: Option<Box<dyn Renderer>>,
 }
 
 impl GtkGlRenderer {
@@ -38,17 +38,17 @@ impl GtkGlRenderer {
         let mut view = GlBackend::new();
         view.use_vao(true);
         view.on_load(state.render_profile()).unwrap();
-        self.view = Some(view);
-        self.resize(
+        self.reconfigure(
             gl_area,
             state.window_size(),
             scaling_factor(state.settings_snapshot().local.video.window.scaling),
             gl_area.width(),
             gl_area.height(),
         );
+        self.view = Some(Box::new(view));
     }
 
-    pub(crate) fn resize(
+    pub(crate) fn reconfigure(
         &mut self,
         gl_area: &gtk::GLArea,
         window_size: WindowSize,
@@ -68,25 +68,20 @@ impl GtkGlRenderer {
         }
 
         if let Some(view) = self.view.as_mut() {
-            view.on_resize(
-                viewport.scale_x,
-                viewport.scale_y,
-                viewport.width,
-                viewport.height,
-            );
+            view.reconfigure(SurfaceSize::new(
+                viewport.width as u32,
+                viewport.height as u32,
+            ));
         }
     }
 
-    pub(crate) fn render(&self, frame_buffer: &FrameBuffer) {
-        if let Some(view) = self.view.as_ref() {
-            view.on_update(frame_buffer);
+    pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer) {
+        if let Some(view) = self.view.as_mut() {
+            view.render(frame_buffer);
         }
     }
 
     pub(crate) fn unrealize(&mut self) {
-        if let Some(view) = self.view.as_mut() {
-            view.on_close();
-        }
         self.view = None;
     }
 }
