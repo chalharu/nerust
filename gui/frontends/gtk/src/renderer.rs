@@ -1,15 +1,15 @@
 use super::State;
 use gtk::prelude::*;
-use nerust_backend_opengl::GlBackend;
+use nerust_backend_opengl::GlRenderer;
+
 use nerust_gui_shell::session::WindowSize;
-use nerust_gui_shell::settings::scaling_factor;
 use nerust_screen_video::{FrameBuffer, Renderer, SurfaceSize};
 use shared_library::dynamic_library::DynamicLibrary;
 use std::ptr;
 
 #[derive(Debug, Default)]
 pub(crate) struct GtkGlRenderer {
-    view: Option<Box<dyn Renderer>>,
+    view: Option<GlRenderer>,
 }
 
 impl GtkGlRenderer {
@@ -33,45 +33,18 @@ impl GtkGlRenderer {
                 }
             }
         });
-        GlBackend::load_with(epoxy::get_proc_addr);
+        GlRenderer::load_with(epoxy::get_proc_addr);
 
-        let mut view = GlBackend::new();
+        let mut view = GlRenderer::new_shared();
         view.use_vao(true);
         view.on_load(state.render_profile()).unwrap();
-        self.reconfigure(
-            gl_area,
-            state.window_size(),
-            scaling_factor(state.settings_snapshot().local.video.window.scaling),
-            gl_area.width(),
-            gl_area.height(),
-        );
-        self.view = Some(Box::new(view));
+        self.view = Some(view);
+        self.reconfigure(gl_area.width() as u32, gl_area.height() as u32);
     }
 
-    pub(crate) fn reconfigure(
-        &mut self,
-        gl_area: &gtk::GLArea,
-        window_size: WindowSize,
-        scaling: Option<u32>,
-        width: i32,
-        height: i32,
-    ) {
-        let Some(viewport) = viewport(window_size, width, height, scaling, gl_area.scale_factor())
-        else {
-            return;
-        };
-
-        gl_area.make_current();
-        if let Some(error) = gl_area.error() {
-            log::error!("{error}");
-            return;
-        }
-
+    pub(crate) fn reconfigure(&mut self, width: u32, height: u32) {
         if let Some(view) = self.view.as_mut() {
-            view.reconfigure(SurfaceSize::new(
-                viewport.width as u32,
-                viewport.height as u32,
-            ));
+            view.reconfigure(SurfaceSize::new(width, height));
         }
     }
 
@@ -82,6 +55,9 @@ impl GtkGlRenderer {
     }
 
     pub(crate) fn unrealize(&mut self) {
+        if let Some(view) = self.view.as_mut() {
+            view.on_close();
+        }
         self.view = None;
     }
 }
@@ -119,6 +95,7 @@ fn viewport(
     })
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::viewport;

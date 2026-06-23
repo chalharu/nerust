@@ -2,7 +2,6 @@ use super::State;
 use super::renderer::GtkGlRenderer;
 use gtk::glib;
 use gtk::prelude::*;
-use nerust_gui_shell::settings::scaling_factor;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -81,19 +80,38 @@ impl GLAreaExtend for GLArea {
     }
 
     fn resize(&self, width: i32, height: i32) {
-        let state = self.state();
-        let state = state.borrow();
-        self.borrow().renderer.borrow_mut().reconfigure(
-            &self.glarea(),
-            state.window_size(),
-            scaling_factor(state.settings_snapshot().local.video.window.scaling),
-            width,
-            height,
-        );
+        self.borrow()
+            .renderer
+            .borrow_mut()
+            .reconfigure(width as u32, height as u32);
     }
 
     fn render(&self) -> bool {
-        render(&self.glarea(), self.borrow().renderer.clone(), self.state());
+        let gl_area = self.glarea();
+        gl_area.make_current();
+        if let Some(e) = gl_area.error() {
+            log::error!("{}", e);
+            return true;
+        }
+        let needs_reload = { self.state().borrow_mut().take_renderer_reload_pending() };
+        if needs_reload {
+            self.borrow().renderer.borrow_mut().unrealize();
+            if let Ok(state) = self.state().try_borrow() {
+                self.borrow()
+                    .renderer
+                    .borrow_mut()
+                    .realize(&gl_area, &state);
+            }
+        }
+        if let Ok(mut state) = self.state().try_borrow_mut() {
+            state.swap_frame_buffer();
+        }
+        if let Ok(state) = self.state().try_borrow() {
+            self.borrow()
+                .renderer
+                .borrow_mut()
+                .render(state.frame_buffer());
+        }
         true
     }
 
@@ -104,30 +122,5 @@ impl GLAreaExtend for GLArea {
     fn tick(&self) -> bool {
         self.glarea().queue_render();
         true
-    }
-}
-
-fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc<RefCell<State>>) {
-    gl_area.make_current();
-    if let Some(e) = gl_area.error() {
-        log::error!("{}", e);
-        return;
-    }
-    let needs_reload = { state.borrow_mut().take_renderer_reload_pending() };
-    if needs_reload {
-        renderer.borrow_mut().unrealize();
-        if let Ok(state) = state.try_borrow() {
-            renderer.borrow_mut().realize(gl_area, &state);
-        }
-    }
-    // swap は成功しても失敗しても試行する
-    if let Ok(mut state) = state.try_borrow_mut() {
-        state.swap_frame_buffer();
-    }
-    if let Ok(state) = state.try_borrow() {
-        renderer.borrow_mut().render(state.frame_buffer());
-    }
-    unsafe {
-        epoxy::Flush();
     }
 }
