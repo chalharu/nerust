@@ -1,8 +1,7 @@
 use nerust_contract_core::audio::AudioBackend;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, GpuCommand, GpuCommandList,
-    PixelFormat, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat, VideoSignalKind,
 };
 
 use crate::cartridge_rom::CartridgeData;
@@ -72,13 +71,11 @@ impl ConsoleCore for NesConsoleCore {
         }
     }
 
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError> {
+    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
-        Ok(GpuCommandList {
-            commands: vec![GpuCommand::PaletteDecode { slot: 0 }],
-        })
+        Ok(())
     }
 
     // `region` フィールドは NES PAL 対応時に使用する。

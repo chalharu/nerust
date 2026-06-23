@@ -1,5 +1,4 @@
 pub mod audio;
-pub mod channel;
 pub mod identity;
 pub mod input;
 pub mod save_state;
@@ -45,25 +44,6 @@ pub struct CoreCapabilities {
     pub output_formats: Vec<PixelFormat>,
     pub video_signal: VideoSignalKind,
 }
-
-// ---------------------------------------------------------------------------
-// GpuCommand
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug)]
-pub enum GpuCommand {
-    Blit { slot: u32 },
-    PaletteDecode { slot: u32 },
-}
-
-#[derive(Clone, Debug)]
-pub struct GpuCommandList {
-    pub commands: Vec<GpuCommand>,
-}
-
-// ---------------------------------------------------------------------------
-// PixelFormat (re-export from screen/video for convenience)
-// ---------------------------------------------------------------------------
 
 pub use nerust_screen_video::{FrameBuffer, PixelFormat};
 
@@ -150,7 +130,7 @@ pub enum EmuCommand {
 pub trait ConsoleCore: Send {
     // -- video --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<GpuCommandList, CoreError>;
+    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError>;
 
     // -- lifecycle --
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError>;
@@ -201,30 +181,5 @@ pub trait ConsoleCore: Send {
     /// Check `rewind_state_size()` returns `Some` before calling.
     fn rewind_restore(&mut self, _buf: &[u8]) {
         panic!("rewind not supported")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gpu_command_round_trips_slot_number() {
-        let cmd = GpuCommand::Blit { slot: 42 };
-        match cmd {
-            GpuCommand::Blit { slot } => assert_eq!(slot, 42),
-            _ => panic!("expected Blit"),
-        }
-    }
-
-    #[test]
-    fn gpu_command_list_holds_commands() {
-        let list = GpuCommandList {
-            commands: vec![
-                GpuCommand::Blit { slot: 0 },
-                GpuCommand::PaletteDecode { slot: 1 },
-            ],
-        };
-        assert_eq!(list.commands.len(), 2);
     }
 }
