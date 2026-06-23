@@ -248,7 +248,6 @@ fn build_window(app: &gtk::Application) -> Window {
     Window::bind(
         app.clone(),
         window,
-        builder.object("glarea").unwrap(),
         state,
         StateMenus {
             select_active_slot_menu,
