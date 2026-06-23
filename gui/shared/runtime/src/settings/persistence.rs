@@ -43,7 +43,7 @@ pub fn resolve_central_storage_paths(
     identity: &SystemIdentity,
 ) -> SidecarPaths {
     let base = root
-        .join(system_id_slug(system))
+        .join(system.to_string())
         .join(system_storage_key(system, identity));
     SidecarPaths {
         mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME),
@@ -148,20 +148,6 @@ fn maybe_auto_import_storage(
         }
     }
     Ok(())
-}
-
-fn system_id_slug(system: SystemId) -> &'static str {
-    if system == SystemId::new("nes") {
-        "nes"
-    } else if system == SystemId::new("snes") {
-        "snes"
-    } else if system == SystemId::new("ps1") {
-        "ps1"
-    } else if system == SystemId::new("megadrive") {
-        "megadrive"
-    } else {
-        panic!("unknown system id: {system}")
-    }
 }
 
 fn storage_is_empty(paths: &SidecarPaths) -> Result<bool, SettingsError> {
