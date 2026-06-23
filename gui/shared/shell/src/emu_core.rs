@@ -78,6 +78,10 @@ impl EmuCore {
 
     pub fn clear_display(&mut self) {
         self.disp_fb.clear();
+        if let Ok(mut guard) = self.shared_fb.lock() {
+            guard.clear();
+        }
+        self.frame_ready.store(false, Ordering::Release);
     }
 
     // metrics() のみ into_inner() で回復する理由: レンダリングパスで毎フレーム呼ばれ、
