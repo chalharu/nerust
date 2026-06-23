@@ -187,13 +187,6 @@ impl PersistenceManager {
         }
     }
 
-    #[allow(dead_code)]
-    pub(super) fn with_backend(b: Box<dyn SlotBackend>) -> Self {
-        let mut pm = Self::new();
-        pm.backend = b;
-        pm
-    }
-
     pub(super) fn slots(&self) -> &[StateSlotSummary] {
         &self.slots
     }
@@ -202,12 +195,12 @@ impl PersistenceManager {
         self.active_slot_id
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn states_dir(&self) -> Option<&PathBuf> {
         self.states_dir.as_ref()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn mapper_save_path(&self) -> Option<&PathBuf> {
         self.mapper_save_path.as_ref()
     }
