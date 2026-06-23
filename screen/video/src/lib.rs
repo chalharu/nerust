@@ -1,6 +1,7 @@
 pub mod filter;
 pub mod logical;
 pub mod physical;
+pub mod renderer;
 pub mod rgb;
 
 pub use crate::filter::presentation::{
@@ -13,7 +14,20 @@ pub use crate::filter::{
 pub use crate::filter::{FilterFunc, FilterType, NesFilter};
 pub use crate::logical::LogicalSize;
 pub use crate::physical::PhysicalSize;
+pub use crate::renderer::{RenderResult, Renderer};
 pub use crate::rgb::RGB;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct SurfaceSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl SurfaceSize {
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoFrameFormat {

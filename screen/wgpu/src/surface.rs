@@ -1,17 +1,7 @@
+pub use nerust_screen_video::SurfaceSize;
+
 use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
 use wgpu::{Instance, Surface};
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct SurfaceSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl SurfaceSize {
-    pub const fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
-    }
-}
 
 /// # Safety
 ///
