@@ -18,10 +18,6 @@ struct SendCore(Option<Core>);
 // `pub(crate)` なので外部からの非 Send 実装追加は不可能。
 unsafe impl Send for SendCore {}
 
-fn cartridge_error_to_core(e: crate::cartridge_error::CartridgeError) -> CoreError {
-    CoreError::Core(e.to_string())
-}
-
 pub struct NesConsoleCore {
     core: SendCore,
     controller: Box<dyn Controller + Send>,
@@ -35,7 +31,7 @@ impl NesConsoleCore {
         controller: Box<dyn Controller + Send>,
         audio: Box<dyn AudioBackend>,
     ) -> Result<Self, CoreError> {
-        let core = Core::new(cartridge_data).map_err(|e| CoreError::Core(e.to_string()))?;
+        let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
             core: SendCore(Some(core)),
             controller,
@@ -87,14 +83,14 @@ impl ConsoleCore for NesConsoleCore {
 
     // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
-        let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(cartridge_error_to_core)?;
+        let cartridge_data =
+            crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
         let options = if config.core_options.is_empty() {
             CoreOptions::default()
         } else {
             CoreOptions::from_bytes(&config.core_options).unwrap_or_default()
         };
-        let core = Core::new_with_options(cartridge_data, options)
-            .map_err(|e| CoreError::Core(e.to_string()))?;
+        let core = Core::new_with_options(cartridge_data, options).map_err(CoreError::Core)?;
         self.core = SendCore(Some(core));
         self.paused = false;
         Ok(())
@@ -121,14 +117,12 @@ impl ConsoleCore for NesConsoleCore {
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let core = self.core_ref()?;
-        core.export_machine_state()
-            .map_err(|e| CoreError::Core(e.to_string()))
+        core.export_machine_state().map_err(CoreError::Core)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
-        core.import_machine_state(data)
-            .map_err(|e| CoreError::Core(e.to_string()))
+        core.import_machine_state(data).map_err(CoreError::Core)
     }
 
     fn set_volume(&mut self, volume: f32) {
@@ -137,21 +131,19 @@ impl ConsoleCore for NesConsoleCore {
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
         let core = self.core_ref()?;
-        core.export_mapper_save()
-            .map_err(|e| CoreError::Core(e.to_string()))
+        core.export_mapper_save().map_err(CoreError::Core)
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
-        core.import_mapper_save(data)
-            .map_err(|e| CoreError::Core(e.to_string()))
+        core.import_mapper_save(data).map_err(CoreError::Core)
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
         self.core_ref()?
             .rom_identity()
             .into_system_identity()
-            .map_err(CoreError::Core)
+            .map_err(|e| CoreError::Core(Box::new(e)))
     }
 }
 

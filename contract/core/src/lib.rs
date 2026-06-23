@@ -16,10 +16,10 @@ use std::sync::mpsc::Sender;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
-    #[error("ROM parse failed: {0}")]
-    RomParse(String),
-    #[error("core error: {0}")]
-    Core(String),
+    #[error("{0}")]
+    RomParse(Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    Core(Box<dyn std::error::Error + Send + Sync>),
     #[error("no ROM loaded")]
     NoRomLoaded,
 }
