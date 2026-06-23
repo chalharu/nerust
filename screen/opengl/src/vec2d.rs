@@ -1,6 +1,5 @@
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
 pub(crate) struct Vec2D {
     pub(crate) x: f32,
     pub(crate) y: f32,
