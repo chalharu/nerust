@@ -1,16 +1,15 @@
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, SyncSender};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, GpuCommandList, PixelFormat};
+use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, PixelFormat};
 use nerust_timer::Timer;
 
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,
     shared_fb: Arc<Mutex<FrameBuffer>>,
-    last_cmds: Arc<RwLock<Option<GpuCommandList>>>,
     thread: Option<JoinHandle<()>>,
     frame_count: Arc<std::sync::atomic::AtomicU64>,
     fps: Arc<AtomicU32>,
@@ -21,7 +20,6 @@ impl fmt::Debug for EmuThread {
         f.debug_struct("EmuThread")
             .field("cmd_tx", &self.cmd_tx)
             .field("shared_fb", &self.shared_fb)
-            .field("last_cmds", &self.last_cmds)
             .field("thread", &self.thread)
             .field("frame_count", &self.frame_count)
             .field("fps", &self.fps.load(Ordering::Relaxed))
@@ -40,12 +38,10 @@ impl EmuThread {
         palette: Box<[u32; 256]>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(8);
-        let last_cmds: Arc<RwLock<Option<GpuCommandList>>> = Arc::new(RwLock::new(None));
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
             Arc::new(std::sync::atomic::AtomicU64::new(0));
         let fps: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 
-        let cmds = Arc::clone(&last_cmds);
         let fb = Arc::clone(&shared_fb);
         let fc = Arc::clone(&frame_count);
         let fps_c = Arc::clone(&fps);
@@ -123,8 +119,7 @@ impl EmuThread {
 
                 if loaded && !core.paused() {
                     // render_frame only fails with NoRomLoaded (guarded by loaded flag)
-                    if let Ok(list) = core.render_frame(&mut frame_slot) {
-                        *cmds.write().unwrap_or_else(|e| e.into_inner()) = Some(list);
+                    if core.render_frame(&mut frame_slot).is_ok() {
                         fc.fetch_add(1, Ordering::Relaxed);
                         if let Ok(mut guard) = fb.lock() {
                             std::mem::swap(&mut *guard, &mut frame_slot);
@@ -141,7 +136,6 @@ impl EmuThread {
         Self {
             cmd_tx,
             shared_fb,
-            last_cmds,
             thread: Some(thread),
             frame_count,
             fps,
@@ -156,13 +150,6 @@ impl EmuThread {
 
     pub fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
         &self.shared_fb
-    }
-
-    pub fn last_commands(&self) -> Option<GpuCommandList> {
-        self.last_cmds
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
     }
 
     pub fn frame_count(&self) -> u64 {
