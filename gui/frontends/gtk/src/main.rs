@@ -1,7 +1,7 @@
 mod crash_handler;
-mod glarea;
 mod preferences;
 mod renderer;
+mod surface;
 mod window;
 
 use self::window::{StateMenus, Window, WindowExtend};

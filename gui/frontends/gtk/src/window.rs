@@ -1,5 +1,5 @@
 use super::build_menu_model;
-use super::glarea::{Surface, SurfaceExtend};
+use super::surface::{Surface, SurfaceExtend};
 use super::{State, TITLE_UPDATE_INTERVAL};
 use crate::preferences::present_preferences_dialog;
 use gtk::gio;

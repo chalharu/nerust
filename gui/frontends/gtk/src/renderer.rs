@@ -3,11 +3,11 @@ use nerust_screen_video::{FrameBuffer, Renderer, SurfaceSize, VideoRenderProfile
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
-pub(crate) struct GtkGlRenderer {
+pub(crate) struct GtkRenderer {
     view: Option<GlRenderer>,
 }
 
-impl GtkGlRenderer {
+impl GtkRenderer {
     pub(crate) fn new() -> Self {
         Self { view: None }
     }
@@ -21,7 +21,7 @@ impl GtkGlRenderer {
     ) {
         match GlRenderer::new(window_handle, display_handle, size, profile) {
             Ok(view) => self.view = Some(view),
-            Err(e) => log::error!("GtkGlRenderer: failed to create GlRenderer: {e}"),
+            Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }
     }
 
