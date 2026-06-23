@@ -88,7 +88,7 @@ mod tests {
             mmc3_irq_variant: Some(WindowMmc3IrqVariant::Sharp),
         });
         let LoadRequest::Explicit { options } = request else {
-            panic!("expected Explicit load request");
+            panic!("expected Explicit load request, got {request:?}");
         };
         assert!(!options.options_bytes.is_empty());
     }

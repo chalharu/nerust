@@ -40,8 +40,8 @@ impl SaveStateHeader {
         if buf[0..4] != SAVE_STATE_MAGIC {
             return Err("invalid save state magic");
         }
-        let version = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-        let data_size = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        let version = u32::from_le_bytes(buf[4..8].try_into().expect("slice is 4 bytes"));
+        let data_size = u32::from_le_bytes(buf[8..12].try_into().expect("slice is 4 bytes"));
         Ok(Self { version, data_size })
     }
 }

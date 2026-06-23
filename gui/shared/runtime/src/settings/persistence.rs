@@ -160,7 +160,8 @@ fn system_id_slug(system: SystemId) -> &'static str {
     } else if system == SystemId::new("megadrive") {
         "megadrive"
     } else {
-        panic!("unknown system id: {system}")
+        log::warn!("unrecognized system id {system}; using 'unknown' as storage slug");
+        "unknown"
     }
 }
 

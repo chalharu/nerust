@@ -188,20 +188,14 @@ pub trait ConsoleCore: Send {
     }
     /// Saves the current state into `buf` for rewind.
     ///
-    /// # Panics
-    /// Panics if the core does not support rewind.
-    /// Check `rewind_state_size()` returns `Some` before calling.
-    fn rewind_save(&self, _buf: &mut [u8]) {
-        panic!("rewind not supported")
-    }
+    /// The default implementation is a no-op. Override this together with
+    /// `rewind_state_size()` and `rewind_restore()` when rewind is supported.
+    fn rewind_save(&self, _buf: &mut [u8]) {}
     /// Restores a previously saved rewind state.
     ///
-    /// # Panics
-    /// Panics if the core does not support rewind.
-    /// Check `rewind_state_size()` returns `Some` before calling.
-    fn rewind_restore(&mut self, _buf: &[u8]) {
-        panic!("rewind not supported")
-    }
+    /// The default implementation is a no-op. Override this together with
+    /// `rewind_state_size()` and `rewind_save()` when rewind is supported.
+    fn rewind_restore(&mut self, _buf: &[u8]) {}
 }
 
 #[cfg(test)]
