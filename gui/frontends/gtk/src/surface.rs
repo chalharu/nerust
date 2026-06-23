@@ -1,5 +1,5 @@
 use super::State;
-use super::renderer::GtkGlRenderer;
+use super::renderer::GtkRenderer;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_screen_video::SurfaceSize;
@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
-    renderer: Rc<RefCell<GtkGlRenderer>>,
+    renderer: Rc<RefCell<GtkRenderer>>,
     state: Rc<RefCell<State>>,
 }
 
@@ -66,7 +66,7 @@ fn gdk_display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle> {
 
 impl SurfaceExtend for Surface {
     fn bind(window: &gtk::ApplicationWindow, state: Rc<RefCell<State>>) -> Surface {
-        let renderer = Rc::new(RefCell::new(GtkGlRenderer::new()));
+        let renderer = Rc::new(RefCell::new(GtkRenderer::new()));
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.clone(),
             renderer: renderer.clone(),
