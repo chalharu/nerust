@@ -35,12 +35,27 @@ impl GlRenderer {
         let window_handle = window.window_handle().map_err(|e| e.to_string())?;
         let display_handle = window.display_handle().map_err(|e| e.to_string())?;
 
+        let preference = {
+            #[cfg(target_os = "macos")]
+            {
+                // macOS CGL — Glx variant is accepted but unused by glutin.
+                DisplayApiPreference::Glx(Box::new(|_reg| {}))
+            }
+            #[cfg(target_os = "windows")]
+            {
+                // Windows WGL — Glx variant is accepted but unused by glutin.
+                DisplayApiPreference::Glx(Box::new(|_reg| {}))
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                // Linux: try EGL (Wayland) first, fall back to GLX (X11).
+                DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}))
+            }
+        };
+
         let display = unsafe {
-            glutin::display::Display::new(
-                *display_handle.as_ref(),
-                DisplayApiPreference::Glx(Box::new(|_reg| {})),
-            )
-            .map_err(|e| format!("failed to create GL display: {e}"))?
+            glutin::display::Display::new(*display_handle.as_ref(), preference)
+                .map_err(|e| format!("failed to create GL display: {e}"))?
         };
 
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
@@ -80,7 +95,7 @@ impl GlRenderer {
             .map_err(|e| format!("failed to make GL context current: {e}"))?;
 
         GlView::load_with(|name| {
-            let cstr = CString::new(name).unwrap();
+            let cstr = CString::new(name).expect("GL function name contains null byte");
             display.get_proc_address(&cstr)
         });
 
