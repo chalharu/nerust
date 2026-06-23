@@ -339,13 +339,18 @@ impl GlView {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
 
-    pub fn on_resize(
-        &mut self,
-        scale_x: f32,
-        scale_y: f32,
-        viewport_width: i32,
-        viewport_height: i32,
-    ) {
+    pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
+        let window_aspect = viewport_width as f32 / viewport_height as f32;
+        let content_aspect = self.logical_width as f32 / self.logical_height as f32;
+
+        let (scale_x, scale_y) = if window_aspect > content_aspect {
+            // Window is wider than content → letterbox (black bars on sides)
+            (content_aspect / window_aspect, 1.0)
+        } else {
+            // Window is taller than content → pillarbox (black bars on top/bottom)
+            (1.0, window_aspect / content_aspect)
+        };
+
         self.shader.as_ref().unwrap().use_program();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();

@@ -138,7 +138,6 @@ impl Renderer for GlRenderer {
     }
 
     fn reconfigure(&mut self, size: SurfaceSize) {
-        self.view
-            .on_resize(1.0, 1.0, size.width as i32, size.height as i32);
+        self.view.on_resize(size.width as i32, size.height as i32);
     }
 }
