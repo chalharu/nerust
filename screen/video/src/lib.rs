@@ -229,6 +229,12 @@ impl FrameBuffer {
         self.cursor = 0;
     }
 
+    /// バッファ全体をゼロで埋める。
+    pub fn clear(&mut self) {
+        self.data.fill(0);
+        self.cursor = 0;
+    }
+
     /// データバッファを指定バイト数にリサイズする。
     /// width/height/stride は更新せず、data のみを拡張する。
     /// ScreenBuffer の出力サイズ (frame_len()) に合わせるために使用する。

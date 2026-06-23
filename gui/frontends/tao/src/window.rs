@@ -80,7 +80,6 @@ impl Default for Window {
 #[cfg(test)]
 mod tests {
     use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
-    use nerust_contract_input::SystemId;
     use nerust_gui_shell::load::LoadRequest;
 
     #[test]

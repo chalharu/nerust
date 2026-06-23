@@ -112,6 +112,10 @@ impl SessionHandle {
         self.emu_core.frame_buffer()
     }
 
+    pub fn clear_display(&mut self) {
+        self.emu_core.clear_display();
+    }
+
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         &self.settings_snapshot
     }
