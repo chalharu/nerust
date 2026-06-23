@@ -7,5 +7,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+glutin.workspace = true
+log.workspace = true
 nerust_screen_opengl.workspace = true
 nerust_screen_video.workspace = true
+raw-window-handle.workspace = true

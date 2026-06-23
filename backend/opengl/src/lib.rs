@@ -1,3 +1,5 @@
+pub mod gl_renderer;
+
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
     FrameBuffer, RenderResult, Renderer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
