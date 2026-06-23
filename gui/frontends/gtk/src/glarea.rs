@@ -83,7 +83,7 @@ impl GLAreaExtend for GLArea {
     fn resize(&self, width: i32, height: i32) {
         let state = self.state();
         let state = state.borrow();
-        self.borrow().renderer.borrow_mut().resize(
+        self.borrow().renderer.borrow_mut().reconfigure(
             &self.glarea(),
             state.window_size(),
             scaling_factor(state.settings_snapshot().local.video.window.scaling),
@@ -125,7 +125,7 @@ fn render(gl_area: &gtk::GLArea, renderer: Rc<RefCell<GtkGlRenderer>>, state: Rc
         state.swap_frame_buffer();
     }
     if let Ok(state) = state.try_borrow() {
-        renderer.borrow().render(state.frame_buffer());
+        renderer.borrow_mut().render(state.frame_buffer());
     }
     unsafe {
         epoxy::Flush();
