@@ -744,6 +744,13 @@ impl AndroidFrontend {
             self.shell.needs_redraw = false;
             return;
         };
+        // If the session has no loaded ROM, clear the display just before
+        // rendering to guard against a stale frame that the emuthread may
+        // have written into shared_fb between the last clear_display() call
+        // and now (race between Unload processing and render_frame completion).
+        if !self.session.loaded() {
+            self.session.clear_display();
+        }
         let size = window.inner_size();
         match renderer.render(
             &mut self.session,
