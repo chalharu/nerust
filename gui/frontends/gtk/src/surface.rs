@@ -7,6 +7,8 @@ use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandWindowHandle, XlibDisplayHandle,
 };
 use std::cell::RefCell;
+use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::rc::Rc;
 
 pub(crate) struct SurfaceCore {
@@ -22,46 +24,27 @@ pub(crate) trait SurfaceExtend {
     fn tick(&self) -> bool;
 }
 
-/// Extract a raw window handle from a GDK surface.
-fn gdk_surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
-    // GTK4 on Linux uses either X11 or Wayland. We try to determine
-    // the backend by checking the surface type at runtime.
-    let ptr = surface.as_ptr() as *mut std::ffi::c_void;
-
-    // Try Wayland first — less overhead if it's available.
-    // The wl_surface pointer is typically at the first field of GdkWaylandSurface.
-    // This is a best-effort detection; actual backend depends on GTK configuration.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        // For Wayland, we use the surface pointer directly as wl_surface*.
-        // In GDK, GdkWaylandSurface's first field is GdkSurface, second is wl_surface.
-        // This is fragile; ideally we'd use gdk4-wayland crate.
-        let wayland = WaylandWindowHandle::new(std::ptr::NonNull::new(ptr).unwrap());
-        return Some(RawWindowHandle::Wayland(wayland));
-    }
-
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
-    {
-        let _ = ptr;
-        None
-    }
+/// On non-Linux platforms GTK is not available, so raw handle extraction
+/// always fails. The cfg is consolidated here rather than duplicated in
+/// each extraction function.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn gdk_ptr(ptr: *mut c_void) -> Option<NonNull<c_void>> {
+    NonNull::new(ptr)
 }
 
-/// Extract a raw display handle from a GDK display.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn gdk_ptr(_ptr: *mut c_void) -> Option<NonNull<c_void>> {
+    None
+}
+
+fn gdk_surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+    let ptr = gdk_ptr(surface.as_ptr() as *mut c_void)?;
+    Some(RawWindowHandle::Wayland(WaylandWindowHandle::new(ptr)))
+}
+
 fn gdk_display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle> {
-    let ptr = display.as_ptr() as *mut std::ffi::c_void;
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let xlib = XlibDisplayHandle::new(std::ptr::NonNull::new(ptr), 0);
-        return Some(RawDisplayHandle::Xlib(xlib));
-    }
-
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
-    {
-        let _ = ptr;
-        None
-    }
+    let ptr = gdk_ptr(display.as_ptr() as *mut c_void)?;
+    Some(RawDisplayHandle::Xlib(XlibDisplayHandle::new(Some(ptr), 0)))
 }
 
 impl SurfaceExtend for Surface {
