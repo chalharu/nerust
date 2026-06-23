@@ -3,11 +3,13 @@ use std::fs;
 use std::path::PathBuf;
 
 const LAST_ROM_ID_FILE_NAME: &str = "last-rom-id";
+const RESTORE_PENDING_FILE_NAME: &str = ".restore_pending";
 const ROM_LIBRARY_ROOT_DIR_NAME: &str = "rom-library";
 
 pub(crate) struct AndroidStorage {
     pub(crate) rom_library: RomLibrary,
     last_rom_id_file: PathBuf,
+    restore_pending_file: PathBuf,
 }
 
 impl AndroidStorage {
@@ -19,7 +21,31 @@ impl AndroidStorage {
         Ok(Self {
             rom_library,
             last_rom_id_file: root.join(LAST_ROM_ID_FILE_NAME),
+            restore_pending_file: root.join(RESTORE_PENDING_FILE_NAME),
         })
+    }
+
+    pub(crate) fn has_restore_pending(&self) -> bool {
+        self.restore_pending_file.exists()
+    }
+
+    pub(crate) fn touch_restore_pending(&self) {
+        if let Some(parent) = self.restore_pending_file.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                log::warn!("failed to create restore pending dir: {error}");
+            }
+        }
+        if let Err(error) = fs::write(&self.restore_pending_file, &[]) {
+            log::warn!("failed to write restore pending file: {error}");
+        }
+    }
+
+    pub(crate) fn clear_restore_pending(&self) {
+        if let Err(error) = fs::remove_file(&self.restore_pending_file) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("failed to clear restore pending file: {error}");
+            }
+        }
     }
 
     pub(crate) fn load_last_rom_id(&self) -> Result<Option<String>, String> {

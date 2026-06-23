@@ -12,7 +12,7 @@ use self::picker::RomPickerResult;
 use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
-use jni::jni_str;
+use jni::{jni_sig, jni_str};
 use nerust_backend_wgpu::RenderResult;
 use nerust_factory_nes::NesFactory;
 use nerust_factory_nes::touch::{
@@ -148,6 +148,7 @@ impl AndroidFrontend {
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
         let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
             session,
@@ -164,9 +165,13 @@ impl AndroidFrontend {
             foreground_retry_at: None,
             last_foreground_error: None,
             lifecycle_auto_paused: false,
-            lifecycle_restore_pending: false,
+            lifecycle_restore_pending: restore_pending,
         };
-        // Skip automatic last-ROM restore on cold start; restore will happen on warm resume.
+        if frontend.lifecycle_restore_pending {
+            log::info!(
+                "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
+            );
+        }
         frontend.refresh_dialog_caches();
         log::info!("AndroidFrontend::new: ready");
         frontend
@@ -372,8 +377,10 @@ impl AndroidFrontend {
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
+            self.storage.clear_restore_pending();
             log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
         } else {
+            self.storage.touch_restore_pending();
             log::info!("save_lifecycle_state: hidden lifecycle state saved");
         }
         self.session.flush_before_exit();
@@ -430,6 +437,43 @@ impl AndroidFrontend {
     fn handle_menu_action(&mut self, action: MenuAction) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
+            MenuAction::Exit => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    if let Err(error) = self.session.unload() {
+                        log::warn!("failed to unload session on exit: {error}");
+                    }
+                }
+                self.session.flush_before_exit();
+                // Finish the activity so the app exits cleanly and is not
+                // restored on next launch (no swipe-kill scenario).
+                let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+                if let Err(error) = vm.attach_current_thread(|env| {
+                    let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
+                    let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+                    if let Err(error) = env.call_method(
+                        &activity,
+                        jni_str!("finishAndRemoveTask"),
+                        jni_sig!("()V"),
+                        &[],
+                    ) {
+                        log::warn!("failed to call finishAndRemoveTask: {error}");
+                    }
+                    Ok::<_, jni::errors::Error>(())
+                }) {
+                    log::warn!("failed to attach JNI thread for exit: {error}");
+                }
+            }
+            MenuAction::Unload => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    let _ = self.session.unload();
+                }
+                self.session.clear_display();
+                self.request_redraw();
+            }
             MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
             MenuAction::OpenLibrary => self.request_library_dialog(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
@@ -523,6 +567,7 @@ impl AndroidFrontend {
         }
         self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
+        self.storage.clear_restore_pending();
         if let Err(error) = self.session.run_command(SessionCommand::Resume) {
             log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
         }
@@ -622,6 +667,7 @@ impl AndroidFrontend {
                             if self.storage.rom_library.rom_path(&id).is_none() {
                                 log::warn!("try_resume_foreground: stored ROM id={id} is missing");
                                 self.session.clear_hidden_lifecycle_state();
+                                self.storage.clear_restore_pending();
                                 self.lifecycle_restore_pending = false;
                             } else {
                                 match self.load_from_library_with_autosave(event_loop, &id, true) {
@@ -635,8 +681,9 @@ impl AndroidFrontend {
                                         log::warn!(
                                             "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
                                         );
-                                        self.lifecycle_restore_pending = false;
                                         self.session.clear_hidden_lifecycle_state();
+                                        self.storage.clear_restore_pending();
+                                        self.lifecycle_restore_pending = false;
                                     }
                                 }
                             }
@@ -644,6 +691,7 @@ impl AndroidFrontend {
                         Ok(None) => {
                             log::info!("try_resume_foreground: no last ROM recorded");
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                         Err(error) => {
@@ -651,6 +699,7 @@ impl AndroidFrontend {
                                 "try_resume_foreground: failed to read last ROM id: {error}"
                             );
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                     }
@@ -695,6 +744,13 @@ impl AndroidFrontend {
             self.shell.needs_redraw = false;
             return;
         };
+        // If the session has no loaded ROM, clear the display just before
+        // rendering to guard against a stale frame that the emuthread may
+        // have written into shared_fb between the last clear_display() call
+        // and now (race between Unload processing and render_frame completion).
+        if !self.session.loaded() {
+            self.session.clear_display();
+        }
         let size = window.inner_size();
         match renderer.render(
             &mut self.session,
