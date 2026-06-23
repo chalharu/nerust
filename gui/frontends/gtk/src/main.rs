@@ -1,4 +1,5 @@
 mod crash_handler;
+mod gdk_raw;
 mod preferences;
 mod renderer;
 mod surface;
