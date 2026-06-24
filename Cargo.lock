@@ -1615,6 +1615,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdk4-macos"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42afa6569445e74c7a580eda5c1d0e9adbc9760ef5f05d9ceff46c77469c5c00"
+dependencies = [
+ "gdk4",
+ "gdk4-macos-sys",
+ "gio 0.22.6",
+ "glib 0.22.7",
+ "libc",
+]
+
+[[package]]
+name = "gdk4-macos-sys"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a05900af362b667cc58e4270ad4367677bdcd190c76fb85f49236e072a17365"
+dependencies = [
+ "gdk4-sys",
+ "glib-sys 0.22.6",
+ "libc",
+ "system-deps 7.0.8",
+]
+
+[[package]]
 name = "gdk4-sys"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1650,6 +1675,33 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "653cafb8715f2ac1c56edaf8060d9360ae3acbe3c6fb61b676a2917d42b668cf"
 dependencies = [
+ "glib-sys 0.22.6",
+ "libc",
+ "system-deps 7.0.8",
+]
+
+[[package]]
+name = "gdk4-win32"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "990cda250ffeb4bac35c4c5716a3a0d1a17d524fca6243bb2c0b5c3ff3baeca0"
+dependencies = [
+ "cairo-rs 0.22.0",
+ "gdk4",
+ "gdk4-win32-sys",
+ "gio 0.22.6",
+ "glib 0.22.7",
+ "libc",
+]
+
+[[package]]
+name = "gdk4-win32-sys"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2ca92d792abe5433bad3fd8fc2e234864d5e37268f6600a29350d174a30a942"
+dependencies = [
+ "cairo-sys-rs 0.22.0",
+ "gdk4-sys",
  "glib-sys 0.22.6",
  "libc",
  "system-deps 7.0.8",
@@ -3224,7 +3276,9 @@ name = "nerust_gtk"
 version = "0.1.0-dev"
 dependencies = [
  "gdk4",
+ "gdk4-macos",
  "gdk4-wayland",
+ "gdk4-win32",
  "gdk4-x11",
  "gio 0.22.6",
  "gtk4",
@@ -3239,6 +3293,8 @@ dependencies = [
  "nerust_persistence",
  "nerust_screen_video",
  "nerust_sound_openal",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
  "raw-window-handle",
  "simple_logger",
 ]

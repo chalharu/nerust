@@ -8,8 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 gdk.workspace = true
-gdk4-x11 = { version = "=0.11.0" }
-gdk4-wayland = { version = "=0.11.0" }
 gio.workspace = true
 gtk.workspace = true
 libc.workspace = true
@@ -25,3 +23,15 @@ nerust_persistence.workspace = true
 nerust_sound_openal.workspace = true
 raw-window-handle.workspace = true
 simple_logger.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gdk-macos.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gdk-win32.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk-x11.workspace = true
+gdk-wayland.workspace = true

@@ -19,6 +19,10 @@ impl GtkRenderer {
         size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
+        // Drop the old renderer BEFORE creating a new one, so that the
+        // old renderer's VAO/VBO glDelete* calls run in the old context
+        // (which is still current) instead of corrupting the new context.
+        self.view = None;
         match GlRenderer::new(window_handle, display_handle, size, profile) {
             Ok(view) => self.view = Some(view),
             Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
