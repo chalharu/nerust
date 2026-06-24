@@ -27,7 +27,6 @@ simple_logger.workspace = true
 gdk-macos.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
-libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gdk-win32.workspace = true
@@ -35,4 +34,6 @@ gdk-win32.workspace = true
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 gdk4-wayland-sys.workspace = true
 gdk4-x11-sys.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 libc.workspace = true
