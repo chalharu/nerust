@@ -3253,7 +3253,6 @@ dependencies = [
  "gdk4-macos",
  "gdk4-wayland-sys",
  "gdk4-win32",
- "gdk4-win32-sys",
  "gdk4-x11-sys",
  "gio 0.22.6",
  "gtk4",
