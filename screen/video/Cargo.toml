@@ -9,4 +9,5 @@ rust-version.workspace = true
 [dependencies]
 log.workspace = true
 nes_ntsc.workspace = true
+raw-window-handle.workspace = true
 serde = { workspace = true, features = ["derive"] }

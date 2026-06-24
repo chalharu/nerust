@@ -10,7 +10,8 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
-    FrameBuffer, RenderResult, Renderer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, RenderResult, Renderer, RendererConfig, RendererFactory, SurfaceSize,
+    VideoFrameFormat, VideoRenderProfile,
 };
 
 /// OpenGL renderer with glutin-managed GL context.
@@ -177,5 +178,25 @@ impl Renderer for GlRenderer {
 
     fn reconfigure(&mut self, size: SurfaceSize) {
         self.view.on_resize(size.width as i32, size.height as i32);
+    }
+}
+
+/// `GlRenderer` を構築する Factory。
+pub struct GlRendererFactory;
+
+impl RendererFactory for GlRendererFactory {
+    fn create_renderer(
+        &self,
+        config: &RendererConfig,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn Renderer>, String> {
+        GlRenderer::new(
+            window_handle,
+            display_handle,
+            config.initial_size,
+            &config.render_profile,
+        )
+        .map(|r| Box::new(r) as Box<dyn Renderer>)
     }
 }

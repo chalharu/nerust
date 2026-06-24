@@ -1,10 +1,12 @@
-use nerust_backend_opengl::GlRenderer;
-use nerust_screen_video::{FrameBuffer, Renderer, SurfaceSize, VideoRenderProfile};
+use nerust_backend_opengl::GlRendererFactory;
+use nerust_screen_video::{
+    FrameBuffer, Renderer, RendererConfig, RendererFactory, SurfaceSize, VideoRenderProfile,
+};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
-    view: Option<GlRenderer>,
+    view: Option<Box<dyn Renderer>>,
 }
 
 impl GtkRenderer {
@@ -23,7 +25,12 @@ impl GtkRenderer {
         // old renderer's VAO/VBO glDelete* calls run in the old context
         // (which is still current) instead of corrupting the new context.
         self.view = None;
-        match GlRenderer::new(window_handle, display_handle, size, profile) {
+        let config = RendererConfig {
+            initial_size: size,
+            render_profile: profile.clone(),
+            vsync: true,
+        };
+        match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
             Ok(view) => self.view = Some(view),
             Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }

@@ -3412,6 +3412,7 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nes_ntsc",
+ "raw-window-handle",
  "serde",
 ]
 
