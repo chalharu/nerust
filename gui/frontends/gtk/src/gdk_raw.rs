@@ -5,21 +5,57 @@ use gio::glib::object::ObjectType as _;
 use gtk::gdk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-/// Extract a [`RawWindowHandle`] from a GDK surface.
+/// Extract handles and call `f` within a scope where the native objects are
+/// guaranteed alive.
 ///
-/// Uses `surface.display().backend()` to determine the backend at runtime,
-/// then extracts the native handle via `gdk4-sys` FFI.
+/// On macOS the NSWindow/NSView are retained for the duration of the closure,
+/// then released.  Other platforms pass the raw handles through directly since
+/// they are borrowed from GDK objects whose lifetime is bounded by the caller.
+#[cfg(target_os = "macos")]
+pub(crate) fn with_raw_handles<R>(
+    surface: &gdk::Surface,
+    display: &gdk::Display,
+    f: impl FnOnce(RawWindowHandle, RawDisplayHandle) -> R,
+) -> Option<R> {
+    use gio::prelude::Cast;
+    use std::ffi::c_void;
+
+    let ns_window = surface.downcast_ref::<gdk_macos::MacosSurface>()?.native();
+    // SAFETY: Retain the NSWindow so it (and its NSView) stay alive for `f`.
+    let ns_window =
+        unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast()) };
+    let ns_view = ns_window.contentView()?;
+    let wh = RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
+        NonNull::new(objc2::rc::Retained::as_ptr(&ns_view) as *mut c_void).unwrap(),
+    ));
+    let dh = display_to_raw(display)?;
+    Some(f(wh, dh))
+    // ns_window (and ns_view) drop here — the pointer is no longer used.
+}
+
+/// Extract handles and call `f` — GDK owns the objects, no retain needed.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn with_raw_handles<R>(
+    surface: &gdk::Surface,
+    display: &gdk::Display,
+    f: impl FnOnce(RawWindowHandle, RawDisplayHandle) -> R,
+) -> Option<R> {
+    let wh = surface_to_raw(surface)?;
+    let dh = display_to_raw(display)?;
+    Some(f(wh, dh))
+}
+
+// ---------------------------------------------------------------------------
+// Platform-specific surface_to_raw — kept private, called by surface_with.
+// ---------------------------------------------------------------------------
+
 #[cfg(all(not(unix), not(target_os = "windows")))]
-pub(crate) fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle> {
+fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle> {
     None
 }
 
-/// Extract a [`RawWindowHandle`] from a GDK surface.
-///
-/// Uses `surface.display().backend()` to determine the backend at runtime,
-/// then extracts the native handle via `gdk4-sys` FFI.
 #[cfg(all(unix, not(target_os = "macos")))]
-pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
     use gdk::prelude::SurfaceExt as _;
 
     let backend = surface.display().backend();
@@ -43,41 +79,15 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
     None
 }
 
-/// Extract a [`RawWindowHandle`] from a GDK surface.
-///
-/// # Safety
-///
-/// The returned handle borrows the GDK-owned NSWindow/NSView. The caller must
-/// use the handle synchronously (before returning to the GTK main loop) so
-/// that GDK does not destroy the backing window.  `retain`/`release` are
-/// deliberately omitted — the transient lifetime of a tick callback is always
-/// shorter than the widget lifecycle.
-#[cfg(target_os = "macos")]
-pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
-    use gio::prelude::Cast;
-    use std::ffi::c_void;
-    surface
-        .downcast_ref::<gdk_macos::MacosSurface>()
-        .and_then(|s| {
-            let ns_window: *mut c_void = s.native().cast();
-            // Get contentView without retain — GDK owns the window.
-            let ns_view: *mut c_void =
-                unsafe { objc2::msg_send![ns_window as *mut objc2_app_kit::NSWindow, contentView] };
-            NonNull::new(ns_view)
-                .map(|ptr| RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(ptr)))
-        })
-}
-
-/// Extract a [`RawWindowHandle`] from a GDK surface.
 #[cfg(target_os = "windows")]
-pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
     let hwnd = surface
         .downcast_ref::<gdk_win32::Win32Surface>()
         .map(|s| gdk_win32::Win32Surface::handle(s))
         .and_then(|h| std::num::NonZeroIsize::new(h.0.addr() as isize))?;
-    return Some(RawWindowHandle::Win32(
+    Some(RawWindowHandle::Win32(
         raw_window_handle::Win32WindowHandle::new(hwnd),
-    ));
+    ))
 }
 
 /// Extract a [`RawDisplayHandle`] from a GDK display.
