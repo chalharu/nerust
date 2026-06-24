@@ -60,6 +60,12 @@ impl SurfaceExtend for Surface {
             }
         }
         if let Ok(state) = s.state.try_borrow() {
+            let scale = s.window.scale_factor().max(1) as u32;
+            let win_size = SurfaceSize::new(
+                (s.window.width() as u32).saturating_mul(scale),
+                (s.window.height() as u32).saturating_mul(scale),
+            );
+            s.renderer.borrow_mut().reconfigure(win_size);
             s.renderer.borrow_mut().render(state.frame_buffer());
         }
         true
