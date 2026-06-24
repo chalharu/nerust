@@ -1,19 +1,16 @@
 mod library;
 mod menu;
 mod picker;
-mod renderer;
 mod settings;
 mod storage;
-mod surface;
 
 use self::library::LibraryDialogResult;
 use self::menu::MenuAction;
 use self::picker::RomPickerResult;
-use self::renderer::WgpuRenderer;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
 use jni::{jni_sig, jni_str};
-use nerust_backend_wgpu::RenderResult;
+use nerust_backend_wgpu::WgpuRenderer;
 use nerust_factory_nes::NesFactory;
 use nerust_factory_nes::touch::{
     PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
@@ -27,6 +24,8 @@ use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
+use nerust_screen_video::{RenderResult, Renderer, SurfaceSize};
+use nerust_screen_wgpu::renderer::DeviceLimitProfile;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -37,6 +36,7 @@ use winit::event::{Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::platform::android::activity::AndroidApp;
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
@@ -121,7 +121,7 @@ struct AndroidFrontend {
     shell: NativeShellState,
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn Renderer>>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
     is_resumed: bool,
@@ -530,10 +530,32 @@ impl AndroidFrontend {
             size.height
         );
         drop(self.renderer.take());
-        self.renderer = match WgpuRenderer::new(window, &self.session) {
+        let vsync = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .presentation
+            .vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        self.renderer = match WgpuRenderer::new(
+            raw_window_handle,
+            raw_display_handle,
+            SurfaceSize::new(size.width, size.height),
+            self.session.render_profile(),
+            DeviceLimitProfile::DownlevelWebGl2,
+            vsync,
+        ) {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
-                Some(renderer)
+                Some(Box::new(renderer) as Box<dyn Renderer>)
             }
             Err(error) => {
                 log::error!("failed to initialize Android renderer: {error}");
@@ -737,9 +759,6 @@ impl AndroidFrontend {
     }
 
     fn render(&mut self) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
         let Some(renderer) = self.renderer.as_mut() else {
             self.shell.needs_redraw = false;
             return;
@@ -751,11 +770,8 @@ impl AndroidFrontend {
         if !self.session.loaded() {
             self.session.clear_display();
         }
-        let size = window.inner_size();
-        match renderer.render(
-            &mut self.session,
-            nerust_screen_wgpu::surface::SurfaceSize::new(size.width, size.height),
-        ) {
+        self.session.swap_frame_buffer();
+        match renderer.render(self.session.frame_buffer()) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
@@ -872,10 +888,7 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
                 if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.reconfigure(nerust_screen_wgpu::surface::SurfaceSize::new(
-                        size.width,
-                        size.height,
-                    ));
+                    renderer.reconfigure(SurfaceSize::new(size.width, size.height));
                 }
                 self.rebuild_overlay();
                 self.request_redraw();

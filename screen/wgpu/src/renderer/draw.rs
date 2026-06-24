@@ -1,8 +1,5 @@
-use super::{RenderOutcome, Renderer, fit_surface_size_to_limit};
-use crate::{
-    surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
-    upload::pack_frame_rows,
-};
+use super::{RenderOutcome, RenderPipeline, fit_surface_size_to_limit};
+use crate::{surface::SurfaceSize, upload::pack_frame_rows};
 use nerust_screen_video::PhysicalSize;
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
@@ -55,18 +52,13 @@ pub(super) fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalS
     }
 }
 
-impl Renderer {
-    pub fn reconfigure_surface<T: SurfaceTargetSource>(
-        &mut self,
-        render_surface: &RenderSurface<T>,
-        surface_size: SurfaceSize,
-    ) {
+impl RenderPipeline {
+    pub fn reconfigure_surface(&mut self, surface: &wgpu::Surface<'_>, surface_size: SurfaceSize) {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
-        let surface = render_surface.surface();
         self.config.width = surface_size.width;
         self.config.height = surface_size.height;
         surface.configure(&self.device, &self.config);
@@ -111,15 +103,14 @@ impl Renderer {
         );
     }
 
-    pub fn render<T: SurfaceTargetSource>(
+    pub fn render(
         &mut self,
-        render_surface: &RenderSurface<T>,
+        surface: &wgpu::Surface<'_>,
         surface_size: SurfaceSize,
         frame_buffer: &[u8],
     ) -> Result<RenderOutcome, String> {
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
-        let surface = render_surface.surface();
         let (surface_texture, suboptimal) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -127,7 +118,7 @@ impl Renderer {
                 return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.reconfigure_surface(render_surface, surface_size);
+                self.reconfigure_surface(surface, surface_size);
                 return Ok(RenderOutcome::Skipped);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -182,7 +173,7 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
         if suboptimal {
-            self.reconfigure_surface(render_surface, surface_size);
+            self.reconfigure_surface(surface, surface_size);
         }
         Ok(RenderOutcome::Presented)
     }

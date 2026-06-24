@@ -4,9 +4,7 @@ mod setup;
 use crate::upload::FrameUploadLayout;
 use nerust_screen_video::LogicalSize;
 use nerust_screen_video::PhysicalSize;
-use wgpu::{
-    BindGroup, Buffer, Device, Limits, Queue, RenderPipeline, SurfaceConfiguration, Texture,
-};
+use wgpu::{BindGroup, Buffer, Device, Limits, Queue, SurfaceConfiguration, Texture};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RenderOutcome {
@@ -63,7 +61,7 @@ pub(crate) fn fit_surface_size_to_limit(
     crate::surface::SurfaceSize::new(scaled_width, scaled_height)
 }
 
-pub struct Renderer {
+pub struct RenderPipeline {
     device: Device,
     queue: Queue,
     config: SurfaceConfiguration,
@@ -75,12 +73,12 @@ pub struct Renderer {
     frame_upload_layout: FrameUploadLayout,
     frame_upload_staging: Box<[u8]>,
     bind_group: BindGroup,
-    pipeline: RenderPipeline,
+    pipeline: wgpu::RenderPipeline,
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
 }
 
-impl Renderer {
+impl RenderPipeline {
     /// PaletteIndex 形式の FrameBuffer からパレットデータを palette texture に書き込む。
     /// `render()` の前に呼ばれることを想定。
     /// palette の width/height は texture 作成時の値から自動的に決まる。

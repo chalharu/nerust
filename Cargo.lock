@@ -3164,6 +3164,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_screen_video",
  "nerust_screen_wgpu",
  "winit",
 ]
@@ -3188,6 +3189,7 @@ dependencies = [
  "nerust_screen_wgpu",
  "pollster",
  "raw-window-handle",
+ "wgpu 29.0.3",
 ]
 
 [[package]]
@@ -3460,8 +3462,6 @@ name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
- "gdkwayland-sys",
- "gdkx11-sys",
  "gtk",
  "iced",
  "iced_tiny_skia",
@@ -3476,6 +3476,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_persistence",
+ "nerust_screen_video",
  "nerust_screen_wgpu",
  "nerust_sound_openal",
  "raw-window-handle",
