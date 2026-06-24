@@ -53,10 +53,10 @@ impl SurfaceExtend for Surface {
             let profile = state.render_profile().clone();
             if let Some(surface) = s.window.surface()
                 && let Some(display) = gdk::Display::default()
-                && let Some(wh) = super::gdk_raw::surface_to_raw(&surface)
-                && let Some(dh) = super::gdk_raw::display_to_raw(&display)
             {
-                s.renderer.borrow_mut().realize(wh, dh, size, &profile);
+                super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
+                    s.renderer.borrow_mut().realize(wh, dh, size, &profile);
+                });
             }
         }
         if let Ok(state) = s.state.try_borrow() {
