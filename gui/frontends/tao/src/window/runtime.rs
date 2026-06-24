@@ -2,10 +2,9 @@ mod host;
 
 use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_backend_wgpu::WgpuRenderer;
+use nerust_backend_wgpu::WgpuRendererFactory;
 use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{Renderer, SurfaceSize};
-use nerust_screen_wgpu::renderer::DeviceLimitProfile;
+use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -199,17 +198,14 @@ impl WindowRuntime {
                 .display_handle()
                 .expect("failed to get display handle")
                 .as_raw();
-            Box::new(
-                WgpuRenderer::new(
-                    raw_window_handle,
-                    raw_display_handle,
-                    SurfaceSize::new(size.width, size.height),
-                    session.render_profile(),
-                    DeviceLimitProfile::Default,
-                    vsync,
-                )
-                .expect("failed to create WgpuRenderer"),
-            ) as Box<dyn Renderer>
+            let config = RendererConfig {
+                initial_size: SurfaceSize::new(size.width, size.height),
+                render_profile: session.render_profile().clone(),
+                vsync,
+            };
+            WgpuRendererFactory
+                .create_renderer(&config, raw_window_handle, raw_display_handle)
+                .expect("failed to create WgpuRenderer")
         });
     }
 }
