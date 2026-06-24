@@ -32,17 +32,50 @@ impl GlRenderer {
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
     ) -> Result<Display, glutin::error::Error> {
-        // Each cfg branch uses only the DisplayApiPreference variant
-        // available for that platform's glutin backend feature.
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
         let preference = DisplayApiPreference::Cgl;
 
-        #[cfg(target_os = "windows")]
-        let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
+        #[cfg(all(
+            windows,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::Wgl(_raw_window_handle);
 
-        // Linux, FreeBSD, Android, iOS, wasm, etc.
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::Glx(Box::new(|_reg| {}));
+
+        #[cfg(all(
+            any(windows, unix),
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
         let preference = DisplayApiPreference::Egl;
+
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
+
+        #[cfg(all(
+            windows,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
 
         unsafe { glutin::display::Display::new(display_handle, preference) }
     }
