@@ -1,7 +1,6 @@
 use nerust_backend_opengl::GlRendererFactory;
 use nerust_screen_video::{
-    FrameBuffer, Renderer, RendererConfig, RendererError, RendererFactory, SurfaceSize,
-    VideoRenderProfile,
+    FrameBuffer, Renderer, RendererConfig, RendererFactory, SurfaceSize, VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -33,7 +32,7 @@ impl GtkRenderer {
         };
         match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
             Ok(view) => self.view = Some(view),
-            Err(RendererError(e)) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
+            Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }
     }
 
