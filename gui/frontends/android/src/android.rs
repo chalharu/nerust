@@ -782,11 +782,7 @@ impl AndroidFrontend {
                 self.shell.needs_redraw = true;
             }
             RenderResult::Error => {
-                log::warn!(
-                    "render: renderer reported an error for {}x{}",
-                    size.width,
-                    size.height
-                );
+                log::warn!("render: renderer reported an error");
                 self.shell.needs_redraw = true;
             }
         }
