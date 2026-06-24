@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
-use glutin::display::DisplayApiPreference;
+use glutin::display::{Display, DisplayApiPreference};
 use glutin::prelude::*;
 use glutin::surface::{SurfaceAttributesBuilder, WindowSurface};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -15,9 +15,9 @@ use nerust_screen_video::{
 
 /// OpenGL renderer with glutin-managed GL context.
 pub struct GlRenderer {
+    view: GlView,
     context: glutin::context::PossiblyCurrentContext,
     surface: glutin::surface::Surface<WindowSurface>,
-    view: GlView,
     expected_frame_len: usize,
 }
 
@@ -28,6 +28,51 @@ impl std::fmt::Debug for GlRenderer {
 }
 
 impl GlRenderer {
+    fn create_display(
+        display_handle: RawDisplayHandle,
+        _raw_window_handle: RawWindowHandle,
+    ) -> Result<Display, glutin::error::Error> {
+        #[cfg(all(
+            any(windows, unix),
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::Egl;
+
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let preference =
+            DisplayApiPreference::Glx(Box::new(winit::platform::x11::register_xlib_error_hook));
+
+        #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
+        let preference = DisplayApiPreference::Cgl;
+
+        #[cfg(all(windows, not(target_family = "wasm")))]
+        let preference = DisplayApiPreference::Wgl(_raw_window_handle);
+
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let preference = DisplayApiPreference::EglThenGlx(Box::new(
+            winit::platform::x11::register_xlib_error_hook,
+        ));
+
+        #[cfg(all(windows, not(target_family = "wasm")))]
+        let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
+
+        unsafe { glutin::display::Display::new(display_handle, preference) }
+    }
+
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(
         window_handle: RawWindowHandle,
@@ -35,12 +80,8 @@ impl GlRenderer {
         initial_size: SurfaceSize,
         render_profile: &VideoRenderProfile,
     ) -> Result<Self, String> {
-        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
-
-        let display = unsafe {
-            glutin::display::Display::new(display_handle, preference)
-                .map_err(|e| format!("failed to create GL display: {e}"))?
-        };
+        let display = Self::create_display(display_handle, window_handle)
+            .map_err(|e| format!("failed to create GL display: {e}"))?;
 
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
         let config = unsafe {
@@ -94,9 +135,9 @@ impl GlRenderer {
         let expected_frame_len = frame_size.width * frame_size.height * bpp;
 
         Ok(Self {
+            view,
             context,
             surface,
-            view,
             expected_frame_len,
         })
     }
@@ -104,6 +145,12 @@ impl GlRenderer {
 
 impl Renderer for GlRenderer {
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+        if !self.context.is_current()
+            && let Err(e) = self.context.make_current(&self.surface) {
+                log::warn!("GlRenderer: failed to make GL context current: {e}");
+                return RenderResult::Error;
+            }
+
         if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
             self.view.update_palette_texture(&palette_rgba8);
         }

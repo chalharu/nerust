@@ -192,10 +192,11 @@ impl WindowExtend for Window {
         let state_delete_slot_action =
             gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
         let settings_action = gio::SimpleAction::new("settings", None);
+        let _ = Surface::bind(&window, state.clone());
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
-            state: state.clone(),
+            state,
             open_dialog: None,
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
@@ -212,7 +213,6 @@ impl WindowExtend for Window {
             load_slot_menu: state_menus.load_slot_menu,
             delete_slot_menu: state_menus.delete_slot_menu,
         }));
-        let _ = Surface::bind(&window, result.state());
         {
             let result = result.clone();
             let _ = window.connect_realize(move |_window| result.realize());
