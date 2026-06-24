@@ -10,7 +10,7 @@ use self::picker::RomPickerResult;
 use self::settings::{AndroidSettings, SettingsDialogResult};
 use self::storage::AndroidStorage;
 use jni::{jni_sig, jni_str};
-use nerust_backend_wgpu::WgpuRenderer;
+use nerust_backend_wgpu::WgpuRendererFactory;
 use nerust_factory_nes::NesFactory;
 use nerust_factory_nes::touch::{
     PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
@@ -24,8 +24,7 @@ use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_gui_shell::settings::defaults::seed::{
     default_app_state, default_local_settings, default_shared_settings,
 };
-use nerust_screen_video::{RenderResult, Renderer, SurfaceSize};
-use nerust_screen_wgpu::renderer::DeviceLimitProfile;
+use nerust_screen_video::{RenderResult, Renderer, RendererConfig, RendererFactory, SurfaceSize};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -545,20 +544,22 @@ impl AndroidFrontend {
             .display_handle()
             .expect("failed to get display handle")
             .as_raw();
-        self.renderer = match WgpuRenderer::new(
+        let config = RendererConfig {
+            initial_size: SurfaceSize::new(size.width, size.height),
+            render_profile: self.session.render_profile().clone(),
+            vsync,
+        };
+        self.renderer = match WgpuRendererFactory.create_renderer(
+            &config,
             raw_window_handle,
             raw_display_handle,
-            SurfaceSize::new(size.width, size.height),
-            self.session.render_profile(),
-            DeviceLimitProfile::DownlevelWebGl2,
-            vsync,
         ) {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
-                Some(Box::new(renderer) as Box<dyn Renderer>)
+                Some(renderer)
             }
-            Err(error) => {
-                log::error!("failed to initialize Android renderer: {error}");
+            Err(e) => {
+                log::error!("failed to initialize Android renderer: {e}");
                 None
             }
         };
