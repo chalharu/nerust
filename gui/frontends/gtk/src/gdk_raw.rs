@@ -53,9 +53,9 @@ pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle>
     }
 }
 
-// Non-macOS platforms: stub functions that always succeed (glutin creates its
-// own display connection on Linux/Windows, no GDK raw handles needed).
+// Non-macOS platforms: stub that returns None (glutin creates its
+// own GL context on Linux/Windows, no GDK raw window handle needed).
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn surface_to_raw2(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+pub(crate) fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle> {
     None
 }
