@@ -14,7 +14,9 @@ pub use crate::filter::{
 pub use crate::filter::{FilterFunc, FilterType, NesFilter};
 pub use crate::logical::LogicalSize;
 pub use crate::physical::PhysicalSize;
-pub use crate::renderer::{RenderResult, Renderer, RendererConfig, RendererError, RendererFactory};
+pub use crate::renderer::{
+    RenderMessage, RenderResult, Renderer, RendererConfig, RendererError, RendererFactory,
+};
 pub use crate::rgb::RGB;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
