@@ -2,16 +2,13 @@ use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 /// Renderer 関連のエラー。
-#[derive(Debug)]
-pub struct RendererError(pub String);
-
-impl std::fmt::Display for RendererError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum RendererError {
+    #[error("{0}")]
+    Create(String),
+    #[error("{0}")]
+    SurfaceRecreate(String),
 }
-
-impl std::error::Error for RendererError {}
 
 /// Outcome reported by [`Renderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -45,8 +42,8 @@ pub trait Renderer: std::fmt::Debug {
         _display_handle: RawDisplayHandle,
         _size: SurfaceSize,
     ) -> Result<(), RendererError> {
-        Err(RendererError(
-            "surface recreation not supported by this backend".to_string(),
+        Err(RendererError::SurfaceRecreate(
+            "not supported by this backend".to_string(),
         ))
     }
 }
