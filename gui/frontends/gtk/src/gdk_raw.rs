@@ -44,6 +44,14 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
 }
 
 /// Extract a [`RawWindowHandle`] from a GDK surface.
+///
+/// # Safety
+///
+/// The returned handle borrows the GDK-owned NSWindow/NSView. The caller must
+/// use the handle synchronously (before returning to the GTK main loop) so
+/// that GDK does not destroy the backing window.  `retain`/`release` are
+/// deliberately omitted — the transient lifetime of a tick callback is always
+/// shorter than the widget lifecycle.
 #[cfg(target_os = "macos")]
 pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
     use gio::prelude::Cast;
@@ -51,14 +59,12 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
     surface
         .downcast_ref::<gdk_macos::MacosSurface>()
         .and_then(|s| {
-            let native_window = s.native().cast();
-            unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(native_window) }
-        })
-        .and_then(|ns_window| ns_window.contentView())
-        .map(|ns_view| {
-            RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
-                NonNull::new(objc2::rc::Retained::into_raw(ns_view) as *mut c_void).unwrap(),
-            ))
+            let ns_window: *mut c_void = s.native().cast();
+            // Get contentView without retain — GDK owns the window.
+            let ns_view: *mut c_void =
+                unsafe { objc2::msg_send![ns_window as *mut objc2_app_kit::NSWindow, contentView] };
+            NonNull::new(ns_view)
+                .map(|ptr| RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(ptr)))
         })
 }
 
