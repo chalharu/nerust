@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 use gtk::gdk;
 use gtk::prelude::*;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -22,21 +24,38 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
 }
 
 /// Extract a [`RawDisplayHandle`] from a GDK display.
-#[cfg(target_os = "macos")]
-pub(crate) fn display_to_raw(_display: &gdk::Display) -> Option<RawDisplayHandle> {
-    Some(RawDisplayHandle::AppKit(
-        raw_window_handle::AppKitDisplayHandle::new(),
-    ))
+pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle> {
+    let backend = display.backend();
+    if backend.is_x11() {
+        Some(RawDisplayHandle::Xlib(
+            raw_window_handle::XlibDisplayHandle::new(NonNull::new(display.as_ptr().cast()), 0),
+        ))
+    } else if backend.is_wayland() {
+        Some(RawDisplayHandle::Wayland(
+            raw_window_handle::WaylandDisplayHandle::new(
+                NonNull::new(display.as_ptr().cast()).unwrap(),
+            ),
+        ))
+    } else if backend.is_broadway() {
+        Some(RawDisplayHandle::Web(
+            raw_window_handle::WebDisplayHandle::new(),
+        ))
+    } else if backend.is_win32() {
+        Some(RawDisplayHandle::Windows(
+            raw_window_handle::WindowsDisplayHandle::new(),
+        ))
+    } else if backend.is_macos() {
+        Some(RawDisplayHandle::AppKit(
+            raw_window_handle::AppKitDisplayHandle::new(),
+        ))
+    } else {
+        None
+    }
 }
 
 // Non-macOS platforms: stub functions that always succeed (glutin creates its
 // own display connection on Linux/Windows, no GDK raw handles needed).
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle> {
-    None
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn display_to_raw(_display: &gdk::Display) -> Option<RawDisplayHandle> {
+pub(crate) fn surface_to_raw2(surface: &gdk::Surface) -> Option<RawWindowHandle> {
     None
 }
