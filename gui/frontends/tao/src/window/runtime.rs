@@ -1,10 +1,12 @@
 mod host;
-mod renderer;
 
 use self::host::{HostAction, HostState};
-use self::renderer::WgpuRenderer;
 use crate::app_menu::{UserEvent, imp::AppMenu};
+use nerust_backend_wgpu::WgpuRenderer;
 use nerust_gui_shell::load::LoadRequest;
+use nerust_screen_video::{Renderer, SurfaceSize};
+use nerust_screen_wgpu::renderer::DeviceLimitProfile;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -16,7 +18,7 @@ use tao::{
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn Renderer>>,
 }
 
 impl WindowRuntime {
@@ -171,24 +173,44 @@ impl WindowRuntime {
     }
 
     fn on_update(&mut self) {
-        let Some(window_size) = self.host.window_surface_size() else {
+        let Some(_window_size) = self.host.window_surface_size() else {
             return;
         };
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
 
-        let result = renderer.render(self.host.session_mut(), window_size);
+        self.host.session_mut().swap_frame_buffer();
+        let result = renderer.render(self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);
     }
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        self.renderer = self
-            .host
-            .window()
-            .cloned()
-            .map(|window| WgpuRenderer::new(window, self.host.session()));
+        self.renderer = self.host.window().cloned().map(|window| {
+            let size = window.inner_size();
+            let session = self.host.session();
+            let vsync = session.settings_snapshot().local.video.presentation.vsync;
+            let raw_window_handle = window
+                .window_handle()
+                .expect("failed to get window handle")
+                .as_raw();
+            let raw_display_handle = window
+                .display_handle()
+                .expect("failed to get display handle")
+                .as_raw();
+            Box::new(
+                WgpuRenderer::new(
+                    raw_window_handle,
+                    raw_display_handle,
+                    SurfaceSize::new(size.width, size.height),
+                    session.render_profile(),
+                    DeviceLimitProfile::Default,
+                    vsync,
+                )
+                .expect("failed to create WgpuRenderer"),
+            ) as Box<dyn Renderer>
+        });
     }
 }
 
