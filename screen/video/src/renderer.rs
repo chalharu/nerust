@@ -1,13 +1,34 @@
 use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+/// Wraps a static or formatted message as an `std::error::Error`.
+///
+/// Used when no meaningful typed error is available (e.g. `glXChooseFBConfig`
+/// returned null without setting an error).
+#[derive(Debug)]
+pub struct RenderMessage(pub String);
+
+impl std::fmt::Display for RenderMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for RenderMessage {}
+
 /// Renderer 関連のエラー。
+///
+/// 各 variant は `Box<dyn Error>` で元のエラー型を保持する。
+/// Frontend は `Display` でエラーメッセージを表示でき、
+/// 必要に応じて `source()` → `downcast_ref()` で具体型を取り出せる。
 #[derive(Debug, thiserror::Error)]
 pub enum RendererError {
-    #[error("{0}")]
-    Create(String),
-    #[error("{0}")]
-    SurfaceRecreate(String),
+    /// Renderer の生成に失敗した。
+    #[error("renderer creation failed")]
+    Create(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// サーフェイスの再作成に失敗した（wgpu surface loss 等）。
+    #[error("surface recreation failed")]
+    SurfaceRecreate(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Outcome reported by [`Renderer::render`].
@@ -42,9 +63,9 @@ pub trait Renderer: std::fmt::Debug {
         _display_handle: RawDisplayHandle,
         _size: SurfaceSize,
     ) -> Result<(), RendererError> {
-        Err(RendererError::SurfaceRecreate(
+        Err(RendererError::SurfaceRecreate(Box::new(RenderMessage(
             "not supported by this backend".to_string(),
-        ))
+        ))))
     }
 }
 

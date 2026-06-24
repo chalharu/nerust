@@ -10,8 +10,8 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
-    FrameBuffer, RenderResult, Renderer, RendererConfig, RendererError, RendererFactory,
-    SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, RenderMessage, RenderResult, Renderer, RendererConfig, RendererError,
+    RendererFactory, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
 
 /// OpenGL renderer with glutin-managed GL context.
@@ -89,15 +89,19 @@ impl GlRenderer {
         render_profile: &VideoRenderProfile,
     ) -> Result<Self, RendererError> {
         let display = Self::create_display(display_handle, window_handle)
-            .map_err(|e| RendererError::Create(format!("failed to create GL display: {e}")))?;
+            .map_err(|e| RendererError::Create(Box::new(e)))?;
 
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
         let config = unsafe {
             display
                 .find_configs(template)
-                .map_err(|e| RendererError::Create(format!("failed to find GL config: {e}")))?
+                .map_err(|e| RendererError::Create(Box::new(e)))?
                 .next()
-                .ok_or_else(|| RendererError::Create("no suitable GL config found".to_string()))?
+                .ok_or_else(|| {
+                    RendererError::Create(Box::new(RenderMessage(
+                        "no suitable GL config found".to_string(),
+                    )))
+                })?
         };
 
         let context_attrs = ContextAttributesBuilder::new()
@@ -107,7 +111,7 @@ impl GlRenderer {
         let not_current = unsafe {
             display
                 .create_context(&config, &context_attrs)
-                .map_err(|e| RendererError::Create(format!("failed to create GL context: {e}")))?
+                .map_err(|e| RendererError::Create(Box::new(e)))?
         };
 
         let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
@@ -119,12 +123,12 @@ impl GlRenderer {
         let surface = unsafe {
             display
                 .create_window_surface(&config, &attrs)
-                .map_err(|e| RendererError::Create(format!("failed to create GL surface: {e}")))?
+                .map_err(|e| RendererError::Create(Box::new(e)))?
         };
 
-        let context = not_current.make_current(&surface).map_err(|e| {
-            RendererError::Create(format!("failed to make GL context current: {e}"))
-        })?;
+        let context = not_current
+            .make_current(&surface)
+            .map_err(|e| RendererError::Create(Box::new(e)))?;
 
         GlView::load_with(|name| {
             let cstr = CString::new(name).expect("GL function name contains null byte");
@@ -134,7 +138,7 @@ impl GlRenderer {
         let mut view = GlView::new();
         view.use_vao(true);
         view.on_load(render_profile)
-            .map_err(|e| RendererError::Create(format!("on_load failed: {e}")))?;
+            .map_err(|e| RendererError::Create(Box::new(RenderMessage(e))))?;
 
         let frame_size = match render_profile.frame_format {
             VideoFrameFormat::Rgba => render_profile.logical_size,
