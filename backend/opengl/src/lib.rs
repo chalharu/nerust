@@ -32,43 +32,19 @@ impl GlRenderer {
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
     ) -> Result<Display, glutin::error::Error> {
-        #[cfg(all(
-            any(windows, unix),
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let preference = DisplayApiPreference::Egl;
-
-        #[cfg(all(
-            unix,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm")
-        ))]
-        let preference =
-            DisplayApiPreference::Glx(Box::new(winit::platform::x11::register_xlib_error_hook));
-
-        #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
+        #[cfg(target_os = "macos")]
         let preference = DisplayApiPreference::Cgl;
 
-        #[cfg(all(windows, not(target_family = "wasm")))]
-        let preference = DisplayApiPreference::Wgl(_raw_window_handle);
+        #[cfg(target_os = "windows")]
+        let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
 
         #[cfg(all(
             unix,
-            not(target_os = "ios"),
             not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm")
+            not(target_os = "ios"),
+            not(target_os = "android")
         ))]
-        let preference = DisplayApiPreference::EglThenGlx(Box::new(
-            winit::platform::x11::register_xlib_error_hook,
-        ));
-
-        #[cfg(all(windows, not(target_family = "wasm")))]
-        let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
+        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
 
         unsafe { glutin::display::Display::new(display_handle, preference) }
     }
@@ -146,10 +122,11 @@ impl GlRenderer {
 impl Renderer for GlRenderer {
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
         if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.surface) {
-                log::warn!("GlRenderer: failed to make GL context current: {e}");
-                return RenderResult::Error;
-            }
+            && let Err(e) = self.context.make_current(&self.surface)
+        {
+            log::warn!("GlRenderer: failed to make GL context current: {e}");
+            return RenderResult::Error;
+        }
 
         if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
             self.view.update_palette_texture(&palette_rgba8);

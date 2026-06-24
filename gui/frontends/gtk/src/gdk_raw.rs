@@ -10,7 +10,7 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
     surface
         .downcast_ref::<gdk_macos::MacosSurface>()
         .and_then(|s| {
-            let native_window = s.native().cast(); // GdkMacosWindow* (NSWindow*)
+            let native_window = s.native().cast();
             unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(native_window) }
         })
         .and_then(|ns_window| ns_window.contentView())
@@ -27,4 +27,16 @@ pub(crate) fn display_to_raw(_display: &gdk::Display) -> Option<RawDisplayHandle
     Some(RawDisplayHandle::AppKit(
         raw_window_handle::AppKitDisplayHandle::new(),
     ))
+}
+
+// Non-macOS platforms: stub functions that always succeed (glutin creates its
+// own display connection on Linux/Windows, no GDK raw handles needed).
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn display_to_raw(_display: &gdk::Display) -> Option<RawDisplayHandle> {
+    None
 }
