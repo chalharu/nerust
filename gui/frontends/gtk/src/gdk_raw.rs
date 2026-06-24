@@ -1,5 +1,7 @@
 use std::ptr::NonNull;
 
+use gdk::prelude::DisplayExtManual as _;
+use gio::glib::object::ObjectType as _;
 use gtk::gdk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -18,6 +20,8 @@ pub(crate) fn surface_to_raw(_surface: &gdk::Surface) -> Option<RawWindowHandle>
 /// then extracts the native handle via `gdk4-sys` FFI.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+    use gdk::prelude::SurfaceExt as _;
+
     let backend = surface.display().backend();
     let ptr = surface.as_ptr();
 
