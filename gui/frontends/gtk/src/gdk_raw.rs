@@ -1,7 +1,6 @@
 use std::ptr::NonNull;
 
 use gtk::gdk;
-use gtk::prelude::*;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 /// Extract a [`RawWindowHandle`] from a GDK surface.
@@ -61,14 +60,12 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
 /// Extract a [`RawWindowHandle`] from a GDK surface.
 #[cfg(target_os = "windows")]
 pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
-    use std::ffi::c_void;
-    unsafe extern "C" {
-        fn gdk_win32_surface_get_hwnd(surface: *mut c_void) -> *mut c_void;
-    }
-    let ptr = surface.as_ptr().cast();
-    let hwnd = unsafe { gdk_win32_surface_get_hwnd(ptr) };
+    let hwnd = surface
+        .downcast_ref::<gdk_win32::Win32Surface>()
+        .map(|s| gdk_win32::Win32Surface::handle(s))
+        .and_then(|h| std::num::NonZeroIsize::new(h.0.addr() as isize))?;
     return Some(RawWindowHandle::Win32(
-        raw_window_handle::Win32WindowHandle::new(NonNull::new(hwnd)?),
+        raw_window_handle::Win32WindowHandle::new(hwnd),
     ));
 }
 
