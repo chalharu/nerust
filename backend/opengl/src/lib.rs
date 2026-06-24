@@ -205,6 +205,12 @@ impl Renderer for GlRenderer {
     }
 
     fn reconfigure(&mut self, size: SurfaceSize) {
+        if !self.context.is_current()
+            && let Err(e) = self.context.make_current(&self.surface)
+        {
+            log::warn!("GlRenderer: failed to make GL context current in reconfigure: {e}");
+            return;
+        }
         self.view.on_resize(size.width as i32, size.height as i32);
     }
 }

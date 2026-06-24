@@ -3,13 +3,14 @@ use super::renderer::GtkRenderer;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_screen_video::SurfaceSize;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
     state: Rc<RefCell<State>>,
+    last_physical_size: Cell<SurfaceSize>,
 }
 
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
@@ -27,6 +28,7 @@ impl SurfaceExtend for Surface {
             window: window.clone(),
             renderer,
             state,
+            last_physical_size: Cell::new(SurfaceSize::new(0, 0)),
         }));
         {
             let result = result.clone();
@@ -48,24 +50,34 @@ impl SurfaceExtend for Surface {
             state.swap_frame_buffer();
         }
         if needs_reinit && let Ok(state) = s.state.try_borrow() {
-            let size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
-            log::info!("reinit size: {:?}", size);
+            let app_size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
+            let scale = s.window.scale_factor().max(1) as u32;
+            let physical_size = SurfaceSize::new(
+                (s.window.width() as u32).saturating_mul(scale),
+                (s.window.height() as u32).saturating_mul(scale),
+            );
+            log::info!("reinit app={:?} physical={:?}", app_size, physical_size);
             let profile = state.render_profile().clone();
             if let Some(surface) = s.window.surface()
                 && let Some(display) = gdk::Display::default()
             {
                 super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
-                    s.renderer.borrow_mut().realize(wh, dh, size, &profile);
+                    s.renderer
+                        .borrow_mut()
+                        .realize(wh, dh, app_size, physical_size, &profile);
                 });
             }
         }
         if let Ok(state) = s.state.try_borrow() {
             let scale = s.window.scale_factor().max(1) as u32;
-            let win_size = SurfaceSize::new(
+            let physical_size = SurfaceSize::new(
                 (s.window.width() as u32).saturating_mul(scale),
                 (s.window.height() as u32).saturating_mul(scale),
             );
-            s.renderer.borrow_mut().reconfigure(win_size);
+            if physical_size != s.last_physical_size.get() {
+                s.last_physical_size.set(physical_size);
+                s.renderer.borrow_mut().reconfigure(physical_size);
+            }
             s.renderer.borrow_mut().render(state.frame_buffer());
         }
         true

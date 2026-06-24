@@ -18,7 +18,8 @@ impl GtkRenderer {
         &mut self,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-        size: SurfaceSize,
+        app_size: SurfaceSize,
+        physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
         // Drop the old renderer BEFORE creating a new one, so that the
@@ -26,12 +27,16 @@ impl GtkRenderer {
         // (which is still current) instead of corrupting the new context.
         self.view = None;
         let config = RendererConfig {
-            initial_size: size,
+            initial_size: app_size,
             render_profile: profile.clone(),
             vsync: true,
         };
         match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
-            Ok(view) => self.view = Some(view),
+            Ok(view) => {
+                let mut view = view;
+                view.reconfigure(physical_size);
+                self.view = Some(view);
+            }
             Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }
     }
