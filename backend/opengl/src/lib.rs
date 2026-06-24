@@ -10,8 +10,8 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
-    FrameBuffer, RenderResult, Renderer, RendererConfig, RendererFactory, SurfaceSize,
-    VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, RenderResult, Renderer, RendererConfig, RendererError, RendererFactory,
+    SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
 
 /// OpenGL renderer with glutin-managed GL context.
@@ -82,7 +82,7 @@ impl GlRenderer {
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
-    pub fn new(
+    fn new(
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
         initial_size: SurfaceSize,
@@ -190,7 +190,7 @@ impl RendererFactory for GlRendererFactory {
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn Renderer>, String> {
+    ) -> Result<Box<dyn Renderer>, RendererError> {
         GlRenderer::new(
             window_handle,
             display_handle,
@@ -198,5 +198,6 @@ impl RendererFactory for GlRendererFactory {
             &config.render_profile,
         )
         .map(|r| Box::new(r) as Box<dyn Renderer>)
+        .map_err(|e| RendererError(e))
     }
 }
