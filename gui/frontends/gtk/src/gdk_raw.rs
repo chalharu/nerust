@@ -8,8 +8,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 /// Extract a [`RawWindowHandle`] from a GDK surface.
 ///
 /// Uses `surface.display().backend()` to determine the backend at runtime,
-/// then extracts the native handle via `gdk4-sys` FFI. This avoids adding
-/// `gdk4-x11` / `gdk4-wayland` crate dependencies.
+/// then extracts the native handle via `gdk4-sys` FFI.
 pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
     let backend = surface.display().backend();
     let ptr = surface.as_ptr() as *mut c_void;
@@ -33,6 +32,17 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
         let wl_surface = unsafe { gdk_wayland_surface_get_wl_surface(ptr) };
         return Some(RawWindowHandle::Wayland(
             raw_window_handle::WaylandWindowHandle::new(NonNull::new(wl_surface)?),
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    if backend.is_win32() {
+        unsafe extern "C" {
+            fn gdk_win32_surface_get_hwnd(surface: *mut c_void) -> *mut c_void;
+        }
+        let hwnd = unsafe { gdk_win32_surface_get_hwnd(ptr) };
+        return Some(RawWindowHandle::Win32(
+            raw_window_handle::Win32WindowHandle::new(NonNull::new(hwnd)?),
         ));
     }
 
