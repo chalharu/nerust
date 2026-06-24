@@ -60,9 +60,9 @@ gl = { version = "=0.14.0" }
 glutin = { version = "=0.32.3" }
 gtk = { version = "=0.11.3", package = "gtk4" }
 gdk-macos = { version = "=0.11.0", package = "gdk4-macos" }
-gdk-x11 = { version = "=0.11.0", package = "gdk4-x11" }
-gdk-wayland = { version = "=0.11.0", package = "gdk4-wayland" }
 gdk-win32 = { version = "=0.11.0", package = "gdk4-win32" }
+gdk4-wayland-sys = { version = "=0.11.0" }
+gdk4-x11-sys = { version = "=0.11.0" }
 hound = { version = "=3.5.1" }
 iced = { version = "=0.14.0" }
 iced_tiny_skia = { version = "=0.14.0" }
