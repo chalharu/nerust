@@ -6,29 +6,46 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 /// Used when no meaningful typed error is available (e.g. `glXChooseFBConfig`
 /// returned null without setting an error).
 #[derive(Debug)]
-pub struct RenderMessage(pub String);
+pub struct OpaqueError(pub String);
 
-impl std::fmt::Display for RenderMessage {
+impl std::fmt::Display for OpaqueError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl std::error::Error for RenderMessage {}
+impl std::error::Error for OpaqueError {}
 
 /// Renderer 関連のエラー。
 ///
-/// 各 variant は `Box<dyn Error>` で元のエラー型を保持する。
-/// Frontend は `Display` でエラーメッセージを表示でき、
-/// 必要に応じて `source()` → `downcast_ref()` で具体型を取り出せる。
-#[derive(Debug, thiserror::Error)]
-pub enum RendererError {
-    /// Renderer の生成に失敗した。
-    #[error("renderer creation failed")]
-    Create(#[source] Box<dyn std::error::Error + Send + Sync>),
-    /// サーフェイスの再作成に失敗した（wgpu surface loss 等）。
-    #[error("surface recreation failed")]
-    SurfaceRecreate(#[source] Box<dyn std::error::Error + Send + Sync>),
+/// 単一構造体で、`context` に発生箇所の説明（"display init" / "surface recreate" 等）、
+/// `source` に元のエラー型を保持する。OCP を満たし、新 backend は既存型を変えずに
+/// 任意の context 文字列を使える。
+///
+/// Frontend は `Display` で `"display init: (source message)"` と表示でき、
+/// `source()` → `downcast_ref()` で具体型を取り出せる。
+#[derive(Debug)]
+pub struct RendererError {
+    context: &'static str,
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl RendererError {
+    pub fn new(context: &'static str, source: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Self { context, source }
+    }
+}
+
+impl std::fmt::Display for RendererError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for RendererError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.source)
+    }
 }
 
 /// Outcome reported by [`Renderer::render`].
@@ -63,9 +80,10 @@ pub trait Renderer: std::fmt::Debug {
         _display_handle: RawDisplayHandle,
         _size: SurfaceSize,
     ) -> Result<(), RendererError> {
-        Err(RendererError::SurfaceRecreate(Box::new(RenderMessage(
-            "not supported by this backend".to_string(),
-        ))))
+        Err(RendererError::new(
+            "surface recreate",
+            Box::new(OpaqueError("not supported by this backend".to_string())),
+        ))
     }
 }
 
