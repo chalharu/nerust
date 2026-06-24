@@ -46,6 +46,7 @@ pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> 
 /// Extract a [`RawWindowHandle`] from a GDK surface.
 #[cfg(target_os = "macos")]
 pub(crate) fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
+    use gio::prelude::Cast;
     use std::ffi::c_void;
     surface
         .downcast_ref::<gdk_macos::MacosSurface>()
