@@ -23,7 +23,7 @@ pub(crate) fn with_raw_handles<R>(
     let ns_window = surface.downcast_ref::<gdk_macos::MacosSurface>()?.native();
     // SAFETY: Retain the NSWindow so it (and its NSView) stay alive for `f`.
     let ns_window =
-        unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast()) };
+        unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast()) }?;
     let ns_view = ns_window.contentView()?;
     let wh = RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
         NonNull::new(objc2::rc::Retained::as_ptr(&ns_view) as *mut c_void).unwrap(),
