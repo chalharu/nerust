@@ -31,15 +31,7 @@ impl GtkRenderer {
             vsync: true,
         };
         match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
-            Ok(view) => {
-                // Apply the initial size so the aspect-ratio correction
-                // (letterbox / pillarbox) is set before the first render.
-                // on_load only sets an identity matrix; without this call
-                // the content would stretch to fill the whole viewport.
-                let mut view = view;
-                view.reconfigure(size);
-                self.view = Some(view);
-            }
+            Ok(view) => self.view = Some(view),
             Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }
     }
@@ -47,6 +39,12 @@ impl GtkRenderer {
     pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer) {
         if let Some(view) = self.view.as_mut() {
             view.render(frame_buffer);
+        }
+    }
+
+    pub(crate) fn reconfigure(&mut self, size: SurfaceSize) {
+        if let Some(view) = self.view.as_mut() {
+            view.reconfigure(size);
         }
     }
 }
