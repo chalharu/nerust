@@ -16,6 +16,8 @@ use nerust_screen_video::{
 
 /// OpenGL renderer with glutin-managed GL context.
 pub struct GlRenderer {
+    // Drop order: view (glDelete*) → context → surface.
+    // `impl Drop` makes the GL context current before the fields drop.
     view: GlView,
     context: glutin::context::PossiblyCurrentContext,
     surface: glutin::surface::Surface<WindowSurface>,
@@ -25,6 +27,16 @@ pub struct GlRenderer {
 impl std::fmt::Debug for GlRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GlRenderer").finish_non_exhaustive()
+    }
+}
+
+impl Drop for GlRenderer {
+    fn drop(&mut self) {
+        // Make the GL context current before dropping `view`, so that
+        // `GlView`'s `glDelete*` calls run in a valid context.
+        if !self.context.is_current() {
+            let _ = self.context.make_current(&self.surface);
+        }
     }
 }
 
@@ -115,11 +127,21 @@ impl GlRenderer {
                 .map_err(|e| RendererError::new("create context", Box::new(e)))?
         };
 
-        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
-            window_handle,
-            NonZeroU32::new(initial_size.width).unwrap(),
-            NonZeroU32::new(initial_size.height).unwrap(),
+        let (w, h) = (
+            NonZeroU32::new(initial_size.width).ok_or_else(|| {
+                RendererError::new(
+                    "zero width",
+                    Box::new(OpaqueError("surface width must be non-zero".to_string())),
+                )
+            })?,
+            NonZeroU32::new(initial_size.height).ok_or_else(|| {
+                RendererError::new(
+                    "zero height",
+                    Box::new(OpaqueError("surface height must be non-zero".to_string())),
+                )
+            })?,
         );
+        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(window_handle, w, h);
 
         let surface = unsafe {
             display
