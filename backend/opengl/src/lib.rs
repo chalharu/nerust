@@ -32,19 +32,17 @@ impl GlRenderer {
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
     ) -> Result<Display, glutin::error::Error> {
+        // Each cfg branch uses only the DisplayApiPreference variant
+        // available for that platform's glutin backend feature.
         #[cfg(target_os = "macos")]
         let preference = DisplayApiPreference::Cgl;
 
         #[cfg(target_os = "windows")]
         let preference = DisplayApiPreference::EglThenWgl(_raw_window_handle);
 
-        #[cfg(all(
-            unix,
-            not(target_os = "macos"),
-            not(target_os = "ios"),
-            not(target_os = "android")
-        ))]
-        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
+        // Linux, FreeBSD, Android, iOS, wasm, etc.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let preference = DisplayApiPreference::Egl;
 
         unsafe { glutin::display::Display::new(display_handle, preference) }
     }
