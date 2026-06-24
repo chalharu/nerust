@@ -28,6 +28,7 @@ impl std::fmt::Debug for GlRenderer {
 }
 
 impl GlRenderer {
+    #[allow(unused_variables)]
     fn create_display(
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
