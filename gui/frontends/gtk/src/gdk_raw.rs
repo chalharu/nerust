@@ -104,9 +104,7 @@ pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle>
         ))
     } else if backend.is_wayland() {
         Some(RawDisplayHandle::Wayland(
-            raw_window_handle::WaylandDisplayHandle::new(
-                NonNull::new(display.as_ptr().cast()).unwrap(),
-            ),
+            raw_window_handle::WaylandDisplayHandle::new(NonNull::new(display.as_ptr().cast())?),
         ))
     } else if backend.is_broadway() {
         Some(RawDisplayHandle::Web(
