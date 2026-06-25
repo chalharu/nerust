@@ -62,10 +62,13 @@ impl SurfaceExtend for Surface {
                 && let Some(display) = gdk::Display::default()
             {
                 super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
-                    s.renderer
-                        .borrow_mut()
-                        .realize(wh, dh, app_size, physical_size, &profile);
+                    s.renderer.borrow_mut().realize(wh, dh, app_size, &profile);
                 });
+                // After realize, the surface (wgpu) was configured at app_size.
+                // Reconfigure to physical_size so the swapchain matches the
+                // actual pixel dimensions.  GlRenderer's reconfigure is a no-op.
+                s.renderer.borrow_mut().reconfigure(physical_size);
+                s.last_physical_size.set(physical_size);
             }
         }
         if let Ok(state) = s.state.try_borrow() {
@@ -76,9 +79,24 @@ impl SurfaceExtend for Surface {
             );
             if physical_size != s.last_physical_size.get() {
                 s.last_physical_size.set(physical_size);
-                s.renderer.borrow_mut().reconfigure(physical_size);
+                // On resize, the native GDK surface may be recreated (Wayland
+                // always does this; X11 + macOS may).  For wgpu this
+                // invalidates the old wgpu surface, so we need to recreate it
+                // from fresh handles.  OpenGL's glutin context is unaffected.
+                if let Some(surf) = s.window.surface()
+                    && let Some(disp) = gdk::Display::default()
+                {
+                    super::gdk_raw::with_raw_handles(&surf, &disp, |wh, dh| {
+                        let _ = s
+                            .renderer
+                            .borrow_mut()
+                            .recreate_surface(wh, dh, physical_size);
+                    });
+                }
             }
-            s.renderer.borrow_mut().render(state.frame_buffer());
+            s.renderer
+                .borrow_mut()
+                .render(state.frame_buffer(), physical_size);
         }
         true
     }

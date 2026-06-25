@@ -1,6 +1,7 @@
 use nerust_backend_opengl::GlRendererFactory;
 use nerust_screen_video::{
-    FrameBuffer, Renderer, RendererConfig, RendererFactory, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, Renderer, RendererConfig, RendererError, RendererFactory, SurfaceSize,
+    VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -19,7 +20,6 @@ impl GtkRenderer {
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
         app_size: SurfaceSize,
-        physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
         // Drop the old renderer BEFORE creating a new one, so that the
@@ -32,24 +32,38 @@ impl GtkRenderer {
             vsync: true,
         };
         match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
-            Ok(view) => {
-                let mut view = view;
-                view.reconfigure(physical_size);
-                self.view = Some(view);
-            }
+            Ok(view) => self.view = Some(view),
             Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
         }
     }
 
-    pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer) {
+    pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) {
         if let Some(view) = self.view.as_mut() {
-            view.render(frame_buffer);
+            view.render(frame_buffer, window_size);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn reconfigure(&mut self, size: SurfaceSize) {
         if let Some(view) = self.view.as_mut() {
             view.reconfigure(size);
+        }
+    }
+
+    pub(crate) fn recreate_surface(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        match self.view.as_mut() {
+            Some(view) => view.recreate_surface(window_handle, display_handle, size),
+            None => Err(RendererError::new(
+                "recreate surface",
+                Box::new(nerust_screen_video::OpaqueError(
+                    "no renderer initialized".to_string(),
+                )),
+            )),
         }
     }
 }

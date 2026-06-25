@@ -180,13 +180,20 @@ impl GlRenderer {
 }
 
 impl Renderer for GlRenderer {
-    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+    fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) -> RenderResult {
         if !self.context.is_current()
             && let Err(e) = self.context.make_current(&self.surface)
         {
             log::warn!("GlRenderer: failed to make GL context current: {e}");
             return RenderResult::Error;
         }
+
+        // Apply viewport and aspect-ratio on every frame.
+        // This is cheap (glViewport + one uniform upload) and ensures the
+        // stateful OpenGL pipeline always matches the current window size
+        // regardless of whether the frontend called reconfigure() or not.
+        self.view
+            .on_resize(window_size.width as i32, window_size.height as i32);
 
         if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
             self.view.update_palette_texture(&palette_rgba8);
@@ -204,14 +211,10 @@ impl Renderer for GlRenderer {
         RenderResult::Presented
     }
 
-    fn reconfigure(&mut self, size: SurfaceSize) {
-        if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.surface)
-        {
-            log::warn!("GlRenderer: failed to make GL context current in reconfigure: {e}");
-            return;
-        }
-        self.view.on_resize(size.width as i32, size.height as i32);
+    fn reconfigure(&mut self, _size: SurfaceSize) {
+        // Viewport is now updated in render() — this is kept as a no-op for
+        // surface recreation (wgpu) compatibility.  GlRenderer has no surface
+        // loss, so reconfigure() is a no-op.
     }
 }
 
