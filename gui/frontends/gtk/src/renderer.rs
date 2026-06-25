@@ -1,6 +1,6 @@
 use nerust_backend_opengl::GlRendererFactory;
 use nerust_screen_video::{
-    FrameBuffer, Renderer, RendererConfig, RendererError, RendererFactory, SurfaceSize,
+    FrameBuffer, Renderer, RendererConfig, RendererError, RendererFactory as _, SurfaceSize,
     VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -31,9 +31,9 @@ impl GtkRenderer {
             render_profile: profile.clone(),
             vsync: true,
         };
-        match GlRendererFactory.create_renderer(&config, window_handle, display_handle) {
+        match RendererFactory.create_renderer(&config, window_handle, display_handle) {
             Ok(view) => self.view = Some(view),
-            Err(e) => log::error!("GtkRenderer: failed to create GlRenderer: {e}"),
+            Err(e) => log::error!("GtkRenderer: failed to create Renderer: {e}"),
         }
     }
 
@@ -43,7 +43,6 @@ impl GtkRenderer {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn reconfigure(&mut self, size: SurfaceSize) {
         if let Some(view) = self.view.as_mut() {
             view.reconfigure(size);
