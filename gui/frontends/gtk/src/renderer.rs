@@ -1,4 +1,4 @@
-use nerust_backend_opengl::GlRendererFactory;
+use nerust_backend_opengl::GlRendererFactory as RendererFactory;
 use nerust_screen_video::{
     FrameBuffer, Renderer, RendererConfig, RendererError, RendererFactory as _, SurfaceSize,
     VideoRenderProfile,
