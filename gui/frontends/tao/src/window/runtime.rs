@@ -4,7 +4,7 @@ use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
 use nerust_backend_wgpu::WgpuRendererFactory;
 use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{Renderer, RendererConfig, Surface, SurfaceSize};
+use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -57,12 +57,18 @@ impl WindowRuntime {
             render_profile: session.render_profile().clone(),
             vsync,
         };
-        let (renderer, surface) = WgpuRendererFactory::create_renderer_and_surface(
-            &config,
-            raw_window_handle,
-            raw_display_handle,
-        )
-        .expect("failed to create WgpuRenderer");
+        let factory = WgpuRendererFactory::new();
+        let renderer = factory
+            .create_renderer(&config, raw_window_handle, raw_display_handle)
+            .expect("failed to create WgpuRenderer");
+        let surface = factory
+            .create_surface(
+                renderer.as_ref(),
+                raw_window_handle,
+                raw_display_handle,
+                SurfaceSize::new(size.width, size.height),
+            )
+            .expect("failed to create WgpuSurface");
         self.renderer = Some(renderer);
         self.surface = Some(surface);
         Some(())
