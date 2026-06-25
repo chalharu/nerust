@@ -57,7 +57,7 @@ impl WindowRuntime {
             render_profile: session.render_profile().clone(),
             vsync,
         };
-        let factory = WgpuRendererFactory::new();
+        let factory = WgpuRendererFactory::default();
         let renderer = factory
             .create_renderer(&config, raw_window_handle, raw_display_handle)
             .expect("failed to create WgpuRenderer");
