@@ -369,6 +369,9 @@ impl HostState {
             return;
         }
         self.settings_open = false;
+        // The main window may not have received Focused(true) yet (platform
+        // quirk).  Ensure the render loop keeps running.
+        self.active = true;
         let should_resume = std::mem::take(&mut self.resume_after_settings);
         if should_resume {
             self.apply_session_command(SessionCommand::Resume);

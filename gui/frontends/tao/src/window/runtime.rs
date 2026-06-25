@@ -147,6 +147,7 @@ impl WindowRuntime {
                     if plan.is_some_and(|p| p.renderer_rebuild_required) {
                         self.recreate_renderer();
                     }
+                    self.host.request_redraw();
                 }
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
@@ -172,7 +173,7 @@ impl WindowRuntime {
     }
 
     fn on_update(&mut self) {
-        let Some(_window_size) = self.host.window_surface_size() else {
+        let Some(window_size) = self.host.window_surface_size() else {
             return;
         };
         let Some(renderer) = self.renderer.as_mut() else {
@@ -180,7 +181,7 @@ impl WindowRuntime {
         };
 
         self.host.session_mut().swap_frame_buffer();
-        let result = renderer.render(self.host.session_mut().frame_buffer());
+        let result = renderer.render(self.host.session_mut().frame_buffer(), window_size);
         self.host.on_render_result(result);
     }
 

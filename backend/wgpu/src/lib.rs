@@ -76,14 +76,15 @@ impl WgpuRenderer {
 }
 
 impl Renderer for WgpuRenderer {
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
+    fn render(&mut self, frame: &FrameBuffer, window_size: SurfaceSize) -> RenderResult {
         if let Some(palette_rgba8) = frame.palette_as_rgba8() {
             self.pipeline.update_palette_texture(&palette_rgba8);
         }
 
+        self.current_size = window_size;
         let outcome = self
             .pipeline
-            .render(&self.surface, self.current_size, frame.as_ref());
+            .render(&self.surface, window_size, frame.as_ref());
 
         match outcome {
             Ok(RenderOutcome::Presented) => {
@@ -126,10 +127,13 @@ impl Renderer for WgpuRenderer {
 
     fn recreate_surface(
         &mut self,
-        _window_handle: RawWindowHandle,
-        _display_handle: RawDisplayHandle,
-        _size: SurfaceSize,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
     ) -> Result<(), RendererError> {
+        self.raw_window_handle = window_handle;
+        self.raw_display_handle = display_handle;
+        self.current_size = size;
         self.do_recreate_surface()
     }
 }
