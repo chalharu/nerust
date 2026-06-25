@@ -2,9 +2,6 @@ use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
-///
-/// Used when no meaningful typed error is available (e.g. `glXChooseFBConfig`
-/// returned null without setting an error).
 #[derive(Debug)]
 pub struct OpaqueError(pub String);
 
@@ -16,14 +13,10 @@ impl std::fmt::Display for OpaqueError {
 
 impl std::error::Error for OpaqueError {}
 
-/// Renderer 関連のエラー。
+/// Renderer-related error.
 ///
-/// 単一構造体で、`context` に発生箇所の説明（"display init" / "surface recreate" 等）、
-/// `source` に元のエラー型を保持する。OCP を満たし、新 backend は既存型を変えずに
-/// 任意の context 文字列を使える。
-///
-/// Frontend は `Display` で `"display init: (source message)"` と表示でき、
-/// `source()` → `downcast_ref()` で具体型を取り出せる。
+/// `context` identifies the failing operation ("display init", "surface recreate"),
+/// `source` carries the original typed error.
 #[derive(Debug)]
 pub struct RendererError {
     context: &'static str,
@@ -59,53 +52,65 @@ pub enum RenderResult {
     Error,
 }
 
-/// 画面描画の抽象化。
-///
-/// 実装はフレームバッファを受け取り、画面に出力する。
-/// `PixelFormat::PaletteIndex` の場合、実装は自動的に palette texture
-/// を同期し、GPU 側で RGB デコードを行う。
+/// GPU device + pipeline.  Lives for the entire application session.
 pub trait Renderer: std::fmt::Debug {
-    /// フレームバッファを `window_size` の出力領域に表示する。
-    /// FrameBuffer は自身のサイズ・PixelFormat を知っている。
-    /// `window_size` は出力先の物理ピクセルサイズ。
-    /// 実装は必要に応じて viewport / aspect 比 / swapchain を window_size に合わせる。
-    fn render(&mut self, frame: &FrameBuffer, window_size: SurfaceSize) -> RenderResult;
+    /// Render `frame` into the platform `surface`.
+    /// Viewport and aspect-ratio are already configured by `Surface::configure`.
+    fn render(&mut self, surface: &dyn Surface, frame: &FrameBuffer) -> RenderResult;
 
-    /// サーフェイスサイズを変更する（wgpu surface loss 後の復旧等）。
-    fn reconfigure(&mut self, size: SurfaceSize);
-
-    /// ネイティブサーフェイスを再作成する（例: wgpu surface loss on Android）。
-    /// デフォルト実装は unsupported。
-    fn recreate_surface(
-        &mut self,
-        _window_handle: RawWindowHandle,
-        _display_handle: RawDisplayHandle,
-        _size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        Err(RendererError::new(
-            "surface recreate",
-            Box::new(OpaqueError("not supported by this backend".to_string())),
-        ))
-    }
+    /// Update the render pipeline for a new render profile
+    /// (e.g. after an NTSC filter change).  The GPU device is kept.
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
 }
 
-/// Renderer 構築に必要な共通パラメータ。
+/// Platform output (wgpu surface + swapchain / GL drawable).
+///
+/// Created by [`RendererFactory::create_surface`] and replaced on resize
+/// or surface loss.  Independent of the [`Renderer`] GPU device.
+pub trait Surface: std::fmt::Debug {
+    /// Current physical pixel size of the platform output.
+    fn size(&self) -> SurfaceSize;
+
+    /// Resize the output (swapchain for wgpu; store for GL, applied at render time).
+    fn configure(&mut self, size: SurfaceSize);
+
+    /// Recreate the native platform surface after loss (Android).
+    fn recreate(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError>;
+}
+
+/// Common parameters to create a [`Renderer`].
 pub struct RendererConfig {
     pub initial_size: SurfaceSize,
     pub render_profile: VideoRenderProfile,
     pub vsync: bool,
 }
 
-/// Renderer のファクトリ。
+/// Abstract factory: creates a [`Renderer`] and a [`Surface`] from the same backend family.
 ///
-/// 各 backend は ZST として実装し、`RendererConfig` から `Box<dyn Renderer>` を生成する。
-/// Backend 固有パラメータ（`DeviceLimitProfile` 等）は impl 内部で吸収する。
+/// `create_renderer` takes raw window/display handles because OpenGL (glutin)
+/// requires them to create a context.  wgpu ignores them and can create a
+/// headless device.  Both backends keep the handles separate from the output
+/// surface, which is managed via [`create_surface`](Self::create_surface).
 pub trait RendererFactory {
-    /// Renderer を構築する。
+    /// Build the GPU device + pipeline.
+    /// `_window_handle` / `_display_handle` are required by GL; wgpu ignores them.
     fn create_renderer(
         &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn Renderer>, RendererError>;
+
+    /// Build a platform output from native window/display handles.
+    fn create_surface(
+        &self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<Box<dyn Surface>, RendererError>;
 }
