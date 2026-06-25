@@ -2,11 +2,12 @@ use std::ffi::CString;
 use std::num::NonZeroU32;
 
 use glutin::config::ConfigTemplateBuilder;
-use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
-use glutin::display::{Display, DisplayApiPreference};
-use glutin::prelude::*;
-use glutin::surface::GlSurface as _;
-use glutin::surface::{SurfaceAttributesBuilder, WindowSurface};
+use glutin::context::{
+    ContextApi, ContextAttributesBuilder, NotCurrentGlContext as _, PossiblyCurrentGlContext as _,
+    Version,
+};
+use glutin::display::{Display, DisplayApiPreference, GlDisplay as _};
+use glutin::surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use nerust_screen_opengl::GlView;

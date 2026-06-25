@@ -1,4 +1,7 @@
+#[cfg(feature = "opengl")]
 use nerust_backend_opengl::GlRendererFactory as Factory;
+#[cfg(feature = "wgpu")]
+use nerust_backend_wgpu::WgpuRendererFactory as Factory;
 use nerust_screen_video::{
     FrameBuffer, Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize,
     VideoRenderProfile,
