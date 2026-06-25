@@ -1,5 +1,4 @@
-use super::super::Register;
-use super::{Accumulate, AccumulateMemory};
+use super::{super::Register, Accumulate, AccumulateMemory};
 
 fn decrement(register: &mut Register, data: u8) -> u8 {
     let result = data.wrapping_sub(1);

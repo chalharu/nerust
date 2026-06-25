@@ -1,7 +1,7 @@
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
+
+use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RomIdentity {

@@ -1,14 +1,20 @@
-use super::{prepare_test_dir, test_identity, test_metadata};
-use crate::archive::build_state_archive;
-use crate::metadata::{
-    METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, StateArchiveMetadataV1,
-    THUMBNAIL_ENTRY,
+use std::{
+    fs::{self, OpenOptions},
+    io::{Cursor, Write},
 };
-use crate::slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot};
-use crate::thumbnail::ThumbnailSource;
-use std::fs::{self, OpenOptions};
-use std::io::{Cursor, Write};
+
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+use super::{prepare_test_dir, test_identity, test_metadata};
+use crate::{
+    archive::build_state_archive,
+    metadata::{
+        METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, StateArchiveMetadataV1,
+        THUMBNAIL_ENTRY,
+    },
+    slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot},
+    thumbnail::ThumbnailSource,
+};
 
 #[test]
 fn metadata_only_archive_is_not_listed_as_state_slot() {
@@ -125,6 +131,7 @@ fn invalid_thumbnail_bytes_are_preserved_as_opaque_blob() {
 #[test]
 fn v1_archive_converts_to_v2_on_read() {
     use std::io::Write;
+
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     let dir = prepare_test_dir("v1-to-v2-conversion");

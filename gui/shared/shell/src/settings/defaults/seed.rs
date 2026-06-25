@@ -1,13 +1,16 @@
-use nerust_contract_input::{DigitalControlId, SystemId};
-use nerust_gui_settings::app_state::DesktopAppState;
-use nerust_gui_settings::input::{
-    IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardKey, PersistedControlId, ShortcutAction,
-    ShortcutBinding,
-};
-use nerust_gui_settings::local::HostBackendLocalSettings;
-use nerust_gui_settings::nes::NesSettings;
-use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
 use std::collections::BTreeMap;
+
+use nerust_contract_input::{DigitalControlId, SystemId};
+use nerust_gui_settings::{
+    app_state::DesktopAppState,
+    input::{
+        IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardKey, PersistedControlId, ShortcutAction,
+        ShortcutBinding,
+    },
+    local::HostBackendLocalSettings,
+    nes::NesSettings,
+    shared::{DesktopSharedSettings, SystemSettings},
+};
 
 const P1: &str = "nes.attachment.player1";
 const A: DigitalControlId = DigitalControlId::new("nes.control.a");
@@ -101,9 +104,10 @@ fn default_control_binding(
 
 #[cfg(test)]
 mod tests {
+    use nerust_gui_settings::input::ShortcutAction;
+
     use super::default_shared_settings;
     use crate::test_support::TEST_CTRL_MIC;
-    use nerust_gui_settings::input::ShortcutAction;
 
     #[test]
     fn default_settings_seed_nes_bindings_and_system_settings() {

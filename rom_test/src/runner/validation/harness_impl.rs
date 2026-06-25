@@ -1,7 +1,9 @@
 use super::runner::ValidationRunner;
-use crate::error::RomTestError;
-use crate::events::{MemoryAssertionSpace, RomAssertion};
-use crate::harness::CaseHarness;
+use crate::{
+    error::RomTestError,
+    events::{MemoryAssertionSpace, RomAssertion},
+    harness::CaseHarness,
+};
 
 impl CaseHarness for ValidationRunner {
     fn run_frame(&mut self) -> u64 {

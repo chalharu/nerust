@@ -28,30 +28,34 @@ pub(crate) mod rom_format;
 pub(crate) mod rom_identity;
 pub mod rom_parse;
 
-use self::apu::Core as Apu;
-use self::cart_device::Cartridge;
-#[cfg(test)]
-use self::cartridge_data_parts::CartridgeDataParts;
-use self::cartridge_rom::CartridgeData;
-use self::cartridge_runtime_state::CartridgeRuntimeState;
-use self::controller::Controller;
-use self::cpu::Core as Cpu;
-use self::persistence_codec::{
-    PERSISTENCE_SCHEMA_VERSION, decode_payload, encode_payload, validate_schema_version,
-};
-use self::persistence_error::PersistenceError;
-use self::ppu::Core as Ppu;
-use crate::core_options::CoreOptions;
-#[cfg(test)]
-use crate::core_options::Mmc3IrqVariant;
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
-use crate::rom_identity::RomIdentity;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_contract_core::audio::AudioBackend;
 use nerust_screen_video::FrameBuffer;
-use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
-use nerust_soundfilter::{ChaindFilter, Filter, IirFilter};
+use nerust_soundfilter::{
+    ChaindFilter, Filter, IirFilter,
+    resampler::{Resampler, SimpleDownSampler},
+};
+
+#[cfg(test)]
+use self::cartridge_data_parts::CartridgeDataParts;
+use self::{
+    apu::Core as Apu,
+    cart_device::Cartridge,
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::CartridgeRuntimeState,
+    controller::Controller,
+    cpu::Core as Cpu,
+    persistence_codec::{
+        PERSISTENCE_SCHEMA_VERSION, decode_payload, encode_payload, validate_schema_version,
+    },
+    persistence_error::PersistenceError,
+    ppu::Core as Ppu,
+};
+#[cfg(test)]
+use crate::core_options::Mmc3IrqVariant;
+use crate::{
+    core_options::CoreOptions, mirror::MirrorMode, rom_format::RomFormat, rom_identity::RomIdentity,
+};
 
 pub(crate) const CLOCK_RATE: u64 = 1_789_773;
 
@@ -826,8 +830,10 @@ fn mapper_program_with_prefix_test_data(
 #[cfg(test)]
 mod scheduler_tests {
     use super::*;
-    use crate::OpenBusReadResult;
-    use crate::interrupt::{DmcDmaKind, Interrupt};
+    use crate::{
+        OpenBusReadResult,
+        interrupt::{DmcDmaKind, Interrupt},
+    };
 
     fn null_fb() -> FrameBuffer {
         let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);

@@ -1,6 +1,5 @@
 #[cfg(target_env = "gnu")]
 use core::fmt::{self, Write as _};
-
 #[cfg(target_env = "gnu")]
 use std::{
     ffi::c_void,

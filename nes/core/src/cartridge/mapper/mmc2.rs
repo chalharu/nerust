@@ -1,13 +1,15 @@
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC2};
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
-use crate::persistence_codec::{decode_payload, encode_payload};
-use crate::persistence_error::PersistenceError;
-use crate::ppu_memory_access::PpuBusEvent;
+use crate::{
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC2},
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    mirror::MirrorMode,
+    persistence_codec::{decode_payload, encode_payload},
+    persistence_error::PersistenceError,
+    ppu_memory_access::PpuBusEvent,
+};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
 enum Model {
@@ -270,15 +272,12 @@ impl Mapper for Mmc2 {
 
 #[cfg(test)]
 mod tests {
-    use super::Cartridge;
-    use super::{LatchState, Mmc2};
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::Interrupt;
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::ppu_memory_access::PpuBusEvent;
-    use crate::rom_format::RomFormat;
+    use super::{Cartridge, LatchState, Mmc2};
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+        interrupt::Interrupt, mapper::Mapper, mirror::MirrorMode, ppu_memory_access::PpuBusEvent,
+        rom_format::RomFormat,
+    };
 
     fn test_data(mapper_type: u16) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

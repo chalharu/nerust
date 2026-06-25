@@ -7,26 +7,25 @@ pub mod persistence;
 mod tests;
 pub mod title;
 
-pub use lifecycle::WindowSize;
+use std::{collections::BTreeSet, sync::Arc};
 
-use crate::descriptor::{SystemDescriptor, SystemSettingsPageModel};
-use crate::emu_core::EmuCore;
-use crate::emu_core::OperationError;
-use crate::factory::{CoreFactory, FactoryError};
-use crate::load::{MediaObject, SystemLoadOptions};
-use crate::session::metrics::ConsoleMetrics;
-use crate::session::persistence::PersistenceManager;
+pub use lifecycle::WindowSize;
 use nerust_contract_core::input::SystemInputAdapter;
-use nerust_gui_runtime::settings::manager::SettingsManager;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsError, SettingsSnapshot};
+use nerust_gui_runtime::settings::{
+    HostBackendIdentity, SettingsError, SettingsSnapshot, manager::SettingsManager,
+};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_persistence::error::PersistenceError;
-use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::FrameBuffer;
-use nerust_screen_video::VideoRenderProfile;
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
+use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
+
+use crate::{
+    descriptor::{SystemDescriptor, SystemSettingsPageModel},
+    emu_core::{EmuCore, OperationError},
+    factory::{CoreFactory, FactoryError},
+    load::{MediaObject, SystemLoadOptions},
+    session::{metrics::ConsoleMetrics, persistence::PersistenceManager},
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {

@@ -14,10 +14,8 @@ use std::{
 
 #[cfg(target_os = "android")]
 use jni::JavaVM;
-
 #[cfg(target_os = "android")]
 use jni::sys::{JNI_VERSION_1_6, jint};
-
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 

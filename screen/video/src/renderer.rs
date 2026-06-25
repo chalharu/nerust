@@ -1,6 +1,8 @@
-use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::any::TypeId;
+
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]

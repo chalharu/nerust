@@ -1,8 +1,9 @@
 mod runtime;
 
+use std::path::{Path, PathBuf};
+
 use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
 use runtime::WindowRuntime;
-use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WindowLoadOptions {
@@ -79,8 +80,9 @@ impl Default for Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
     use nerust_gui_shell::load::LoadRequest;
+
+    use super::{WindowLoadOptions, WindowMmc3IrqVariant, system_load_request_from_window_options};
 
     #[test]
     fn window_load_options_translate_to_system_load_request() {

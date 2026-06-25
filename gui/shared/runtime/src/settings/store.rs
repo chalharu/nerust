@@ -1,15 +1,19 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use directories::ProjectDirs;
+use nerust_gui_settings::{
+    app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState},
+    local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings},
+    shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
+};
+use serde_yaml::Value;
+
 use super::{
     HostBackendIdentity, LoadedSettingsDocument, SettingsError, SettingsPaths, SettingsStore,
 };
-use directories::ProjectDirs;
-use nerust_gui_settings::app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState};
-use nerust_gui_settings::local::{
-    HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
-};
-use nerust_gui_settings::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
-use serde_yaml::Value;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 const SHARED_SETTINGS_FILE_NAME: &str = "shared-settings.yaml";
 const APP_STATE_FILE_NAME: &str = "app-state.yaml";

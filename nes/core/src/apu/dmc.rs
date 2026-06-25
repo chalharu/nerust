@@ -208,11 +208,13 @@ impl DMC {
 
 #[cfg(test)]
 mod tests {
-    use super::super::fft_test::{
-        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
-        dominant_frequency_tolerance,
+    use super::{
+        super::fft_test::{
+            CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+            dominant_frequency_tolerance,
+        },
+        DMC, DMC_TABLE,
     };
-    use super::{DMC, DMC_TABLE};
     use crate::interrupt::Interrupt;
 
     fn expected_single_sample_frequency(rate_index: usize) -> f32 {

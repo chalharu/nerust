@@ -2,14 +2,21 @@ mod error;
 pub mod raw;
 pub mod vertex;
 
-use self::error::*;
-use self::raw::{
-    get_active_attrib, get_active_uniform, get_attrib_location, get_programiv, get_uniform_location,
+use std::{
+    collections::HashMap,
+    ffi::{CStr, CString},
+    ptr, str,
 };
+
 use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
-use std::collections::HashMap;
-use std::ffi::{CStr, CString};
-use std::{ptr, str};
+
+use self::{
+    error::*,
+    raw::{
+        get_active_attrib, get_active_uniform, get_attrib_location, get_programiv,
+        get_uniform_location,
+    },
+};
 
 fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
     let result = func();

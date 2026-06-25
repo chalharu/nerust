@@ -107,9 +107,10 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 
 #[cfg(test)]
 mod tests {
+    use nerust_contract_input::SystemId;
+
     use super::{keyboard_binding_sections, shortcut_descriptors};
     use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};
-    use nerust_contract_input::SystemId;
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {

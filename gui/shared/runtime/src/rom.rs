@@ -1,6 +1,8 @@
-use std::fs::File;
-use std::io::{self, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::{self, BufReader, Read},
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LoadedRom {

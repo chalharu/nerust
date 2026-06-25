@@ -1,18 +1,22 @@
-use crate::error::RomTestError;
-use crate::events::{ButtonCode, ControllerPad, PadState, RomAssertion};
-use crate::harness::{CaseHarness, apply_button_state, drive_case};
-use crate::manifest::{RomCase, load_default_manifest, read_rom};
-use crate::results::{CaseOutcome, ValidationOptions};
-use crate::runner::validate_case;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use clap::{Arg, ArgAction, Command};
 use nerust_contract_core::audio::AudioBackend;
-use nerust_nes_core::Core;
-use nerust_nes_core::input_types::Buttons;
-use nerust_nes_core::rom_parse;
+use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+
+use crate::{
+    error::RomTestError,
+    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
+    harness::{CaseHarness, apply_button_state, drive_case},
+    manifest::{RomCase, load_default_manifest, read_rom},
+    results::{CaseOutcome, ValidationOptions},
+    runner::validate_case,
+};
 
 pub fn run_cli() {
     if let Err(message) = run() {

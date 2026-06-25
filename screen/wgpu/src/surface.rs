@@ -1,5 +1,4 @@
 pub use nerust_screen_video::SurfaceSize;
-
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use wgpu::{Instance, Surface};
 

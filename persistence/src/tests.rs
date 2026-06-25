@@ -3,15 +3,15 @@ mod sidecar;
 mod slots;
 mod time;
 
-use crate::metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
+use std::{env, fs, path::PathBuf, time::SystemTime};
 
-use crate::time::unix_millis;
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::time::SystemTime;
+
+use crate::{
+    metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata},
+    time::unix_millis,
+};
 
 fn prepare_test_dir(name: &str) -> PathBuf {
     let dir = test_dir(name);

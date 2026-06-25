@@ -1,9 +1,7 @@
-use crate::cpu::Register;
-use crate::interrupt::Interrupt;
-use crate::{Apu, Controller, Ppu};
-
 use super::CpuCartridgeBus as Cartridge;
-use crate::{OpenBus, OpenBusReadResult};
+use crate::{
+    Apu, Controller, OpenBus, OpenBusReadResult, Ppu, cpu::Register, interrupt::Interrupt,
+};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct Memory {

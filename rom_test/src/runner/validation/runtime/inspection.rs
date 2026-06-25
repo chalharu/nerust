@@ -1,7 +1,10 @@
-use super::ValidationRuntime;
-use crate::error::RomTestError;
-use crate::media::{encode_screenshot_png, screen_hash};
 use nerust_contract_core::audio::AudioBackend;
+
+use super::ValidationRuntime;
+use crate::{
+    error::RomTestError,
+    media::{encode_screenshot_png, screen_hash},
+};
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn audio_sample_rate(&self) -> u32 {

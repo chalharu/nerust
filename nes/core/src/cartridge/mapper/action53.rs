@@ -1,12 +1,14 @@
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_ACTION53};
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
-use crate::persistence_codec::{decode_payload, encode_payload};
-use crate::persistence_error::PersistenceError;
+use crate::{
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_ACTION53},
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    mirror::MirrorMode,
+    persistence_codec::{decode_payload, encode_payload},
+    persistence_error::PersistenceError,
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Action53RuntimeState {
@@ -218,14 +220,11 @@ impl Mapper for Action53 {
 
 #[cfg(test)]
 mod tests {
-    use super::Action53;
-    use super::Cartridge;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::Interrupt;
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use super::{Action53, Cartridge};
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+        interrupt::Interrupt, mapper::Mapper, mirror::MirrorMode, rom_format::RomFormat,
+    };
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

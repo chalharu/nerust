@@ -6,12 +6,14 @@ mod settings;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::descriptor::{
-    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+use nerust_gui_shell::{
+    descriptor::{
+        SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+    },
+    emu_core::EmuCore,
+    factory::FactoryError,
+    load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
 };
-use nerust_gui_shell::emu_core::EmuCore;
-use nerust_gui_shell::factory::FactoryError;
-use nerust_gui_shell::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 
 pub mod touch;
 

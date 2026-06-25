@@ -2,19 +2,13 @@ mod mat4;
 mod vec2d;
 mod vertex_data;
 
-use self::mat4::Mat4;
-use self::vec2d::Vec2D;
-use self::vertex_data::VertexData;
+use std::{ffi::CStr, os::raw::c_void, ptr, rc::Rc};
+
 use gl::types::GLint;
-use nerust_glwrap::Shader;
-use nerust_glwrap::raw::*;
-use nerust_glwrap::vertex::*;
-use nerust_screen_video::VideoFrameFormat;
-use nerust_screen_video::VideoRenderProfile;
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use std::ptr;
-use std::rc::Rc;
+use nerust_glwrap::{Shader, raw::*, vertex::*};
+use nerust_screen_video::{VideoFrameFormat, VideoRenderProfile};
+
+use self::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
 const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;

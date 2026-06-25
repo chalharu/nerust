@@ -1,7 +1,7 @@
 mod host;
 
-use self::host::{HostAction, HostState};
-use crate::app_menu::{UserEvent, imp::AppMenu};
+use std::path::{Path, PathBuf};
+
 #[cfg(feature = "opengl")]
 use nerust_backend_opengl::GlRendererFactory as Factory;
 #[cfg(feature = "wgpu")]
@@ -9,13 +9,15 @@ use nerust_backend_wgpu::WgpuRendererFactory as Factory;
 use nerust_gui_shell::load::LoadRequest;
 use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
+
+use self::host::{HostAction, HostState};
+use crate::app_menu::{UserEvent, imp::AppMenu};
 
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,

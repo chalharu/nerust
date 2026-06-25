@@ -1,18 +1,21 @@
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
 /// Only the fields that make sense on a mobile/touch device are exposed.
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JObjectArray, JString, JValue};
-use jni::refs::Global;
-use jni::sys::jobject;
-use jni::{JavaVM, jni_sig, jni_str};
+use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
-use nerust_gui_settings::shared::SystemSettings;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use nerust_gui_settings::{
+    nes::{NesSettings, NesVideoFilter},
+    shared::SystemSettings,
+};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -504,13 +507,16 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use nerust_contract_input::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::app_state::DesktopAppState;
-    use nerust_gui_settings::local::HostBackendLocalSettings;
-    use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
-    use nerust_gui_settings::shared::{DesktopSharedSettings, SystemSettings};
+    use nerust_gui_settings::{
+        app_state::DesktopAppState,
+        local::HostBackendLocalSettings,
+        nes::{NesSettings, NesVideoFilter},
+        shared::{DesktopSharedSettings, SystemSettings},
+    };
+
+    use super::*;
 
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();

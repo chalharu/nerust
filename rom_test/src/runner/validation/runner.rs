@@ -1,11 +1,13 @@
-use super::artifacts::ValidationArtifacts;
-use super::assertions::CartridgeRamAssertion;
-use super::runtime::ValidationRuntime;
-use crate::error::RomTestError;
-use crate::events::{ButtonCode, ControllerPad, PadState};
-use crate::harness::drive_case;
-use crate::manifest::RomCase;
-use crate::results::{CaseValidation, ValidationOptions};
+use super::{
+    artifacts::ValidationArtifacts, assertions::CartridgeRamAssertion, runtime::ValidationRuntime,
+};
+use crate::{
+    error::RomTestError,
+    events::{ButtonCode, ControllerPad, PadState},
+    harness::drive_case,
+    manifest::RomCase,
+    results::{CaseValidation, ValidationOptions},
+};
 
 pub(in crate::runner) struct ValidationRunner {
     case_id: String,

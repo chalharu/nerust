@@ -1,10 +1,11 @@
-use crate::OpenBusReadResult;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::Interrupt;
-use crate::mapper_state::MapperStateDao;
-use crate::mapper_state::MappingMode;
-use crate::mirror::MirrorMode;
-use crate::ppu_memory_access::PpuBusEvent;
+use crate::{
+    OpenBusReadResult,
+    cartridge_rom::CartridgeData,
+    interrupt::Interrupt,
+    mapper_state::{MapperStateDao, MappingMode},
+    mirror::MirrorMode,
+    ppu_memory_access::PpuBusEvent,
+};
 
 pub(crate) trait CartridgeDataDao {
     fn data_mut(&mut self) -> &mut CartridgeData;

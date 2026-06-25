@@ -1,8 +1,10 @@
-use super::error::RomTestError;
-use super::results::CaseOutcome;
-use std::fmt::Write as _;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Write as _,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use super::{error::RomTestError, results::CaseOutcome};
 
 #[derive(Debug, Clone)]
 pub struct ReportSummary {

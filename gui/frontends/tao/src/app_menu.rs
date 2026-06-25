@@ -26,7 +26,8 @@ pub(crate) enum UserEvent {
     target_os = "windows"
 ))]
 pub(crate) mod imp {
-    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
+    use std::sync::{Arc, RwLock};
+
     #[cfg(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -38,7 +39,6 @@ pub(crate) mod imp {
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
     use nerust_gui_settings::language::AppLanguage;
     use nerust_gui_shell::settings::i18n::{UiText, text};
-    use std::sync::{Arc, RwLock};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
@@ -52,6 +52,8 @@ pub(crate) mod imp {
     use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
+
+    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -352,9 +354,10 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use super::{StateSlotSummary, TaoWindow, UserEvent};
     use nerust_gui_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
+
+    use super::{StateSlotSummary, TaoWindow, UserEvent};
 
     pub(crate) struct AppMenu;
 

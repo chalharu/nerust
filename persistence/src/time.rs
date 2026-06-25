@@ -1,8 +1,11 @@
-use crate::error::PersistenceError;
-use crate::model::StateSlotSummary;
+use std::{
+    mem::MaybeUninit,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
 use libc::tm;
-use std::mem::MaybeUninit;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::{error::PersistenceError, model::StateSlotSummary};
 
 pub fn format_slot_saved_at(saved_at: SystemTime) -> String {
     let Ok(duration) = saved_at.duration_since(UNIX_EPOCH) else {

@@ -1,24 +1,28 @@
-use super::apply::{validate_local_settings, validate_shared_settings};
-use super::persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import};
-use super::store::{
-    empty_mapping, load_settings_document, merge_serialized_value, normalize_app_state,
-    normalize_loaded_settings, normalize_local_settings, normalize_shared_settings,
-    save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
+use std::{
+    path::Path,
+    sync::{Arc, RwLock},
 };
-use super::{HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
+
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
-use nerust_gui_settings::app_state::{
-    DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
+use nerust_gui_settings::{
+    app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
+    local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings},
+    shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
 };
-use nerust_gui_settings::local::{
-    HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings,
-};
-use nerust_gui_settings::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
 use nerust_persistence::sidecar::SidecarPaths;
 use serde_yaml::Value;
-use std::path::Path;
-use std::sync::{Arc, RwLock};
+
+use super::{
+    HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
+    apply::{validate_local_settings, validate_shared_settings},
+    persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
+    store::{
+        empty_mapping, load_settings_document, merge_serialized_value, normalize_app_state,
+        normalize_loaded_settings, normalize_local_settings, normalize_shared_settings,
+        save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
+    },
+};
 
 #[derive(Clone, Debug)]
 pub struct SettingsManager {
