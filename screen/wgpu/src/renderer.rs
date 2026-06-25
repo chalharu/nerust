@@ -79,6 +79,18 @@ pub struct RenderPipeline {
 }
 
 impl RenderPipeline {
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
+        &self.config
+    }
+
     /// PaletteIndex 形式の FrameBuffer からパレットデータを palette texture に書き込む。
     /// `render()` の前に呼ばれることを想定。
     /// palette の width/height は texture 作成時の値から自動的に決まる。

@@ -2,9 +2,9 @@ mod host;
 
 use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_backend_wgpu::WgpuRendererFactory as RendererFactory;
+use nerust_backend_wgpu::WgpuRendererFactory;
 use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{Renderer, RendererConfig, RendererFactory as _, SurfaceSize};
+use nerust_screen_video::{Renderer, RendererConfig, Surface, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -18,6 +18,7 @@ pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
     renderer: Option<Box<dyn Renderer>>,
+    surface: Option<Box<dyn Surface>>,
 }
 
 impl WindowRuntime {
@@ -35,7 +36,36 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             host: HostState::new(AppMenu::new(proxy)),
             renderer: None,
+            surface: None,
         }
+    }
+
+    fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
+        let size = window.inner_size();
+        let session = self.host.session();
+        let vsync = session.settings_snapshot().local.video.presentation.vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        let config = RendererConfig {
+            initial_size: SurfaceSize::new(size.width, size.height),
+            render_profile: session.render_profile().clone(),
+            vsync,
+        };
+        let (renderer, surface) = WgpuRendererFactory::create_renderer_and_surface(
+            &config,
+            raw_window_handle,
+            raw_display_handle,
+        )
+        .expect("failed to create WgpuRenderer");
+        self.renderer = Some(renderer);
+        self.surface = Some(surface);
+        Some(())
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) {
@@ -73,7 +103,6 @@ impl WindowRuntime {
                 self.recreate_renderer();
                 *control_flow = ControlFlow::Wait;
             }
-            // Main window events
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_window(window_id) => match event {
@@ -98,34 +127,23 @@ impl WindowRuntime {
                 }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
-                    if let Some(window_size) = self.host.window_surface_size()
-                        && let Some(renderer) = self.renderer.as_mut()
-                    {
-                        renderer.reconfigure(window_size);
-                    }
                     self.host.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
                 _ => (),
             },
-            // Settings window events
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_settings_window(window_id) => {
                 let Some(handle) = self.host.settings_window.as_mut() else {
                     return;
                 };
-
                 match &event {
-                    WindowEvent::Resized(size) => {
-                        handle.resize(size.width, size.height);
-                    }
+                    WindowEvent::Resized(size) => handle.resize(size.width, size.height),
                     WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                         handle.set_scale_factor(*scale_factor as f32);
                     }
-                    WindowEvent::ModifiersChanged(state) => {
-                        handle.set_modifiers(*state);
-                    }
+                    WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
                     WindowEvent::CloseRequested => {
                         handle
                             .should_close
@@ -133,11 +151,9 @@ impl WindowRuntime {
                     }
                     _ => {}
                 }
-
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
                 handle.render();
-
                 if handle
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
@@ -179,40 +195,33 @@ impl WindowRuntime {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
+        let Some(surface) = self.surface.as_mut() else {
+            return;
+        };
+
+        // Keep the surface sized to the current window.
+        if surface.size() != window_size {
+            surface.configure(window_size);
+        }
 
         self.host.session_mut().swap_frame_buffer();
-        let result = renderer.render(self.host.session_mut().frame_buffer(), window_size);
+        let result = renderer.render(surface.as_ref(), self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);
     }
 
     fn recreate_renderer(&mut self) {
+        // Drop surface first (wgpu requirement), then renderer.
+        self.surface = None;
         self.renderer = None;
-        self.renderer = self.host.window().cloned().map(|window| {
-            let size = window.inner_size();
-            let session = self.host.session();
-            let vsync = session.settings_snapshot().local.video.presentation.vsync;
-            let raw_window_handle = window
-                .window_handle()
-                .expect("failed to get window handle")
-                .as_raw();
-            let raw_display_handle = window
-                .display_handle()
-                .expect("failed to get display handle")
-                .as_raw();
-            let config = RendererConfig {
-                initial_size: SurfaceSize::new(size.width, size.height),
-                render_profile: session.render_profile().clone(),
-                vsync,
-            };
-            RendererFactory
-                .create_renderer(&config, raw_window_handle, raw_display_handle)
-                .expect("failed to create Renderer")
-        });
+        if let Some(window) = self.host.window().cloned() {
+            self.build_renderer_and_surface(&window);
+        }
     }
 }
 
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
+        self.surface = None;
         self.renderer = None;
     }
 }
