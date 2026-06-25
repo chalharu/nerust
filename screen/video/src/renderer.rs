@@ -1,5 +1,6 @@
 use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+use std::any::TypeId;
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -53,9 +54,11 @@ pub enum RenderResult {
 }
 
 /// GPU device + pipeline.  Lives for the entire application session.
-pub trait Renderer: std::fmt::Debug {
-    /// Downcast for backend-to-backend communication.
-    fn as_any(&self) -> &dyn std::any::Any;
+pub trait Renderer: std::fmt::Debug + 'static {
+    /// Returns the `TypeId` of the concrete implementor.
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
 
     /// Render `frame` into the platform `surface`.
     /// Viewport and aspect-ratio are already configured by `Surface::configure`.
@@ -66,13 +69,26 @@ pub trait Renderer: std::fmt::Debug {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
 }
 
+impl dyn Renderer {
+    /// Downcast to a concrete backend type.
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        if self.type_id() == TypeId::of::<T>() {
+            Some(unsafe { &*(self as *const dyn Renderer as *const T) })
+        } else {
+            None
+        }
+    }
+}
+
 /// Platform output (wgpu surface + swapchain / GL drawable).
 ///
 /// Created by [`RendererFactory::create_surface`] and replaced on resize
 /// or surface loss.  Independent of the [`Renderer`] GPU device.
-pub trait Surface: std::fmt::Debug {
-    /// Downcast for backend-to-backend communication.
-    fn as_any(&self) -> &dyn std::any::Any;
+pub trait Surface: std::fmt::Debug + 'static {
+    /// Returns the `TypeId` of the concrete implementor.
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
 
     /// Current physical pixel size of the platform output.
     fn size(&self) -> SurfaceSize;
@@ -87,6 +103,17 @@ pub trait Surface: std::fmt::Debug {
         display_handle: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError>;
+}
+
+impl dyn Surface {
+    /// Downcast to a concrete backend type.
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        if self.type_id() == TypeId::of::<T>() {
+            Some(unsafe { &*(self as *const dyn Surface as *const T) })
+        } else {
+            None
+        }
+    }
 }
 
 /// Common parameters to create a [`Renderer`].
