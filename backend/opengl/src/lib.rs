@@ -42,6 +42,10 @@ impl Drop for GlRenderer {
 }
 
 impl Renderer for GlRenderer {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn render(&mut self, _surface: &dyn Surface, frame_buffer: &FrameBuffer) -> RenderResult {
         if !self.context.is_current()
             && let Err(e) = self.context.make_current(&self.gl_surface)
@@ -115,6 +119,10 @@ impl std::fmt::Debug for GlSurface {
 }
 
 impl Surface for GlSurface {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -303,6 +311,7 @@ impl RendererFactory for GlRendererFactory {
 
     fn create_surface(
         &self,
+        _renderer: &dyn Renderer,
         _window_handle: RawWindowHandle,
         _display_handle: RawDisplayHandle,
         size: SurfaceSize,
