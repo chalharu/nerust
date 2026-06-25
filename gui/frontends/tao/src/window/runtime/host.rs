@@ -369,9 +369,6 @@ impl HostState {
             return;
         }
         self.settings_open = false;
-        // The main window may not have received Focused(true) yet (platform
-        // quirk).  Ensure the render loop keeps running.
-        self.active = true;
         let should_resume = std::mem::take(&mut self.resume_after_settings);
         if should_resume {
             self.apply_session_command(SessionCommand::Resume);
@@ -387,7 +384,7 @@ impl HostState {
                 self.session.settings_snapshot().shared.general.language,
                 UiText::Open,
             ))
-            .add_filter("NES ROM", &["nes", "zip"])
+            .add_filter("NES ROM", &["nes"])
             .pick_file()
             .is_some_and(|path| self.load_path(&path))
     }
