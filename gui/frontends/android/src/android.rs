@@ -760,6 +760,10 @@ impl AndroidFrontend {
     }
 
     fn render(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            self.shell.needs_redraw = false;
+            return;
+        };
         let Some(renderer) = self.renderer.as_mut() else {
             self.shell.needs_redraw = false;
             return;
@@ -772,7 +776,8 @@ impl AndroidFrontend {
             self.session.clear_display();
         }
         self.session.swap_frame_buffer();
-        match renderer.render(self.session.frame_buffer()) {
+        let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
+        match renderer.render(self.session.frame_buffer(), window_size) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
