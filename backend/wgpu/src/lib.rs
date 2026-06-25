@@ -119,6 +119,7 @@ impl Renderer for WgpuRenderer {
 
 /// Wgpu output surface + swapchain config.
 pub struct WgpuSurface {
+    instance: wgpu::Instance,
     wgpu_surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
@@ -157,9 +158,8 @@ impl Surface for WgpuSurface {
         display_handle: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
-        let instance = surface::default_instance();
         let wgpu_surface =
-            surface::create_wgpu_surface(&instance, window_handle, display_handle)
+            surface::create_wgpu_surface(&self.instance, window_handle, display_handle)
                 .map_err(|e| RendererError::new("recreate surface", Box::new(OpaqueError(e))))?;
         self.wgpu_surface = wgpu_surface;
         self.configure(size);
@@ -177,6 +177,7 @@ impl Surface for WgpuSurface {
 pub struct WgpuRendererFactory {
     state: Mutex<
         Option<(
+            wgpu::Instance,
             wgpu::Surface<'static>,
             wgpu::SurfaceConfiguration,
             wgpu::Device,
@@ -246,7 +247,12 @@ impl RendererFactory for WgpuRendererFactory {
         let surface_config = pipeline.surface_config().clone();
 
         // Store surface + config for create_surface.
-        *self.state.lock().unwrap() = Some((wgpu_surface, surface_config, device.clone()));
+        *self.state.lock().unwrap() = Some((
+            instance.clone(),
+            wgpu_surface,
+            surface_config,
+            device.clone(),
+        ));
 
         Ok(Box::new(WgpuRenderer {
             instance,
@@ -273,7 +279,7 @@ impl RendererFactory for WgpuRendererFactory {
         })?;
 
         let mut guard = self.state.lock().unwrap();
-        let (wgpu_surface, mut config, device) = guard.take().ok_or_else(|| {
+        let (instance, wgpu_surface, mut config, device) = guard.take().ok_or_else(|| {
             RendererError::new(
                 "create_surface",
                 Box::new(OpaqueError(
@@ -287,6 +293,7 @@ impl RendererFactory for WgpuRendererFactory {
         wgpu_surface.configure(&device, &config);
 
         Ok(Box::new(WgpuSurface {
+            instance,
             wgpu_surface,
             config,
             device,
