@@ -17,6 +17,9 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 /// Wgpu device + pipeline.  The actual wgpu::Device and Queue live inside
 /// the RenderPipeline (accessible via pipeline.device() / pipeline.queue()).
 pub struct WgpuRenderer {
+    instance: wgpu::Instance,
+    raw_window_handle: RawWindowHandle,
+    raw_display_handle: RawDisplayHandle,
     pipeline: RenderPipeline,
     last_render_error: Option<String>,
 }
@@ -30,12 +33,8 @@ impl std::fmt::Debug for WgpuRenderer {
 }
 
 impl Renderer for WgpuRenderer {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn render(&mut self, surface: &dyn Surface, frame: &FrameBuffer) -> RenderResult {
-        let Some(wgpu_surf) = surface.as_any().downcast_ref::<WgpuSurface>() else {
+        let Some(wgpu_surf) = surface.downcast_ref::<WgpuSurface>() else {
             log::error!("WgpuRenderer: surface is not a WgpuSurface");
             return RenderResult::Error;
         };
@@ -70,13 +69,46 @@ impl Renderer for WgpuRenderer {
         }
     }
 
-    fn update_render_profile(
-        &mut self,
-        _profile: &VideoRenderProfile,
-    ) -> Result<(), RendererError> {
-        // The wgpu pipeline is built with both palette and NTSC decode
-        // capabilities, so a render profile change (e.g. NTSC filter toggle)
-        // does not require a pipeline rebuild.
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        // Rebuild the pipeline with the new render profile.
+        // We need a wgpu::Surface for RenderPipeline::new, so create a
+        // temporary one from the stored raw handles.
+        let temp_surface = surface::create_wgpu_surface(
+            &self.instance,
+            self.raw_window_handle,
+            self.raw_display_handle,
+        )
+        .map_err(|e| RendererError::new("temp surface for rebuild", Box::new(OpaqueError(e))))?;
+
+        let presentation = VideoPresentation::new(VideoFrameSpec::new(
+            profile.frame_format,
+            profile.source_logical_size,
+            profile.logical_size,
+            profile.physical_size,
+        ));
+        let current_size = SurfaceSize::new(
+            self.pipeline.surface_config().width.max(1),
+            self.pipeline.surface_config().height.max(1),
+        );
+        #[cfg(target_os = "android")]
+        let device_limit = DeviceLimitProfile::DownlevelWebGl2;
+        #[cfg(not(target_os = "android"))]
+        let device_limit = DeviceLimitProfile::Default;
+
+        self.pipeline = pollster::block_on(RenderPipeline::new(
+            &self.instance,
+            &temp_surface,
+            current_size,
+            &presentation,
+            profile.ntsc_packed_rgba8.as_deref(),
+            PresentationOptions {
+                vsync: self.pipeline.surface_config().present_mode != wgpu::PresentMode::Fifo,
+            },
+            device_limit,
+        ))
+        .map_err(|e| RendererError::new("rebuild pipeline", Box::new(OpaqueError(e))))?;
+        // temp_surface drops here — the WgpuSurface held by the frontend
+        // remains valid and will be reused.
         Ok(())
     }
 }
@@ -108,10 +140,6 @@ impl WgpuSurface {
 }
 
 impl Surface for WgpuSurface {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -221,6 +249,9 @@ impl RendererFactory for WgpuRendererFactory {
         *self.state.lock().unwrap() = Some((wgpu_surface, surface_config, device.clone()));
 
         Ok(Box::new(WgpuRenderer {
+            instance,
+            raw_window_handle: window_handle,
+            raw_display_handle: display_handle,
             pipeline,
             last_render_error: None,
         }))
@@ -234,15 +265,12 @@ impl RendererFactory for WgpuRendererFactory {
         size: SurfaceSize,
     ) -> Result<Box<dyn Surface>, RendererError> {
         // Validate that the renderer is a WgpuRenderer.
-        renderer
-            .as_any()
-            .downcast_ref::<WgpuRenderer>()
-            .ok_or_else(|| {
-                RendererError::new(
-                    "create_surface",
-                    Box::new(OpaqueError("renderer is not a WgpuRenderer".to_string())),
-                )
-            })?;
+        renderer.downcast_ref::<WgpuRenderer>().ok_or_else(|| {
+            RendererError::new(
+                "create_surface",
+                Box::new(OpaqueError("renderer is not a WgpuRenderer".to_string())),
+            )
+        })?;
 
         let mut guard = self.state.lock().unwrap();
         let (wgpu_surface, mut config, device) = guard.take().ok_or_else(|| {
