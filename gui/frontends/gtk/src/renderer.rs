@@ -37,7 +37,7 @@ impl GtkRenderer {
         };
         match Factory.create_renderer(&config, window_handle, display_handle) {
             Ok(r) => {
-                let s = Factory.create_surface(window_handle, display_handle, app_size);
+                let s = Factory.create_surface(r.as_ref(), window_handle, display_handle, app_size);
                 match s {
                     Ok(s) => {
                         self.renderer = Some(r);
