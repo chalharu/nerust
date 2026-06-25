@@ -88,14 +88,6 @@ pub(crate) enum Message {
     Cancel,
 }
 
-// ---------------------------------------------------------------------------
-// Old path (dead code in PR2, removed in PR3 -- child process iced::application)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// New path: Program + State (iced_winit integration)
-// ---------------------------------------------------------------------------
-
 pub(crate) struct SettingsAppProgram {
     pub(crate) snapshot: SettingsSnapshot,
     pub(crate) should_close: Arc<AtomicBool>,

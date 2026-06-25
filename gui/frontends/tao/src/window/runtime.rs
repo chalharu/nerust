@@ -2,7 +2,10 @@ mod host;
 
 use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_backend_wgpu::WgpuRendererFactory;
+#[cfg(feature = "opengl")]
+use nerust_backend_opengl::GlRendererFactory as Factory;
+#[cfg(feature = "wgpu")]
+use nerust_backend_wgpu::WgpuRendererFactory as Factory;
 use nerust_gui_shell::load::LoadRequest;
 use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -57,7 +60,7 @@ impl WindowRuntime {
             render_profile: session.render_profile().clone(),
             vsync,
         };
-        let factory = WgpuRendererFactory::default();
+        let factory = Factory::default();
         let renderer = factory
             .create_renderer(&config, raw_window_handle, raw_display_handle)
             .expect("failed to create WgpuRenderer");

@@ -15,8 +15,7 @@ use nerust_gui_shell::settings::defaults::seed::{
 };
 use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_gui_shell::settings::scaling_factor;
-use nerust_screen_video::RenderResult;
-use nerust_screen_wgpu::surface::SurfaceSize;
+use nerust_screen_video::{RenderResult, SurfaceSize};
 use rfd::FileDialog;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
