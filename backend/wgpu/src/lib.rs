@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use nerust_screen_video::{
     FrameBuffer, OpaqueError, RenderResult, Renderer, RendererConfig, RendererError,
     RendererFactory, Surface, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
@@ -12,14 +14,9 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 // WgpuRenderer  — GPU device + pipeline (implements Renderer)
 // ---------------------------------------------------------------------------
 
-/// Wgpu renderer: instance + device + queue + pipeline.
+/// Wgpu device + pipeline.  The actual wgpu::Device and Queue live inside
+/// the RenderPipeline (accessible via pipeline.device() / pipeline.queue()).
 pub struct WgpuRenderer {
-    #[allow(dead_code)]
-    instance: wgpu::Instance,
-    #[allow(dead_code)]
-    device: wgpu::Device,
-    #[allow(dead_code)]
-    queue: wgpu::Queue,
     pipeline: RenderPipeline,
     last_render_error: Option<String>,
 }
@@ -33,6 +30,10 @@ impl std::fmt::Debug for WgpuRenderer {
 }
 
 impl Renderer for WgpuRenderer {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn render(&mut self, surface: &dyn Surface, frame: &FrameBuffer) -> RenderResult {
         let Some(wgpu_surf) = surface.as_any().downcast_ref::<WgpuSurface>() else {
             log::error!("WgpuRenderer: surface is not a WgpuSurface");
@@ -55,9 +56,6 @@ impl Renderer for WgpuRenderer {
             }
             Ok(RenderOutcome::Skipped) => RenderResult::Skipped,
             Ok(RenderOutcome::RecreateSurface) => {
-                // The surface was lost — store the new surface from the pipeline.
-                // For wgpu the Surface handle stored in WgpuSurface is already
-                // invalid; the frontend should call Surface::recreate() instead.
                 self.last_render_error = None;
                 RenderResult::Skipped
             }
@@ -72,12 +70,13 @@ impl Renderer for WgpuRenderer {
         }
     }
 
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        // For wgpu the pipeline is built from the render profile at init time.
-        // A full pipeline rebuild would require re-creating the RenderPipeline.
-        // For now the initial config is sufficient since NTSC filter changes
-        // only affect the frame format, which the existing pipeline handles.
-        let _ = profile;
+    fn update_render_profile(
+        &mut self,
+        _profile: &VideoRenderProfile,
+    ) -> Result<(), RendererError> {
+        // The wgpu pipeline is built with both palette and NTSC decode
+        // capabilities, so a render profile change (e.g. NTSC filter toggle)
+        // does not require a pipeline rebuild.
         Ok(())
     }
 }
@@ -103,7 +102,7 @@ impl std::fmt::Debug for WgpuSurface {
 }
 
 impl WgpuSurface {
-    fn wgpu_surface(&self) -> &wgpu::Surface<'static> {
+    pub fn wgpu_surface(&self) -> &wgpu::Surface<'static> {
         &self.wgpu_surface
     }
 }
@@ -144,16 +143,53 @@ impl Surface for WgpuSurface {
 // WgpuRendererFactory  — implements RendererFactory
 // ---------------------------------------------------------------------------
 
-pub struct WgpuRendererFactory;
+/// Stateful factory: create_renderer stores the surface + config internally,
+/// create_surface retrieves them.  This avoids requiring the frontend to
+/// orchestrate two-phase creation for wgpu.
+pub struct WgpuRendererFactory {
+    state: Mutex<
+        Option<(
+            wgpu::Surface<'static>,
+            wgpu::SurfaceConfiguration,
+            wgpu::Device,
+        )>,
+    >,
+}
 
 impl WgpuRendererFactory {
-    /// Helper: create both a renderer and a surface from the same handles.
-    /// Used by frontends during initialization.
-    pub fn create_renderer_and_surface(
+    pub fn new() -> Self {
+        Self {
+            state: Mutex::new(None),
+        }
+    }
+}
+
+impl Default for WgpuRendererFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WgpuRendererFactory {
+    fn device_limit_profile() -> DeviceLimitProfile {
+        #[cfg(target_os = "android")]
+        {
+            DeviceLimitProfile::DownlevelWebGl2
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            DeviceLimitProfile::Default
+        }
+    }
+}
+
+impl RendererFactory for WgpuRendererFactory {
+    fn create_renderer(
+        &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-    ) -> Result<(Box<dyn Renderer>, Box<dyn Surface>), RendererError> {
+    ) -> Result<Box<dyn Renderer>, RendererError> {
         let instance = surface::default_instance();
         let wgpu_surface =
             surface::create_wgpu_surface(&instance, window_handle, display_handle)
@@ -180,63 +216,53 @@ impl WgpuRendererFactory {
 
         let device = pipeline.device().clone();
         let surface_config = pipeline.surface_config().clone();
-        let initial_size = config.initial_size;
 
-        let renderer = Box::new(WgpuRenderer {
-            instance,
-            device: device.clone(),
-            queue: pipeline.queue().clone(),
+        // Store surface + config for create_surface.
+        *self.state.lock().unwrap() = Some((wgpu_surface, surface_config, device.clone()));
+
+        Ok(Box::new(WgpuRenderer {
             pipeline,
             last_render_error: None,
-        }) as Box<dyn Renderer>;
-
-        let surface = Box::new(WgpuSurface {
-            wgpu_surface,
-            config: surface_config,
-            device,
-            size: initial_size,
-        }) as Box<dyn Surface>;
-
-        Ok((renderer, surface))
-    }
-
-    fn device_limit_profile() -> DeviceLimitProfile {
-        #[cfg(target_os = "android")]
-        {
-            DeviceLimitProfile::DownlevelWebGl2
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            DeviceLimitProfile::Default
-        }
-    }
-}
-
-impl RendererFactory for WgpuRendererFactory {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn Renderer>, RendererError> {
-        let (renderer, _surface) =
-            Self::create_renderer_and_surface(config, window_handle, display_handle)?;
-        // surface is stored in the factory for later retrieval.
-        // For now, frontends should use create_renderer_and_surface() directly.
-        Ok(renderer)
+        }))
     }
 
     fn create_surface(
         &self,
+        renderer: &dyn Renderer,
         _window_handle: RawWindowHandle,
         _display_handle: RawDisplayHandle,
-        _size: SurfaceSize,
+        size: SurfaceSize,
     ) -> Result<Box<dyn Surface>, RendererError> {
-        Err(RendererError::new(
-            "create_surface",
-            Box::new(OpaqueError(
-                "use WgpuRendererFactory::create_renderer_and_surface".to_string(),
-            )),
-        ))
+        // Validate that the renderer is a WgpuRenderer.
+        renderer
+            .as_any()
+            .downcast_ref::<WgpuRenderer>()
+            .ok_or_else(|| {
+                RendererError::new(
+                    "create_surface",
+                    Box::new(OpaqueError("renderer is not a WgpuRenderer".to_string())),
+                )
+            })?;
+
+        let mut guard = self.state.lock().unwrap();
+        let (wgpu_surface, mut config, device) = guard.take().ok_or_else(|| {
+            RendererError::new(
+                "create_surface",
+                Box::new(OpaqueError(
+                    "create_renderer must be called first".to_string(),
+                )),
+            )
+        })?;
+
+        config.width = size.width.max(1);
+        config.height = size.height.max(1);
+        wgpu_surface.configure(&device, &config);
+
+        Ok(Box::new(WgpuSurface {
+            wgpu_surface,
+            config,
+            device,
+            size,
+        }))
     }
 }
