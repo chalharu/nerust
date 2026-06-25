@@ -285,6 +285,12 @@ impl GlRenderer {
 /// Factory for the OpenGL backend.
 pub struct GlRendererFactory;
 
+impl Default for GlRendererFactory {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl RendererFactory for GlRendererFactory {
     fn create_renderer(
         &self,
