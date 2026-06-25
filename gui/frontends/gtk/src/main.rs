@@ -14,6 +14,7 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
+use log::LevelFilter;
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -34,6 +35,7 @@ use nerust_gui_shell::{
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
 use nerust_sound_openal::prepare_macos_runtime;
+use simple_logger::SimpleLogger;
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -320,7 +322,11 @@ fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Wind
 
 fn main() {
     // log initialize
-    simple_logger::init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Warn)
+        .env()
+        .init()
+        .unwrap();
     crash_handler::install();
     prepare_macos_runtime();
 
