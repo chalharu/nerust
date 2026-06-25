@@ -54,6 +54,9 @@ pub enum RenderResult {
 
 /// GPU device + pipeline.  Lives for the entire application session.
 pub trait Renderer: std::fmt::Debug {
+    /// Downcast for backend-to-backend communication.
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Render `frame` into the platform `surface`.
     /// Viewport and aspect-ratio are already configured by `Surface::configure`.
     fn render(&mut self, surface: &dyn Surface, frame: &FrameBuffer) -> RenderResult;
@@ -68,6 +71,9 @@ pub trait Renderer: std::fmt::Debug {
 /// Created by [`RendererFactory::create_surface`] and replaced on resize
 /// or surface loss.  Independent of the [`Renderer`] GPU device.
 pub trait Surface: std::fmt::Debug {
+    /// Downcast for backend-to-backend communication.
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Current physical pixel size of the platform output.
     fn size(&self) -> SurfaceSize;
 
@@ -107,8 +113,11 @@ pub trait RendererFactory {
     ) -> Result<Box<dyn Renderer>, RendererError>;
 
     /// Build a platform output from native window/display handles.
+    /// `renderer` is required by wgpu to attach the surface to the pipeline.
+    /// GL ignores this parameter.
     fn create_surface(
         &self,
+        renderer: &dyn Renderer,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
         size: SurfaceSize,
