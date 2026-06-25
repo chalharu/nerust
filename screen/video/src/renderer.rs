@@ -65,11 +65,13 @@ pub enum RenderResult {
 /// `PixelFormat::PaletteIndex` の場合、実装は自動的に palette texture
 /// を同期し、GPU 側で RGB デコードを行う。
 pub trait Renderer: std::fmt::Debug {
-    /// フレームバッファを表示する。
+    /// フレームバッファを `window_size` の出力領域に表示する。
     /// FrameBuffer は自身のサイズ・PixelFormat を知っている。
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
+    /// `window_size` は出力先の物理ピクセルサイズ。
+    /// 実装は必要に応じて viewport / aspect 比 / swapchain を window_size に合わせる。
+    fn render(&mut self, frame: &FrameBuffer, window_size: SurfaceSize) -> RenderResult;
 
-    /// サーフェイスサイズを変更する。
+    /// サーフェイスサイズを変更する（wgpu surface loss 後の復旧等）。
     fn reconfigure(&mut self, size: SurfaceSize);
 
     /// ネイティブサーフェイスを再作成する（例: wgpu surface loss on Android）。
