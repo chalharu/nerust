@@ -16,24 +16,24 @@ use nerust_screen_video::{
 };
 
 // ---------------------------------------------------------------------------
-// GlDevice  — GPU device + pipeline (implements Renderer)
+// GlRenderer  — GPU device + pipeline (implements Renderer)
 // ---------------------------------------------------------------------------
 
-/// OpenGL device: context + shaders + view.
-pub struct GlDevice {
+/// OpenGL renderer: context + shaders + view.
+pub struct GlRenderer {
     view: GlView,
     context: glutin::context::PossiblyCurrentContext,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     expected_frame_len: usize,
 }
 
-impl std::fmt::Debug for GlDevice {
+impl std::fmt::Debug for GlRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GlDevice").finish_non_exhaustive()
     }
 }
 
-impl Drop for GlDevice {
+impl Drop for GlRenderer {
     fn drop(&mut self) {
         if !self.context.is_current() {
             let _ = self.context.make_current(&self.gl_surface);
@@ -41,7 +41,7 @@ impl Drop for GlDevice {
     }
 }
 
-impl Renderer for GlDevice {
+impl Renderer for GlRenderer {
     fn render(&mut self, _surface: &dyn Surface, frame_buffer: &FrameBuffer) -> RenderResult {
         if !self.context.is_current()
             && let Err(e) = self.context.make_current(&self.gl_surface)
@@ -137,10 +137,10 @@ impl Surface for GlSurface {
 }
 
 // ---------------------------------------------------------------------------
-// GlDevice — constructor (called by the factory's create_renderer)
+// GlRenderer — constructor (called by the factory's create_renderer)
 // ---------------------------------------------------------------------------
 
-impl GlDevice {
+impl GlRenderer {
     fn create_display(
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
@@ -279,20 +279,20 @@ impl GlDevice {
 }
 
 // ---------------------------------------------------------------------------
-// GlDeviceFactory — implements RendererFactory
+// GlRendererFactory — implements RendererFactory
 // ---------------------------------------------------------------------------
 
 /// Factory for the OpenGL backend.
-pub struct GlDeviceFactory;
+pub struct GlRendererFactory;
 
-impl RendererFactory for GlDeviceFactory {
+impl RendererFactory for GlRendererFactory {
     fn create_renderer(
         &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn Renderer>, RendererError> {
-        GlDevice::new(
+        GlRenderer::new(
             window_handle,
             display_handle,
             config.initial_size,
