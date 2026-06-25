@@ -5,42 +5,142 @@ use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
 use glutin::display::{Display, DisplayApiPreference};
 use glutin::prelude::*;
+use glutin::surface::GlSurface as _;
 use glutin::surface::{SurfaceAttributesBuilder, WindowSurface};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
     FrameBuffer, OpaqueError, RenderResult, Renderer, RendererConfig, RendererError,
-    RendererFactory, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    RendererFactory, Surface, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
 
-/// OpenGL renderer with glutin-managed GL context.
-pub struct GlRenderer {
-    // Drop order: view (glDelete*) → context → surface.
-    // `impl Drop` makes the GL context current before the fields drop.
+// ---------------------------------------------------------------------------
+// GlDevice  — GPU device + pipeline (implements Renderer)
+// ---------------------------------------------------------------------------
+
+/// OpenGL device: context + shaders + view.
+pub struct GlDevice {
     view: GlView,
     context: glutin::context::PossiblyCurrentContext,
-    surface: glutin::surface::Surface<WindowSurface>,
+    gl_surface: glutin::surface::Surface<WindowSurface>,
     expected_frame_len: usize,
 }
 
-impl std::fmt::Debug for GlRenderer {
+impl std::fmt::Debug for GlDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlRenderer").finish_non_exhaustive()
+        f.debug_struct("GlDevice").finish_non_exhaustive()
     }
 }
 
-impl Drop for GlRenderer {
+impl Drop for GlDevice {
     fn drop(&mut self) {
-        // Make the GL context current before dropping `view`, so that
-        // `GlView`'s `glDelete*` calls run in a valid context.
         if !self.context.is_current() {
-            let _ = self.context.make_current(&self.surface);
+            let _ = self.context.make_current(&self.gl_surface);
         }
     }
 }
 
-impl GlRenderer {
+impl Renderer for GlDevice {
+    fn render(&mut self, _surface: &dyn Surface, frame_buffer: &FrameBuffer) -> RenderResult {
+        if !self.context.is_current()
+            && let Err(e) = self.context.make_current(&self.gl_surface)
+        {
+            log::warn!("GlDevice: failed to make context current: {e}");
+            return RenderResult::Error;
+        }
+
+        // Apply the output surface's current size as viewport.
+        // This is cheap (glViewport + one uniform upload).
+        let vs = _surface.size();
+        self.view.on_resize(vs.width as i32, vs.height as i32);
+
+        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
+            self.view.update_palette_texture(&palette_rgba8);
+        }
+        let bytes = frame_buffer.as_ref();
+        let bytes = bytes
+            .get(..self.expected_frame_len)
+            .expect("GlDevice: frame buffer too small");
+        self.view.on_update(bytes.as_ptr());
+
+        if let Err(e) = self.gl_surface.swap_buffers(&self.context) {
+            log::warn!("GlDevice: swap_buffers failed: {e}");
+            return RenderResult::Error;
+        }
+        RenderResult::Presented
+    }
+
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        if !self.context.is_current()
+            && let Err(e) = self.context.make_current(&self.gl_surface)
+        {
+            return Err(RendererError::new(
+                "update: make current",
+                Box::new(OpaqueError(e.to_string())),
+            ));
+        }
+        self.view.on_close();
+        self.view = GlView::new();
+        self.view.use_vao(true);
+        self.view
+            .on_load(profile)
+            .map_err(|e| RendererError::new("view init", Box::new(OpaqueError(e))))?;
+        let frame_size = match profile.frame_format {
+            VideoFrameFormat::Rgba => profile.logical_size,
+            VideoFrameFormat::Palette => profile.source_logical_size,
+        };
+        let bpp = profile.frame_format.bytes_per_pixel();
+        self.expected_frame_len = frame_size.width * frame_size.height * bpp;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GlSurface  — platform output (implements Surface)
+// ---------------------------------------------------------------------------
+
+/// OpenGL surface wrapper.  `configure()` stores the size — the actual
+/// viewport / uniform update is applied lazily by `GlDevice::render()`.
+pub struct GlSurface {
+    size: SurfaceSize,
+}
+
+impl std::fmt::Debug for GlSurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GlSurface")
+            .field("size", &self.size)
+            .finish()
+    }
+}
+
+impl Surface for GlSurface {
+    fn size(&self) -> SurfaceSize {
+        self.size
+    }
+
+    fn configure(&mut self, size: SurfaceSize) {
+        self.size = size;
+    }
+
+    fn recreate(
+        &mut self,
+        _window_handle: RawWindowHandle,
+        _display_handle: RawDisplayHandle,
+        _size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::new(
+            "surface recreate",
+            Box::new(OpaqueError("OpenGL has no surface loss".to_string())),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GlDevice — constructor (called by the factory's create_renderer)
+// ---------------------------------------------------------------------------
+
+impl GlDevice {
     fn create_display(
         display_handle: RawDisplayHandle,
         _raw_window_handle: RawWindowHandle,
@@ -93,7 +193,6 @@ impl GlRenderer {
         unsafe { glutin::display::Display::new(display_handle, _preference) }
     }
 
-    #[allow(clippy::arc_with_non_send_sync)]
     fn new(
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
@@ -141,16 +240,16 @@ impl GlRenderer {
                 )
             })?,
         );
-        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(window_handle, w, h);
 
-        let surface = unsafe {
+        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(window_handle, w, h);
+        let gl_surface = unsafe {
             display
                 .create_window_surface(&config, &attrs)
                 .map_err(|e| RendererError::new("create window surface", Box::new(e)))?
         };
 
         let context = not_current
-            .make_current(&surface)
+            .make_current(&gl_surface)
             .map_err(|e| RendererError::new("make current", Box::new(e)))?;
 
         GlView::load_with(|name| {
@@ -173,67 +272,41 @@ impl GlRenderer {
         Ok(Self {
             view,
             context,
-            surface,
+            gl_surface,
             expected_frame_len,
         })
     }
 }
 
-impl Renderer for GlRenderer {
-    fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) -> RenderResult {
-        if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.surface)
-        {
-            log::warn!("GlRenderer: failed to make GL context current: {e}");
-            return RenderResult::Error;
-        }
+// ---------------------------------------------------------------------------
+// GlDeviceFactory — implements RendererFactory
+// ---------------------------------------------------------------------------
 
-        // Apply viewport and aspect-ratio on every frame.
-        // This is cheap (glViewport + one uniform upload) and ensures the
-        // stateful OpenGL pipeline always matches the current window size
-        // regardless of whether the frontend called reconfigure() or not.
-        self.view
-            .on_resize(window_size.width as i32, window_size.height as i32);
+/// Factory for the OpenGL backend.
+pub struct GlDeviceFactory;
 
-        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
-            self.view.update_palette_texture(&palette_rgba8);
-        }
-        let bytes = frame_buffer.as_ref();
-        let bytes = bytes
-            .get(..self.expected_frame_len)
-            .expect("GlRenderer expected a loaded frame buffer of the configured size");
-        self.view.on_update(bytes.as_ptr());
-
-        if let Err(e) = self.surface.swap_buffers(&self.context) {
-            log::warn!("GlRenderer: swap_buffers failed: {e}");
-            return RenderResult::Error;
-        }
-        RenderResult::Presented
-    }
-
-    fn reconfigure(&mut self, _size: SurfaceSize) {
-        // Viewport is now updated in render() — this is kept as a no-op for
-        // surface recreation (wgpu) compatibility.  GlRenderer has no surface
-        // loss, so reconfigure() is a no-op.
-    }
-}
-
-/// `GlRenderer` を構築する Factory。
-pub struct GlRendererFactory;
-
-impl RendererFactory for GlRendererFactory {
+impl RendererFactory for GlDeviceFactory {
     fn create_renderer(
         &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn Renderer>, RendererError> {
-        GlRenderer::new(
+        GlDevice::new(
             window_handle,
             display_handle,
             config.initial_size,
             &config.render_profile,
         )
-        .map(|r| Box::new(r) as Box<dyn Renderer>)
+        .map(|d| Box::new(d) as Box<dyn Renderer>)
+    }
+
+    fn create_surface(
+        &self,
+        _window_handle: RawWindowHandle,
+        _display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<Box<dyn Surface>, RendererError> {
+        Ok(Box::new(GlSurface { size }))
     }
 }

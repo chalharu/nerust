@@ -15,7 +15,7 @@ pub use crate::filter::{FilterFunc, FilterType, NesFilter};
 pub use crate::logical::LogicalSize;
 pub use crate::physical::PhysicalSize;
 pub use crate::renderer::{
-    OpaqueError, RenderResult, Renderer, RendererConfig, RendererError, RendererFactory,
+    OpaqueError, RenderResult, Renderer, RendererConfig, RendererError, RendererFactory, Surface,
 };
 pub use crate::rgb::RGB;
 

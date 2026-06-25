@@ -3,14 +3,13 @@ use super::renderer::GtkRenderer;
 use gtk::glib;
 use gtk::prelude::*;
 use nerust_screen_video::SurfaceSize;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
     state: Rc<RefCell<State>>,
-    last_physical_size: Cell<SurfaceSize>,
 }
 
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
@@ -28,7 +27,6 @@ impl SurfaceExtend for Surface {
             window: window.clone(),
             renderer,
             state,
-            last_physical_size: Cell::new(SurfaceSize::new(0, 0)),
         }));
         {
             let result = result.clone();
@@ -56,8 +54,7 @@ impl SurfaceExtend for Surface {
         }
         if needs_reinit && let Ok(state) = s.state.try_borrow() {
             let app_size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
-            log::info!("reinit app={:?} physical={:?}", app_size, physical_size);
-            s.last_physical_size.set(physical_size);
+            log::info!("reinit size: {:?}", app_size);
             let profile = state.render_profile().clone();
             if let Some(surface) = s.window.surface()
                 && let Some(display) = gdk::Display::default()
@@ -65,30 +62,9 @@ impl SurfaceExtend for Surface {
                 super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
                     s.renderer.borrow_mut().realize(wh, dh, app_size, &profile);
                 });
-                // After realize, the surface (wgpu) was configured at app_size.
-                // Reconfigure to physical_size so the swapchain matches the
-                // actual pixel dimensions.  GlRenderer's reconfigure is a no-op.
-                s.renderer.borrow_mut().reconfigure(physical_size);
             }
         }
         if let Ok(state) = s.state.try_borrow() {
-            if physical_size != s.last_physical_size.get() {
-                s.last_physical_size.set(physical_size);
-                // On resize, the native GDK surface may be recreated (Wayland
-                // always does this; X11 + macOS may).  For wgpu this
-                // invalidates the old wgpu surface, so we need to recreate it
-                // from fresh handles.  OpenGL's glutin context is unaffected.
-                if let Some(surf) = s.window.surface()
-                    && let Some(disp) = gdk::Display::default()
-                {
-                    super::gdk_raw::with_raw_handles(&surf, &disp, |wh, dh| {
-                        let _ = s
-                            .renderer
-                            .borrow_mut()
-                            .recreate_surface(wh, dh, physical_size);
-                    });
-                }
-            }
             s.renderer
                 .borrow_mut()
                 .render(state.frame_buffer(), physical_size);
