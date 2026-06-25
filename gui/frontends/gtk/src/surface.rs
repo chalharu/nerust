@@ -46,28 +46,32 @@ impl SurfaceExtend for Surface {
             (s.window.width() as u32).saturating_mul(scale),
             (s.window.height() as u32).saturating_mul(scale),
         );
-        let mut needs_reinit = false;
         if let Ok(mut state) = s.state.try_borrow_mut() {
-            needs_reinit = state.take_renderer_reload_pending();
             state.swap_frame_buffer();
-        }
-        if needs_reinit && let Ok(state) = s.state.try_borrow() {
-            let app_size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
-            log::info!("reinit size: {:?}", app_size);
-            let profile = state.render_profile().clone();
-            if let Some(surface) = s.window.surface()
-                && let Some(display) = gdk::Display::default()
-            {
-                super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
-                    s.renderer.borrow_mut().realize(wh, dh, app_size, &profile);
-                });
+
+            if state.take_renderer_reload_pending() {
+                let app_size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
+                log::info!("reinit size: {:?}", app_size);
+                let profile = state.render_profile().clone();
+                if let Some(surface) = s.window.surface()
+                    && let Some(display) = gdk::Display::default()
+                {
+                    super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
+                        s.renderer.borrow_mut().realize(wh, dh, app_size, &profile);
+                    });
+                }
             }
-        }
-        if let Ok(state) = s.state.try_borrow() {
+
             s.renderer
                 .borrow_mut()
                 .render(state.frame_buffer(), physical_size);
+            if let Some(renderer) = s.window.renderer()
+                && renderer.is_realized()
+            {
+                renderer.unrealize();
+            }
         }
+
         true
     }
 }
