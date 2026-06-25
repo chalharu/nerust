@@ -4,7 +4,7 @@ use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
 use nerust_backend_wgpu::WgpuRendererFactory;
 use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, SurfaceSize};
+use nerust_screen_video::{Renderer, RendererConfig, RendererFactory as _, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -204,9 +204,9 @@ impl WindowRuntime {
                 render_profile: session.render_profile().clone(),
                 vsync,
             };
-            WgpuRendererFactory
+            RendererFactory
                 .create_renderer(&config, raw_window_handle, raw_display_handle)
-                .expect("failed to create WgpuRenderer")
+                .expect("failed to create Renderer")
         });
     }
 }
