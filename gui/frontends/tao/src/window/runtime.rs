@@ -2,7 +2,7 @@ mod host;
 
 use self::host::{HostAction, HostState};
 use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_backend_wgpu::WgpuRendererFactory;
+use nerust_backend_wgpu::WgpuRendererFactory as RendererFactory;
 use nerust_gui_shell::load::LoadRequest;
 use nerust_screen_video::{Renderer, RendererConfig, RendererFactory as _, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
