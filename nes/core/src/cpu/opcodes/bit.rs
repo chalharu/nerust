@@ -1,6 +1,7 @@
-use super::super::CpuCartridgeBus;
-use super::super::{Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu};
-use super::exit_opcode;
+use super::{
+    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
+    exit_opcode,
+};
 
 pub(crate) struct Bit;
 

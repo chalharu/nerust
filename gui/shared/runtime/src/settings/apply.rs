@@ -1,9 +1,11 @@
+use std::path::Path;
+
+use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
+
 use super::{
     HostBackendLocalSettings, HostBackendProfile, SettingsApplyPlan, SettingsError,
     SettingsSnapshot,
 };
-use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
-use std::path::Path;
 
 pub fn derive_apply_plan(
     host_backend: HostBackendProfile,

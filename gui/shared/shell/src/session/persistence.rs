@@ -1,21 +1,24 @@
-use crate::state::resolve_state_format;
-use nerust_contract_core::identity::SystemIdentity;
-use nerust_contract_core::save_state_with_header;
-use nerust_persistence::error::PersistenceError;
-use nerust_persistence::model::{LoadedStateSlot, StateSlotSummary};
-use nerust_persistence::sidecar::{
-    load_mapper_save, write_mapper_save, write_recovery_mapper_save,
+use std::{
+    io::ErrorKind,
+    path::{Path, PathBuf},
 };
-use nerust_persistence::slots::{
-    allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
-    load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
-    write_autosave_state_slot, write_state_slot,
+
+use nerust_contract_core::{identity::SystemIdentity, save_state_with_header};
+use nerust_persistence::{
+    error::PersistenceError,
+    model::{LoadedStateSlot, StateSlotSummary},
+    sidecar::{load_mapper_save, write_mapper_save, write_recovery_mapper_save},
+    slots::{
+        allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
+        load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
+        write_autosave_state_slot, write_state_slot,
+    },
+    thumbnail::ThumbnailSource,
+    time::latest_saved_slot_id,
 };
-use nerust_persistence::thumbnail::ThumbnailSource;
-use nerust_persistence::time::latest_saved_slot_id;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+use crate::state::resolve_state_format;
 
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, Error)]

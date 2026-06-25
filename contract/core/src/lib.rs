@@ -3,11 +3,9 @@ pub mod identity;
 pub mod input;
 pub mod save_state;
 
-pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::mpsc::Sender;
+pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
 
 // ---------------------------------------------------------------------------
 // CoreError

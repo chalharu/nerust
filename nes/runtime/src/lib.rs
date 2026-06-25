@@ -3,9 +3,12 @@ pub mod nes_input_cell;
 pub mod persisted;
 pub mod topology;
 
+use nerust_nes_core::{
+    controller::Controller,
+    input_types::{Buttons, NesInputFrame},
+};
+
 use crate::codec::{decode_input_state, encode_input_state as encode_frame_input_state};
-use nerust_nes_core::controller::Controller;
-use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
 /// NES パッドのセーブステート関連のトレイト。
 ///
@@ -112,12 +115,13 @@ pub fn apply_input_state(
 
 #[cfg(test)]
 mod tests {
+    use nerust_nes_core::input_types::{Buttons, NesInputFrame};
+
     use super::{
         StandardControllerSnapshot, apply_input_state, decode_controller_state,
         encode_controller_state, encode_input_state,
     };
     use crate::codec::decode_input_state;
-    use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
     #[test]
     fn controller_state_round_trips() {

@@ -1,9 +1,10 @@
-use crate::settings::bindings::keys::keyboard_key_label;
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
+
+use crate::settings::bindings::keys::keyboard_key_label;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
@@ -100,14 +101,17 @@ pub fn apply_capture_target(
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureTarget, apply_capture_target, current_binding_key};
-    use crate::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use crate::test_support::{TEST_ATT_P1, TEST_CTRL_A};
     use nerust_contract_input::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+
+    use super::{CaptureTarget, apply_capture_target, current_binding_key};
+    use crate::{
+        settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        },
+        test_support::{TEST_ATT_P1, TEST_CTRL_A},
+    };
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {

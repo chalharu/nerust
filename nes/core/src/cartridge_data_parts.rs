@@ -1,5 +1,4 @@
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
+use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
 #[derive(Debug, Clone)]
 pub struct CartridgeDataParts {

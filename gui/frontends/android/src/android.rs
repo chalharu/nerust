@@ -4,39 +4,51 @@ mod picker;
 mod settings;
 mod storage;
 
-use self::library::LibraryDialogResult;
-use self::menu::MenuAction;
-use self::picker::RomPickerResult;
-use self::settings::{AndroidSettings, SettingsDialogResult};
-use self::storage::AndroidStorage;
+use std::{
+    collections::HashMap,
+    ffi::c_void,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use jni::{jni_sig, jni_str};
 use nerust_backend_wgpu::WgpuRendererFactory;
-use nerust_factory_nes::NesFactory;
-use nerust_factory_nes::touch::{
-    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+use nerust_factory_nes::{
+    NesFactory,
+    touch::{
+        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+    },
 };
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
-use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::load::MediaObject;
-use nerust_gui_shell::session::SessionHandle;
-use nerust_gui_shell::session::commands::SessionCommand;
-use nerust_gui_shell::settings::defaults::seed::{
-    default_app_state, default_local_settings, default_shared_settings,
+use nerust_gui_runtime::{
+    settings::{HostBackendIdentity, SettingsSnapshot},
+    shell::NativeShellState,
+};
+use nerust_gui_shell::{
+    factory::CoreFactory,
+    load::MediaObject,
+    session::{SessionHandle, commands::SessionCommand},
+    settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    },
 };
 use nerust_screen_video::{RenderResult, Renderer, RendererConfig, RendererFactory, SurfaceSize};
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{Touch, TouchPhase, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::android::EventLoopBuilderExtAndroid;
-use winit::platform::android::activity::AndroidApp;
-use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use winit::window::{Window, WindowId};
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::{Touch, TouchPhase, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
+    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    window::{Window, WindowId},
+};
+
+use self::{
+    library::LibraryDialogResult,
+    menu::MenuAction,
+    picker::RomPickerResult,
+    settings::{AndroidSettings, SettingsDialogResult},
+    storage::AndroidStorage,
+};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);

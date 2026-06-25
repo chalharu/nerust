@@ -1,18 +1,19 @@
 mod spriteinfo;
 mod tileinfo;
 
-use self::spriteinfo::SpriteInfo;
-use self::tileinfo::TileInfo;
-use crate::cart_device::Cartridge as MapperCartridge;
-use crate::interrupt::Interrupt;
-use crate::persistence_error::PersistenceError;
-use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess};
-use crate::{OpenBus, OpenBusReadResult};
-use nerust_screen_video::FrameBuffer;
-use std::cmp;
-use std::mem;
+use std::{cmp, mem};
 
-use crate::cartridge_bus::PpuCartridgeBus as Cartridge;
+use nerust_screen_video::FrameBuffer;
+
+use self::{spriteinfo::SpriteInfo, tileinfo::TileInfo};
+use crate::{
+    OpenBus, OpenBusReadResult,
+    cart_device::Cartridge as MapperCartridge,
+    cartridge_bus::PpuCartridgeBus as Cartridge,
+    interrupt::Interrupt,
+    persistence_error::PersistenceError,
+    ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess},
+};
 
 const NMI_SCAN_LINE: u16 = 242;
 const TOTAL_SCAN_LINE: u16 = 262;
@@ -34,15 +35,14 @@ struct DecayableOpenBus {
 
 #[cfg(test)]
 mod tests {
-    use super::{Core, Mask, NMI_SCAN_LINE};
-    use crate::cart_device::Cartridge;
-    use crate::cartridge;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::Interrupt;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
     use nerust_screen_video::FrameBuffer;
+
+    use super::{Core, Mask, NMI_SCAN_LINE};
+    use crate::{
+        cart_device::Cartridge, cartridge, cartridge_data_parts::CartridgeDataParts,
+        cartridge_rom::CartridgeData, interrupt::Interrupt, mirror::MirrorMode,
+        rom_format::RomFormat,
+    };
 
     fn null_fb() -> FrameBuffer {
         let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);

@@ -1,9 +1,10 @@
-use super::super::CpuCartridgeBus;
-use super::super::{
-    Apu, Controller, Core, CpuStepStateEnum, Ppu, Register, RegisterP, pull, push,
-    read_dummy_current,
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, RegisterP, pull,
+        push, read_dummy_current,
+    },
+    exit_opcode,
 };
-use super::exit_opcode;
 
 pub(crate) trait Pull {
     fn setter(register: &mut Register, value: u8);

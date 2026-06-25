@@ -1,26 +1,30 @@
-use crate::emu_core::EmuCore;
-use crate::factory::{CoreFactory, FactoryError};
-use crate::load::{MediaObject, SystemLoadOptions};
-use crate::session::{KeyboardShortcut, SessionHandle};
-use nerust_contract_core::ConsoleCore;
-use nerust_contract_core::identity::SystemIdentity;
-use nerust_contract_core::input::{InputStatePersistence, SystemInputAdapter};
-use nerust_contract_core::{CoreCapabilities, CoreConfig, CoreError};
-use nerust_contract_emuthread::EmuThread;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex, atomic::AtomicBool},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
+use nerust_contract_core::{
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    identity::SystemIdentity,
+    input::{InputStatePersistence, SystemInputAdapter},
+};
+use nerust_contract_emuthread::EmuThread;
+use nerust_contract_input::SystemId;
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_video::{
     FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile,
 };
-use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::test_support::single_port_topology;
-use nerust_contract_input::SystemId;
+use crate::{
+    emu_core::EmuCore,
+    factory::{CoreFactory, FactoryError},
+    load::{MediaObject, SystemLoadOptions},
+    session::{KeyboardShortcut, SessionHandle},
+    test_support::single_port_topology,
+};
 
 struct MockConsoleCore {
     loaded: bool,

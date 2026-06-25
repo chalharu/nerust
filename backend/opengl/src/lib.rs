@@ -1,20 +1,20 @@
-use std::ffi::CString;
-use std::num::NonZeroU32;
+use std::{ffi::CString, num::NonZeroU32};
 
-use glutin::config::ConfigTemplateBuilder;
-use glutin::context::{
-    ContextApi, ContextAttributesBuilder, NotCurrentGlContext as _, PossiblyCurrentGlContext as _,
-    Version,
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::{
+        ContextApi, ContextAttributesBuilder, NotCurrentGlContext as _,
+        PossiblyCurrentGlContext as _, Version,
+    },
+    display::{Display, DisplayApiPreference, GlDisplay as _},
+    surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface},
 };
-use glutin::display::{Display, DisplayApiPreference, GlDisplay as _};
-use glutin::surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
     FrameBuffer, OpaqueError, RenderResult, Renderer, RendererConfig, RendererError,
     RendererFactory, Surface, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 // ---------------------------------------------------------------------------
 // GlRenderer  — GPU device + pipeline (implements Renderer)

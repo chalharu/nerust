@@ -1,7 +1,5 @@
 use super::FilterUnit;
-use crate::LogicalSize;
-use crate::PhysicalSize;
-use crate::RGB;
+use crate::{LogicalSize, PhysicalSize, RGB};
 
 #[derive(Debug)]
 pub(crate) struct NesNtsc {

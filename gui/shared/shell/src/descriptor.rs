@@ -1,6 +1,6 @@
+use std::{borrow::Cow, sync::Arc};
+
 use nerust_contract_input::InputTopologyDescriptor;
-use std::borrow::Cow;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDescriptor {

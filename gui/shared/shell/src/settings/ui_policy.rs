@@ -31,8 +31,9 @@ pub fn settings_ui_policy(host_backend: HostBackendIdentity) -> SettingsUiPolicy
 
 #[cfg(test)]
 mod tests {
-    use super::{SettingsUiPolicy, settings_ui_policy};
     use nerust_gui_runtime::settings::HostBackendIdentity;
+
+    use super::{SettingsUiPolicy, settings_ui_policy};
 
     #[test]
     fn android_hides_desktop_only_settings_controls() {

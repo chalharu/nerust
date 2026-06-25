@@ -38,8 +38,9 @@ pub fn decode_input_state(bytes: &[u8]) -> Result<NesInputFrame, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_input_state, encode_input_state};
     use nerust_nes_core::input_types::{Buttons, NesInputFrame};
+
+    use super::{decode_input_state, encode_input_state};
 
     #[test]
     fn input_state_round_trips() {

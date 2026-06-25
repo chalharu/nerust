@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::time::SystemTime;
+use std::{path::PathBuf, time::SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSlotSummary {

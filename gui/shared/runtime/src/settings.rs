@@ -1,9 +1,9 @@
-use nerust_gui_settings::app_state::DesktopAppState;
-use nerust_gui_settings::local::HostBackendLocalSettings;
-use nerust_gui_settings::shared::DesktopSharedSettings;
+use std::{fmt, path::PathBuf};
+
+use nerust_gui_settings::{
+    app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+};
 use serde_yaml::Value;
-use std::fmt;
-use std::path::PathBuf;
 
 pub mod apply;
 pub mod manager;
@@ -254,32 +254,34 @@ fn sanitize_path_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::apply::{derive_apply_plan, validate_shared_settings};
-    use super::manager::SettingsManager;
-    use super::persistence::{
-        resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
-    };
-    use super::store::merge_with_defaults;
-    use super::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+    use std::{collections::BTreeMap, env, fs, path::PathBuf};
+
     use nerust_contract_core::identity::SystemIdentity;
     use nerust_contract_input::SystemId;
-    use nerust_gui_settings::app_state::{DesktopAppState, RememberedWindowSize};
-    use nerust_gui_settings::input::{
-        IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
-        ShortcutAction, ShortcutBinding, SystemInputSettings,
-    };
-    use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
-    use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
     use nerust_gui_settings::{
+        app_state::{DesktopAppState, RememberedWindowSize},
+        input::{
+            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
+            ShortcutAction, ShortcutBinding, SystemInputSettings,
+        },
         language::AppLanguage,
+        local::{HostBackendLocalSettings, ScalingMode},
         nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter},
+        shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
     };
     use nerust_persistence::sidecar::resolve_sidecars;
     use serde_yaml::{Mapping, Value};
-    use std::collections::BTreeMap;
-    use std::env;
-    use std::fs;
-    use std::path::PathBuf;
+
+    use super::{
+        HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot,
+        apply::{derive_apply_plan, validate_shared_settings},
+        manager::SettingsManager,
+        persistence::{
+            resolve_central_storage_paths, resolve_persistence_paths_with_import,
+            system_storage_key,
+        },
+        store::merge_with_defaults,
+    };
 
     fn test_system_identity() -> SystemIdentity {
         SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])

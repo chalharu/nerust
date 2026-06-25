@@ -1,30 +1,35 @@
-use crate::State;
-use gtk::glib;
-use gtk::prelude::*;
-use nerust_contract_input::InputTopologyDescriptor;
-use nerust_contract_input::SystemId;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+use gio::glib::object::{Cast as _, IsA};
+use gtk::{
+    glib,
+    prelude::{
+        BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
+        EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
+    },
+};
+use nerust_contract_input::{InputTopologyDescriptor, SystemId};
 use nerust_factory_nes::NesFactory;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_runtime::settings::apply::validate_shared_settings;
-use nerust_gui_settings::input::KeyboardKey;
-use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_settings::local::ScalingMode;
-use nerust_gui_settings::shared::StoragePolicy;
-use nerust_gui_shell::descriptor::SystemSettingsFieldKind;
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::session::SessionError;
-use nerust_gui_shell::settings::bindings::conflicting_keys;
-use nerust_gui_shell::settings::bindings::descriptors::{
-    keyboard_binding_sections, shortcut_descriptors,
+use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
+use nerust_gui_settings::{
+    input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
-use nerust_gui_shell::settings::editor::{
-    CaptureTarget, apply_capture_target, current_binding_label,
+use nerust_gui_shell::{
+    descriptor::SystemSettingsFieldKind,
+    factory::CoreFactory,
+    session::SessionError,
+    settings::{
+        bindings::{
+            conflicting_keys,
+            descriptors::{keyboard_binding_sections, shortcut_descriptors},
+            keys::keyboard_key_label,
+        },
+        editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        i18n::{UiText, text},
+    },
 };
-use nerust_gui_shell::settings::i18n::{UiText, text};
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
+
+use crate::State;
 
 #[derive(Clone)]
 struct InputRow {
@@ -1165,13 +1170,17 @@ fn run_finish_callback(finish: &FinishCallback) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
-    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
-    use nerust_gui_shell::session::SessionError;
-    use nerust_gui_shell::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
     use std::cell::RefCell;
+
+    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_shell::{
+        session::SessionError,
+        settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        },
+    };
+
+    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
 
     #[derive(Default)]
     struct FakeState {

@@ -1,12 +1,14 @@
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_FME7};
-use crate::interrupt::{Interrupt, IrqSource};
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
-use crate::persistence_codec::{decode_payload, encode_payload};
-use crate::persistence_error::PersistenceError;
+use crate::{
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_FME7},
+    interrupt::{Interrupt, IrqSource},
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    mirror::MirrorMode,
+    persistence_codec::{decode_payload, encode_payload},
+    persistence_error::PersistenceError,
+};
 
 const IRQ_ENABLE: u8 = 0x01;
 const IRQ_COUNT: u8 = 0x80;
@@ -299,14 +301,15 @@ impl Fme7 {
 
 #[cfg(test)]
 mod tests {
-    use super::Cartridge;
-    use super::Fme7;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::{Interrupt, IrqSource};
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use super::{Cartridge, Fme7};
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts,
+        cartridge_rom::CartridgeData,
+        interrupt::{Interrupt, IrqSource},
+        mapper::Mapper,
+        mirror::MirrorMode,
+        rom_format::RomFormat,
+    };
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

@@ -1,8 +1,8 @@
 use super::{ChrBankSet, Mmc5};
-use crate::OpenBusReadResult;
-use crate::mapper::CartridgeDataDao;
-use crate::mapper_state::MapperStateDao;
-use crate::ppu_memory_access::PpuReadAccess;
+use crate::{
+    OpenBusReadResult, mapper::CartridgeDataDao, mapper_state::MapperStateDao,
+    ppu_memory_access::PpuReadAccess,
+};
 
 impl Mmc5 {
     pub(super) fn exram_visible_to_ppu(&self) -> bool {

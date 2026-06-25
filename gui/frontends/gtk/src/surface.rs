@@ -1,10 +1,9 @@
-use super::State;
-use super::renderer::GtkRenderer;
-use gtk::glib;
-use gtk::prelude::*;
+use std::{cell::RefCell, rc::Rc};
+
+use gtk::{glib, prelude::*};
 use nerust_screen_video::SurfaceSize;
-use std::cell::RefCell;
-use std::rc::Rc;
+
+use super::{State, renderer::GtkRenderer};
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,

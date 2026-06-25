@@ -1,5 +1,4 @@
-use iced::Font;
-use iced::keyboard;
+use iced::{Font, keyboard};
 use iced_winit::core::SmolStr;
 use tao::keyboard::ModifiersState as TaoModifiers;
 

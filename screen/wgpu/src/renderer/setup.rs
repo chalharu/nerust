@@ -1,8 +1,6 @@
-use super::{DeviceLimitProfile, PresentationOptions, RenderPipeline, fit_surface_size_to_limit};
-use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, surface::SurfaceSize, upload::FrameUploadLayout};
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
+use nerust_screen_video::{
+    LogicalSize, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoFrameFormat, VideoPresentation,
+};
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,
@@ -11,6 +9,9 @@ use wgpu::{
     TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
+
+use super::{DeviceLimitProfile, PresentationOptions, RenderPipeline, fit_surface_size_to_limit};
+use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, surface::SurfaceSize, upload::FrameUploadLayout};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

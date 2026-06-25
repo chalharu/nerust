@@ -1,8 +1,12 @@
-use crate::session::{KeyboardShortcut, SessionHandle};
-use crate::settings::bindings::events::controller::controller_event_for_key;
-use crate::settings::bindings::events::shortcut::shortcut_action_for_key;
 use nerust_contract_input::DigitalInputEvent;
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+
+use crate::{
+    session::{KeyboardShortcut, SessionHandle},
+    settings::bindings::events::{
+        controller::controller_event_for_key, shortcut::shortcut_action_for_key,
+    },
+};
 
 impl SessionHandle {
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {

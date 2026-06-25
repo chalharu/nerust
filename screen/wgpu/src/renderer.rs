@@ -1,10 +1,10 @@
 mod draw;
 mod setup;
 
-use crate::upload::FrameUploadLayout;
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::PhysicalSize;
+use nerust_screen_video::{LogicalSize, PhysicalSize};
 use wgpu::{BindGroup, Buffer, Device, Limits, Queue, SurfaceConfiguration, Texture};
+
+use crate::upload::FrameUploadLayout;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RenderOutcome {

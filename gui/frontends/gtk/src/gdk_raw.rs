@@ -17,8 +17,9 @@ pub(crate) fn with_raw_handles<R>(
     display: &gdk::Display,
     f: impl FnOnce(RawWindowHandle, RawDisplayHandle) -> R,
 ) -> Option<R> {
-    use gio::prelude::Cast;
     use std::ffi::c_void;
+
+    use gio::prelude::Cast;
 
     let ns_window = surface.downcast_ref::<gdk_macos::MacosSurface>()?.native();
     // SAFETY: Retain the NSWindow so it (and its NSView) stay alive for `f`.

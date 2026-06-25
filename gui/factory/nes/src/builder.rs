@@ -1,14 +1,13 @@
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
+
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_emuthread::EmuThread;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::emu_core::EmuCore;
-use nerust_gui_shell::factory::FactoryError;
+use nerust_gui_shell::{emu_core::EmuCore, factory::FactoryError};
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_screen_video::{FilterType, FrameBuffer, LogicalSize, PixelFormat, VideoRenderProfile};
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
 
 use crate::adapter::NesAdapter;
 

@@ -110,13 +110,14 @@ impl NesInputState {
 
 #[cfg(test)]
 mod tests {
-    use super::NesInputState;
     use nerust_contract_input::DigitalInputEvent;
     use nerust_nes_core::input_types::{Buttons, NesInputFrame};
     use nerust_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_RIGHT,
     };
+
+    use super::NesInputState;
 
     #[test]
     fn nes_input_state_maps_player_one_buttons() {

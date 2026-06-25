@@ -1,7 +1,7 @@
-use crate::cartridge_data_parts::CartridgeDataParts;
-use crate::cartridge_error::CartridgeError;
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
+use crate::{
+    cartridge_data_parts::CartridgeDataParts, cartridge_error::CartridgeError, mirror::MirrorMode,
+    rom_format::RomFormat,
+};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct CartridgeData {
@@ -139,8 +139,9 @@ impl CartridgeData {
 }
 
 mod mirror_mode_serde {
-    use crate::mirror::MirrorMode;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    use crate::mirror::MirrorMode;
 
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -193,9 +194,7 @@ mod mirror_mode_serde {
 #[cfg(test)]
 mod tests {
     use super::{CartridgeData, RomFormat};
-    use crate::Core;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::mirror::MirrorMode;
+    use crate::{Core, cartridge_data_parts::CartridgeDataParts, mirror::MirrorMode};
 
     #[test]
     fn inspect_cartridge_reads_ines_metadata() {

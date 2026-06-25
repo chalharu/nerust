@@ -1,6 +1,6 @@
+use std::{collections::BTreeMap, path::PathBuf};
+
 use nerust_contract_input::SystemId;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 pub mod language {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -258,10 +258,9 @@ pub mod nes {
 }
 
 pub mod shared {
-    use super::input::InputSettings;
-    use super::language::AppLanguage;
-    use super::nes::NesSettings;
-    use super::{BTreeMap, PathBuf, SystemId};
+    use super::{
+        BTreeMap, PathBuf, SystemId, input::InputSettings, language::AppLanguage, nes::NesSettings,
+    };
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
@@ -525,14 +524,14 @@ pub mod app_state {
 
 #[cfg(test)]
 mod tests {
-    use super::app_state::{
-        DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize,
+    use super::{
+        app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
+        input::{KeyboardKey, ShortcutAction, ShortcutBinding},
+        local::{
+            HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
+        },
+        shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
     };
-    use super::input::{KeyboardKey, ShortcutAction, ShortcutBinding};
-    use super::local::{
-        HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
-    };
-    use super::shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings};
 
     #[test]
     fn defaults_track_current_schema_versions() {

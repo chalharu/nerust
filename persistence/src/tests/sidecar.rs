@@ -1,9 +1,12 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use super::prepare_test_dir;
 use crate::sidecar::{
     load_mapper_save, resolve_sidecars, write_mapper_save, write_recovery_mapper_save,
 };
-use std::fs;
-use std::path::{Path, PathBuf};
 
 #[test]
 fn resolve_sidecars_appends_to_full_rom_filename() {

@@ -1,6 +1,9 @@
-use super::super::CpuCartridgeBus;
-use super::super::{Apu, Controller, Core, CpuStepStateEnum, Ppu, Register, read_dummy_current};
-use super::exit_opcode;
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, read_dummy_current,
+    },
+    exit_opcode,
+};
 
 pub(crate) trait FlagControl {
     fn setter(register: &mut Register);

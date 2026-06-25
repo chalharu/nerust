@@ -1,12 +1,10 @@
-use crate::OpenBusReadResult;
-use crate::cartridge_runtime_state::CartridgeRuntimeState;
-use crate::interrupt::Interrupt;
-use crate::mapper::Mapper;
-use crate::mapper_state::MappingMode;
-use crate::mirror::MirrorMode;
-use crate::persistence_error::PersistenceError;
-use crate::ppu_memory_access::PpuReadAccess;
 use std::cmp;
+
+use crate::{
+    OpenBusReadResult, cartridge_runtime_state::CartridgeRuntimeState, interrupt::Interrupt,
+    mapper::Mapper, mapper_state::MappingMode, mirror::MirrorMode,
+    persistence_error::PersistenceError, ppu_memory_access::PpuReadAccess,
+};
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {
     match mode {

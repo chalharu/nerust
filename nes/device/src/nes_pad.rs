@@ -1,7 +1,5 @@
 use nerust_contract_core::input::InputState;
-use nerust_nes_core::OpenBusReadResult;
-use nerust_nes_core::controller::Controller;
-use nerust_nes_core::input_types::Buttons;
+use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Buttons};
 use nerust_nes_runtime::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
@@ -105,10 +103,11 @@ impl<S: InputState<3>> Controller for NesPadDevice<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
 
     use nerust_contract_core::input::InputCell;
+
+    use super::*;
 
     type Cell = InputCell<3>;
 

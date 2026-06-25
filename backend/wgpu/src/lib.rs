@@ -4,10 +4,10 @@ use nerust_screen_video::{
     FrameBuffer, OpaqueError, RenderResult, Renderer, RendererConfig, RendererError,
     RendererFactory, Surface, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
 };
-use nerust_screen_wgpu::renderer::{
-    DeviceLimitProfile, PresentationOptions, RenderOutcome, RenderPipeline,
+use nerust_screen_wgpu::{
+    renderer::{DeviceLimitProfile, PresentationOptions, RenderOutcome, RenderPipeline},
+    surface,
 };
-use nerust_screen_wgpu::surface;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 // ---------------------------------------------------------------------------

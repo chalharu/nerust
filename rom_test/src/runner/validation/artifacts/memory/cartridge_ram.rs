@@ -1,7 +1,11 @@
-use super::super::super::{assertions::CartridgeRamAssertion, runtime::ValidationRuntime};
-use super::super::ValidationArtifacts;
-use crate::error::RomTestError;
-use crate::results::{CartridgeRamCheck, ValidationOptions};
+use super::super::{
+    super::{assertions::CartridgeRamAssertion, runtime::ValidationRuntime},
+    ValidationArtifacts,
+};
+use crate::{
+    error::RomTestError,
+    results::{CartridgeRamCheck, ValidationOptions},
+};
 
 #[derive(Default)]
 pub(in crate::runner::validation::artifacts) struct CartridgeRamArtifacts {

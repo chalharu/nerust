@@ -1,6 +1,7 @@
-use super::super::CpuCartridgeBus;
-use super::super::{Apu, Controller, Core, CpuStepStateEnum, Ppu, Register};
-use super::exit_opcode;
+use super::{
+    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register},
+    exit_opcode,
+};
 
 pub(crate) trait Arithmetic {
     fn calculator(register: &mut Register, a: u8, b: u8) -> u8;

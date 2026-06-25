@@ -1,7 +1,10 @@
-use nerust_rom_test::manifest::{RomManifest, load_default_manifest};
-use nerust_rom_test::results::{CaseOutcome, ValidationOptions};
-use nerust_rom_test::runner::validate_case;
 use std::sync::OnceLock;
+
+use nerust_rom_test::{
+    manifest::{RomManifest, load_default_manifest},
+    results::{CaseOutcome, ValidationOptions},
+    runner::validate_case,
+};
 
 #[test]
 fn rom_manifest_is_well_formed() {

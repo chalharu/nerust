@@ -1,20 +1,23 @@
-use super::build_menu_model;
-use super::surface::{Surface, SurfaceExtend};
-use super::{State, TITLE_UPDATE_INTERVAL};
-use crate::preferences::present_preferences_dialog;
-use gtk::gio;
-use gtk::glib;
-use gtk::glib::variant::{StaticVariantType, ToVariant};
-use gtk::prelude::*;
-use nerust_gui_runtime::rom::load_rom_path;
-use nerust_gui_runtime::slots::slot_label;
+use std::{cell::RefCell, path::Path, rc::Rc};
+
+use gtk::{
+    gio, glib,
+    glib::variant::{StaticVariantType, ToVariant},
+    prelude::*,
+};
+use nerust_gui_runtime::{rom::load_rom_path, slots::slot_label};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionError};
+use nerust_gui_shell::session::{
+    KeyboardShortcut, SessionError,
+    commands::{SessionCommand, SessionCommandOutcome},
+};
 use nerust_persistence::model::StateSlotSummary;
-use std::cell::RefCell;
-use std::path::Path;
-use std::rc::Rc;
+
+use super::{
+    State, TITLE_UPDATE_INTERVAL, build_menu_model,
+    surface::{Surface, SurfaceExtend},
+};
+use crate::preferences::present_preferences_dialog;
 
 pub(crate) struct StateMenus {
     pub(crate) select_active_slot_menu: gio::Menu,
@@ -683,10 +686,12 @@ fn rebuild_slot_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
+    use std::cell::RefCell;
+
     use nerust_gui_settings::input::KeyboardKey;
     use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-    use std::cell::RefCell;
+
+    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
 
     #[derive(Default)]
     struct FakeState {

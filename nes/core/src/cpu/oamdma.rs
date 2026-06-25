@@ -1,5 +1,4 @@
-use super::CpuCartridgeBus;
-use super::{Apu, Controller, Core, Ppu, read_dummy_current};
+use super::{Apu, Controller, Core, CpuCartridgeBus, Ppu, read_dummy_current};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {

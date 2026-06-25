@@ -1,36 +1,41 @@
-use iced::alignment::Alignment;
-use iced::keyboard::key::Code;
-use iced::widget::{
-    button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
-    text_input,
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
-use iced::{Font, Length, Task, Theme};
+
+use iced::{
+    Font, Length, Task, Theme,
+    alignment::Alignment,
+    keyboard::key::Code,
+    widget::{
+        button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
+        text_input,
+    },
+};
 use iced_winit::program::Program;
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_runtime::settings::apply::validate_shared_settings;
-use nerust_gui_settings::input::KeyboardKey;
-use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_settings::local::ScalingMode;
-use nerust_gui_settings::shared::StoragePolicy;
-use nerust_gui_shell::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldKind, SystemSettingsFieldModel,
+use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
+use nerust_gui_settings::{
+    input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::settings::bindings::conflicting_keys;
-use nerust_gui_shell::settings::bindings::descriptors::{
-    keyboard_binding_sections, shortcut_descriptors,
+use nerust_gui_shell::{
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldKind, SystemSettingsFieldModel},
+    factory::CoreFactory,
+    settings::{
+        bindings::{
+            conflicting_keys,
+            descriptors::{keyboard_binding_sections, shortcut_descriptors},
+            keys::keyboard_key_label,
+        },
+        editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        i18n::{UiText, text as ui_text},
+    },
 };
-use nerust_gui_shell::settings::bindings::keys::keyboard_key_label;
-use nerust_gui_shell::settings::editor::{
-    CaptureTarget, apply_capture_target, current_binding_label,
-};
-use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
 use rfd::FileDialog;
-use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 
@@ -835,11 +840,10 @@ pub(crate) fn keyboard_key_from_physical(
 
 #[cfg(test)]
 mod tests {
-    use super::keyboard_key_from_physical;
-
     use iced::keyboard::key::{Code, Physical};
-
     use nerust_gui_settings::input::KeyboardKey;
+
+    use super::keyboard_key_from_physical;
 
     #[test]
     fn physical_key_mapping_matches_tao_bindings() {

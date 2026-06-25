@@ -1,6 +1,6 @@
+use std::{fmt, fmt::Display};
+
 use gl::types::*;
-use std::fmt;
-use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ErrorKind {

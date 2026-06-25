@@ -63,8 +63,9 @@ pub(crate) fn pack_frame_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameUploadLayout, pack_frame_rows};
     use nerust_screen_video::LogicalSize;
+
+    use super::{FrameUploadLayout, pack_frame_rows};
 
     #[test]
     fn aligned_upload_layout_keeps_native_row_pitch() {
