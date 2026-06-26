@@ -424,6 +424,9 @@ impl WindowExtend for Window {
         window.present();
         result.sync_fullscreen_from_settings();
         let _ = window.grab_focus();
+        if let Some(renderer) = window.renderer() {
+            renderer.unrealize();
+        }
         result
     }
 
