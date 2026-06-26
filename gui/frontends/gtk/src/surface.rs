@@ -38,26 +38,27 @@ impl SurfaceExtend for Surface {
 
     fn tick(&self) -> bool {
         let s = self.borrow();
-        if s.window.width() == 0 || s.window.height() == 0 {
+        let width = s.window.width() as u32;
+        let height = s.window.height() as u32;
+        if width == 0 || height == 0 {
             return true;
         }
         let scale = s.window.scale_factor().max(1) as u32;
-        let physical_size = SurfaceSize::new(
-            (s.window.width() as u32).saturating_mul(scale),
-            (s.window.height() as u32).saturating_mul(scale),
-        );
+        let physical_size =
+            SurfaceSize::new(width.saturating_mul(scale), height.saturating_mul(scale));
         if let Ok(mut state) = s.state.try_borrow_mut() {
             state.swap_frame_buffer();
 
             if state.take_renderer_reload_pending() {
-                let app_size = SurfaceSize::new(s.window.width() as u32, s.window.height() as u32);
+                let app_size = SurfaceSize::new(width, height);
                 log::info!("reinit size: {:?}", app_size);
-                let profile = state.render_profile().clone();
                 if let Some(surface) = s.window.surface()
                     && let Some(display) = gdk::Display::default()
                 {
                     super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
-                        s.renderer.borrow_mut().realize(wh, dh, app_size, &profile);
+                        s.renderer
+                            .borrow_mut()
+                            .realize(wh, dh, app_size, state.render_profile());
                     });
                 }
             }
