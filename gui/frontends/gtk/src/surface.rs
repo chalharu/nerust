@@ -66,11 +66,6 @@ impl SurfaceExtend for Surface {
             s.renderer
                 .borrow_mut()
                 .render(state.frame_buffer(), physical_size);
-            if let Some(renderer) = s.window.renderer()
-                && renderer.is_realized()
-            {
-                renderer.unrealize();
-            }
         }
 
         true
