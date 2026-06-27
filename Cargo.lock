@@ -3155,6 +3155,7 @@ dependencies = [
 name = "nerust"
 version = "0.1.0-dev"
 dependencies = [
+ "clap",
  "log",
  "nerust_backend_opengl",
  "nerust_backend_wgpu",
@@ -3471,7 +3472,6 @@ version = "0.1.0-dev"
 name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
- "clap",
  "gtk",
  "iced",
  "iced_tiny_skia",
