@@ -17,8 +17,8 @@
 #             "v0.1.0" when no tags are present.
 #   VERSION   Version string embedded in Info.plist.
 #             Defaults to TAG_NAME with a leading `v` stripped.
-#   BINARY   Path to the compiled nerust_tao binary.
-#            Defaults to target/release/nerust_tao.
+#   BINARY   Path to the compiled nerust binary.
+#            Defaults to target/release/nerust.
 #   OUT_DIR  Directory where Nerust.app and the zip are written.
 #            Defaults to target/dist.
 #
@@ -43,7 +43,7 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_RO
 
 TAG_NAME="${TAG_NAME:-$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")}"
 VERSION="${VERSION:-${TAG_NAME#v}}"
-BINARY="${BINARY:-${TARGET_DIR}/release/nerust_tao}"
+BINARY="${BINARY:-${TARGET_DIR}/release/nerust}"
 OUT_DIR="${OUT_DIR:-${TARGET_DIR}/dist}"
 
 APP_NAME="Nerust"
@@ -79,8 +79,8 @@ rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 # Executable
-cp "${BINARY}" "${MACOS_DIR}/nerust_tao"
-chmod +x "${MACOS_DIR}/nerust_tao"
+cp "${BINARY}" "${MACOS_DIR}/nerust"
+chmod +x "${MACOS_DIR}/nerust"
 
 # Info.plist (substitute version placeholder)
 sed "s/__VERSION__/${VERSION}/g" \
