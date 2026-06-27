@@ -48,14 +48,6 @@ impl GtkRenderer {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn resize(&mut self, size: SurfaceSize) {
-        self.last_size = size;
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.resize(size);
-        }
-    }
-
     pub(crate) fn reattach(
         &mut self,
         window_handle: RawWindowHandle,
