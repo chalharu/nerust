@@ -133,12 +133,6 @@ impl GpuRenderer for GlRenderer {
                 Box::new(OpaqueError("".to_string())),
             ));
         };
-        let Some(ref _surf) = self.gl_surface else {
-            return Err(RendererError::new(
-                "update: no surface",
-                Box::new(OpaqueError("".to_string())),
-            ));
-        };
         if !ctx.is_current() {
             return Err(RendererError::new(
                 "update: not current",
