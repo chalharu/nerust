@@ -95,8 +95,12 @@ impl GpuRenderer for WgpuRenderer {
 
     fn resize(&mut self, size: SurfaceSize) {
         self.size = size;
-        let Some(ref surface) = self.surface else { return };
-        let Some(ref mut pipeline) = self.pipeline else { return };
+        let Some(ref surface) = self.surface else {
+            return;
+        };
+        let Some(ref mut pipeline) = self.pipeline else {
+            return;
+        };
         pipeline.reconfigure_surface(surface, size);
     }
 

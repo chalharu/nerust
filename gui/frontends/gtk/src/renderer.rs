@@ -3,7 +3,8 @@ use nerust_backend_opengl::GlFactory as Factory;
 #[cfg(feature = "wgpu")]
 use nerust_backend_wgpu::WgpuFactory as Factory;
 use nerust_screen_video::{
-    FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, RendererError, SurfaceSize,
+    VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -52,6 +53,22 @@ impl GtkRenderer {
         self.last_size = size;
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(size);
+        }
+    }
+
+    pub(crate) fn reattach(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.last_size = size;
+        match self.renderer.as_mut() {
+            Some(r) => r.reattach(window_handle, display_handle, size),
+            None => Err(RendererError::new(
+                "reattach",
+                Box::new(nerust_screen_video::OpaqueError("no renderer".to_string())),
+            )),
         }
     }
 
