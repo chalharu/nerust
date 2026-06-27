@@ -33,6 +33,20 @@ impl SurfaceExtend for Surface {
                 glib::ControlFlow::from(result.tick())
             });
         }
+        {
+            let drawing_area = gtk::DrawingArea::new();
+            drawing_area.set_hexpand(true);
+            drawing_area.set_vexpand(true);
+            window.set_child(Some(&drawing_area));
+
+            let result = result.clone();
+            drawing_area.connect_resize(move |_drawing_area, w, h| {
+                let s = result.borrow();
+                if let Ok(mut state) = s.state.try_borrow_mut() {
+                    state.renderer_reload_pending = true;
+                }
+            });
+        }
         result
     }
 
