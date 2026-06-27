@@ -125,7 +125,7 @@ impl GpuRenderer for GlRenderer {
                 Box::new(OpaqueError("".to_string())),
             ));
         };
-        let Some(ref surf) = self.gl_surface else {
+        let Some(ref _surf) = self.gl_surface else {
             return Err(RendererError::new(
                 "update: no surface",
                 Box::new(OpaqueError("".to_string())),
