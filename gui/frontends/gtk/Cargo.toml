@@ -32,6 +32,3 @@ gdk-win32.workspace = true
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 gdk4-wayland-sys.workspace = true
 gdk4-x11-sys.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
