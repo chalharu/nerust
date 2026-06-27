@@ -3463,6 +3463,7 @@ name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
+ "gtk",
  "iced",
  "iced_tiny_skia",
  "iced_winit",

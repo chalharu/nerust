@@ -70,9 +70,13 @@ impl SurfaceExtend for Surface {
                     && let Some(display) = gdk::Display::default()
                 {
                     super::gdk_raw::with_raw_handles(&surface, &display, |wh, dh| {
-                        s.renderer
-                            .borrow_mut()
-                            .realize(wh, dh, app_size, state.render_profile());
+                        s.renderer.borrow_mut().realize(
+                            wh,
+                            dh,
+                            app_size,
+                            physical_size,
+                            state.render_profile(),
+                        );
                     });
                 }
             }
