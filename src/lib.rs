@@ -1,17 +1,11 @@
-#[cfg(any(feature = "gtk", feature = "tao"))]
 use std::path::PathBuf;
 
+use clap::{Arg, Command};
 use log::LevelFilter;
-#[cfg(any(feature = "gtk", feature = "tao"))]
 use nerust_run_options::RunOptions;
+use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
-#[cfg(any(feature = "gtk", feature = "tao"))]
-use clap::{Arg, Command};
-#[cfg(any(feature = "gtk", feature = "tao"))]
-use nerust_screen_video::GpuFactory;
-
-#[cfg(any(feature = "gtk", feature = "tao"))]
 fn create_factory() -> Box<dyn GpuFactory> {
     #[cfg(feature = "wgpu")]
     return Box::new(nerust_backend_wgpu::WgpuFactory);
@@ -21,7 +15,6 @@ fn create_factory() -> Box<dyn GpuFactory> {
     compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
 }
 
-#[cfg(any(feature = "gtk", feature = "tao"))]
 fn parse_cli_args() -> RunOptions {
     let app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -49,20 +42,19 @@ pub fn run() {
         .init()
         .unwrap();
 
-    #[cfg(any(feature = "gtk", feature = "tao"))]
     let options = parse_cli_args();
+    let factory = create_factory();
 
-    #[cfg(feature = "gtk")]
-    nerust_gtk::run(create_factory(), options.clone());
-    #[cfg(feature = "tao")]
-    nerust_tao::run(create_factory(), options);
-    #[cfg(not(any(feature = "gtk", feature = "tao")))]
+    #[cfg(all(feature = "gtk", not(clippy)))]
+    nerust_gtk::run(factory, options);
+    #[cfg(all(feature = "tao", not(clippy)))]
+    nerust_tao::run(factory, options);
+    #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
+    compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
+    #[cfg(clippy)]
     {
-        eprintln!("error: no frontend selected");
-        eprintln!("  cargo run --features gtk   (GTK4 frontend)");
-        eprintln!("  cargo run --features tao   (Tao/iced frontend)");
-        eprintln!("  cargo run --no-default-features --features gtk,opengl");
-        eprintln!("  cargo run --no-default-features --features tao,opengl");
-        std::process::exit(1);
+        // This is a workaround for clippy, which does not support conditional compilation of the main function.
+        let _ = factory;
+        let _ = options;
     }
 }

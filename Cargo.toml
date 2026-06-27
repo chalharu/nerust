@@ -3,7 +3,6 @@ resolver = "3"
 members = [
   "backend/opengl",
   "backend/wgpu",
-
   "contract/core",
   "contract/emuthread",
   "gui/factory/nes",
@@ -52,7 +51,7 @@ nerust_screen_video.workspace = true
 simple_logger.workspace = true
 
 [features]
-default = ["wgpu"]
+default = ["tao", "wgpu"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
 wgpu = ["nerust_backend_wgpu"]
