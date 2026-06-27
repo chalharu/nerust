@@ -3,7 +3,7 @@ mod host;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "opengl")]
-use nerust_backend_opengl::GlRendererFactory as Factory;
+use nerust_backend_opengl::GlFactory as Factory;
 #[cfg(feature = "wgpu")]
 use nerust_backend_wgpu::WgpuFactory as Factory;
 use nerust_gui_shell::load::LoadRequest;
