@@ -32,7 +32,7 @@ impl GtkRenderer {
             vsync: true,
         };
         let factory = Factory::default();
-        match factory.create_renderer(&config, window_handle, display_handle) {
+        match factory.create_renderer(&config, display_handle) {
             Ok(mut r) => {
                 if let Err(e) = r.attach(window_handle, display_handle, physical_size) {
                     log::error!("GtkRenderer: attach failed: {e}");
