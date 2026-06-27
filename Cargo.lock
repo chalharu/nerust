@@ -3271,7 +3271,6 @@ dependencies = [
  "gdk4-x11-sys",
  "gio 0.22.6",
  "gtk4",
- "libc",
  "log",
  "nerust_contract_input",
  "nerust_factory_nes",
