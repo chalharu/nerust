@@ -16,7 +16,6 @@ use gtk::{
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_gui_settings::RunOptions;
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     descriptor::SystemSettingsPageModel,
@@ -32,6 +31,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_persistence::model::StateSlotSummary;
+use nerust_run_options::RunOptions;
 use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
 
 use self::window::{StateMenus, Window, WindowExtend};
