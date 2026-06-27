@@ -1,14 +1,14 @@
-use super::Cartridge;
-use super::{ChrBankSet, Mmc5};
-use crate::cartridge_data_parts::CartridgeDataParts;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::{Interrupt, IrqSource};
-use crate::mapper::Mapper;
-use crate::mirror::MirrorMode;
-use crate::ppu::Core as PpuCore;
-use crate::ppu_memory_access::PpuReadAccess;
-use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-use crate::rom_format::RomFormat;
+use super::{Cartridge, ChrBankSet, Mmc5};
+use crate::{
+    cartridge_data_parts::CartridgeDataParts,
+    cartridge_rom::CartridgeData,
+    interrupt::{Interrupt, IrqSource},
+    mapper::Mapper,
+    mirror::MirrorMode,
+    ppu::Core as PpuCore,
+    ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess},
+    rom_format::RomFormat,
+};
 
 fn test_data() -> CartridgeData {
     CartridgeData::new(CartridgeDataParts {

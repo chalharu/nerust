@@ -1,16 +1,26 @@
-use crate::load::MediaObject;
-use crate::session::metrics::ConsoleMetrics;
-use crate::session::persistence::{CorePersistence, CorePersistenceError};
-use nerust_contract_core::identity::SystemIdentity;
-use nerust_contract_core::{CoreConfig, EmuCommand, LoadCommand, StateDataCommand};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+};
+
+use nerust_contract_core::{
+    CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
+};
 use nerust_contract_emuthread::EmuThread;
-use nerust_screen_video::FrameBuffer;
-use nerust_screen_video::VideoRenderProfile;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
+
+use crate::{
+    load::MediaObject,
+    session::{
+        metrics::ConsoleMetrics,
+        persistence::{CorePersistence, CorePersistenceError},
+    },
+};
 
 #[derive(Debug, Error)]
 pub enum OperationError {

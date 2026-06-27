@@ -60,9 +60,10 @@ pub fn scaling_factor(mode: ScalingMode) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::scaling_factor;
     use nerust_contract_core::audio::{AudioBackend, NullAudio};
     use nerust_gui_settings::local::ScalingMode;
+
+    use super::scaling_factor;
 
     #[test]
     fn null_audio_reports_default_sample_rate() {

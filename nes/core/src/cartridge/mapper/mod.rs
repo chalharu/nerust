@@ -15,25 +15,15 @@ mod nrom;
 mod sxrom;
 mod uxrom;
 
-use self::action53::Action53;
-use self::axrom::AxRom;
-use self::bnrom::BNRom;
-use self::cnrom::CNRom;
-use self::color_dreams::ColorDreams;
-use self::crazy_climber::CrazyClimber;
-use self::fme7::Fme7;
-use self::gnrom::GnRom;
-use self::mapper78::Mapper78;
-use self::mmc2::Mmc2;
-use self::mmc5::Mmc5;
-use self::nina001::Nina001;
-use self::nrom::NRom;
-use self::sxrom::SxRom;
-use self::uxrom::UxRom;
-use crate::cart_device::Cartridge;
-use crate::cartridge_error::CartridgeError;
-use crate::cartridge_rom::CartridgeData;
-use crate::core_options::Mmc3IrqVariant;
+use self::{
+    action53::Action53, axrom::AxRom, bnrom::BNRom, cnrom::CNRom, color_dreams::ColorDreams,
+    crazy_climber::CrazyClimber, fme7::Fme7, gnrom::GnRom, mapper78::Mapper78, mmc2::Mmc2,
+    mmc5::Mmc5, nina001::Nina001, nrom::NRom, sxrom::SxRom, uxrom::UxRom,
+};
+use crate::{
+    cart_device::Cartridge, cartridge_error::CartridgeError, cartridge_rom::CartridgeData,
+    core_options::Mmc3IrqVariant,
+};
 
 pub(crate) fn try_from(
     data: CartridgeData,

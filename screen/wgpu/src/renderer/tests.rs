@@ -1,13 +1,14 @@
+use nerust_screen_video::{
+    FilterType, LogicalSize, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PhysicalSize,
+    VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+};
+
 use super::{
     draw::compute_viewport,
     fit_surface_size_to_limit,
     setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
 };
 use crate::surface::SurfaceSize;
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::PhysicalSize;
-use nerust_screen_video::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
-use nerust_screen_video::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[test]
 fn viewport_preserves_aspect_ratio() {

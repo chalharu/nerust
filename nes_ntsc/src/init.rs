@@ -1,5 +1,6 @@
-use super::*;
 use std::f32;
+
+use super::*;
 
 pub(crate) struct Init {
     pub(crate) to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],

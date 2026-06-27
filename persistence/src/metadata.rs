@@ -1,10 +1,13 @@
-use crate::error::PersistenceError;
-use crate::time::unix_millis;
+use std::{
+    io::{Read, Seek},
+    time::SystemTime,
+};
+
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
-use std::io::{Read, Seek};
-use std::time::SystemTime;
 use zip::ZipArchive;
+
+use crate::{error::PersistenceError, time::unix_millis};
 
 pub(crate) const METADATA_ENTRY: &str = "metadata.msgpack";
 pub(crate) const STATE_ENTRY: &str = "state.bin";

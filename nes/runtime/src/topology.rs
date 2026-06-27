@@ -95,12 +95,13 @@ pub fn input_topology_descriptor() -> InputTopologyDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use nerust_contract_input::ControlDescriptor;
+
     use super::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD, NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
         input_topology_descriptor,
     };
-    use nerust_contract_input::ControlDescriptor;
 
     #[test]
     fn nes_topology_reports_distinct_player_devices() {

@@ -2,10 +2,10 @@ pub mod descriptors;
 pub mod events;
 pub mod keys;
 
-use nerust_contract_input::{InputTopologyDescriptor, SystemId};
-use nerust_gui_settings::input::KeyboardKey;
-use nerust_gui_settings::shared::DesktopSharedSettings;
 use std::collections::BTreeMap;
+
+use nerust_contract_input::{InputTopologyDescriptor, SystemId};
+use nerust_gui_settings::{input::KeyboardKey, shared::DesktopSharedSettings};
 
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,
@@ -55,11 +55,13 @@ pub fn conflicting_keys(
 
 #[cfg(test)]
 mod tests {
-    use super::conflicting_keys;
-    use crate::settings::defaults::seed::default_shared_settings;
-    use crate::test_support::single_port_topology;
     use nerust_contract_input::SystemId;
     use nerust_gui_settings::input::KeyboardKey;
+
+    use super::conflicting_keys;
+    use crate::{
+        settings::defaults::seed::default_shared_settings, test_support::single_port_topology,
+    };
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {

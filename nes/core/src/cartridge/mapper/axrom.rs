@@ -1,11 +1,13 @@
 // Mapper 7
 
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
+use crate::{
+    cartridge_rom::CartridgeData,
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    mirror::MirrorMode,
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct AxRom {

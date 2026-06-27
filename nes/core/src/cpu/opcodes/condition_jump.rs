@@ -1,8 +1,10 @@
-use super::super::CpuCartridgeBus;
-use super::super::{
-    Apu, Controller, Core, CpuStepStateEnum, Ppu, Register, page_crossed, read_dummy_current,
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, page_crossed,
+        read_dummy_current,
+    },
+    exit_opcode,
 };
-use super::exit_opcode;
 
 macro_rules! condition_jump {
     ($name:ident, $cond:expr) => {

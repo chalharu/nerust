@@ -1,7 +1,10 @@
-use super::ValidationRuntime;
-use crate::events::{ButtonCode, ControllerPad, PadState};
-use crate::harness::apply_button_state;
 use nerust_nes_core::input_types::Buttons;
+
+use super::ValidationRuntime;
+use crate::{
+    events::{ButtonCode, ControllerPad, PadState},
+    harness::apply_button_state,
+};
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn apply_standard_controller(

@@ -4,14 +4,11 @@ mod shared;
 mod standard;
 mod txsrom;
 
-use self::mmc3_nec::Mmc3Nec;
-use self::mmc6::Mmc6;
-use self::standard::Mmc3;
-use self::txsrom::TxSrom;
-use crate::cart_device::Cartridge;
-use crate::cartridge_error::CartridgeError;
-use crate::cartridge_rom::CartridgeData;
-use crate::core_options::Mmc3IrqVariant;
+use self::{mmc3_nec::Mmc3Nec, mmc6::Mmc6, standard::Mmc3, txsrom::TxSrom};
+use crate::{
+    cart_device::Cartridge, cartridge_error::CartridgeError, cartridge_rom::CartridgeData,
+    core_options::Mmc3IrqVariant,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper4Model {
@@ -56,17 +53,19 @@ pub(crate) fn try_from_txsrom(data: CartridgeData) -> Result<Box<dyn Cartridge>,
 
 #[cfg(test)]
 mod tests {
-    use super::shared::{IrqVariant, PrgRamModel};
     use super::{
         Cartridge, CartridgeData, Mapper4Model, Mmc3, Mmc3IrqVariant, Mmc3Nec, Mmc6,
         resolve_mapper4_model,
+        shared::{IrqVariant, PrgRamModel},
     };
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::interrupt::{Interrupt, IrqSource};
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
-    use crate::rom_format::RomFormat;
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts,
+        interrupt::{Interrupt, IrqSource},
+        mapper::Mapper,
+        mirror::MirrorMode,
+        ppu_memory_access::{PpuBusAccess, PpuBusEvent},
+        rom_format::RomFormat,
+    };
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

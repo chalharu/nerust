@@ -1,8 +1,11 @@
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const ROM_LIBRARY_SCHEMA_VERSION: u32 = 1;
 const CATALOG_FILE_NAME: &str = "catalog.yaml";
@@ -197,10 +200,13 @@ fn normalize_extension(extension: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::{RomLibrary, RomLibraryPaths};
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()

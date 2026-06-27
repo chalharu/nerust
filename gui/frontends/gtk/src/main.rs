@@ -1,37 +1,43 @@
 mod crash_handler;
-mod glarea;
+mod gdk_raw;
 mod preferences;
 mod renderer;
+mod surface;
 mod window;
 
-use self::window::{StateMenus, Window, WindowExtend};
-use gtk::gio;
-use gtk::glib;
-use gtk::prelude::*;
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+
+use gtk::{
+    gio, glib,
+    prelude::{
+        ActionMapExt as _, ApplicationExt as _, ApplicationExtManual as _,
+        ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
+    },
+};
+use log::LevelFilter;
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_gui_settings::input::KeyboardKey;
-use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_shell::descriptor::SystemSettingsPageModel;
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::load::MediaObject;
-use nerust_gui_shell::session::WindowSize;
-use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionError, SessionHandle};
-use nerust_gui_shell::settings::defaults::seed::{
-    default_app_state, default_local_settings, default_shared_settings,
+use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
+use nerust_gui_shell::{
+    descriptor::SystemSettingsPageModel,
+    factory::CoreFactory,
+    load::MediaObject,
+    session::{
+        KeyboardShortcut, SessionError, SessionHandle,
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
+    settings::{
+        defaults::seed::{default_app_state, default_local_settings, default_shared_settings},
+        i18n::{UiText, text},
+    },
 };
-use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::FrameBuffer;
-use nerust_screen_video::VideoRenderProfile;
+use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
 use nerust_sound_openal::prepare_macos_runtime;
-use std::cell::RefCell;
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
+use simple_logger::SimpleLogger;
+
+use self::window::{StateMenus, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -81,10 +87,6 @@ impl State {
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
         self.session.render_profile()
-    }
-
-    pub(crate) fn window_size(&self) -> WindowSize {
-        self.session.window_size()
     }
 
     pub(crate) fn can_pause(&self) -> bool {
@@ -248,7 +250,6 @@ fn build_window(app: &gtk::Application) -> Window {
     Window::bind(
         app.clone(),
         window,
-        builder.object("glarea").unwrap(),
         state,
         StateMenus {
             select_active_slot_menu,
@@ -321,7 +322,11 @@ fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Wind
 
 fn main() {
     // log initialize
-    simple_logger::init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Warn)
+        .env()
+        .init()
+        .unwrap();
     crash_handler::install();
     prepare_macos_runtime();
 

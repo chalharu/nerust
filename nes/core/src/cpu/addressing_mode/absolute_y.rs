@@ -1,6 +1,9 @@
-use super::super::CpuCartridgeBus;
-use super::super::{Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu, page_crossed};
-use super::exit_addressing_mode;
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu, page_crossed,
+    },
+    exit_addressing_mode,
+};
 
 pub(crate) struct AbsoluteY;
 

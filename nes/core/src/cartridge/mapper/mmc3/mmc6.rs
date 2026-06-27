@@ -1,8 +1,11 @@
-use super::Cartridge;
-use super::shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper};
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::CartridgeRuntimeState;
-use crate::persistence_error::PersistenceError;
+use super::{
+    Cartridge,
+    shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper},
+};
+use crate::{
+    cartridge_rom::CartridgeData, cartridge_runtime_state::CartridgeRuntimeState,
+    persistence_error::PersistenceError,
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Mmc6 {

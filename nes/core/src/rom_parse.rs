@@ -1,10 +1,9 @@
 use std::cmp;
 
-use crate::cartridge_data_parts::CartridgeDataParts;
-use crate::cartridge_error::CartridgeError;
-use crate::cartridge_rom::CartridgeData;
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
+use crate::{
+    cartridge_data_parts::CartridgeDataParts, cartridge_error::CartridgeError,
+    cartridge_rom::CartridgeData, mirror::MirrorMode, rom_format::RomFormat,
+};
 
 /// Raw ROM バイト列をパースして CartridgeData を生成する。
 /// iNES または NES 2.0 を自動判別する。

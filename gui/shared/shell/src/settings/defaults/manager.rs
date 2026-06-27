@@ -1,6 +1,8 @@
+use nerust_gui_runtime::settings::{
+    HostBackendIdentity, SettingsError, SettingsSnapshot, manager::SettingsManager,
+};
+
 use super::seed::{default_app_state, default_local_settings, default_shared_settings};
-use nerust_gui_runtime::settings::manager::SettingsManager;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsError, SettingsSnapshot};
 
 pub fn load_settings_manager(identity: HostBackendIdentity) -> SettingsManager {
     SettingsManager::load_or_ephemeral(
@@ -31,10 +33,11 @@ pub fn save_settings(
 
 #[cfg(test)]
 mod tests {
+    use nerust_gui_runtime::settings::manager::SettingsManager;
+
     use super::{
         current_or_default, default_app_state, default_local_settings, default_shared_settings,
     };
-    use nerust_gui_runtime::settings::manager::SettingsManager;
 
     #[test]
     fn current_or_default_falls_back_for_ephemeral_manager_reads() {

@@ -3,12 +3,13 @@
     reason = "this module intentionally mirrors pointer-based OpenGL C APIs"
 )]
 
-use super::{Error, gl_error_handle};
+use std::{ffi::CStr, os::raw::c_void};
+
 use gl::types::{
     GLbitfield, GLboolean, GLchar, GLenum, GLfloat, GLint, GLsizei, GLsizeiptr, GLuint,
 };
-use std::ffi::CStr;
-use std::os::raw::c_void;
+
+use super::{Error, gl_error_handle};
 
 pub fn get_programiv(program: GLuint, pname: GLenum, params: *mut GLint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::GetProgramiv(program, pname, params) })

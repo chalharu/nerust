@@ -1,8 +1,10 @@
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::{
+    cartridge_rom::CartridgeData,
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct ColorDreams {
@@ -74,14 +76,11 @@ impl Mapper for ColorDreams {
 
 #[cfg(test)]
 mod tests {
-    use super::Cartridge;
-    use super::ColorDreams;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::Interrupt;
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use super::{Cartridge, ColorDreams};
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+        interrupt::Interrupt, mapper::Mapper, mirror::MirrorMode, rom_format::RomFormat,
+    };
 
     fn test_data() -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

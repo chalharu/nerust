@@ -68,9 +68,9 @@ pub(super) mod stack;
 pub(super) mod store;
 pub(super) mod transfer;
 
-use super::CpuCartridgeBus;
 use super::{
-    Apu, Controller, Core, CpuStatesEnum, CpuStepStateEnum, Ppu, Register, read_dummy_current,
+    Apu, Controller, Core, CpuCartridgeBus, CpuStatesEnum, CpuStepStateEnum, Ppu, Register,
+    read_dummy_current,
 };
 
 fn exit_opcode(core: &mut Core) -> CpuStepStateEnum {

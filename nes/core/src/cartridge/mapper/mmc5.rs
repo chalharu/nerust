@@ -1,14 +1,15 @@
 use super::Cartridge;
-use crate::OpenBusReadResult;
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC5};
-use crate::interrupt::{Interrupt, IrqSource};
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::persistence_codec::{decode_payload, encode_payload};
-use crate::persistence_error::PersistenceError;
-use crate::ppu_memory_access::PpuReadAccess;
-use crate::ppu_memory_access::{PpuBusAccess, PpuBusEvent};
+use crate::{
+    OpenBusReadResult,
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC5},
+    interrupt::{Interrupt, IrqSource},
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    persistence_codec::{decode_payload, encode_payload},
+    persistence_error::PersistenceError,
+    ppu_memory_access::{PpuBusAccess, PpuBusEvent, PpuReadAccess},
+};
 
 mod audio;
 mod ppu;

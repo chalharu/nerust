@@ -1,13 +1,15 @@
-use super::ValidationRuntime;
-use crate::error::RomTestError;
-use crate::manifest::RomCase;
-use crate::media::{HashingMixer, validation_screen_buffer};
-use nerust_nes_core::Core;
-use nerust_nes_core::input_types::Buttons;
-use nerust_nes_core::rom_parse;
+use std::sync::Arc;
+
+use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use std::sync::Arc;
+
+use super::ValidationRuntime;
+use crate::{
+    error::RomTestError,
+    manifest::RomCase,
+    media::{HashingMixer, validation_screen_buffer},
+};
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(

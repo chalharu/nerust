@@ -1,173 +1,217 @@
-use nerust_screen_video::{FrameBuffer, VideoFrameSpec, VideoPresentation, VideoRenderProfile};
-use nerust_screen_wgpu::renderer::{
-    DeviceLimitProfile, PresentationOptions, RenderOutcome, Renderer,
+use nerust_screen_video::{
+    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
+    SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
 };
-use nerust_screen_wgpu::surface::{RenderSurface, SurfaceSize, SurfaceTargetSource};
-use raw_window_handle::{HandleError, RawDisplayHandle, RawWindowHandle};
+use nerust_screen_wgpu::renderer::{
+    DeviceLimitProfile, PresentationOptions, RenderOutcome, RenderPipeline,
+};
+use nerust_screen_wgpu::surface;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-pub use nerust_screen_video::RenderResult;
+// ---------------------------------------------------------------------------
+// WgpuRenderer
+// ---------------------------------------------------------------------------
 
-/// Shell-side contract for surfaces that can host a wgpu renderer.
-///
-/// # Safety
-///
-/// Implementors must ensure the returned raw display/window handles describe a
-/// stable native surface target, and that the backing native objects outlive
-/// any `RenderSurface` built from them.
-pub unsafe trait RenderSurfaceTarget {
-    fn prepare(&self);
-
-    fn surface_size(&self, fallback: SurfaceSize) -> SurfaceSize;
-
-    fn raw_window_handle(&self) -> Result<RawWindowHandle, HandleError>;
-
-    fn raw_display_handle(&self) -> Result<Option<RawDisplayHandle>, HandleError>;
-}
-
-struct ShellSurfaceTarget<T>(T);
-
-// Safety: `T` is required to uphold the `RenderSurfaceTarget` contract, and
-// `RenderSurface` stores `Surface<'static>` ahead of the wrapped target so the
-// wgpu surface is dropped before the native target handles it was built from.
-unsafe impl<T: RenderSurfaceTarget> SurfaceTargetSource for ShellSurfaceTarget<T> {
-    fn prepare(&self) {
-        self.0.prepare();
-    }
-
-    fn surface_size(&self, fallback: SurfaceSize) -> SurfaceSize {
-        self.0.surface_size(fallback)
-    }
-
-    fn raw_window_handle(&self) -> Result<RawWindowHandle, HandleError> {
-        self.0.raw_window_handle()
-    }
-
-    fn raw_display_handle(&self) -> Result<Option<RawDisplayHandle>, HandleError> {
-        self.0.raw_display_handle()
-    }
-}
-
-/// App-facing wgpu render backend.
-///
-/// Owns the [`RenderSurface`] and [`Renderer`] lifecycle so that wgpu shells
-/// are free from direct surface-management dependencies below the backend.
-/// Surface recreation and reconfiguration after resize or loss are handled
-/// transparently inside [`render`](Self::render).
-pub struct WgpuBackend<T: RenderSurfaceTarget> {
-    // Drop order matters: release GPU resources before tearing down the
-    // surface/instance pair they were created against.
-    renderer: Renderer,
-    render_surface: RenderSurface<ShellSurfaceTarget<T>>,
+/// Wgpu device + pipeline.  Surface is attached/detached dynamically.
+pub struct WgpuRenderer {
+    instance: wgpu::Instance,
+    render_profile: VideoRenderProfile,
+    pipeline: Option<RenderPipeline>,
+    surface: Option<wgpu::Surface<'static>>,
+    size: SurfaceSize,
     last_render_error: Option<String>,
 }
 
-impl<T: RenderSurfaceTarget> WgpuBackend<T> {
-    /// Create a new backend from a shell-provided surface target.
-    ///
-    /// `initial_size` is used as a fallback when the surface target cannot
-    /// determine its own size (e.g. before the first layout pass). The backend
-    /// calls [`Renderer::new`] synchronously via `pollster::block_on`.
-    pub fn new(
-        target: T,
-        initial_size: SurfaceSize,
-        render_profile: &VideoRenderProfile,
-        presentation_options: PresentationOptions,
-    ) -> Result<Self, String> {
-        Self::new_with_device_limit_profile(
-            target,
-            initial_size,
-            render_profile,
-            DeviceLimitProfile::Default,
-            presentation_options,
-        )
+impl std::fmt::Debug for WgpuRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WgpuRenderer")
+            .field("size", &self.size)
+            .field("last_render_error", &self.last_render_error)
+            .finish_non_exhaustive()
     }
+}
 
-    pub fn new_with_device_limit_profile(
-        target: T,
-        initial_size: SurfaceSize,
-        render_profile: &VideoRenderProfile,
-        device_limit_profile: DeviceLimitProfile,
-        presentation_options: PresentationOptions,
-    ) -> Result<Self, String> {
+impl WgpuRenderer {
+    fn build_pipeline(
+        instance: &wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        size: SurfaceSize,
+        profile: &VideoRenderProfile,
+        vsync: bool,
+    ) -> Result<RenderPipeline, RendererError> {
         let presentation = VideoPresentation::new(VideoFrameSpec::new(
-            render_profile.frame_format,
-            render_profile.source_logical_size,
-            render_profile.logical_size,
-            render_profile.physical_size,
+            profile.frame_format,
+            profile.source_logical_size,
+            profile.logical_size,
+            profile.physical_size,
         ));
-        let render_surface = RenderSurface::new(ShellSurfaceTarget(target))?;
-        let surface_size = render_surface.surface_size(initial_size);
-        let renderer = pollster::block_on(Renderer::new_with_device_limit_profile(
-            &render_surface,
-            surface_size,
+        #[cfg(target_os = "android")]
+        let dl = DeviceLimitProfile::DownlevelWebGl2;
+        #[cfg(not(target_os = "android"))]
+        let dl = DeviceLimitProfile::Default;
+        pollster::block_on(RenderPipeline::new(
+            instance,
+            surface,
+            size,
             &presentation,
-            render_profile.ntsc_packed_rgba8.as_deref(),
-            device_limit_profile,
-            presentation_options,
-        ))?;
-        Ok(Self {
-            renderer,
-            render_surface,
-            last_render_error: None,
-        })
+            profile.ntsc_packed_rgba8.as_deref(),
+            PresentationOptions { vsync },
+            dl,
+        ))
+        .map_err(|e| RendererError::new("pipeline", Box::new(OpaqueError(e))))
+    }
+}
+
+impl GpuRenderer for WgpuRenderer {
+    fn size(&self) -> SurfaceSize {
+        self.size
     }
 
-    /// Render a frame from `frame_buffer`.
-    ///
-    /// `window_size` is the current inner size of the OS window, used as a
-    /// fallback if the surface target cannot determine its own size. Surface
-    /// recreation on loss is handled internally; shells see
-    /// [`RenderResult::Skipped`] for successful recovery and
-    /// [`RenderResult::Error`] when recreation itself fails.
-    pub fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) -> RenderResult {
-        // PaletteIndex 形式の場合、palette texture を FrameBuffer から同期する
-        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
-            self.renderer.update_palette_texture(&palette_rgba8);
+    fn attach(
+        &mut self,
+        wh: RawWindowHandle,
+        dh: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.size = size;
+        let wgpu_surface = surface::create_wgpu_surface(&self.instance, wh, dh)
+            .map_err(|e| RendererError::new("surface", Box::new(OpaqueError(e))))?;
+        let pipeline = Self::build_pipeline(
+            &self.instance,
+            &wgpu_surface,
+            size,
+            &self.render_profile,
+            true,
+        )?;
+        self.surface = Some(wgpu_surface);
+        self.pipeline = Some(pipeline);
+        Ok(())
+    }
+
+    fn detach(&mut self) {
+        self.surface = None;
+        self.pipeline = None;
+    }
+
+    fn resize(&mut self, size: SurfaceSize) {
+        self.size = size;
+        let Some(ref surface) = self.surface else {
+            return;
+        };
+        let Some(ref mut pipeline) = self.pipeline else {
+            return;
+        };
+        pipeline.reconfigure_surface(surface, size);
+    }
+
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        let Some(ref surface) = self.surface else {
+            return Err(RendererError::new(
+                "update: not attached",
+                Box::new(OpaqueError("".to_string())),
+            ));
+        };
+        self.pipeline = Some(Self::build_pipeline(
+            &self.instance,
+            surface,
+            self.size,
+            profile,
+            true,
+        )?);
+        Ok(())
+    }
+
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
+        let Some(ref surface) = self.surface else {
+            return RenderResult::Skipped;
+        };
+        let Some(ref mut pipeline) = self.pipeline else {
+            return RenderResult::Skipped;
+        };
+
+        if let Some(p) = frame.palette_as_rgba8() {
+            pipeline.update_palette_texture(&p);
         }
-        let surface_size = self.render_surface.surface_size(window_size);
-        let outcome =
-            self.renderer
-                .render(&self.render_surface, surface_size, frame_buffer.as_ref());
-        match outcome {
+
+        match pipeline.render(surface, self.size, frame.as_ref()) {
             Ok(RenderOutcome::Presented) => {
                 self.last_render_error = None;
                 RenderResult::Presented
             }
             Ok(RenderOutcome::Skipped) => RenderResult::Skipped,
-            Ok(RenderOutcome::RecreateSurface) => match self.render_surface.recreate_surface() {
-                Ok(()) => {
-                    self.last_render_error = None;
-                    let new_size = self.render_surface.surface_size(window_size);
-                    self.renderer
-                        .reconfigure_surface(&self.render_surface, new_size);
-                    RenderResult::Skipped
+            Ok(RenderOutcome::RecreateSurface) => {
+                self.last_render_error = None;
+                RenderResult::Skipped
+            }
+            Err(e) => {
+                if self.last_render_error.as_deref() != Some(e.as_str()) {
+                    log::error!("wgpu: {e}");
                 }
-                Err(err) => {
-                    let should_log = self.last_render_error.as_deref() != Some(err.as_str());
-                    self.last_render_error = Some(err.clone());
-                    if should_log {
-                        log::error!("wgpu surface recreation failed: {err}");
-                    }
-                    RenderResult::Error
-                }
-            },
-            Err(err) => {
-                let should_log = self.last_render_error.as_deref() != Some(err.as_str());
-                self.last_render_error = Some(err.clone());
-                if should_log {
-                    log::error!("wgpu render error: {err}");
-                }
+                self.last_render_error = Some(e.to_string());
                 RenderResult::Error
             }
         }
     }
+}
 
-    /// Reconfigure the wgpu surface for a new window size.
-    ///
-    /// Call this after a resize event, before the next [`render`](Self::render).
-    pub fn reconfigure(&mut self, window_size: SurfaceSize) {
-        let surface_size = self.render_surface.surface_size(window_size);
-        self.renderer
-            .reconfigure_surface(&self.render_surface, surface_size);
+// ---------------------------------------------------------------------------
+// WgpuFactory
+// ---------------------------------------------------------------------------
+
+pub struct WgpuFactory;
+
+impl Default for WgpuFactory {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl WgpuFactory {
+    fn device_limit_profile() -> DeviceLimitProfile {
+        #[cfg(target_os = "android")]
+        {
+            DeviceLimitProfile::DownlevelWebGl2
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            DeviceLimitProfile::Default
+        }
+    }
+}
+
+impl GpuFactory for WgpuFactory {
+    fn create_renderer(
+        &self,
+        config: &RendererConfig,
+        _display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+        let instance = surface::default_instance();
+
+        // Create a headless device + queue.  The pipeline and surface are
+        // created in attach() where we have actual window handles.
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .map_err(|e| RendererError::new("request adapter", Box::new(OpaqueError(e.to_string()))))?;
+        let limits = Self::device_limit_profile().required_limits();
+        let (_device, _queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("nerust_wgpu_device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: limits,
+                ..Default::default()
+            }))
+            .map_err(|e| RendererError::new("device", Box::new(OpaqueError(e.to_string()))))?;
+
+        Ok(Box::new(WgpuRenderer {
+            instance,
+            render_profile: config.render_profile.clone(),
+            pipeline: None,
+            surface: None,
+            size: SurfaceSize::new(0, 0),
+            last_render_error: None,
+        }))
     }
 }

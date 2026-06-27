@@ -1,6 +1,8 @@
-use super::{Error, gl_error_handle, gl_get_error};
-use gl::types::{GLenum, GLint, GLsizei, GLuint};
 use std::rc::Rc;
+
+use gl::types::{GLenum, GLint, GLsizei, GLuint};
+
+use super::{Error, gl_error_handle, gl_get_error};
 
 #[derive(Debug)]
 pub struct VertexArray {

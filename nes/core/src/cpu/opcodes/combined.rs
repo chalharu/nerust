@@ -1,6 +1,9 @@
-use super::super::CpuCartridgeBus;
-use super::super::{Apu, Controller, Core, CpuStepStateEnum, InternalStat, Ppu, Register};
-use super::exit_opcode;
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, InternalStat, Ppu, Register,
+    },
+    exit_opcode,
+};
 
 pub(crate) trait Read {
     fn reader(register: &mut Register, value: u8);

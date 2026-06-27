@@ -1,10 +1,15 @@
-use jni::objects::{JObject, JObjectArray, JString, JValue};
-use jni::refs::Global;
-use jni::sys::jobject;
-use jni::{JavaVM, jni_sig, jni_str};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
+use jni::{
+    JavaVM, jni_sig, jni_str,
+    objects::{JObject, JObjectArray, JString, JValue},
+    refs::Global,
+    sys::jobject,
+};
 use nerust_gui_runtime::rom_library::RomLibraryEntry;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 /// Cached library entries for synchronous dialog display from JNI callbacks.

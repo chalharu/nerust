@@ -1,9 +1,13 @@
-use crate::load::{MediaObject, ResolvedLoadRequest};
-use crate::session::SessionError;
-use crate::session::SessionHandle;
-use crate::session::commands::{SessionCommand, SessionCommandOutcome};
-use crate::session::title::window_title;
 use std::path::Path;
+
+use crate::{
+    load::{MediaObject, ResolvedLoadRequest},
+    session::{
+        SessionError, SessionHandle,
+        commands::{SessionCommand, SessionCommandOutcome},
+        title::window_title,
+    },
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSize {

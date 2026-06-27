@@ -1,43 +1,54 @@
 mod library;
 mod menu;
 mod picker;
-mod renderer;
 mod settings;
 mod storage;
-mod surface;
 
-use self::library::LibraryDialogResult;
-use self::menu::MenuAction;
-use self::picker::RomPickerResult;
-use self::renderer::WgpuRenderer;
-use self::settings::{AndroidSettings, SettingsDialogResult};
-use self::storage::AndroidStorage;
+use std::{
+    collections::HashMap,
+    ffi::c_void,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use jni::{jni_sig, jni_str};
-use nerust_backend_wgpu::RenderResult;
-use nerust_factory_nes::NesFactory;
-use nerust_factory_nes::touch::{
-    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+use nerust_backend_wgpu::WgpuFactory;
+use nerust_factory_nes::{
+    NesFactory,
+    touch::{
+        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+    },
 };
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsSnapshot};
-use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::load::MediaObject;
-use nerust_gui_shell::session::SessionHandle;
-use nerust_gui_shell::session::commands::SessionCommand;
-use nerust_gui_shell::settings::defaults::seed::{
-    default_app_state, default_local_settings, default_shared_settings,
+use nerust_gui_runtime::{
+    settings::{HostBackendIdentity, SettingsSnapshot},
+    shell::NativeShellState,
 };
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{Touch, TouchPhase, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::android::EventLoopBuilderExtAndroid;
-use winit::platform::android::activity::AndroidApp;
-use winit::window::{Window, WindowId};
+use nerust_gui_shell::{
+    factory::CoreFactory,
+    load::MediaObject,
+    session::{SessionHandle, commands::SessionCommand},
+    settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    },
+};
+use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::{Touch, TouchPhase, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
+    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    window::{Window, WindowId},
+};
+
+use self::{
+    library::LibraryDialogResult,
+    menu::MenuAction,
+    picker::RomPickerResult,
+    settings::{AndroidSettings, SettingsDialogResult},
+    storage::AndroidStorage,
+};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -121,7 +132,7 @@ struct AndroidFrontend {
     shell: NativeShellState,
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn GpuRenderer>>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
     is_resumed: bool,
@@ -530,13 +541,39 @@ impl AndroidFrontend {
             size.height
         );
         drop(self.renderer.take());
-        self.renderer = match WgpuRenderer::new(window, &self.session) {
+        let vsync = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .presentation
+            .vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        let config = RendererConfig {
+            render_profile: self.session.render_profile().clone(),
+            vsync,
+        };
+        let renderer_result = WgpuFactory
+            .create_renderer(&config, raw_display_handle)
+            .and_then(|mut r| {
+                let ws = SurfaceSize::new(size.width, size.height);
+                r.attach(raw_window_handle, raw_display_handle, ws)
+                    .map(|_| r)
+            });
+        self.renderer = match renderer_result {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
                 Some(renderer)
             }
-            Err(error) => {
-                log::error!("failed to initialize Android renderer: {error}");
+            Err(e) => {
+                log::error!("failed to initialize Android renderer: {e}");
                 None
             }
         };
@@ -738,6 +775,7 @@ impl AndroidFrontend {
 
     fn render(&mut self) {
         let Some(window) = self.window.as_ref() else {
+            self.shell.needs_redraw = false;
             return;
         };
         let Some(renderer) = self.renderer.as_mut() else {
@@ -751,11 +789,12 @@ impl AndroidFrontend {
         if !self.session.loaded() {
             self.session.clear_display();
         }
-        let size = window.inner_size();
-        match renderer.render(
-            &mut self.session,
-            nerust_screen_wgpu::surface::SurfaceSize::new(size.width, size.height),
-        ) {
+        self.session.swap_frame_buffer();
+        let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+        match renderer.render(self.session.frame_buffer()) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
@@ -765,11 +804,7 @@ impl AndroidFrontend {
                 self.shell.needs_redraw = true;
             }
             RenderResult::Error => {
-                log::warn!(
-                    "render: renderer reported an error for {}x{}",
-                    size.width,
-                    size.height
-                );
+                log::warn!("render: renderer reported an error");
                 self.shell.needs_redraw = true;
             }
         }
@@ -872,10 +907,7 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
                 if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.reconfigure(nerust_screen_wgpu::surface::SurfaceSize::new(
-                        size.width,
-                        size.height,
-                    ));
+                    renderer.resize(SurfaceSize::new(size.width, size.height));
                 }
                 self.rebuild_overlay();
                 self.request_redraw();

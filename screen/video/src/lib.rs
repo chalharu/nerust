@@ -4,18 +4,20 @@ pub mod physical;
 pub mod renderer;
 pub mod rgb;
 
-pub use crate::filter::presentation::{
-    ConsoleVideoAssets, EncodedNtscTextures, EncodedPackedNtscTexture, FilterLayout,
-    NesVideoAssets, VideoFilterPipeline, VideoPresentationPipelineKind,
+pub use crate::{
+    filter::{
+        BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH,
+        NesFilter, PALETTE_TEXTURE_WIDTH,
+        presentation::{
+            ConsoleVideoAssets, EncodedNtscTextures, EncodedPackedNtscTexture, FilterLayout,
+            NesVideoAssets, VideoFilterPipeline, VideoPresentationPipelineKind,
+        },
+    },
+    logical::LogicalSize,
+    physical::PhysicalSize,
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
+    rgb::RGB,
 };
-pub use crate::filter::{
-    BLACK_PALETTE_INDEX, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH,
-};
-pub use crate::filter::{FilterFunc, FilterType, NesFilter};
-pub use crate::logical::LogicalSize;
-pub use crate::physical::PhysicalSize;
-pub use crate::renderer::{RenderResult, Renderer};
-pub use crate::rgb::RGB;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct SurfaceSize {

@@ -1,8 +1,7 @@
 pub(crate) mod ntsc;
 pub(crate) mod rgb;
 
-use crate::LogicalSize;
-use crate::PhysicalSize;
+use crate::{LogicalSize, PhysicalSize};
 
 pub trait FilterUnit: Send {
     type Input;

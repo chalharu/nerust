@@ -1,5 +1,4 @@
-use super::super::Register;
-use super::Accumulate;
+use super::{super::Register, Accumulate};
 
 fn set_nz_from_value(register: &mut Register, data: u8) -> u8 {
     register.set_nz_from_value(data);

@@ -1,11 +1,14 @@
-use super::{prepare_test_dir, test_identity, test_identity_with_bytes};
-use crate::slots::{
-    allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
-    scan_state_slots, scan_state_slots_for_identity, state_slot_path, write_autosave_state_slot,
-    write_state_slot,
-};
-use crate::thumbnail::ThumbnailSource;
 use std::fs;
+
+use super::{prepare_test_dir, test_identity, test_identity_with_bytes};
+use crate::{
+    slots::{
+        allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
+        scan_state_slots, scan_state_slots_for_identity, state_slot_path,
+        write_autosave_state_slot, write_state_slot,
+    },
+    thumbnail::ThumbnailSource,
+};
 
 #[test]
 fn slot_id_allocation_is_monotonic_across_deletions() {

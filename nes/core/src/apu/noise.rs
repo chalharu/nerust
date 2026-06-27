@@ -1,6 +1,4 @@
-use super::envelope::*;
-use super::length_counter::*;
-use super::timer::*;
+use super::{envelope::*, length_counter::*, timer::*};
 
 // NTSC
 // https://wiki.nesdev.com/w/index.php/APU_Noise
@@ -122,11 +120,13 @@ impl Noise {
 
 #[cfg(test)]
 mod tests {
-    use super::super::fft_test::{
-        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, average_band_power, capture_samples, dominant_frequency,
-        dominant_frequency_tolerance, power_spectrum, spectral_flatness,
+    use super::{
+        super::fft_test::{
+            CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, average_band_power, capture_samples,
+            dominant_frequency, dominant_frequency_tolerance, power_spectrum, spectral_flatness,
+        },
+        NOISE_TABLE, Noise,
     };
-    use super::{NOISE_TABLE, Noise};
 
     const SHORT_MODE_SEQUENCE_LENGTH: f32 = 93.0;
     const SHORT_MODE_DOMINANT_HARMONIC: f32 = 31.0;

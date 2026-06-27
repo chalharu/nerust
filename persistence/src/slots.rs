@@ -1,18 +1,22 @@
-use crate::archive::{
-    build_state_archive, load_state_archive, read_state_summary, summary_from_metadata,
+use std::{
+    fs::{self, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
-use crate::error::PersistenceError;
-use crate::fs_ops::write_atomic;
-use crate::metadata::encode_slot_metadata;
-use crate::model::{LoadedStateSlot, StateSlotSummary};
-use crate::thumbnail::{ThumbnailSource, encode_thumbnail_png};
-use crate::time::{system_time_from_millis, unix_millis};
+
 use fs2::FileExt;
 use nerust_contract_core::identity::SystemIdentity;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+
+use crate::{
+    archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
+    error::PersistenceError,
+    fs_ops::write_atomic,
+    metadata::encode_slot_metadata,
+    model::{LoadedStateSlot, StateSlotSummary},
+    thumbnail::{ThumbnailSource, encode_thumbnail_png},
+    time::{system_time_from_millis, unix_millis},
+};
 
 const AUTOSAVE_SLOT_ENTRY: &str = ".autosave_slot";
 const AUTOSAVE_SLOT_ID: u64 = 0;

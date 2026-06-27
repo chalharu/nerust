@@ -1,19 +1,22 @@
+use std::{borrow::Cow, sync::Arc};
+
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
-use nerust_gui_settings::shared::SystemSettings;
-use nerust_gui_shell::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
-    SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+use nerust_gui_settings::{
+    nes::{NesSettings, NesVideoFilter},
+    shared::SystemSettings,
 };
-use nerust_gui_shell::factory::FactoryError;
-use nerust_gui_shell::load::{ResolvedLoadRequest, SystemLoadOptions};
-use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_nes_core::core_options::CoreOptions;
-use nerust_nes_core::core_options::Mmc3IrqVariant;
+use nerust_gui_shell::{
+    descriptor::{
+        SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
+        SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+    },
+    factory::FactoryError,
+    load::{ResolvedLoadRequest, SystemLoadOptions},
+    settings::i18n::{UiText, text},
+};
+use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_screen_video::FilterType;
-use std::borrow::Cow;
-use std::sync::Arc;
 
 const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
@@ -203,27 +206,30 @@ pub(crate) fn apply_nes_settings_choice(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_nes_settings_choice, effective_load_options, filter_type, nes_settings_page,
-        resolve_nes_load_request,
-    };
-    use crate::NesFactory;
+    use std::borrow::Cow;
+
     use nerust_contract_input::ControlDescriptor;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
-    use nerust_gui_shell::factory::CoreFactory;
-    use nerust_gui_shell::load::SystemLoadOptions;
-    use nerust_gui_shell::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
+    use nerust_gui_shell::{
+        factory::CoreFactory,
+        load::SystemLoadOptions,
+        settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        },
     };
-    use nerust_nes_core::core_options::CoreOptions;
-    use nerust_nes_core::core_options::Mmc3IrqVariant;
+    use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_nes_runtime::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
-    use std::borrow::Cow;
+
+    use super::{
+        apply_nes_settings_choice, effective_load_options, filter_type, nes_settings_page,
+        resolve_nes_load_request,
+    };
+    use crate::NesFactory;
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {

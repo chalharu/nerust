@@ -1,7 +1,4 @@
-use std::env;
-use std::fmt::Write as _;
-use std::fs;
-use std::path::PathBuf;
+use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 fn main() {
     let manifest_path =

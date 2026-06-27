@@ -1,10 +1,12 @@
 // Mapper 2
 
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
+use crate::{
+    cartridge_rom::CartridgeData,
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct UxRom {
