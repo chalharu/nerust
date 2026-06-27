@@ -14,7 +14,6 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use log::LevelFilter;
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -34,8 +33,6 @@ use nerust_gui_shell::{
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
-use nerust_sound_openal::prepare_macos_runtime;
-use simple_logger::SimpleLogger;
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -327,14 +324,7 @@ fn ensure_window(
 }
 
 pub fn run(factory: Box<dyn GpuFactory>) {
-    // log initialize
-    SimpleLogger::new()
-        .with_level(LevelFilter::Warn)
-        .env()
-        .init()
-        .unwrap();
     crash_handler::install();
-    prepare_macos_runtime();
 
     let factory: Rc<dyn GpuFactory> = Rc::from(factory);
 
