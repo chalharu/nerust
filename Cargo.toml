@@ -48,6 +48,7 @@ default = ["tao"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
 wgpu = ["nerust_gtk?/wgpu", "nerust_tao?/wgpu"]
+opengl = ["nerust_gtk?/opengl", "nerust_tao?/opengl"]
 
 [profile.release]
 debug = false
