@@ -12,7 +12,7 @@ use std::{
 };
 
 use jni::{jni_sig, jni_str};
-use nerust_backend_wgpu::WgpuRendererFactory;
+use nerust_backend_wgpu::WgpuFactory;
 use nerust_factory_nes::{
     NesFactory,
     touch::{
@@ -31,7 +31,7 @@ use nerust_gui_shell::{
         default_app_state, default_local_settings, default_shared_settings,
     },
 };
-use nerust_screen_video::{RenderResult, Renderer, RendererConfig, RendererFactory, SurfaceSize};
+use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -132,7 +132,7 @@ struct AndroidFrontend {
     shell: NativeShellState,
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
-    renderer: Option<Box<dyn Renderer>>,
+    renderer: Option<Box<dyn GpuRenderer>>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
     is_resumed: bool,
@@ -561,11 +561,14 @@ impl AndroidFrontend {
             render_profile: self.session.render_profile().clone(),
             vsync,
         };
-        self.renderer = match WgpuRendererFactory.create_renderer(
-            &config,
-            raw_window_handle,
-            raw_display_handle,
-        ) {
+        let renderer_result = WgpuFactory
+            .create_renderer(&config, raw_display_handle)
+            .and_then(|mut r| {
+                let ws = SurfaceSize::new(size.width, size.height);
+                r.attach(raw_window_handle, raw_display_handle, ws)
+                    .map(|_| r)
+            });
+        self.renderer = match renderer_result {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
                 Some(renderer)
@@ -789,7 +792,10 @@ impl AndroidFrontend {
         }
         self.session.swap_frame_buffer();
         let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
-        match renderer.render(self.session.frame_buffer(), window_size) {
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+        match renderer.render(self.session.frame_buffer()) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
@@ -902,7 +908,7 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
                 if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.reconfigure(SurfaceSize::new(size.width, size.height));
+                    renderer.resize(SurfaceSize::new(size.width, size.height));
                 }
                 self.rebuild_overlay();
                 self.request_redraw();
