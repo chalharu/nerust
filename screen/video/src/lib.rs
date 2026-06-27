@@ -3,6 +3,7 @@ pub mod logical;
 pub mod physical;
 pub mod renderer;
 pub mod rgb;
+pub mod run_options;
 
 pub use crate::{
     filter::{
@@ -17,6 +18,7 @@ pub use crate::{
     physical::PhysicalSize,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
     rgb::RGB,
+    run_options::RunOptions,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

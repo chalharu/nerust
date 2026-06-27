@@ -10,7 +10,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-clap.workspace = true
 iced = { workspace = true, features = ["advanced"] }
 iced_tiny_skia.workspace = true
 iced_winit.workspace = true

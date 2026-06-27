@@ -31,7 +31,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
+use nerust_screen_video::{FrameBuffer, GpuFactory, RunOptions, VideoRenderProfile};
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -322,7 +322,7 @@ fn ensure_window(
     window
 }
 
-pub fn run(factory: Box<dyn GpuFactory>) {
+pub fn run(factory: Box<dyn GpuFactory>, _options: RunOptions) {
     let factory: Rc<dyn GpuFactory> = Rc::from(factory);
 
     let app = gtk::Application::new(
