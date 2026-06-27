@@ -15,9 +15,7 @@ pub use crate::{
     },
     logical::LogicalSize,
     physical::PhysicalSize,
-    renderer::{
-        GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
-    },
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
     rgb::RGB,
 };
 

@@ -11,26 +11,23 @@ use glutin::{
 };
 use nerust_screen_opengl::GlView;
 use nerust_screen_video::{
-    FrameBuffer, OpaqueError, RenderResult, Renderer, RendererConfig, RendererError,
-    RendererFactory, Surface, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
+    SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-// ---------------------------------------------------------------------------
-// GlRenderer  — GPU device + pipeline (implements Renderer)
-// ---------------------------------------------------------------------------
-
-/// OpenGL renderer: context + shaders + view.
+/// OpenGL renderer: context + shaders + view + surface.
 pub struct GlRenderer {
     view: GlView,
     context: glutin::context::PossiblyCurrentContext,
     gl_surface: glutin::surface::Surface<WindowSurface>,
     expected_frame_len: usize,
+    size: SurfaceSize,
 }
 
 impl std::fmt::Debug for GlRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlDevice").finish_non_exhaustive()
+        f.debug_struct("GlRenderer").finish_non_exhaustive()
     }
 }
 
@@ -42,34 +39,25 @@ impl Drop for GlRenderer {
     }
 }
 
-impl Renderer for GlRenderer {
-    fn render(&mut self, _surface: &dyn Surface, frame_buffer: &FrameBuffer) -> RenderResult {
-        if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.gl_surface)
-        {
-            log::warn!("GlDevice: failed to make context current: {e}");
-            return RenderResult::Error;
-        }
+impl GpuRenderer for GlRenderer {
+    fn size(&self) -> SurfaceSize {
+        self.size
+    }
 
-        // Apply the output surface's current size as viewport.
-        // This is cheap (glViewport + one uniform upload).
-        let vs = _surface.size();
-        self.view.on_resize(vs.width as i32, vs.height as i32);
+    fn attach(
+        &mut self,
+        _window_handle: RawWindowHandle,
+        _display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.size = size;
+        Ok(())
+    }
 
-        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
-            self.view.update_palette_texture(&palette_rgba8);
-        }
-        let bytes = frame_buffer.as_ref();
-        let bytes = bytes
-            .get(..self.expected_frame_len)
-            .expect("GlDevice: frame buffer too small");
-        self.view.on_update(bytes.as_ptr());
+    fn detach(&mut self) {}
 
-        if let Err(e) = self.gl_surface.swap_buffers(&self.context) {
-            log::warn!("GlDevice: swap_buffers failed: {e}");
-            return RenderResult::Error;
-        }
-        RenderResult::Presented
+    fn resize(&mut self, size: SurfaceSize) {
+        self.size = size;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -95,50 +83,37 @@ impl Renderer for GlRenderer {
         self.expected_frame_len = frame_size.width * frame_size.height * bpp;
         Ok(())
     }
-}
 
-// ---------------------------------------------------------------------------
-// GlSurface  — platform output (implements Surface)
-// ---------------------------------------------------------------------------
+    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+        if !self.context.is_current()
+            && let Err(e) = self.context.make_current(&self.gl_surface)
+        {
+            log::warn!("GlRenderer: failed to make context current: {e}");
+            return RenderResult::Error;
+        }
 
-/// OpenGL surface wrapper.  `configure()` stores the size — the actual
-/// viewport / uniform update is applied lazily by `GlDevice::render()`.
-pub struct GlSurface {
-    size: SurfaceSize,
-}
+        self.view
+            .on_resize(self.size.width as i32, self.size.height as i32);
 
-impl std::fmt::Debug for GlSurface {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlSurface")
-            .field("size", &self.size)
-            .finish()
-    }
-}
+        if let Some(palette_rgba8) = frame_buffer.palette_as_rgba8() {
+            self.view.update_palette_texture(&palette_rgba8);
+        }
+        let bytes = frame_buffer.as_ref();
+        let bytes = bytes
+            .get(..self.expected_frame_len)
+            .expect("GlRenderer: frame buffer too small");
+        self.view.on_update(bytes.as_ptr());
 
-impl Surface for GlSurface {
-    fn size(&self) -> SurfaceSize {
-        self.size
-    }
-
-    fn configure(&mut self, size: SurfaceSize) {
-        self.size = size;
-    }
-
-    fn recreate(
-        &mut self,
-        _window_handle: RawWindowHandle,
-        _display_handle: RawDisplayHandle,
-        _size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        Err(RendererError::new(
-            "surface recreate",
-            Box::new(OpaqueError("OpenGL has no surface loss".to_string())),
-        ))
+        if let Err(e) = self.gl_surface.swap_buffers(&self.context) {
+            log::warn!("GlRenderer: swap_buffers failed: {e}");
+            return RenderResult::Error;
+        }
+        RenderResult::Presented
     }
 }
 
 // ---------------------------------------------------------------------------
-// GlRenderer — constructor (called by the factory's create_renderer)
+// Constructor (called by GlFactory::create_renderer)
 // ---------------------------------------------------------------------------
 
 impl GlRenderer {
@@ -229,16 +204,10 @@ impl GlRenderer {
 
         let (w, h) = (
             NonZeroU32::new(initial_size.width).ok_or_else(|| {
-                RendererError::new(
-                    "zero width",
-                    Box::new(OpaqueError("surface width must be non-zero".to_string())),
-                )
+                RendererError::new("zero width", Box::new(OpaqueError("...".to_string())))
             })?,
             NonZeroU32::new(initial_size.height).ok_or_else(|| {
-                RendererError::new(
-                    "zero height",
-                    Box::new(OpaqueError("surface height must be non-zero".to_string())),
-                )
+                RendererError::new("zero height", Box::new(OpaqueError("...".to_string())))
             })?,
         );
 
@@ -275,46 +244,36 @@ impl GlRenderer {
             context,
             gl_surface,
             expected_frame_len,
+            size: initial_size,
         })
     }
 }
 
 // ---------------------------------------------------------------------------
-// GlRendererFactory — implements RendererFactory
+// GlFactory
 // ---------------------------------------------------------------------------
 
-/// Factory for the OpenGL backend.
-pub struct GlRendererFactory;
+pub struct GlFactory;
 
-impl Default for GlRendererFactory {
+impl Default for GlFactory {
     fn default() -> Self {
         Self
     }
 }
 
-impl RendererFactory for GlRendererFactory {
+impl GpuFactory for GlFactory {
     fn create_renderer(
         &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn Renderer>, RendererError> {
+    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
         GlRenderer::new(
             window_handle,
             display_handle,
             config.initial_size,
             &config.render_profile,
         )
-        .map(|d| Box::new(d) as Box<dyn Renderer>)
-    }
-
-    fn create_surface(
-        &self,
-        _renderer: &dyn Renderer,
-        _window_handle: RawWindowHandle,
-        _display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<Box<dyn Surface>, RendererError> {
-        Ok(Box::new(GlSurface { size }))
+        .map(|r| Box::new(r) as Box<dyn GpuRenderer>)
     }
 }

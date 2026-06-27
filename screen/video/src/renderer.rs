@@ -51,6 +51,9 @@ pub enum RenderResult {
 ///
 /// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
 pub trait GpuRenderer: std::fmt::Debug {
+    /// Current output size.
+    fn size(&self) -> SurfaceSize;
+
     /// Attach a native window.  Must be called before render().
     fn attach(
         &mut self,

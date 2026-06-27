@@ -1,25 +1,17 @@
-#[cfg(feature = "opengl")]
-use nerust_backend_opengl::GlRendererFactory as Factory;
-#[cfg(feature = "wgpu")]
-use nerust_backend_wgpu::WgpuRendererFactory as Factory;
+use nerust_backend_opengl::GlFactory;
 use nerust_screen_video::{
-    FrameBuffer, Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize,
-    VideoRenderProfile,
+    FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, SurfaceSize, VideoRenderProfile,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
-    renderer: Option<Box<dyn Renderer>>,
-    surface: Option<Box<dyn Surface>>,
+    renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl GtkRenderer {
     pub(crate) fn new() -> Self {
-        Self {
-            renderer: None,
-            surface: None,
-        }
+        Self { renderer: None }
     }
 
     pub(crate) fn realize(
@@ -27,30 +19,24 @@ impl GtkRenderer {
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
         app_size: SurfaceSize,
+        physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
-        // Drop old state: wgpu requires surface before renderer.
-        drop(self.surface.take());
         drop(self.renderer.take());
-
         let config = RendererConfig {
             initial_size: app_size,
             render_profile: profile.clone(),
             vsync: true,
         };
-        let factory = Factory::default();
+        let factory = GlFactory::default();
         match factory.create_renderer(&config, window_handle, display_handle) {
-            Ok(r) => {
-                let s = factory.create_surface(r.as_ref(), window_handle, display_handle, app_size);
-                match s {
-                    Ok(s) => {
-                        self.renderer = Some(r);
-                        self.surface = Some(s);
-                    }
-                    Err(e) => log::error!("GtkRenderer: surface creation failed: {e}"),
+            Ok(mut r) => {
+                if let Err(e) = r.attach(window_handle, display_handle, physical_size) {
+                    log::error!("GtkRenderer: attach failed: {e}");
                 }
+                self.renderer = Some(r);
             }
-            Err(e) => log::error!("GtkRenderer: renderer creation failed: {e}"),
+            Err(e) => log::error!("GtkRenderer: create failed: {e}"),
         }
     }
 
@@ -58,13 +44,9 @@ impl GtkRenderer {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let Some(surface) = self.surface.as_mut() else {
-            return;
-        };
-        // Keep the output surface sized to the current window.
-        if surface.size() != window_size {
-            surface.configure(window_size);
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
         }
-        renderer.render(surface.as_ref(), frame_buffer);
+        renderer.render(frame_buffer);
     }
 }

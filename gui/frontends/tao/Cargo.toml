@@ -34,6 +34,9 @@ serde.workspace = true
 simple_logger.workspace = true
 tao.workspace = true
 
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+gtk = "=0.18.2"
+
 [features]
 default = ["wgpu"]
 opengl = ["nerust_backend_opengl"]

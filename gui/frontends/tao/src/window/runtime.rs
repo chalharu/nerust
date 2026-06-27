@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "opengl")]
 use nerust_backend_opengl::GlRendererFactory as Factory;
 #[cfg(feature = "wgpu")]
-use nerust_backend_wgpu::WgpuRendererFactory as Factory;
+use nerust_backend_wgpu::WgpuFactory as Factory;
 use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{Renderer, RendererConfig, RendererFactory, Surface, SurfaceSize};
+use nerust_screen_video::{GpuFactory, GpuRenderer, RendererConfig, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -22,8 +22,7 @@ use crate::app_menu::{UserEvent, imp::AppMenu};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<Box<dyn Renderer>>,
-    surface: Option<Box<dyn Surface>>,
+    renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
@@ -41,7 +40,6 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             host: HostState::new(AppMenu::new(proxy)),
             renderer: None,
-            surface: None,
         }
     }
 
@@ -63,19 +61,17 @@ impl WindowRuntime {
             vsync,
         };
         let factory = Factory::default();
-        let renderer = factory
+        let mut renderer = factory
             .create_renderer(&config, raw_window_handle, raw_display_handle)
             .expect("failed to create WgpuRenderer");
-        let surface = factory
-            .create_surface(
-                renderer.as_ref(),
+        renderer
+            .attach(
                 raw_window_handle,
                 raw_display_handle,
                 SurfaceSize::new(size.width, size.height),
             )
-            .expect("failed to create WgpuSurface");
+            .expect("failed to attach");
         self.renderer = Some(renderer);
-        self.surface = Some(surface);
         Some(())
     }
 
@@ -206,23 +202,18 @@ impl WindowRuntime {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let Some(surface) = self.surface.as_mut() else {
-            return;
-        };
 
-        // Keep the surface sized to the current window.
-        if surface.size() != window_size {
-            surface.configure(window_size);
+        // Keep the output sized to the current window.
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
         }
 
         self.host.session_mut().swap_frame_buffer();
-        let result = renderer.render(surface.as_ref(), self.host.session_mut().frame_buffer());
+        let result = renderer.render(self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);
     }
 
     fn recreate_renderer(&mut self) {
-        // Drop surface first (wgpu requirement), then renderer.
-        self.surface = None;
         self.renderer = None;
         if let Some(window) = self.host.window().cloned() {
             self.build_renderer_and_surface(&window);
@@ -232,7 +223,6 @@ impl WindowRuntime {
 
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
-        self.surface = None;
         self.renderer = None;
     }
 }
