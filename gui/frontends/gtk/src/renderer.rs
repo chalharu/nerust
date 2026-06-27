@@ -10,11 +10,15 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
     renderer: Option<Box<dyn GpuRenderer>>,
+    last_size: SurfaceSize,
 }
 
 impl GtkRenderer {
     pub(crate) fn new() -> Self {
-        Self { renderer: None }
+        Self {
+            renderer: None,
+            last_size: SurfaceSize::new(0, 0),
+        }
     }
 
     pub(crate) fn realize(
@@ -25,6 +29,7 @@ impl GtkRenderer {
         physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
+        self.last_size = physical_size;
         drop(self.renderer.take());
         let config = RendererConfig {
             initial_size: app_size,
@@ -43,12 +48,20 @@ impl GtkRenderer {
         }
     }
 
+    pub(crate) fn resize(&mut self, size: SurfaceSize) {
+        self.last_size = size;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(size);
+        }
+    }
+
     pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        if renderer.size() != window_size {
+        if self.last_size != window_size {
             renderer.resize(window_size);
+            self.last_size = window_size;
         }
         renderer.render(frame_buffer);
     }
