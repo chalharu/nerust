@@ -16,25 +16,31 @@ use nerust_screen_video::{
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-/// OpenGL renderer: context + shaders + view + surface.
+/// OpenGL renderer: context + shaders + view + attachable surface.
 pub struct GlRenderer {
     view: GlView,
+    display: glutin::display::Display,
+    gl_config: glutin::config::Config,
     context: glutin::context::PossiblyCurrentContext,
-    gl_surface: glutin::surface::Surface<WindowSurface>,
+    gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
 }
 
 impl std::fmt::Debug for GlRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlRenderer").finish_non_exhaustive()
+        f.debug_struct("GlRenderer")
+            .field("attached", &self.gl_surface.is_some())
+            .finish_non_exhaustive()
     }
 }
 
 impl Drop for GlRenderer {
     fn drop(&mut self) {
-        if !self.context.is_current() {
-            let _ = self.context.make_current(&self.gl_surface);
+        if let Some(ref surface) = self.gl_surface {
+            if !self.context.is_current() {
+                let _ = self.context.make_current(surface);
+            }
         }
     }
 }
@@ -46,23 +52,51 @@ impl GpuRenderer for GlRenderer {
 
     fn attach(
         &mut self,
-        _window_handle: RawWindowHandle,
-        _display_handle: RawDisplayHandle,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
         self.size = size;
+
+        let (w, h) = (
+            NonZeroU32::new(size.width.max(1)).unwrap(),
+            NonZeroU32::new(size.height.max(1)).unwrap(),
+        );
+        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(window_handle, w, h);
+        let new_surface = unsafe {
+            self.display
+                .create_window_surface(&self.gl_config, &attrs)
+                .map_err(|e| RendererError::new("attach: surface", Box::new(e)))?
+        };
+        // Make the new surface current.  The context was made current in new()
+        // and the old surface (if any) is replaced.
+        if let Err(e) = self.context.make_current(&new_surface) {
+            return Err(RendererError::new(
+                "attach: make_current",
+                Box::new(OpaqueError(e.to_string())),
+            ));
+        }
+        drop(self.gl_surface.replace(new_surface));
         Ok(())
     }
 
-    fn detach(&mut self) {}
+    fn detach(&mut self) {
+        drop(self.gl_surface.take());
+    }
 
     fn resize(&mut self, size: SurfaceSize) {
         self.size = size;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        let Some(ref surface) = self.gl_surface else {
+            return Err(RendererError::new(
+                "update: not attached",
+                Box::new(OpaqueError("".to_string())),
+            ));
+        };
         if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.gl_surface)
+            && let Err(e) = self.context.make_current(surface)
         {
             return Err(RendererError::new(
                 "update: make current",
@@ -85,8 +119,12 @@ impl GpuRenderer for GlRenderer {
     }
 
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+        let Some(ref surface) = self.gl_surface else {
+            log::warn!("GlRenderer: render without attach");
+            return RenderResult::Skipped;
+        };
         if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.gl_surface)
+            && let Err(e) = self.context.make_current(surface)
         {
             log::warn!("GlRenderer: failed to make context current: {e}");
             return RenderResult::Error;
@@ -104,7 +142,7 @@ impl GpuRenderer for GlRenderer {
             .expect("GlRenderer: frame buffer too small");
         self.view.on_update(bytes.as_ptr());
 
-        if let Err(e) = self.gl_surface.swap_buffers(&self.context) {
+        if let Err(e) = surface.swap_buffers(&self.context) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
         }
@@ -241,8 +279,10 @@ impl GlRenderer {
 
         Ok(Self {
             view,
+            display,
+            gl_config: config,
             context,
-            gl_surface,
+            gl_surface: Some(gl_surface),
             expected_frame_len,
             size: initial_size,
         })
