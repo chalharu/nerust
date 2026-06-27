@@ -35,9 +35,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy (default members)
-        run: cargo clippy --quiet
+        run: cargo clippy -p nerust_nes_core -p nerust_persistence --quiet
       - name: Unit tests (default members)
-        run: cargo test --quiet
+        run: cargo test -p nerust_nes_core -p nerust_persistence --quiet
       - name: Support crate tests
         run: |
           cargo test -p nerust_screen_video --lib --quiet
