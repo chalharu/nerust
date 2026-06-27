@@ -19,7 +19,6 @@ nerust_contract_input.workspace = true
 nerust_run_options.workspace = true
 nerust_screen_video.workspace = true
 nerust_persistence.workspace = true
-nerust_sound_openal.workspace = true
 raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

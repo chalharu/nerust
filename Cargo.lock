@@ -3282,7 +3282,6 @@ dependencies = [
  "nerust_persistence",
  "nerust_run_options",
  "nerust_screen_video",
- "nerust_sound_openal",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
@@ -3493,10 +3492,8 @@ dependencies = [
  "nerust_persistence",
  "nerust_run_options",
  "nerust_screen_video",
- "nerust_sound_openal",
  "raw-window-handle",
  "rfd",
- "rmp-serde",
  "serde",
  "tao",
 ]
