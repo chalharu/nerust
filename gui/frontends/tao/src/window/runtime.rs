@@ -24,7 +24,7 @@ pub(crate) struct WindowRuntime {
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
+    pub(crate) fn new(factory: Rc<dyn GpuFactory>, request: Option<LoadRequest>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -35,18 +35,17 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
+        let mut host = HostState::new(app_menu);
+        if let Some(request) = request {
+            host.set_pending_load_request(request);
+        }
+
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(app_menu),
+            host,
             factory,
             renderer: None,
         }
-    }
-
-    pub(crate) fn with_load_request(factory: Rc<dyn GpuFactory>, request: LoadRequest) -> Self {
-        let mut this = Self::new(factory);
-        this.host.set_pending_load_request(request);
-        this
     }
 
     fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
