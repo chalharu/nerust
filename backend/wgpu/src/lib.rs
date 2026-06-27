@@ -95,16 +95,9 @@ impl GpuRenderer for WgpuRenderer {
 
     fn resize(&mut self, size: SurfaceSize) {
         self.size = size;
-        let Some(ref surface) = self.surface else {
-            return;
-        };
-        let Some(ref pipeline) = self.pipeline else {
-            return;
-        };
-        let mut config = pipeline.surface_config().clone();
-        config.width = size.width.max(1);
-        config.height = size.height.max(1);
-        surface.configure(pipeline.device(), &config);
+        let Some(ref surface) = self.surface else { return };
+        let Some(ref mut pipeline) = self.pipeline else { return };
+        pipeline.reconfigure_surface(surface, size);
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
