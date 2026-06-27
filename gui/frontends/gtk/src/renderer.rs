@@ -1,4 +1,7 @@
-use nerust_backend_opengl::GlFactory;
+#[cfg(feature = "opengl")]
+use nerust_backend_opengl::GlFactory as Factory;
+#[cfg(feature = "wgpu")]
+use nerust_backend_wgpu::WgpuFactory as Factory;
 use nerust_screen_video::{
     FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, SurfaceSize, VideoRenderProfile,
 };
@@ -28,7 +31,7 @@ impl GtkRenderer {
             render_profile: profile.clone(),
             vsync: true,
         };
-        let factory = GlFactory::default();
+        let factory = Factory::default();
         match factory.create_renderer(&config, window_handle, display_handle) {
             Ok(mut r) => {
                 if let Err(e) = r.attach(window_handle, display_handle, physical_size) {
