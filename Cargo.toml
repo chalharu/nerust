@@ -44,9 +44,10 @@ nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 
 [features]
-default = ["gtk"]
+default = ["tao"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
+wgpu = ["nerust_gtk?/wgpu", "nerust_tao?/wgpu"]
 
 [profile.release]
 debug = false
