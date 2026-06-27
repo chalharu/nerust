@@ -189,12 +189,28 @@ impl Default for GlFactory {
 }
 
 impl GlFactory {
+    #[allow(unused_variables)]
     fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
-        // We defer the window-handle-dependent preferences (Wgl, EglThenWgl)
-        // to attach().  The display preference here uses only handle-free
-        // variants; attach() will create the context with the correct config.
+        use DisplayApiPreference::*;
         #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
-        let _preference = DisplayApiPreference::Cgl;
+        let _preference = Cgl;
+
+        #[cfg(all(
+            windows,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
+        let _preference = Wgl(None);
+
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let _preference = Glx(Box::new(|_reg| {}));
 
         #[cfg(all(
             any(windows, unix),
@@ -202,10 +218,24 @@ impl GlFactory {
             not(target_os = "macos"),
             not(target_family = "wasm")
         ))]
-        let _preference = DisplayApiPreference::Egl;
+        let _preference = Egl;
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_family = "wasm")))]
-        let _preference = DisplayApiPreference::Egl;
+        #[cfg(all(
+            unix,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm")
+        ))]
+        let _preference = EglThenGlx(Box::new(|_reg| {}));
+
+        #[cfg(all(
+            windows,
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_family = "wasm")
+        ))]
+        let _preference = EglThenWgl(None);
 
         unsafe { glutin::display::Display::new(dh, _preference) }
     }
