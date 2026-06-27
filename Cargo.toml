@@ -26,7 +26,27 @@ members = [
   "sound/filter",
   "timer",
 ]
-default-members = ["nes/core", "persistence"]
+default-members = [".", "nes/core"]
+
+[package]
+name = "nerust"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_gtk = { workspace = true, optional = true }
+nerust_tao = { workspace = true, optional = true }
+
+[features]
+default = ["gtk"]
+gtk = ["nerust_gtk"]
+tao = ["nerust_tao"]
 
 [profile.release]
 debug = false
@@ -95,6 +115,9 @@ nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
 nerust_soundfilter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
+nerust_gtk = { path = "gui/frontends/gtk" }
+nerust_tao = { path = "gui/frontends/tao" }
+nerust_android = { path = "gui/frontends/android" }
 nes_ntsc = { path = "nes_ntsc" }
 objc2 = { version = "=0.6.4" }
 objc2-app-kit = { version = "=0.3.2" }

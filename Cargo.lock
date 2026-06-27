@@ -3152,6 +3152,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_gtk",
+ "nerust_tao",
+]
+
+[[package]]
 name = "nerust_android"
 version = "0.1.0-dev"
 dependencies = [
