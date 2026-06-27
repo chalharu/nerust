@@ -26,7 +26,7 @@ members = [
   "sound/filter",
   "timer",
 ]
-default-members = [".", "nes/core"]
+default-members = ["nes/core", "persistence"]
 
 [package]
 name = "nerust"
