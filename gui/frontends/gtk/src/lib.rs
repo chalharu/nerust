@@ -185,7 +185,7 @@ impl State {
     }
 }
 
-fn build_window(app: &gtk::Application, factory: &Rc<Box<dyn GpuFactory>>) -> Window {
+fn build_window(app: &gtk::Application, factory: &Rc<dyn GpuFactory>) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let state_menu = gio::Menu::new();
@@ -314,7 +314,7 @@ pub(crate) fn build_menu_model(
 
 fn ensure_window(
     app: &gtk::Application,
-    factory: &Rc<Box<dyn GpuFactory>>,
+    factory: &Rc<dyn GpuFactory>,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
@@ -336,7 +336,7 @@ pub fn run(factory: Box<dyn GpuFactory>) {
     crash_handler::install();
     prepare_macos_runtime();
 
-    let factory = Rc::new(factory);
+    let factory: Rc<dyn GpuFactory> = Rc::from(factory);
 
     let app = gtk::Application::new(
         Some("com.github.chalharu"),

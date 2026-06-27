@@ -55,7 +55,7 @@ pub(crate) trait WindowExtend {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<Box<dyn GpuFactory>>,
+        factory: Rc<dyn GpuFactory>,
         state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -180,7 +180,7 @@ impl WindowExtend for Window {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<Box<dyn GpuFactory>>,
+        factory: Rc<dyn GpuFactory>,
         state_menus: StateMenus,
     ) -> Window {
         let close_action = gio::SimpleAction::new("close", None);

@@ -21,7 +21,7 @@ pub fn run(factory: Box<dyn GpuFactory>) {
         .unwrap();
     prepare_macos_runtime();
 
-    let factory = Rc::new(factory);
+    let factory: Rc<dyn GpuFactory> = Rc::from(factory);
 
     let app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))

@@ -19,7 +19,7 @@ pub(crate) trait SurfaceExtend {
     fn bind(
         window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<Box<dyn GpuFactory>>,
+        factory: Rc<dyn GpuFactory>,
     ) -> Surface;
     fn tick(&self) -> bool;
 }
@@ -28,7 +28,7 @@ impl SurfaceExtend for Surface {
     fn bind(
         window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<Box<dyn GpuFactory>>,
+        factory: Rc<dyn GpuFactory>,
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
         let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
