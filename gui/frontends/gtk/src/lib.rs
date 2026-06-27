@@ -1,4 +1,3 @@
-mod crash_handler;
 mod gdk_raw;
 mod preferences;
 mod renderer;
@@ -324,8 +323,6 @@ fn ensure_window(
 }
 
 pub fn run(factory: Box<dyn GpuFactory>) {
-    crash_handler::install();
-
     let factory: Rc<dyn GpuFactory> = Rc::from(factory);
 
     let app = gtk::Application::new(
