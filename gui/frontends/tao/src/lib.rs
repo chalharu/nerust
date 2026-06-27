@@ -6,7 +6,8 @@ pub mod window;
 
 use std::rc::Rc;
 
-use nerust_screen_video::{GpuFactory, RunOptions};
+use nerust_gui_settings::RunOptions;
+use nerust_screen_video::GpuFactory;
 
 pub fn run(factory: Box<dyn GpuFactory>, options: RunOptions) {
     let factory: Rc<dyn GpuFactory> = Rc::from(factory);

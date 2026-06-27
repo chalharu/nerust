@@ -42,6 +42,7 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
+nerust_gui_settings.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 nerust_backend_opengl = { workspace = true, optional = true }

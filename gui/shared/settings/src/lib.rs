@@ -2,6 +2,15 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use nerust_contract_input::SystemId;
 
+/// CLI options parsed by the root crate and forwarded to the active frontend.
+#[derive(Clone, Debug, Default)]
+pub struct RunOptions {
+    /// Path to a ROM file to load on startup.
+    pub rom_path: Option<PathBuf>,
+    /// MMC3 IRQ variant override (`"sharp"` or `"nec"`).
+    pub mmc3_irq_variant: Option<String>,
+}
+
 pub mod language {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]

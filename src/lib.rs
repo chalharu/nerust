@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Arg, Command};
 use log::LevelFilter;
-use nerust_screen_video::{GpuFactory, RunOptions};
+use nerust_gui_settings::RunOptions;
+use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
 fn create_factory() -> Box<dyn GpuFactory> {
