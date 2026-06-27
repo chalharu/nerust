@@ -58,6 +58,7 @@ pub(crate) struct HostState {
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
+    pending_load_request: Option<LoadRequest>,
     pub(crate) active: bool,
     auto_paused: bool,
 }
@@ -85,6 +86,7 @@ impl HostState {
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
+            pending_load_request: None,
             active: true,
             auto_paused: false,
         }
@@ -169,6 +171,10 @@ impl HostState {
             .map(|window| window_surface_size(window.inner_size()))
     }
 
+    pub(crate) fn set_pending_load_request(&mut self, request: LoadRequest) {
+        self.pending_load_request = Some(request);
+    }
+
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
         self.load_inner(None, data, None)
     }
@@ -179,9 +185,9 @@ impl HostState {
         data: Vec<u8>,
         request: LoadRequest,
     ) -> bool {
-        let options = match &request {
+        let options = match request {
             LoadRequest::Auto => self.session.default_load_options(),
-            LoadRequest::Explicit { options } => options.clone(),
+            LoadRequest::Explicit { options } => options,
         };
         self.load_inner(rom_path, data, Some(options))
     }
@@ -208,10 +214,14 @@ impl HostState {
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
+        let request = self.pending_load_request.take();
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();
-                self.load_inner(Some(rom_path), data, None)
+                match request {
+                    Some(request) => self.load_with_options(Some(rom_path), data, request),
+                    None => self.load_inner(Some(rom_path), data, None),
+                }
             }
             Err(error) => {
                 log::warn!("ROM open failed: {error}");

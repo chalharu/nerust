@@ -3,7 +3,6 @@ mod host;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::load::LoadRequest;
 use nerust_screen_video::{GpuFactory, GpuRenderer, RendererConfig, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -21,19 +20,11 @@ pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
     factory: Rc<dyn GpuFactory>,
-    pending_load_request: Option<LoadRequest>,
     renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
     pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
-        Self::with_load_request(factory, None)
-    }
-
-    pub(crate) fn with_load_request(
-        factory: Rc<dyn GpuFactory>,
-        pending_load_request: Option<LoadRequest>,
-    ) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -48,9 +39,14 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             host: HostState::new(app_menu),
             factory,
-            pending_load_request,
             renderer: None,
         }
+    }
+
+    pub(crate) fn with_load_request(factory: Rc<dyn GpuFactory>, request: LoadRequest) -> Self {
+        let mut this = Self::new(factory);
+        this.host.set_pending_load_request(request);
+        this
     }
 
     fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
@@ -102,20 +98,7 @@ impl WindowRuntime {
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
-        let loaded = if let Some(request) = self.pending_load_request.take() {
-            match load_rom_path(path) {
-                Ok(loaded_rom) => {
-                    let (rom_path, data) = loaded_rom.into_parts();
-                    self.host.load_with_options(Some(rom_path), data, request)
-                }
-                Err(error) => {
-                    log::warn!("ROM open failed: {error}");
-                    false
-                }
-            }
-        } else {
-            self.host.load_path(path)
-        };
+        let loaded = self.host.load_path(path);
         if loaded {
             self.recreate_renderer();
         }
