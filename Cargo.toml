@@ -8,6 +8,7 @@ members = [
   "contract/emuthread",
   "gui/factory/nes",
   "gui/shared/settings",
+  "gui/shared/run-options",
   "persistence",
   "rom_test",
   "gui/frontends/android",
@@ -42,7 +43,7 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
-nerust_gui_settings.workspace = true
+nerust_run_options.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 nerust_backend_opengl = { workspace = true, optional = true }
@@ -105,6 +106,7 @@ nerust_contract_core = { path = "contract/core" }
 nerust_contract_emuthread = { path = "contract/emuthread" }
 nerust_factory_nes = { path = "gui/factory/nes" }
 nerust_gui_settings = { path = "gui/shared/settings" }
+nerust_run_options = { path = "gui/shared/run-options" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
 nerust_gui_runtime = { path = "gui/shared/runtime" }

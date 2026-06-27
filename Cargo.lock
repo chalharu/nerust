@@ -3160,7 +3160,7 @@ dependencies = [
  "nerust_backend_opengl",
  "nerust_backend_wgpu",
  "nerust_gtk",
- "nerust_gui_settings",
+ "nerust_run_options",
  "nerust_screen_video",
  "nerust_tao",
  "simple_logger",
@@ -3280,6 +3280,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_persistence",
+ "nerust_run_options",
  "nerust_screen_video",
  "nerust_sound_openal",
  "objc2 0.6.4",
@@ -3411,6 +3412,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_run_options"
+version = "0.1.0-dev"
+
+[[package]]
 name = "nerust_screen_opengl"
 version = "0.1.0-dev"
 dependencies = [
@@ -3486,6 +3491,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_persistence",
+ "nerust_run_options",
  "nerust_screen_video",
  "nerust_sound_openal",
  "raw-window-handle",
