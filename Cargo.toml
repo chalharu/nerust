@@ -44,7 +44,7 @@ nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 
 [features]
-default = ["tao"]
+default = ["tao", "wgpu"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
 wgpu = ["nerust_gtk?/wgpu", "nerust_tao?/wgpu"]
@@ -117,8 +117,8 @@ nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
 nerust_soundfilter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
-nerust_gtk = { path = "gui/frontends/gtk" }
-nerust_tao = { path = "gui/frontends/tao" }
+nerust_gtk = { path = "gui/frontends/gtk", default-features = false }
+nerust_tao = { path = "gui/frontends/tao", default-features = false }
 nerust_android = { path = "gui/frontends/android" }
 nes_ntsc = { path = "nes_ntsc" }
 objc2 = { version = "=0.6.4" }
