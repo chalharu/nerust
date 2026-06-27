@@ -41,9 +41,9 @@ impl Window {
     }
 
     pub fn with_load_options(options: WindowLoadOptions, factory: Rc<dyn GpuFactory>) -> Self {
-        let _ = options;
+        let request = system_load_request_from_window_options(options);
         Self {
-            runtime: Box::new(WindowRuntime::new(factory)),
+            runtime: Box::new(WindowRuntime::with_load_request(factory, Some(request))),
         }
     }
 

@@ -16,7 +16,7 @@ use nerust_gui_settings::{
 };
 use nerust_gui_shell::{
     factory::CoreFactory,
-    load::{LoadRequest, MediaObject},
+    load::{LoadRequest, MediaObject, SystemLoadOptions},
     session::{
         KeyboardShortcut, SessionError, SessionHandle, WindowSize,
         commands::{SessionCommand, SessionCommandOutcome},
@@ -170,21 +170,30 @@ impl HostState {
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_inner(None, data)
+        self.load_inner(None, data, None)
     }
 
     pub(crate) fn load_with_options(
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        _request: LoadRequest,
+        request: LoadRequest,
     ) -> bool {
-        self.load_inner(rom_path, data)
+        let options = match &request {
+            LoadRequest::Auto => self.session.default_load_options(),
+            LoadRequest::Explicit { options } => options.clone(),
+        };
+        self.load_inner(rom_path, data, Some(options))
     }
 
-    fn load_inner(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
+    fn load_inner(
+        &mut self,
+        rom_path: Option<PathBuf>,
+        data: Vec<u8>,
+        options_override: Option<SystemLoadOptions>,
+    ) -> bool {
         let media = MediaObject::new(rom_path, data);
-        let options = self.session.default_load_options();
+        let options = options_override.unwrap_or_else(|| self.session.default_load_options());
         if let Ok(resolved) = self
             .session
             .factory()
@@ -202,7 +211,7 @@ impl HostState {
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();
-                self.load_inner(Some(rom_path), data)
+                self.load_inner(Some(rom_path), data, None)
             }
             Err(error) => {
                 log::warn!("ROM open failed: {error}");
