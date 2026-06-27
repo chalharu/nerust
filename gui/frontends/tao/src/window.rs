@@ -34,16 +34,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(factory: Rc<dyn GpuFactory>) -> Self {
+    pub fn new(factory: Rc<dyn GpuFactory>, options: Option<WindowLoadOptions>) -> Self {
+        let request = options.map(system_load_request_from_window_options);
         Self {
-            runtime: Box::new(WindowRuntime::new(factory, None)),
-        }
-    }
-
-    pub fn with_load_options(options: WindowLoadOptions, factory: Rc<dyn GpuFactory>) -> Self {
-        let request = system_load_request_from_window_options(options);
-        Self {
-            runtime: Box::new(WindowRuntime::new(factory, Some(request))),
+            runtime: Box::new(WindowRuntime::new(factory, request)),
         }
     }
 
