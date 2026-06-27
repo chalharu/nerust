@@ -51,7 +51,7 @@ nerust_screen_video.workspace = true
 simple_logger.workspace = true
 
 [features]
-default = ["tao", "wgpu"]
+default = ["wgpu"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
 wgpu = ["nerust_backend_wgpu"]
