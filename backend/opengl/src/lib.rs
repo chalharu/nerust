@@ -46,7 +46,7 @@ impl GpuRenderer for GlRenderer {
                 NonZeroU32::new(size.width.max(1)).unwrap(),
                 NonZeroU32::new(size.height.max(1)).unwrap(),
             );
-            surf.resize(&self.context.as_ref().unwrap(), w, h);
+            surf.resize(self.context.as_ref().unwrap(), w, h);
         }
         self.size = size;
     }
