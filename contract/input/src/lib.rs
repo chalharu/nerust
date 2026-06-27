@@ -1,6 +1,9 @@
-use serde::de::{self, Unexpected, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Unexpected, Visitor},
+};
 
 /// システム識別子。CoreFactory impl のみが生成する。
 /// 比較は `Eq` 経由のみ。生文字列の取り出しは不可。

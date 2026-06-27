@@ -1,7 +1,8 @@
-use super::super::runtime::ValidationRuntime;
-use super::ValidationArtifacts;
-use crate::manifest::RomCase;
-use crate::results::{AudioObservation, CaseValidation, ExecutionTotals, ValidationOptions};
+use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use crate::{
+    manifest::RomCase,
+    results::{AudioObservation, CaseValidation, ExecutionTotals, ValidationOptions},
+};
 
 impl ValidationArtifacts {
     pub(in crate::runner::validation) fn finish(

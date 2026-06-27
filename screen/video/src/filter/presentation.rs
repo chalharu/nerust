@@ -1,7 +1,7 @@
-use super::filters;
-use super::{FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH};
-use crate::{LogicalSize, PhysicalSize, RGB, VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 use nes_ntsc::{ShaderKernelEntry, setup::Setup};
+
+use super::{FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH, filters};
+use crate::{LogicalSize, PhysicalSize, RGB, VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoPresentationPipelineKind {

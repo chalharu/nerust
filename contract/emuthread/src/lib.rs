@@ -1,8 +1,12 @@
-use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{self, SyncSender};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        mpsc::{self, SyncSender},
+    },
+    thread::{self, JoinHandle},
+};
 
 use nerust_contract_core::{ConsoleCore, EmuCommand, FrameBuffer, PixelFormat};
 use nerust_timer::Timer;

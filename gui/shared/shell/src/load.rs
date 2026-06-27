@@ -1,5 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaObject {
@@ -50,8 +52,9 @@ pub struct ResolvedLoadRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoadRequest, MediaObject, SystemLoadOptions};
     use std::path::PathBuf;
+
+    use super::{LoadRequest, MediaObject, SystemLoadOptions};
 
     #[test]
     fn media_object_tracks_path_extension() {

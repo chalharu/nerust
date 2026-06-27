@@ -5,13 +5,5 @@
     <property name="title" translatable="yes">Nerust</property>
     <property name="default-width">500</property>
     <property name="default-height">400</property>
-    <child>
-      <object class="GtkGLArea" id="glarea">
-        <property name="visible">True</property>
-        <property name="focusable">False</property>
-        <property name="hexpand">True</property>
-        <property name="vexpand">True</property>
-      </object>
-    </child>
   </object>
 </interface>

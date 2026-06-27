@@ -1,8 +1,10 @@
-use crate::OpenBusReadResult;
-use crate::cart_device::Cartridge as MapperCartridge;
-use crate::interrupt::Interrupt;
-use crate::mapper::Mapper;
-use crate::ppu_memory_access::{PpuBusEvent, PpuReadAccess};
+use crate::{
+    OpenBusReadResult,
+    cart_device::Cartridge as MapperCartridge,
+    interrupt::Interrupt,
+    mapper::Mapper,
+    ppu_memory_access::{PpuBusEvent, PpuReadAccess},
+};
 
 pub(crate) trait PpuCartridgeBus {
     fn read_ppu_pattern(

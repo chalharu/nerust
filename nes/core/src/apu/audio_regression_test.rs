@@ -1,15 +1,15 @@
-use super::fft_test::CPU_CLOCK_HZ;
-use crate::Core;
-use crate::OpenBusReadResult;
-use crate::cartridge_data_parts::CartridgeDataParts;
-use crate::cartridge_rom::CartridgeData;
-use crate::controller::Controller;
-use crate::mirror::MirrorMode;
-use crate::rom_format::RomFormat;
+use std::io::Cursor;
+
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_contract_core::audio::AudioBackend;
 use nerust_screen_video::FrameBuffer;
-use std::io::Cursor;
+
+use super::fft_test::CPU_CLOCK_HZ;
+use crate::{
+    Core, OpenBusReadResult, cartridge_data_parts::CartridgeDataParts,
+    cartridge_rom::CartridgeData, controller::Controller, mirror::MirrorMode,
+    rom_format::RomFormat,
+};
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;
 const HALF_FRAME_SECONDS: f32 = 14_914.0 / CPU_CLOCK_HZ;

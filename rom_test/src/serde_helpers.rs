@@ -1,5 +1,6 @@
-use serde::de::{self, Visitor};
 use std::fmt;
+
+use serde::de::{self, Visitor};
 
 pub(super) fn parse_hex_u64(value: &str) -> Result<u64, String> {
     let trimmed = value.trim().replace('_', "");
@@ -27,8 +28,9 @@ pub(super) fn parse_hex_u8(value: &str) -> Result<u8, String> {
 }
 
 pub(super) mod hex_u8 {
-    use super::*;
     use serde::{Deserializer, Serializer};
+
+    use super::*;
 
     pub fn serialize<S>(value: &u8, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -78,8 +80,9 @@ pub(super) mod hex_u8 {
 }
 
 pub(super) mod hex_u16 {
-    use super::*;
     use serde::{Deserializer, Serializer};
+
+    use super::*;
 
     pub fn serialize<S>(value: &u16, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -129,8 +132,9 @@ pub(super) mod hex_u16 {
 }
 
 pub(super) mod hex_u64 {
-    use super::*;
     use serde::{Deserializer, Serializer};
+
+    use super::*;
 
     pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
     where

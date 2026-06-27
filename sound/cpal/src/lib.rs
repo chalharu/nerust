@@ -12,11 +12,14 @@
 //! * Feed samples via [`AudioBackend::push`]; the NES APU calls this at the rate
 //!   returned by [`AudioBackend::sample_rate`].
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc::{SyncSender, TrySendError, sync_channel},
+};
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 /// CPAL-based audio backend.
 ///

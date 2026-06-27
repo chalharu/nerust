@@ -1,6 +1,6 @@
+use std::{fs, path::PathBuf};
+
 use nerust_gui_runtime::rom_library::{RomLibrary, RomLibraryPaths};
-use std::fs;
-use std::path::PathBuf;
 
 const LAST_ROM_ID_FILE_NAME: &str = "last-rom-id";
 const RESTORE_PENDING_FILE_NAME: &str = ".restore_pending";

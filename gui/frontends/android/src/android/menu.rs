@@ -1,6 +1,6 @@
+use std::{mem, sync::Mutex};
+
 use jni::objects::{JObject, JString};
-use std::mem;
-use std::sync::Mutex;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 use super::{library, settings};
@@ -138,10 +138,9 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, ACTION_UNLOAD,
-        MenuAction,
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_LIBRARY, ACTION_OPEN_SETTINGS, ACTION_RESET,
+        ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
     };
-    use super::{ACTION_OPEN_LIBRARY, ACTION_OPEN_SETTINGS, ACTION_RESET, decode_action};
 
     #[test]
     fn decode_action_maps_known_ids() {

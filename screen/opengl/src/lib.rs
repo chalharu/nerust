@@ -2,19 +2,13 @@ mod mat4;
 mod vec2d;
 mod vertex_data;
 
-use self::mat4::Mat4;
-use self::vec2d::Vec2D;
-use self::vertex_data::VertexData;
+use std::{ffi::CStr, os::raw::c_void, ptr, rc::Rc};
+
 use gl::types::GLint;
-use nerust_glwrap::Shader;
-use nerust_glwrap::raw::*;
-use nerust_glwrap::vertex::*;
-use nerust_screen_video::VideoFrameFormat;
-use nerust_screen_video::VideoRenderProfile;
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use std::ptr;
-use std::rc::Rc;
+use nerust_glwrap::{Shader, raw::*, vertex::*};
+use nerust_screen_video::{VideoFrameFormat, VideoRenderProfile};
+
+use self::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
 const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
@@ -339,13 +333,18 @@ impl GlView {
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
     }
 
-    pub fn on_resize(
-        &mut self,
-        scale_x: f32,
-        scale_y: f32,
-        viewport_width: i32,
-        viewport_height: i32,
-    ) {
+    pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
+        let window_aspect = viewport_width as f32 / viewport_height as f32;
+        let content_aspect = self.logical_width as f32 / self.logical_height as f32;
+
+        let (scale_x, scale_y) = if window_aspect > content_aspect {
+            // Window is wider than content → letterbox (black bars on sides)
+            (content_aspect / window_aspect, 1.0)
+        } else {
+            // Window is taller than content → pillarbox (black bars on top/bottom)
+            (1.0, window_aspect / content_aspect)
+        };
+
         self.shader.as_ref().unwrap().use_program();
         if self.use_vao {
             self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();

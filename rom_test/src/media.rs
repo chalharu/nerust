@@ -1,10 +1,14 @@
-use super::error::RomTestError;
+use std::{
+    hash::{Hash, Hasher},
+    io::Cursor,
+};
+
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_contract_core::audio::AudioBackend;
 use nerust_screen_video::{FilterType, FrameBuffer, LogicalSize, PixelFormat};
 use png::{BitDepth, ColorType, Encoder};
-use std::hash::{Hash, Hasher};
-use std::io::Cursor;
+
+use super::error::RomTestError;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 

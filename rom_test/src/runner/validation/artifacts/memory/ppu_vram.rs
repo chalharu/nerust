@@ -1,7 +1,8 @@
-use super::super::super::runtime::ValidationRuntime;
-use super::super::ValidationArtifacts;
-use crate::error::RomTestError;
-use crate::results::{PpuVramCheck, ValidationOptions};
+use super::super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use crate::{
+    error::RomTestError,
+    results::{PpuVramCheck, ValidationOptions},
+};
 
 #[derive(Default)]
 pub(in crate::runner::validation::artifacts) struct PpuVramArtifacts {

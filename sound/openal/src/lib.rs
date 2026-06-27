@@ -1,15 +1,19 @@
-use alto::*;
-use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::Once;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::JoinHandle;
-use std::time::Duration;
-use std::{f64, thread};
+use std::{
+    f64,
+    sync::mpsc::{Receiver, Sender, channel},
+    thread,
+    thread::JoinHandle,
+    time::Duration,
+};
+
+use alto::*;
+use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
 
 #[cfg(any(target_os = "macos", test))]
 const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];

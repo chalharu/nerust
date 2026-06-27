@@ -1,28 +1,32 @@
-use crate::settings::ui::{Message, SettingsAppProgram};
-use crate::tao_conversions::*;
-use iced::advanced::renderer;
-use iced::keyboard;
-use iced::mouse;
-use iced::theme;
-use iced::{Event, Point, Size};
-use iced_tiny_skia::Renderer;
-use iced_tiny_skia::graphics::compositor::Compositor as _;
-use iced_tiny_skia::window::compositor;
-use iced_tiny_skia::window::{Compositor, Surface};
-use iced_winit::Clipboard;
-use iced_winit::core::SmolStr;
-use iced_winit::graphics::Viewport;
-use iced_winit::program;
-use iced_winit::runtime::user_interface::{Cache, UserInterface};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
+
+use iced::{Event, Point, Size, advanced::renderer, keyboard, mouse, theme};
+use iced_tiny_skia::{
+    Renderer,
+    graphics::compositor::Compositor as _,
+    window::{Compositor, Surface, compositor},
+};
+use iced_winit::{
+    Clipboard,
+    core::SmolStr,
+    graphics::Viewport,
+    program,
+    runtime::user_interface::{Cache, UserInterface},
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::settings::editor::CaptureTarget;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-use tao::event_loop::EventLoopWindowTarget;
-use tao::keyboard::ModifiersState as TaoModifiers;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
-use tao::window::{Window as TaoWindow, WindowBuilder};
+use tao::{
+    event_loop::EventLoopWindowTarget,
+    keyboard::ModifiersState as TaoModifiers,
+    window::{Window as TaoWindow, WindowBuilder},
+};
+
+use crate::{
+    settings::ui::{Message, SettingsAppProgram},
+    tao_conversions::*,
+};
 
 /// Owns Instance + Cache + UI, ensuring UI is dropped before Instance.
 /// This makes the phantom lifetime safety explicit via Drop rather than
@@ -453,9 +457,9 @@ impl SettingsWindowHandle {
 
 #[cfg(test)]
 mod tests {
+    use tao::{dpi::PhysicalPosition, event::WindowEvent};
+
     use super::*;
-    use tao::dpi::PhysicalPosition;
-    use tao::event::WindowEvent;
 
     fn initial_cursor() -> mouse::Cursor {
         mouse::Cursor::Available(Point::new(0.0, 0.0))

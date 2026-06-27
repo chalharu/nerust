@@ -1,6 +1,4 @@
-use super::envelope::*;
-use super::length_counter::*;
-use super::timer::*;
+use super::{envelope::*, length_counter::*, timer::*};
 use crate::persistence_error::PersistenceError;
 
 const DUTY_TABLE: [[bool; 8]; 4] = [
@@ -209,11 +207,13 @@ impl Pulse {
 
 #[cfg(test)]
 mod tests {
-    use super::super::fft_test::{
-        CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
-        dominant_frequency_tolerance, peak_power_near_frequency, power_spectrum,
+    use super::{
+        super::fft_test::{
+            CPU_CLOCK_HZ, FFT_SAMPLE_COUNT, capture_samples, dominant_frequency,
+            dominant_frequency_tolerance, peak_power_near_frequency, power_spectrum,
+        },
+        Pulse,
     };
-    use super::Pulse;
 
     fn expected_frequency(raw_period: u16) -> f32 {
         CPU_CLOCK_HZ / (16.0 * (f32::from(raw_period) + 1.0))

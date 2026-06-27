@@ -1,11 +1,14 @@
 mod host;
-mod renderer;
 
-use self::host::{HostAction, HostState};
-use self::renderer::WgpuRenderer;
-use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_gui_shell::load::LoadRequest;
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "opengl")]
+use nerust_backend_opengl::GlFactory as Factory;
+#[cfg(feature = "wgpu")]
+use nerust_backend_wgpu::WgpuFactory as Factory;
+use nerust_gui_shell::load::LoadRequest;
+use nerust_screen_video::{GpuFactory, GpuRenderer, RendererConfig, SurfaceSize};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -13,10 +16,13 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
+use self::host::{HostAction, HostState};
+use crate::app_menu::{UserEvent, imp::AppMenu};
+
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
@@ -35,6 +41,36 @@ impl WindowRuntime {
             host: HostState::new(AppMenu::new(proxy)),
             renderer: None,
         }
+    }
+
+    fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
+        let size = window.inner_size();
+        let session = self.host.session();
+        let vsync = session.settings_snapshot().local.video.presentation.vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        let config = RendererConfig {
+            render_profile: session.render_profile().clone(),
+            vsync,
+        };
+        let mut renderer = Factory
+            .create_renderer(&config, raw_display_handle)
+            .expect("failed to create renderer");
+        renderer
+            .attach(
+                raw_window_handle,
+                raw_display_handle,
+                SurfaceSize::new(size.width, size.height),
+            )
+            .expect("failed to attach");
+        self.renderer = Some(renderer);
+        Some(())
     }
 
     pub(crate) fn load(&mut self, data: Vec<u8>) {
@@ -72,7 +108,6 @@ impl WindowRuntime {
                 self.recreate_renderer();
                 *control_flow = ControlFlow::Wait;
             }
-            // Main window events
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_window(window_id) => match event {
@@ -97,34 +132,23 @@ impl WindowRuntime {
                 }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
-                    if let Some(window_size) = self.host.window_surface_size()
-                        && let Some(renderer) = self.renderer.as_mut()
-                    {
-                        renderer.reconfigure(window_size);
-                    }
                     self.host.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
                 _ => (),
             },
-            // Settings window events
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_settings_window(window_id) => {
                 let Some(handle) = self.host.settings_window.as_mut() else {
                     return;
                 };
-
                 match &event {
-                    WindowEvent::Resized(size) => {
-                        handle.resize(size.width, size.height);
-                    }
+                    WindowEvent::Resized(size) => handle.resize(size.width, size.height),
                     WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                         handle.set_scale_factor(*scale_factor as f32);
                     }
-                    WindowEvent::ModifiersChanged(state) => {
-                        handle.set_modifiers(*state);
-                    }
+                    WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
                     WindowEvent::CloseRequested => {
                         handle
                             .should_close
@@ -132,11 +156,9 @@ impl WindowRuntime {
                     }
                     _ => {}
                 }
-
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
                 handle.render();
-
                 if handle
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
@@ -146,6 +168,7 @@ impl WindowRuntime {
                     if plan.is_some_and(|p| p.renderer_rebuild_required) {
                         self.recreate_renderer();
                     }
+                    self.host.request_redraw();
                 }
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
@@ -178,17 +201,21 @@ impl WindowRuntime {
             return;
         };
 
-        let result = renderer.render(self.host.session_mut(), window_size);
+        // Keep the output sized to the current window.
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+
+        self.host.session_mut().swap_frame_buffer();
+        let result = renderer.render(self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);
     }
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        self.renderer = self
-            .host
-            .window()
-            .cloned()
-            .map(|window| WgpuRenderer::new(window, self.host.session()));
+        if let Some(window) = self.host.window().cloned() {
+            self.build_renderer_and_surface(&window);
+        }
     }
 }
 

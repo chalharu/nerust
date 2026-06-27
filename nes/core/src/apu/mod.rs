@@ -11,18 +11,17 @@ mod pulse;
 pub(crate) mod timer;
 mod triangle;
 
-use self::dmc::DMC;
-use self::envelope::*;
-use self::frame_counter::*;
-use self::length_counter::*;
-use self::noise::Noise;
-use self::pulse::Pulse;
-use self::triangle::Triangle;
-use crate::Cpu;
-use crate::OpenBusReadResult;
-use crate::interrupt::{Interrupt, IrqSource};
-use crate::persistence_error::PersistenceError;
 use nerust_contract_core::audio::AudioBackend;
+
+use self::{
+    dmc::DMC, envelope::*, frame_counter::*, length_counter::*, noise::Noise, pulse::Pulse,
+    triangle::Triangle,
+};
+use crate::{
+    Cpu, OpenBusReadResult,
+    interrupt::{Interrupt, IrqSource},
+    persistence_error::PersistenceError,
+};
 
 // // 240Hz フレームシーケンサ
 // const FRAME_COUNTER_RATE: f64 = 7457.3875;
@@ -445,10 +444,10 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use super::Core;
-    use crate::cpu::Core as Cpu;
-    use crate::interrupt::Interrupt;
     use nerust_contract_core::audio::AudioBackend;
+
+    use super::Core;
+    use crate::{cpu::Core as Cpu, interrupt::Interrupt};
 
     struct CapturingMixer {
         samples: Vec<f32>,

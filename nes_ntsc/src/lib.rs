@@ -1,10 +1,10 @@
 mod init;
 pub mod setup;
 
-use self::setup::Setup;
-use self::setup::SetupValues;
-
-use self::init::Init;
+use self::{
+    init::Init,
+    setup::{Setup, SetupValues},
+};
 
 const NES_NTSC_PALETTE_SIZE: usize = 64;
 const NES_NTSC_ENTRY_SIZE: usize = 128;

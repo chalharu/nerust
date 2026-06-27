@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+
 use clap::{Arg, Command};
 use log::LevelFilter;
 use nerust_sound_openal::prepare_macos_runtime;
 use nerust_tao::window::{Window, WindowLoadOptions, WindowMmc3IrqVariant};
 use simple_logger::SimpleLogger;
-use std::path::PathBuf;
 
 fn main() {
     SimpleLogger::new()

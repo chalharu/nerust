@@ -1,13 +1,14 @@
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC3};
-use crate::interrupt::{Interrupt, IrqSource};
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::MappingMode;
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
-use crate::persistence_codec::{decode_payload, encode_payload};
-use crate::persistence_error::PersistenceError;
-use crate::ppu_memory_access::PpuBusEvent;
+use crate::{
+    cartridge_rom::CartridgeData,
+    cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC3},
+    interrupt::{Interrupt, IrqSource},
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao, MappingMode},
+    mirror::MirrorMode,
+    persistence_codec::{decode_payload, encode_payload},
+    persistence_error::PersistenceError,
+    ppu_memory_access::PpuBusEvent,
+};
 
 const A12_LOW_FILTER_TICKS: u64 = 9;
 

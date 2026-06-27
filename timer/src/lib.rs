@@ -1,6 +1,8 @@
-use std::collections::VecDeque;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    thread,
+    time::{Duration, Instant},
+};
 
 pub const CLOCK_RATE: usize = 1_789_773;
 pub const TARGET_FPS: f32 = CLOCK_RATE as f32 * 3.0 / 89_341.5_f32;
@@ -116,8 +118,9 @@ impl Default for Timer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Timer, advance_deadline};
     use std::time::{Duration, Instant};
+
+    use super::{Timer, advance_deadline};
 
     #[test]
     fn slight_lag_keeps_single_frame_catch_up() {

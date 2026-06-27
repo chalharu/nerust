@@ -1,12 +1,15 @@
-use crate::descriptor::{
-    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
-};
-use crate::emu_core::EmuCore;
-use crate::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use thiserror::Error;
+
+use crate::{
+    descriptor::{
+        SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+    },
+    emu_core::EmuCore,
+    load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+};
 
 #[derive(Debug, Error)]
 pub enum FactoryError {

@@ -1,8 +1,10 @@
-use super::super::CpuCartridgeBus;
-use super::super::{
-    Apu, Controller, Core, CpuStepState, CpuStepStateEnum, Ppu, read_dummy_current,
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu,
+        read_dummy_current,
+    },
+    exit_opcode,
 };
-use super::exit_opcode;
 
 pub(crate) struct Jmp;
 

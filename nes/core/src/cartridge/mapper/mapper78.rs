@@ -1,9 +1,11 @@
 use super::Cartridge;
-use crate::cartridge_rom::CartridgeData;
-use crate::interrupt::Interrupt;
-use crate::mapper::{CartridgeDataDao, Mapper};
-use crate::mapper_state::{MapperState, MapperStateDao};
-use crate::mirror::MirrorMode;
+use crate::{
+    cartridge_rom::CartridgeData,
+    interrupt::Interrupt,
+    mapper::{CartridgeDataDao, Mapper},
+    mapper_state::{MapperState, MapperStateDao},
+    mirror::MirrorMode,
+};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Mapper78 {
@@ -95,14 +97,11 @@ impl Mapper for Mapper78 {
 
 #[cfg(test)]
 mod tests {
-    use super::Cartridge;
-    use super::Mapper78;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::interrupt::Interrupt;
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use super::{Cartridge, Mapper78};
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+        interrupt::Interrupt, mapper::Mapper, mirror::MirrorMode, rom_format::RomFormat,
+    };
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

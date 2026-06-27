@@ -1,7 +1,8 @@
-use super::super::super::runtime::ValidationRuntime;
-use super::super::ValidationArtifacts;
-use crate::error::RomTestError;
-use crate::results::{ValidationOptions, WorkRamCheck};
+use super::super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use crate::{
+    error::RomTestError,
+    results::{ValidationOptions, WorkRamCheck},
+};
 
 #[derive(Default)]
 pub(in crate::runner::validation::artifacts) struct WorkRamArtifacts {

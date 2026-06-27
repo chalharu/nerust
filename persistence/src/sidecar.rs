@@ -1,8 +1,13 @@
-use crate::error::PersistenceError;
-use crate::fs_ops::{create_unique_file, read_limited, sync_parent_dir, write_atomic};
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+use crate::{
+    error::PersistenceError,
+    fs_ops::{create_unique_file, read_limited, sync_parent_dir, write_atomic},
+};
 
 const MAX_MAPPER_SAVE_BYTES: usize = 64 * 1024 * 1024;
 

@@ -1,7 +1,5 @@
 use super::Mmc5;
-use crate::OpenBusReadResult;
-use crate::mapper::CartridgeDataDao;
-use crate::mapper_state::MapperStateDao;
+use crate::{OpenBusReadResult, mapper::CartridgeDataDao, mapper_state::MapperStateDao};
 
 #[derive(Clone, Copy)]
 pub(super) enum ProgramTarget {

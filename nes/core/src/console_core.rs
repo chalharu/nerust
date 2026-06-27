@@ -1,12 +1,9 @@
-use nerust_contract_core::audio::AudioBackend;
-use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_core::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat,
+    VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
 };
 
-use crate::cartridge_rom::CartridgeData;
-use crate::core_options::CoreOptions;
-use crate::{Controller, Core};
+use crate::{Controller, Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
 /// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
@@ -146,12 +143,13 @@ impl ConsoleCore for NesConsoleCore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::OpenBusReadResult;
-    use crate::controller::Controller;
+    use std::collections::HashMap;
+
     use nerust_contract_core::CoreConfig;
     use nerust_screen_video::PixelFormat;
-    use std::collections::HashMap;
+
+    use super::*;
+    use crate::{OpenBusReadResult, controller::Controller};
 
     struct MockController;
     impl Controller for MockController {

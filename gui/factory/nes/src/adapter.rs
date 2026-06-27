@@ -1,10 +1,14 @@
-use crate::input_state::NesInputState;
+use std::sync::Arc;
+
 use nerust_contract_core::input::{InputError, InputStatePersistence, SystemInputAdapter};
 use nerust_contract_input::DigitalInputEvent;
-use nerust_nes_runtime::codec::{decode_input_state, encode_input_state};
-use nerust_nes_runtime::nes_input_cell::NesInputCell;
-use nerust_nes_runtime::persisted::digital_event_from_persisted_ids;
-use std::sync::Arc;
+use nerust_nes_runtime::{
+    codec::{decode_input_state, encode_input_state},
+    nes_input_cell::NesInputCell,
+    persisted::digital_event_from_persisted_ids,
+};
+
+use crate::input_state::NesInputState;
 
 #[derive(Debug)]
 pub(crate) struct NesAdapter {

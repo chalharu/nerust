@@ -46,8 +46,9 @@ impl Default for NativeShellState {
 
 #[cfg(test)]
 mod tests {
-    use super::NativeShellState;
     use std::time::Instant;
+
+    use super::NativeShellState;
 
     #[test]
     fn native_shell_state_tracks_frame_presentation() {

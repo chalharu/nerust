@@ -1,5 +1,4 @@
-use super::super::Register;
-use super::AccumulateMemory;
+use super::{super::Register, AccumulateMemory};
 
 accumulate_memory!(Isc, |r: &mut Register, v: u8| {
     let result = v.wrapping_add(1);

@@ -1,9 +1,10 @@
-use super::super::CpuCartridgeBus;
-use super::super::{
-    Apu, Controller, Core, CpuStepState, CpuStepStateEnum, IRQ_VECTOR, IrqSource, NMI_VECTOR, Ppu,
-    RESET_VECTOR, RegisterP, pull, push, read_dummy_current,
+use super::{
+    super::{
+        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, IRQ_VECTOR,
+        IrqSource, NMI_VECTOR, Ppu, RESET_VECTOR, RegisterP, pull, push, read_dummy_current,
+    },
+    exit_opcode,
 };
-use super::exit_opcode;
 
 pub(crate) struct Brk;
 

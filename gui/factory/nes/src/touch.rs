@@ -200,13 +200,14 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchRect, TouchTarget,
-        actions_for_target,
-    };
     use nerust_contract_input::DigitalInputEvent;
     use nerust_nes_runtime::topology::{
         NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
+    };
+
+    use super::{
+        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchRect, TouchTarget,
+        actions_for_target,
     };
 
     fn zone_center(bounds: TouchRect) -> TouchPoint {

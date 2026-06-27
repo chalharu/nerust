@@ -1,20 +1,23 @@
-use super::build_menu_model;
-use super::glarea::{GLArea, GLAreaExtend};
-use super::{State, TITLE_UPDATE_INTERVAL};
-use crate::preferences::present_preferences_dialog;
-use gtk::gio;
-use gtk::glib;
-use gtk::glib::variant::{StaticVariantType, ToVariant};
-use gtk::prelude::*;
-use nerust_gui_runtime::rom::load_rom_path;
-use nerust_gui_runtime::slots::slot_label;
+use std::{cell::RefCell, path::Path, rc::Rc};
+
+use gtk::{
+    gio, glib,
+    glib::variant::{StaticVariantType, ToVariant},
+    prelude::*,
+};
+use nerust_gui_runtime::{rom::load_rom_path, slots::slot_label};
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionError};
+use nerust_gui_shell::session::{
+    KeyboardShortcut, SessionError,
+    commands::{SessionCommand, SessionCommandOutcome},
+};
 use nerust_persistence::model::StateSlotSummary;
-use std::cell::RefCell;
-use std::path::Path;
-use std::rc::Rc;
+
+use super::{
+    State, TITLE_UPDATE_INTERVAL, build_menu_model,
+    surface::{Surface, SurfaceExtend},
+};
+use crate::preferences::present_preferences_dialog;
 
 pub(crate) struct StateMenus {
     pub(crate) select_active_slot_menu: gio::Menu,
@@ -50,7 +53,6 @@ pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
         state_menus: StateMenus,
     ) -> Window;
@@ -175,7 +177,6 @@ impl WindowExtend for Window {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        glarea: gtk::GLArea,
         state: Rc<RefCell<State>>,
         state_menus: StateMenus,
     ) -> Window {
@@ -194,10 +195,11 @@ impl WindowExtend for Window {
         let state_delete_slot_action =
             gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
         let settings_action = gio::SimpleAction::new("settings", None);
+        let _ = Surface::bind(&window, state.clone());
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
-            state: state.clone(),
+            state,
             open_dialog: None,
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
@@ -214,7 +216,6 @@ impl WindowExtend for Window {
             load_slot_menu: state_menus.load_slot_menu,
             delete_slot_menu: state_menus.delete_slot_menu,
         }));
-        let _ = GLArea::bind(glarea.clone(), result.state());
         {
             let result = result.clone();
             let _ = window.connect_realize(move |_window| result.realize());
@@ -422,7 +423,7 @@ impl WindowExtend for Window {
         result.update_actions();
         window.present();
         result.sync_fullscreen_from_settings();
-        let _ = glarea.grab_focus();
+        let _ = window.grab_focus();
         result
     }
 
@@ -685,10 +686,12 @@ fn rebuild_slot_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
+    use std::cell::RefCell;
+
     use nerust_gui_settings::input::KeyboardKey;
     use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-    use std::cell::RefCell;
+
+    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
 
     #[derive(Default)]
     struct FakeState {

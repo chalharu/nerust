@@ -1,12 +1,14 @@
-use super::Cartridge;
-use super::shared::{
-    IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared, Mapper4Wrapper,
-    PrgRamModel,
+use super::{
+    Cartridge,
+    shared::{
+        IrqVariant, LegacyIrqState, LegacyMapper4State, Mapper4Config, Mapper4Shared,
+        Mapper4Wrapper, PrgRamModel,
+    },
 };
-use crate::cartridge_rom::CartridgeData;
-use crate::cartridge_runtime_state::CartridgeRuntimeState;
-use crate::mapper_state::MapperState;
-use crate::persistence_error::PersistenceError;
+use crate::{
+    cartridge_rom::CartridgeData, cartridge_runtime_state::CartridgeRuntimeState,
+    mapper_state::MapperState, persistence_error::PersistenceError,
+};
 
 #[derive(serde::Serialize)]
 pub(super) struct Mmc3 {
@@ -152,10 +154,10 @@ mod tests {
         CartridgeData, IrqVariant, LegacyIrqUnit, LegacyIrqVariant, LegacyMmc3State,
         LegacyPrgRamModel, MapperState, Mmc3, Mmc3Deserialized, PrgRamModel,
     };
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::mapper::Mapper;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use crate::{
+        cartridge_data_parts::CartridgeDataParts, mapper::Mapper, mirror::MirrorMode,
+        rom_format::RomFormat,
+    };
 
     fn test_data(sub_mapper_type: u8) -> CartridgeData {
         CartridgeData::new(CartridgeDataParts {

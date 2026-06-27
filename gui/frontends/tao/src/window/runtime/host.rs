@@ -1,26 +1,34 @@
-use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
-use nerust_backend_wgpu::RenderResult;
-use nerust_factory_nes::NesFactory;
-use nerust_gui_runtime::rom::load_rom_path;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
-use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_settings::app_state::RememberedWindowSize;
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_gui_shell::factory::CoreFactory;
-use nerust_gui_shell::load::{LoadRequest, MediaObject};
-use nerust_gui_shell::session::WindowSize;
-use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
-use nerust_gui_shell::session::{KeyboardShortcut, SessionError, SessionHandle};
-use nerust_gui_shell::settings::defaults::seed::{
-    default_app_state, default_local_settings, default_shared_settings,
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
 };
-use nerust_gui_shell::settings::i18n::{UiText, text};
-use nerust_gui_shell::settings::scaling_factor;
-use nerust_screen_wgpu::surface::SurfaceSize;
+
+use nerust_factory_nes::NesFactory;
+use nerust_gui_runtime::{
+    rom::load_rom_path,
+    settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot},
+    shell::NativeShellState,
+};
+use nerust_gui_settings::{
+    app_state::RememberedWindowSize,
+    input::{KeyboardKey, ShortcutAction},
+};
+use nerust_gui_shell::{
+    factory::CoreFactory,
+    load::{LoadRequest, MediaObject},
+    session::{
+        KeyboardShortcut, SessionError, SessionHandle, WindowSize,
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
+    settings::{
+        defaults::seed::{default_app_state, default_local_settings, default_shared_settings},
+        i18n::{UiText, text},
+        scaling_factor,
+    },
+};
+use nerust_screen_video::{RenderResult, SurfaceSize};
 use rfd::FileDialog;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
@@ -28,6 +36,8 @@ use tao::{
     keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
+
+use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -384,7 +394,7 @@ impl HostState {
                 self.session.settings_snapshot().shared.general.language,
                 UiText::Open,
             ))
-            .add_filter("NES ROM", &["nes", "zip"])
+            .add_filter("NES ROM", &["nes"])
             .pick_file()
             .is_some_and(|path| self.load_path(&path))
     }
@@ -747,12 +757,13 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    use nerust_gui_settings::input::KeyboardKey;
+    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
+
     use super::{
         NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
         keycode_controller_input,
     };
-    use nerust_gui_settings::input::KeyboardKey;
-    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {

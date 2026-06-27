@@ -1,21 +1,17 @@
-use super::{DeviceLimitProfile, PresentationOptions, Renderer, fit_surface_size_to_limit};
-use crate::{
-    srgb_lut::SRGB_TO_LINEAR_LUT_BYTES,
-    surface::{RenderSurface, SurfaceSize, SurfaceTargetSource},
-    upload::FrameUploadLayout,
+use nerust_screen_video::{
+    LogicalSize, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoFrameFormat, VideoPresentation,
 };
-use nerust_screen_video::LogicalSize;
-use nerust_screen_video::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH};
-use nerust_screen_video::{VideoFrameFormat, VideoPresentation};
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PrimitiveState, Queue,
-    RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    Surface, SurfaceConfiguration, TexelCopyTextureInfo, Texture, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor,
-    TextureViewDimension,
+    RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
+
+use super::{DeviceLimitProfile, PresentationOptions, RenderPipeline, fit_surface_size_to_limit};
+use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, surface::SurfaceSize, upload::FrameUploadLayout};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -33,37 +29,17 @@ pub(super) enum FramePipelineKind {
     Ntsc,
 }
 
-impl Renderer {
-    pub async fn new<T: SurfaceTargetSource>(
-        render_surface: &RenderSurface<T>,
+impl RenderPipeline {
+    pub async fn new(
+        instance: &wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
         surface_size: SurfaceSize,
         presentation: &VideoPresentation,
         ntsc_data: Option<&[u8]>,
         presentation_options: PresentationOptions,
-    ) -> Result<Self, String> {
-        Self::new_with_device_limit_profile(
-            render_surface,
-            surface_size,
-            presentation,
-            ntsc_data,
-            DeviceLimitProfile::Default,
-            presentation_options,
-        )
-        .await
-    }
-
-    pub async fn new_with_device_limit_profile<T: SurfaceTargetSource>(
-        render_surface: &RenderSurface<T>,
-        surface_size: SurfaceSize,
-        presentation: &VideoPresentation,
-        ntsc_data: Option<&[u8]>,
         device_limit_profile: DeviceLimitProfile,
-        presentation_options: PresentationOptions,
     ) -> Result<Self, String> {
         let pipeline_kind = frame_pipeline_kind(presentation, ntsc_data)?;
-
-        let instance = render_surface.instance();
-        let surface = render_surface.surface();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -89,7 +65,15 @@ impl Renderer {
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
-        let mut config = Self::surface_config(surface, &adapter, surface_size, &device)?;
+        let normalized_size =
+            fit_surface_size_to_limit(surface_size, device.limits().max_texture_dimension_2d);
+        let mut config = surface
+            .get_default_config(
+                &adapter,
+                normalized_size.width.max(1),
+                normalized_size.height.max(1),
+            )
+            .ok_or_else(|| "failed to derive a default surface configuration".to_string())?;
         let caps = surface.get_capabilities(&adapter);
         if let Some(format) = caps.formats.iter().copied().find(|format| format.is_srgb()) {
             config.format = format;
@@ -326,23 +310,6 @@ impl Renderer {
             .find(|mode| modes.contains(mode))
             .unwrap_or(PresentMode::Fifo)
     }
-
-    fn surface_config(
-        surface: &Surface<'_>,
-        adapter: &wgpu::Adapter,
-        surface_size: SurfaceSize,
-        device: &Device,
-    ) -> Result<SurfaceConfiguration, String> {
-        let normalized_size =
-            fit_surface_size_to_limit(surface_size, device.limits().max_texture_dimension_2d);
-        surface
-            .get_default_config(
-                adapter,
-                normalized_size.width.max(1),
-                normalized_size.height.max(1),
-            )
-            .ok_or_else(|| "failed to derive a default surface configuration".to_string())
-    }
 }
 
 pub(super) fn frame_logical_size(
@@ -448,7 +415,7 @@ fn create_render_pipeline(
     shader: &wgpu::ShaderModule,
     surface_format: TextureFormat,
     fragment_entry_point: &'static str,
-) -> RenderPipeline {
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: Some("nerust_render_pipeline"),
         layout: Some(pipeline_layout),

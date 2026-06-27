@@ -1,5 +1,4 @@
-use super::super::Register;
-use super::{Accumulate, AccumulateMemory};
+use super::{super::Register, Accumulate, AccumulateMemory};
 
 fn asl(register: &mut Register, data: u8) -> u8 {
     register.set_c(data & 0x80 != 0);

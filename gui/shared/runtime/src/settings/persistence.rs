@@ -1,11 +1,12 @@
-use super::{SettingsError, SettingsPaths};
+use std::{fs, path::Path};
+
 use crc::{CRC_32_ISO_HDLC, Crc};
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
-use std::fs;
-use std::path::Path;
+
+use super::{SettingsError, SettingsPaths};
 
 const MAPPER_SAVE_FILE_NAME: &str = "mapper.sav";
 const STATES_DIR_NAME: &str = "states";
