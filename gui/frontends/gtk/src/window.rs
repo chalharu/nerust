@@ -12,6 +12,7 @@ use nerust_gui_shell::session::{
     commands::{SessionCommand, SessionCommandOutcome},
 };
 use nerust_persistence::model::StateSlotSummary;
+use nerust_screen_video::GpuFactory;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,
@@ -54,6 +55,7 @@ pub(crate) trait WindowExtend {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
+        factory: Rc<Box<dyn GpuFactory>>,
         state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -178,6 +180,7 @@ impl WindowExtend for Window {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
+        factory: Rc<Box<dyn GpuFactory>>,
         state_menus: StateMenus,
     ) -> Window {
         let close_action = gio::SimpleAction::new("close", None);
@@ -195,7 +198,7 @@ impl WindowExtend for Window {
         let state_delete_slot_action =
             gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
         let settings_action = gio::SimpleAction::new("settings", None);
-        let _ = Surface::bind(&window, state.clone());
+        let _ = Surface::bind(&window, state.clone(), factory);
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),

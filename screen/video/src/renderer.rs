@@ -97,7 +97,7 @@ pub struct RendererConfig {
 /// `display_handle` is required by OpenGL (glutin::Display::new).
 /// wgpu ignores it and creates a headless device.
 /// Call `attach()` on the result before rendering.
-pub trait GpuFactory {
+pub trait GpuFactory: std::fmt::Debug {
     fn create_renderer(
         &self,
         config: &RendererConfig,

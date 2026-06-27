@@ -1,11 +1,8 @@
 mod host;
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-#[cfg(feature = "opengl")]
-use nerust_backend_opengl::GlFactory as Factory;
-#[cfg(feature = "wgpu")]
-use nerust_backend_wgpu::WgpuFactory as Factory;
 use nerust_gui_shell::load::LoadRequest;
 use nerust_screen_video::{GpuFactory, GpuRenderer, RendererConfig, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -22,11 +19,12 @@ use crate::app_menu::{UserEvent, imp::AppMenu};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
+    factory: Rc<Box<dyn GpuFactory>>,
     renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(factory: Rc<Box<dyn GpuFactory>>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -35,10 +33,12 @@ impl WindowRuntime {
             event_loop
         };
         let proxy = event_loop.create_proxy();
+        let app_menu = AppMenu::new(proxy);
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy)),
+            host: HostState::new(app_menu),
+            factory,
             renderer: None,
         }
     }
@@ -59,7 +59,8 @@ impl WindowRuntime {
             render_profile: session.render_profile().clone(),
             vsync,
         };
-        let mut renderer = Factory
+        let mut renderer = self
+            .factory
             .create_renderer(&config, raw_display_handle)
             .expect("failed to create renderer");
         renderer
