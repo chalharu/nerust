@@ -60,10 +60,9 @@ impl WindowRuntime {
             render_profile: session.render_profile().clone(),
             vsync,
         };
-        let factory = Factory::default();
-        let mut renderer = factory
+        let mut renderer = Factory
             .create_renderer(&config, raw_display_handle)
-            .expect("failed to create WgpuRenderer");
+            .expect("failed to create renderer");
         renderer
             .attach(
                 raw_window_handle,
