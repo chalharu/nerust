@@ -31,7 +31,7 @@ pub enum DeviceLimitProfile {
 }
 
 impl DeviceLimitProfile {
-    pub(crate) fn required_limits(self) -> Limits {
+    pub fn required_limits(self) -> Limits {
         match self {
             Self::Default => Limits::default(),
             Self::DownlevelWebGl2 => Limits::downlevel_webgl2_defaults(),

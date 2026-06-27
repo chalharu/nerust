@@ -62,7 +62,7 @@ impl WindowRuntime {
         };
         let factory = Factory::default();
         let mut renderer = factory
-            .create_renderer(&config, raw_window_handle, raw_display_handle)
+            .create_renderer(&config, raw_display_handle)
             .expect("failed to create WgpuRenderer");
         renderer
             .attach(

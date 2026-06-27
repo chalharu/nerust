@@ -16,18 +16,22 @@ use nerust_screen_video::{
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-/// OpenGL renderer.
 pub struct GlRenderer {
-    view: GlView,
-    context: glutin::context::PossiblyCurrentContext,
-    gl_surface: glutin::surface::Surface<WindowSurface>,
+    display: Display,
+    gl_config: glutin::config::Config,
+    render_profile: VideoRenderProfile,
+    view: Option<GlView>,
+    context: Option<glutin::context::PossiblyCurrentContext>,
+    gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
 }
 
 impl std::fmt::Debug for GlRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlRenderer").finish_non_exhaustive()
+        f.debug_struct("GlRenderer")
+            .field("attached", &self.gl_surface.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -41,49 +45,131 @@ impl GpuRenderer for GlRenderer {
 
     fn attach(
         &mut self,
-        _wh: RawWindowHandle,
+        wh: RawWindowHandle,
         _dh: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
         self.size = size;
+
+        // Create GL context and surface.
+        let nc = unsafe {
+            self.display
+                .create_context(
+                    &self.gl_config,
+                    &ContextAttributesBuilder::new()
+                        .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
+                        .build(Some(wh)),
+                )
+                .map_err(|e| RendererError::new("context", Box::new(e)))?
+        };
+        let (w, h) = (
+            NonZeroU32::new(size.width.max(1)).unwrap(),
+            NonZeroU32::new(size.height.max(1)).unwrap(),
+        );
+        let surf = unsafe {
+            self.display
+                .create_window_surface(
+                    &self.gl_config,
+                    &SurfaceAttributesBuilder::<WindowSurface>::new().build(wh, w, h),
+                )
+                .map_err(|e| RendererError::new("surface", Box::new(e)))?
+        };
+        let ctx = nc
+            .make_current(&surf)
+            .map_err(|e| RendererError::new("make_current", Box::new(e)))?;
+
+        // Compile shaders.
+        GlView::load_with(|n| {
+            let c = std::ffi::CString::new(n).unwrap();
+            self.display.get_proc_address(&c)
+        });
+        let mut view = GlView::new();
+        view.use_vao(true);
+        view.on_load(&self.render_profile)
+            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e))))?;
+        let fs = match self.render_profile.frame_format {
+            VideoFrameFormat::Rgba => self.render_profile.logical_size,
+            VideoFrameFormat::Palette => self.render_profile.source_logical_size,
+        };
+
+        self.view = Some(view);
+        self.context = Some(ctx);
+        self.gl_surface = Some(surf);
+        self.expected_frame_len =
+            fs.width * fs.height * self.render_profile.frame_format.bytes_per_pixel();
         Ok(())
     }
-    fn detach(&mut self) {}
+
+    fn detach(&mut self) {
+        self.view = None;
+        self.context = None;
+        drop(self.gl_surface.take());
+    }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        // View 再初期化 (context は current にしたまま)
-        self.view.on_close();
-        self.view = GlView::new();
-        self.view.use_vao(true);
-        self.view
-            .on_load(profile)
-            .map_err(|e| RendererError::new("view init", Box::new(OpaqueError(e))))?;
+        self.render_profile = profile.clone();
+        let Some(ref ctx) = self.context else {
+            return Err(RendererError::new(
+                "update: not attached",
+                Box::new(OpaqueError("".to_string())),
+            ));
+        };
+        let Some(ref surf) = self.gl_surface else {
+            return Err(RendererError::new(
+                "update: no surface",
+                Box::new(OpaqueError("".to_string())),
+            ));
+        };
+        if !ctx.is_current() {
+            return Err(RendererError::new(
+                "update: not current",
+                Box::new(OpaqueError("".to_string())),
+            ));
+        }
+        if let Some(ref mut v) = self.view {
+            v.on_close();
+        }
+        let mut view = GlView::new();
+        view.use_vao(true);
+        view.on_load(profile)
+            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e))))?;
         let fs = match profile.frame_format {
             VideoFrameFormat::Rgba => profile.logical_size,
             VideoFrameFormat::Palette => profile.source_logical_size,
         };
         self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
+        self.view = Some(view);
         Ok(())
     }
 
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
-        if !self.context.is_current()
-            && let Err(e) = self.context.make_current(&self.gl_surface)
+        let Some(ref ctx) = self.context else {
+            return RenderResult::Skipped;
+        };
+        let Some(ref surf) = self.gl_surface else {
+            return RenderResult::Skipped;
+        };
+        let Some(ref mut view) = self.view else {
+            return RenderResult::Skipped;
+        };
+
+        if !ctx.is_current()
+            && let Err(e) = ctx.make_current(surf)
         {
             log::warn!("GlRenderer: make_current failed: {e}");
             return RenderResult::Error;
         }
-        self.view
-            .on_resize(self.size.width as i32, self.size.height as i32);
+
+        view.on_resize(self.size.width as i32, self.size.height as i32);
         if let Some(p) = frame_buffer.palette_as_rgba8() {
-            self.view.update_palette_texture(&p);
+            view.update_palette_texture(&p);
         }
         let bytes = frame_buffer.as_ref();
         let bytes = bytes
             .get(..self.expected_frame_len)
             .expect("frame buffer too small");
-        self.view.on_update(bytes.as_ptr());
-        if let Err(e) = self.gl_surface.swap_buffers(&self.context) {
+        view.on_update(bytes.as_ptr());
+        if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
         }
@@ -91,7 +177,9 @@ impl GpuRenderer for GlRenderer {
     }
 }
 
-impl GlRenderer {}
+// ---------------------------------------------------------------------------
+// GlFactory
+// ---------------------------------------------------------------------------
 
 pub struct GlFactory;
 impl Default for GlFactory {
@@ -101,30 +189,12 @@ impl Default for GlFactory {
 }
 
 impl GlFactory {
-    #[allow(unused_variables)]
-    fn create_display(
-        display_handle: RawDisplayHandle,
-        _raw_window_handle: RawWindowHandle,
-    ) -> Result<Display, glutin::error::Error> {
+    fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
+        // We defer the window-handle-dependent preferences (Wgl, EglThenWgl)
+        // to attach().  The display preference here uses only handle-free
+        // variants; attach() will create the context with the correct config.
         #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
         let _preference = DisplayApiPreference::Cgl;
-
-        #[cfg(all(
-            windows,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = DisplayApiPreference::Wgl(Some(_raw_window_handle));
-
-        #[cfg(all(
-            unix,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = DisplayApiPreference::Glx(Box::new(|_reg| {}));
 
         #[cfg(all(
             any(windows, unix),
@@ -134,24 +204,10 @@ impl GlFactory {
         ))]
         let _preference = DisplayApiPreference::Egl;
 
-        #[cfg(all(
-            unix,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_family = "wasm")))]
+        let _preference = DisplayApiPreference::Egl;
 
-        #[cfg(all(
-            windows,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = DisplayApiPreference::EglThenWgl(Some(_raw_window_handle));
-
-        unsafe { glutin::display::Display::new(display_handle, _preference) }
+        unsafe { glutin::display::Display::new(dh, _preference) }
     }
 }
 
@@ -159,11 +215,10 @@ impl GpuFactory for GlFactory {
     fn create_renderer(
         &self,
         config: &RendererConfig,
-        wh: RawWindowHandle,
-        dh: RawDisplayHandle,
+        display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError> {
-        let display =
-            Self::create_display(dh, wh).map_err(|e| RendererError::new("display", Box::new(e)))?;
+        let display = Self::create_display(display_handle)
+            .map_err(|e| RendererError::new("display", Box::new(e)))?;
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
         let gl_config = unsafe {
             display
@@ -174,52 +229,14 @@ impl GpuFactory for GlFactory {
                     RendererError::new("no config", Box::new(OpaqueError("".to_string())))
                 })?
         };
-        let nc = unsafe {
-            display
-                .create_context(
-                    &gl_config,
-                    &ContextAttributesBuilder::new()
-                        .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
-                        .build(Some(wh)),
-                )
-                .map_err(|e| RendererError::new("context", Box::new(e)))?
-        };
-        let surf = unsafe {
-            display
-                .create_window_surface(
-                    &gl_config,
-                    &SurfaceAttributesBuilder::<WindowSurface>::new().build(
-                        wh,
-                        NonZeroU32::new(config.initial_size.width.max(1)).unwrap(),
-                        NonZeroU32::new(config.initial_size.height.max(1)).unwrap(),
-                    ),
-                )
-                .map_err(|e| RendererError::new("surface", Box::new(e)))?
-        };
-        let ctx = nc
-            .make_current(&surf)
-            .map_err(|e| RendererError::new("make_current", Box::new(e)))?;
-
-        GlView::load_with(|n| {
-            let c = std::ffi::CString::new(n).unwrap();
-            display.get_proc_address(&c)
-        });
-        let mut view = GlView::new();
-        view.use_vao(true);
-        view.on_load(&config.render_profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e))))?;
-
-        let fs = match config.render_profile.frame_format {
-            VideoFrameFormat::Rgba => config.render_profile.logical_size,
-            VideoFrameFormat::Palette => config.render_profile.source_logical_size,
-        };
         Ok(Box::new(GlRenderer {
-            view,
-            context: ctx,
-            gl_surface: surf,
-            expected_frame_len: fs.width
-                * fs.height
-                * config.render_profile.frame_format.bytes_per_pixel(),
+            display,
+            gl_config,
+            render_profile: config.render_profile.clone(),
+            view: None,
+            context: None,
+            gl_surface: None,
+            expected_frame_len: 0,
             size: config.initial_size,
         }))
     }
