@@ -36,14 +36,14 @@ pub struct Window {
 impl Window {
     pub fn new(factory: Rc<dyn GpuFactory>) -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new(factory)),
+            runtime: Box::new(WindowRuntime::new(factory, None)),
         }
     }
 
     pub fn with_load_options(options: WindowLoadOptions, factory: Rc<dyn GpuFactory>) -> Self {
         let request = system_load_request_from_window_options(options);
         Self {
-            runtime: Box::new(WindowRuntime::with_load_request(factory, request)),
+            runtime: Box::new(WindowRuntime::new(factory, Some(request))),
         }
     }
 
