@@ -211,8 +211,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-release-x86_64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-x86_64-
-      - name: Build nerust_tao (release)
-        run: cargo build -p nerust_tao --release
+      - name: Build nerust (release)
+        run: cargo build -p nerust --release
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -275,8 +275,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-aarch64-
-      - name: Build nerust_tao (release)
-        run: cargo build -p nerust_tao --release
+      - name: Build nerust (release)
+        run: cargo build -p nerust --release
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -331,11 +331,11 @@ jobs:
             target
           key: macos-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-cargo-release-aarch64-
-      - name: Build nerust_tao (release, aarch64)
-        run: cargo build -p nerust_tao --release --target aarch64-apple-darwin
+      - name: Build nerust (release, aarch64)
+        run: cargo build -p nerust --release --target aarch64-apple-darwin
       - name: Package .app bundle
         env:
-          BINARY: target/aarch64-apple-darwin/release/nerust_tao
+          BINARY: target/aarch64-apple-darwin/release/nerust
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
           VERSION: ${{ needs.prepare-context.outputs.version }}
         run: |
