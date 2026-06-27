@@ -19,12 +19,12 @@ use crate::app_menu::{UserEvent, imp::AppMenu};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    factory: Rc<Box<dyn GpuFactory>>,
+    factory: Rc<dyn GpuFactory>,
     renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(factory: Rc<Box<dyn GpuFactory>>) -> Self {
+    pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {

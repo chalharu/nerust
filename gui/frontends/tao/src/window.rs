@@ -34,13 +34,13 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(factory: Rc<Box<dyn GpuFactory>>) -> Self {
+    pub fn new(factory: Rc<dyn GpuFactory>) -> Self {
         Self {
             runtime: Box::new(WindowRuntime::new(factory)),
         }
     }
 
-    pub fn with_load_options(options: WindowLoadOptions, factory: Rc<Box<dyn GpuFactory>>) -> Self {
+    pub fn with_load_options(options: WindowLoadOptions, factory: Rc<dyn GpuFactory>) -> Self {
         let _ = options;
         Self {
             runtime: Box::new(WindowRuntime::new(factory)),

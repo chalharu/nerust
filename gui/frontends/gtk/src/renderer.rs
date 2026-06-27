@@ -8,13 +8,13 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
-    factory: Rc<Box<dyn GpuFactory>>,
+    factory: Rc<dyn GpuFactory>,
     renderer: Option<Box<dyn GpuRenderer>>,
     last_size: SurfaceSize,
 }
 
 impl GtkRenderer {
-    pub(crate) fn new(factory: Rc<Box<dyn GpuFactory>>) -> Self {
+    pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
         Self {
             factory,
             renderer: None,
