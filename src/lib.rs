@@ -1,11 +1,17 @@
+#[cfg(any(feature = "gtk", feature = "tao"))]
 use std::path::PathBuf;
 
-use clap::{Arg, Command};
 use log::LevelFilter;
+#[cfg(any(feature = "gtk", feature = "tao"))]
 use nerust_run_options::RunOptions;
-use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
+#[cfg(any(feature = "gtk", feature = "tao"))]
+use clap::{Arg, Command};
+#[cfg(any(feature = "gtk", feature = "tao"))]
+use nerust_screen_video::GpuFactory;
+
+#[cfg(any(feature = "gtk", feature = "tao"))]
 fn create_factory() -> Box<dyn GpuFactory> {
     #[cfg(feature = "wgpu")]
     return Box::new(nerust_backend_wgpu::WgpuFactory);
@@ -15,6 +21,7 @@ fn create_factory() -> Box<dyn GpuFactory> {
     compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
 }
 
+#[cfg(any(feature = "gtk", feature = "tao"))]
 fn parse_cli_args() -> RunOptions {
     let app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -42,6 +49,7 @@ pub fn run() {
         .init()
         .unwrap();
 
+    #[cfg(any(feature = "gtk", feature = "tao"))]
     let options = parse_cli_args();
 
     #[cfg(feature = "gtk")]
@@ -49,5 +57,12 @@ pub fn run() {
     #[cfg(feature = "tao")]
     nerust_tao::run(create_factory(), options);
     #[cfg(not(any(feature = "gtk", feature = "tao")))]
-    compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
+    {
+        eprintln!("error: no frontend selected");
+        eprintln!("  cargo run --features gtk   (GTK4 frontend)");
+        eprintln!("  cargo run --features tao   (Tao/iced frontend)");
+        eprintln!("  cargo run --no-default-features --features gtk,opengl");
+        eprintln!("  cargo run --no-default-features --features tao,opengl");
+        std::process::exit(1);
+    }
 }
