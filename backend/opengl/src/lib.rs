@@ -39,7 +39,15 @@ impl GpuRenderer for GlRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
+    
     fn resize(&mut self, size: SurfaceSize) {
+        if let Some(ref surf) = self.gl_surface {
+            let (w, h) = (
+                NonZeroU32::new(size.width.max(1)).unwrap(),
+                NonZeroU32::new(size.height.max(1)).unwrap(),
+            );
+            surf.resize(&self.context.as_ref().unwrap(), w, h);
+        }
         self.size = size;
     }
 
