@@ -26,14 +26,12 @@ impl GtkRenderer {
         &mut self,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-        app_size: SurfaceSize,
         physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
     ) {
         self.last_size = physical_size;
         drop(self.renderer.take());
         let config = RendererConfig {
-            initial_size: app_size,
             render_profile: profile.clone(),
             vsync: true,
         };

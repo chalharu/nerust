@@ -210,7 +210,7 @@ impl GpuFactory for WgpuFactory {
             render_profile: config.render_profile.clone(),
             pipeline: None,
             surface: None,
-            size: config.initial_size,
+            size: SurfaceSize::new(0, 0),
             last_render_error: None,
         }))
     }

@@ -67,8 +67,7 @@ impl SurfaceExtend for Surface {
             state.swap_frame_buffer();
 
             if state.take_renderer_reload_pending() {
-                let app_size = SurfaceSize::new(width, height);
-                log::info!("reinit size: {:?}", app_size);
+                log::info!("reinit physical={:?}", physical_size);
                 if let Some(surf) = s.window.surface()
                     && let Some(display) = gdk::Display::default()
                 {
@@ -76,7 +75,6 @@ impl SurfaceExtend for Surface {
                         s.renderer.borrow_mut().realize(
                             wh,
                             dh,
-                            app_size,
                             physical_size,
                             state.render_profile(),
                         );

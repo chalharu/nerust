@@ -280,7 +280,7 @@ impl GpuFactory for GlFactory {
             context: None,
             gl_surface: None,
             expected_frame_len: 0,
-            size: config.initial_size,
+            size: SurfaceSize::new(0, 0),
         }))
     }
 }

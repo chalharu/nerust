@@ -88,7 +88,6 @@ pub trait GpuRenderer: std::fmt::Debug {
 
 /// Common parameters for [`GpuFactory::create_renderer`].
 pub struct RendererConfig {
-    pub initial_size: SurfaceSize,
     pub render_profile: VideoRenderProfile,
     pub vsync: bool,
 }
