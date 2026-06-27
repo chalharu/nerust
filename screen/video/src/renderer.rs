@@ -1,5 +1,3 @@
-use std::any::TypeId;
-
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
@@ -17,9 +15,6 @@ impl std::fmt::Display for OpaqueError {
 impl std::error::Error for OpaqueError {}
 
 /// Renderer-related error.
-///
-/// `context` identifies the failing operation ("display init", "surface recreate"),
-/// `source` carries the original typed error.
 #[derive(Debug)]
 pub struct RendererError {
     context: &'static str,
@@ -44,111 +39,67 @@ impl std::error::Error for RendererError {
     }
 }
 
-/// Outcome reported by [`Renderer::render`].
+/// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
-    /// A frame was successfully presented.
     Presented,
-    /// The frame was skipped (surface not ready, resize in flight, etc.).
     Skipped,
-    /// A render error occurred; the shell may log or surface this as needed.
     Error,
 }
 
-/// GPU device + pipeline.  Lives for the entire application session.
-pub trait Renderer: std::fmt::Debug + 'static {
-    /// Returns the `TypeId` of the concrete implementor.
-    fn type_id(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
-    /// Render `frame` into the platform `surface`.
-    /// Viewport and aspect-ratio are already configured by `Surface::configure`.
-    fn render(&mut self, surface: &dyn Surface, frame: &FrameBuffer) -> RenderResult;
-
-    /// Update the render pipeline for a new render profile
-    /// (e.g. after an NTSC filter change).  The GPU device is kept.
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
-}
-
-impl dyn Renderer {
-    /// Downcast to a concrete backend type.
-    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        if self.type_id() == TypeId::of::<T>() {
-            Some(unsafe { &*(self as *const dyn Renderer as *const T) })
-        } else {
-            None
-        }
-    }
-}
-
-/// Platform output (wgpu surface + swapchain / GL drawable).
+/// GPU device + pipeline + surface.  Single unified trait.
 ///
-/// Created by [`RendererFactory::create_surface`] and replaced on resize
-/// or surface loss.  Independent of the [`Renderer`] GPU device.
-pub trait Surface: std::fmt::Debug + 'static {
-    /// Returns the `TypeId` of the concrete implementor.
-    fn type_id(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
-    /// Current physical pixel size of the platform output.
-    fn size(&self) -> SurfaceSize;
-
-    /// Resize the output (swapchain for wgpu; store for GL, applied at render time).
-    fn configure(&mut self, size: SurfaceSize);
-
-    /// Recreate the native platform surface after loss (Android).
-    fn recreate(
+/// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
+pub trait GpuRenderer: std::fmt::Debug {
+    /// Attach a native window.  Must be called before render().
+    fn attach(
         &mut self,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError>;
-}
 
-impl dyn Surface {
-    /// Downcast to a concrete backend type.
-    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        if self.type_id() == TypeId::of::<T>() {
-            Some(unsafe { &*(self as *const dyn Surface as *const T) })
-        } else {
-            None
-        }
+    /// Detach from the native window (device/pipeline are kept).
+    fn detach(&mut self);
+
+    /// detach + attach (handy for Android surface loss or Wayland).
+    fn reattach(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.detach();
+        self.attach(window_handle, display_handle, size)
     }
+
+    /// Resize the output (swapchain for wgpu; stored for GL).
+    fn resize(&mut self, size: SurfaceSize);
+
+    /// Update the render pipeline for a new render profile.
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
+
+    /// Render a frame.  attach() must have been called.
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
 }
 
-/// Common parameters to create a [`Renderer`].
+/// Common parameters for [`GpuFactory::create_renderer`].
 pub struct RendererConfig {
     pub initial_size: SurfaceSize,
     pub render_profile: VideoRenderProfile,
     pub vsync: bool,
 }
 
-/// Abstract factory: creates a [`Renderer`] and a [`Surface`] from the same backend family.
+/// Abstract factory: creates a [`GpuRenderer`].
 ///
 /// `create_renderer` takes raw window/display handles because OpenGL (glutin)
-/// requires them to create a context.  wgpu ignores them and can create a
-/// headless device.  Both backends keep the handles separate from the output
-/// surface, which is managed via [`create_surface`](Self::create_surface).
-pub trait RendererFactory {
-    /// Build the GPU device + pipeline.
-    /// `_window_handle` / `_display_handle` are required by GL; wgpu ignores them.
+/// requires them to create a context.  wgpu ignores them and creates a
+/// headless device.  Call `attach()` on the result before rendering.
+pub trait GpuFactory {
     fn create_renderer(
         &self,
         config: &RendererConfig,
         window_handle: RawWindowHandle,
         display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn Renderer>, RendererError>;
-
-    /// Build a platform output from native window/display handles.
-    /// `renderer` is required by wgpu to attach the surface to the pipeline.
-    /// GL ignores this parameter.
-    fn create_surface(
-        &self,
-        renderer: &dyn Renderer,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<Box<dyn Surface>, RendererError>;
+    ) -> Result<Box<dyn GpuRenderer>, RendererError>;
 }
