@@ -43,6 +43,17 @@ impl GpuRenderer for GlRenderer {
         self.size = size;
     }
 
+    /// GL surface is never invalidated on resize — just update viewport size.
+    fn reattach(
+        &mut self,
+        _wh: RawWindowHandle,
+        _dh: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.size = size;
+        Ok(())
+    }
+
     fn attach(
         &mut self,
         wh: RawWindowHandle,
