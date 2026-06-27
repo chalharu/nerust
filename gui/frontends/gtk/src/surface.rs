@@ -40,7 +40,7 @@ impl SurfaceExtend for Surface {
             window.set_child(Some(&drawing_area));
 
             let result = result.clone();
-            drawing_area.connect_resize(move |_drawing_area, w, h| {
+            drawing_area.connect_resize(move |_drawing_area, _, _| {
                 let s = result.borrow();
                 if let Ok(mut state) = s.state.try_borrow_mut() {
                     state.renderer_reload_pending = true;
