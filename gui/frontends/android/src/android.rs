@@ -557,7 +557,6 @@ impl AndroidFrontend {
             .expect("failed to get display handle")
             .as_raw();
         let config = RendererConfig {
-            initial_size: SurfaceSize::new(size.width, size.height),
             render_profile: self.session.render_profile().clone(),
             vsync,
         };
