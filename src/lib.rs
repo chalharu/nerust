@@ -17,7 +17,6 @@ pub fn run() {
         .env()
         .init()
         .unwrap();
-    nerust_sound_openal::prepare_macos_runtime();
 
     #[cfg(feature = "gtk")]
     nerust_gtk::run(create_factory());
