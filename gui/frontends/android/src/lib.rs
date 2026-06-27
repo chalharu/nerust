@@ -1,9 +1,9 @@
+#![cfg(target_os = "android")]
+
 mod import_metadata;
 
-#[cfg(target_os = "android")]
 mod android;
 
-#[cfg(target_os = "android")]
 use std::{
     any::Any,
     backtrace::Backtrace,
@@ -12,17 +12,12 @@ use std::{
     sync::Once,
 };
 
-#[cfg(target_os = "android")]
 use jni::JavaVM;
-#[cfg(target_os = "android")]
 use jni::sys::{JNI_VERSION_1_6, jint};
-#[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
-#[cfg(target_os = "android")]
 const ANDROID_LOG_TAG: &str = "Nerust";
 
-#[cfg(target_os = "android")]
 fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default()
@@ -43,7 +38,6 @@ fn init_android_logging() {
     });
 }
 
-#[cfg(target_os = "android")]
 fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&'static str>() {
         (*message).to_owned()
@@ -54,7 +48,6 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub fn android_main(app: AndroidApp) {
     init_android_logging();
@@ -81,7 +74,6 @@ pub fn android_main(app: AndroidApp) {
     }
 }
 
-#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 /// # Safety
 ///
@@ -104,6 +96,3 @@ pub unsafe extern "system" fn JNI_OnLoad(
     }
     JNI_VERSION_1_6
 }
-
-#[cfg(not(target_os = "android"))]
-pub fn android_entrypoint_stub() {}
