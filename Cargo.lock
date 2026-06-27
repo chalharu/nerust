@@ -3155,7 +3155,10 @@ dependencies = [
 name = "nerust"
 version = "0.1.0-dev"
 dependencies = [
+ "nerust_backend_opengl",
+ "nerust_backend_wgpu",
  "nerust_gtk",
+ "nerust_screen_video",
  "nerust_tao",
 ]
 
@@ -3268,8 +3271,6 @@ dependencies = [
  "gtk4",
  "libc",
  "log",
- "nerust_backend_opengl",
- "nerust_backend_wgpu",
  "nerust_contract_input",
  "nerust_factory_nes",
  "nerust_gui_runtime",
@@ -3477,8 +3478,6 @@ dependencies = [
  "iced_winit",
  "log",
  "muda",
- "nerust_backend_opengl",
- "nerust_backend_wgpu",
  "nerust_contract_core",
  "nerust_contract_input",
  "nerust_factory_nes",

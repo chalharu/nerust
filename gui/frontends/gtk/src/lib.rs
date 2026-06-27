@@ -33,7 +33,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
+use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
 use nerust_sound_openal::prepare_macos_runtime;
 use simple_logger::SimpleLogger;
 
@@ -185,7 +185,7 @@ impl State {
     }
 }
 
-fn build_window(app: &gtk::Application) -> Window {
+fn build_window(app: &gtk::Application, factory: &Rc<Box<dyn GpuFactory>>) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let state_menu = gio::Menu::new();
@@ -252,6 +252,7 @@ fn build_window(app: &gtk::Application) -> Window {
         app.clone(),
         window,
         state,
+        Rc::clone(factory),
         StateMenus {
             select_active_slot_menu,
             save_slot_menu,
@@ -311,17 +312,21 @@ pub(crate) fn build_menu_model(
     menu
 }
 
-fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Window>>>) -> Window {
+fn ensure_window(
+    app: &gtk::Application,
+    factory: &Rc<Box<dyn GpuFactory>>,
+    current_window: &Rc<RefCell<Option<Window>>>,
+) -> Window {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
         return window;
     }
 
-    let window = build_window(app);
+    let window = build_window(app, factory);
     *current_window.borrow_mut() = Some(window.clone());
     window
 }
 
-pub fn run() {
+pub fn run(factory: Box<dyn GpuFactory>) {
     // log initialize
     SimpleLogger::new()
         .with_level(LevelFilter::Warn)
@@ -331,6 +336,8 @@ pub fn run() {
     crash_handler::install();
     prepare_macos_runtime();
 
+    let factory = Rc::new(factory);
+
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
@@ -338,16 +345,18 @@ pub fn run() {
 
     let current_window = Rc::new(RefCell::new(None));
     {
+        let factory = Rc::clone(&factory);
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
-            let window = ensure_window(app, &current_window);
+            let window = ensure_window(app, &factory, &current_window);
             window.window().present();
         });
     }
     {
+        let factory = Rc::clone(&factory);
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
-            let window = ensure_window(app, &current_window);
+            let window = ensure_window(app, &factory, &current_window);
             if let Some(path) = files.iter().find_map(|file| file.path()) {
                 window.load_path(&path);
             }

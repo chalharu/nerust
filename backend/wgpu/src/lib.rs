@@ -158,6 +158,7 @@ impl GpuRenderer for WgpuRenderer {
 // WgpuFactory
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct WgpuFactory;
 
 impl Default for WgpuFactory {

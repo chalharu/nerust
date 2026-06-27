@@ -16,8 +16,6 @@ iced_tiny_skia.workspace = true
 iced_winit.workspace = true
 log.workspace = true
 muda.workspace = true
-nerust_backend_opengl = { workspace = true, optional = true }
-nerust_backend_wgpu = { workspace = true, optional = true }
 nerust_contract_core.workspace = true
 nerust_screen_video.workspace = true
 nerust_factory_nes.workspace = true
@@ -36,8 +34,3 @@ tao.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"
-
-[features]
-default = ["wgpu"]
-opengl = ["nerust_backend_opengl"]
-wgpu = ["nerust_backend_wgpu"]

@@ -42,13 +42,16 @@ rust-version.workspace = true
 [dependencies]
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
+nerust_backend_opengl = { workspace = true, optional = true }
+nerust_backend_wgpu = { workspace = true, optional = true }
+nerust_screen_video.workspace = true
 
 [features]
 default = ["tao", "wgpu"]
 gtk = ["nerust_gtk"]
 tao = ["nerust_tao"]
-wgpu = ["nerust_gtk?/wgpu", "nerust_tao?/wgpu"]
-opengl = ["nerust_gtk?/opengl", "nerust_tao?/opengl"]
+wgpu = ["nerust_backend_wgpu"]
+opengl = ["nerust_backend_opengl"]
 
 [profile.release]
 debug = false
@@ -117,8 +120,8 @@ nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
 nerust_soundfilter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
-nerust_gtk = { path = "gui/frontends/gtk", default-features = false }
-nerust_tao = { path = "gui/frontends/tao", default-features = false }
+nerust_gtk = { path = "gui/frontends/gtk" }
+nerust_tao = { path = "gui/frontends/tao" }
 nerust_android = { path = "gui/frontends/android" }
 nes_ntsc = { path = "nes_ntsc" }
 objc2 = { version = "=0.6.4" }

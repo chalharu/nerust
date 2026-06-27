@@ -194,6 +194,7 @@ impl GpuRenderer for GlRenderer {
 // GlFactory
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct GlFactory;
 impl Default for GlFactory {
     fn default() -> Self {
