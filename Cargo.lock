@@ -3160,7 +3160,6 @@ dependencies = [
  "nerust_backend_wgpu",
  "nerust_gtk",
  "nerust_screen_video",
- "nerust_sound_openal",
  "nerust_tao",
  "simple_logger",
 ]

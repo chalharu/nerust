@@ -58,7 +58,7 @@ fn present_dyld_env_vars(mut is_present: impl FnMut(&str) -> bool) -> Vec<&'stat
         .collect()
 }
 
-pub fn prepare_macos_runtime() {
+fn prepare_macos_runtime() {
     #[cfg(target_os = "macos")]
     PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
         let guard_present = std::env::var_os(MACOS_RUNTIME_SANITIZED_ENV).is_some();
@@ -455,6 +455,8 @@ impl OpenAl {
     }
 
     pub fn with_gain(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
+        prepare_macos_runtime();
+
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
             match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
