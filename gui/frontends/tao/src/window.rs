@@ -74,12 +74,6 @@ impl Window {
     }
 }
 
-impl Default for Window {
-    fn default() -> Self {
-        panic!("Window::default() is not supported; use Window::new(factory)");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use nerust_gui_shell::load::LoadRequest;

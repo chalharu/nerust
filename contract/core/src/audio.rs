@@ -43,6 +43,7 @@ pub trait AudioBackendFactory: Send + Sync {
 /// the first successfully created backend, falling back to `NullAudio`.
 /// `supported_rates` lazily probes all factories on first access and
 /// caches the result.
+#[derive(Default)]
 pub struct AudioBackendRegistry {
     entries: Vec<BackendEntry>,
     probed: OnceLock<Vec<u32>>,
@@ -53,18 +54,9 @@ struct BackendEntry {
     factory: &'static dyn AudioBackendFactory,
 }
 
-impl Default for AudioBackendRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AudioBackendRegistry {
     pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-            probed: OnceLock::new(),
-        }
+        Self::default()
     }
 
     pub fn register(&mut self, priority: u8, factory: &'static dyn AudioBackendFactory) {
