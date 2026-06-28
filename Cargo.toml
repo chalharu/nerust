@@ -44,9 +44,9 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
-nerust_factory_nes = { workspace = true, optional = true }
+nerust_factory_nes.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_gui_shell = { workspace = true, optional = true }
+nerust_gui_shell.workspace = true
 nerust_run_options.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
@@ -60,8 +60,8 @@ simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = ["nerust_gtk", "nerust_factory_nes", "nerust_gui_shell", "nerust_sound_cpal", "nerust_sound_openal"]
-tao = ["nerust_tao", "nerust_factory_nes", "nerust_gui_shell", "nerust_sound_cpal", "nerust_sound_openal"]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_openal"]
+tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_openal"]
 wgpu = ["nerust_render_wgpu"]
 opengl = ["nerust_render_gl"]
 
