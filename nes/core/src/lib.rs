@@ -29,9 +29,9 @@ pub(crate) mod rom_identity;
 pub mod rom_parse;
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_contract_core::audio::AudioBackend;
-use nerust_screen_video::FrameBuffer;
-use nerust_soundfilter::{
+use nerust_core_traits::audio::AudioBackend;
+use nerust_render_base::FrameBuffer;
+use nerust_sound_filter::{
     ChaindFilter, Filter, IirFilter,
     resampler::{Resampler, SimpleDownSampler},
 };
@@ -836,7 +836,7 @@ mod scheduler_tests {
     };
 
     fn null_fb() -> FrameBuffer {
-        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_render_base::PixelFormat::Rgba);
         fb.resize(256, 240);
         fb
     }

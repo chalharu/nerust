@@ -13,8 +13,8 @@ use nerust_gui_shell::{
     factory::CoreFactory,
     load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
 };
+use nerust_render_base::GpuFactory;
 use nerust_run_options::RunOptions;
-use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
 fn create_factory() -> Box<dyn GpuFactory> {

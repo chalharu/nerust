@@ -19,7 +19,7 @@ use std::sync::{
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
+use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 /// CPAL-based audio backend.
 ///
@@ -200,5 +200,5 @@ impl AudioBackendFactory for CpalFactory {
     }
 }
 
-/// Static singleton for use with [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+/// Static singleton for use with [`AudioBackendRegistry`](nerust_core_traits::audio::AudioBackendRegistry).
 pub static CPAL: CpalFactory = CpalFactory;

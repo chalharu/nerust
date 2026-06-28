@@ -16,7 +16,6 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
-use nerust_contract_input::InputTopologyDescriptor;
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
@@ -34,6 +33,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text as ui_text},
     },
 };
+use nerust_input_traits::InputTopologyDescriptor;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;

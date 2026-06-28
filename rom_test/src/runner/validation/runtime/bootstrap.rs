@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
 
 use super::ValidationRuntime;
 use crate::{

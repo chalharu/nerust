@@ -6,7 +6,7 @@ use std::{
 };
 
 use fs2::FileExt;
-use nerust_contract_core::identity::SystemIdentity;
+use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{
     archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
