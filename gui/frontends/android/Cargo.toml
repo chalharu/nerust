@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
 log.workspace = true
+nerust_core_traits.workspace = true
 nerust_render_base.workspace = true
 nerust_render_wgpu.workspace = true
 nerust_gui_settings.workspace = true
@@ -23,5 +24,6 @@ nerust_gui_runtime.workspace = true
 nerust_factory_nes.workspace = true
 nerust_gui_shell.workspace = true
 nerust_input_traits.workspace = true
+nerust_sound_cpal.workspace = true
 android_logger.workspace = true
 winit = { workspace = true, features = ["android-native-activity"] }

@@ -1,3 +1,4 @@
+use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::SystemId;
@@ -33,9 +34,12 @@ pub trait CoreFactory {
     fn display_name(&self) -> &'static str;
 
     /// コアと入力アダプタを構築する（rebuild 時にも使用）。
+    ///
+    /// `speaker` は呼び出し元（SessionHandle）で構築された音声出力。
     fn create_core_and_adapter(
         &self,
         settings: &SettingsSnapshot,
+        speaker: Box<dyn AudioBackend>,
     ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError>;
 
     /// この factory が処理可能なメディアかを判定する。

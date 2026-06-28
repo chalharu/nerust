@@ -11,6 +11,7 @@ pub mod title;
 use std::{collections::BTreeSet, sync::Arc};
 
 pub use lifecycle::WindowSize;
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_core_traits::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
@@ -27,6 +28,7 @@ use crate::{
     factory::{CoreFactory, FactoryError},
     load::{MediaObject, SystemLoadOptions},
     session::{metrics::ConsoleMetrics, persistence::PersistenceManager},
+    settings,
 };
 
 #[derive(Debug, Clone)]
@@ -59,16 +61,19 @@ pub struct SessionHandle {
     pub(super) pressed_keys: BTreeSet<KeyboardKey>,
     pub(super) loaded_media: Option<LoadedMedia>,
     pub(super) persistence: PersistenceManager,
+    pub(super) audio_registry: Arc<AudioBackendRegistry>,
 }
 
 impl SessionHandle {
     /// Create a core from settings, falling back to defaults on failure.
     fn create_core_or_default(
         factory: &Arc<dyn CoreFactory>,
+        registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
     ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
+        let speaker = settings::build_speaker(registry, &snapshot.local);
         factory
-            .create_core_and_adapter(snapshot)
+            .create_core_and_adapter(snapshot, speaker)
             .unwrap_or_else(|_| {
                 log::warn!("core creation with loaded settings failed; using defaults");
                 use crate::settings::defaults::seed::{
@@ -79,8 +84,9 @@ impl SessionHandle {
                     local: default_local_settings(),
                     app_state: default_app_state(),
                 };
+                let fallback_speaker = settings::build_speaker(registry, &fallback.local);
                 factory
-                    .create_core_and_adapter(&fallback)
+                    .create_core_and_adapter(&fallback, fallback_speaker)
                     .expect("failed to create core even with default settings")
             })
     }
@@ -89,6 +95,7 @@ impl SessionHandle {
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Self {
         use crate::settings::defaults::seed::{
@@ -110,7 +117,8 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
+        let (emu_core, input_adapter) =
+            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
             input_adapter,
@@ -122,6 +130,7 @@ impl SessionHandle {
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
+            audio_registry,
         }
     }
 
@@ -129,8 +138,9 @@ impl SessionHandle {
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, true)
+        Self::new_inner(capabilities, descriptor, factory, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -141,6 +151,7 @@ impl SessionHandle {
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
     ) -> Self {
         use crate::settings::defaults::seed::{
@@ -160,7 +171,8 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
+        let (emu_core, input_adapter) =
+            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
             input_adapter,
@@ -172,6 +184,7 @@ impl SessionHandle {
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
+            audio_registry,
         }
     }
 
@@ -180,8 +193,9 @@ impl SessionHandle {
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, false)
+        Self::new_inner(capabilities, descriptor, factory, audio_registry, false)
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
