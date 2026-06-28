@@ -76,14 +76,24 @@ fn recover_snapshot(defaults: &SettingsSnapshot, raw: Value) -> SettingsSnapshot
     let mut result = defaults.clone();
     for key_str in ["shared", "local", "app_state"] {
         let key = Value::String(key_str.into());
-        if let Some(field_val) = map.get(&key) {
-            let mut candidate = serde_yaml::to_value(&result).unwrap();
-            if let Some(m) = candidate.as_mapping_mut() {
-                m.insert(key, field_val.clone());
+        let Some(field_val) = map.get(&key) else { continue };
+        match key_str {
+            "shared" => {
+                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                    result.shared = v;
+                }
             }
-            if let Ok(patched) = serde_yaml::from_value::<SettingsSnapshot>(candidate) {
-                result = patched;
+            "local" => {
+                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                    result.local = v;
+                }
             }
+            "app_state" => {
+                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                    result.app_state = v;
+                }
+            }
+            _ => {}
         }
     }
     result
