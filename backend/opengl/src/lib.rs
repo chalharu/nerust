@@ -198,7 +198,6 @@ impl GpuRenderer for GlRenderer {
 pub struct GlFactory;
 
 impl GlFactory {
-    #[allow(unused_variables)]
     fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
         use DisplayApiPreference::*;
         #[cfg(all(target_os = "macos", not(target_family = "wasm")))]

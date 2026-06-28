@@ -57,7 +57,7 @@ impl SessionHandle {
     ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         let previous = self.settings_snapshot.clone();
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            self.host_backend,
+            &self.capabilities,
             &previous,
             &next_settings,
         );
@@ -99,7 +99,7 @@ impl SessionHandle {
         let mut next_settings = self.settings_snapshot.clone();
         next_settings.local.video.window.fullscreen_default = fullscreen;
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            self.host_backend,
+            &self.capabilities,
             &self.settings_snapshot,
             &next_settings,
         );
@@ -161,6 +161,10 @@ impl SessionHandle {
     pub fn flush_before_exit(&mut self) {
         if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
             log::warn!("mapper save flush before close failed: {error}");
+        }
+        // Persist in-memory settings to disk so the next launch sees them.
+        if let Err(error) = self.settings.save_snapshot(self.settings_snapshot.clone()) {
+            log::warn!("settings save on exit failed: {error}");
         }
     }
 

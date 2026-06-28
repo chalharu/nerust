@@ -1,9 +1,8 @@
-use std::{fmt, path::PathBuf};
+use std::path::PathBuf;
 
 use nerust_gui_settings::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
-use serde_yaml::Value;
 
 pub mod apply;
 pub mod manager;
@@ -14,11 +13,6 @@ mod store;
 pub(super) enum SettingsStore {
     FileBacked(SettingsPaths),
     Ephemeral,
-}
-
-pub(super) struct LoadedSettingsDocument<T> {
-    pub(super) settings: T,
-    pub(super) raw: Value,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,48 +33,6 @@ pub enum SettingsError {
     LockPoisoned,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostKind {
-    Android,
-    Gtk,
-    Glutin,
-    Tao,
-}
-
-impl HostKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Android => "android",
-            Self::Gtk => "gtk",
-            Self::Glutin => "glutin",
-            Self::Tao => "tao",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AudioBackendKind {
-    OpenAl,
-    Android,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RenderBackendKind {
-    OpenGl,
-    Wgpu,
-}
-
-impl RenderBackendKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::OpenGl => "opengl",
-            Self::Wgpu => "wgpu",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostWindowCapabilities {
     pub remembers_window_size: bool,
@@ -93,127 +45,20 @@ pub struct BackendPresentationCapabilities {
     pub supports_vsync: bool,
 }
 
+/// Frontend/backend capabilities, constructed directly by each frontend.
+///
+/// Replaces the closed `HostBackendProfile` enum. Each frontend specifies
+/// its own capabilities rather than being matched against a fixed set of
+/// (host_kind, render_backend_kind) pairs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostBackendCapabilities {
     pub window: HostWindowCapabilities,
     pub presentation: Option<BackendPresentationCapabilities>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HostBackendProfile {
-    host: HostKind,
-    backend: RenderBackendKind,
-}
-
-pub type HostBackendIdentity = HostBackendProfile;
-
-impl HostBackendProfile {
-    pub fn new(host: HostKind, backend: RenderBackendKind) -> Self {
-        Self { host, backend }
-    }
-
-    pub fn host(&self) -> HostKind {
-        self.host
-    }
-
-    pub fn backend(&self) -> RenderBackendKind {
-        self.backend
-    }
-
-    pub fn capabilities(&self) -> HostBackendCapabilities {
-        match (self.host, self.backend) {
-            (HostKind::Android, RenderBackendKind::Wgpu) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: false,
-                    supports_scaling: false,
-                },
-                presentation: Some(BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            },
-            (HostKind::Gtk, RenderBackendKind::OpenGl) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-            (HostKind::Glutin, RenderBackendKind::OpenGl) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-            (HostKind::Tao, RenderBackendKind::Wgpu) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: Some(BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            },
-            _ => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-        }
-    }
-
-    pub fn audio_backend(self) -> AudioBackendKind {
-        match (self.host, self.backend) {
-            (HostKind::Android, RenderBackendKind::Wgpu) => AudioBackendKind::Android,
-            _ => AudioBackendKind::OpenAl,
-        }
-    }
-
-    pub fn android_wgpu() -> Self {
-        Self::new(HostKind::Android, RenderBackendKind::Wgpu)
-    }
-
-    pub fn gtk_opengl() -> Self {
-        Self::new(HostKind::Gtk, RenderBackendKind::OpenGl)
-    }
-
-    pub fn glutin_opengl() -> Self {
-        Self::new(HostKind::Glutin, RenderBackendKind::OpenGl)
-    }
-
-    pub fn tao_wgpu() -> Self {
-        Self::new(HostKind::Tao, RenderBackendKind::Wgpu)
-    }
-
-    fn file_stem(&self) -> String {
-        format!(
-            "{}+{}",
-            sanitize_path_component(self.host.label()),
-            sanitize_path_component(self.backend.label())
-        )
-    }
-}
-
-impl fmt::Display for HostBackendProfile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}+{}", self.host.label(), self.backend.label())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsPaths {
-    pub config_dir: PathBuf,
-    pub data_dir: PathBuf,
-    pub shared_settings_file: PathBuf,
-    pub local_settings_file: PathBuf,
-    pub app_state_file: PathBuf,
+    pub settings_file: PathBuf,
     pub central_storage_root: PathBuf,
 }
 
@@ -239,23 +84,20 @@ pub struct SettingsApplyPlan {
     pub fullscreen_default_changed: bool,
 }
 
-fn sanitize_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+    use super::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsApplyPlan, SettingsSnapshot,
+        apply::{derive_apply_plan, validate_shared_settings},
+        manager::SettingsManager,
+        persistence::{
+            resolve_central_storage_paths, resolve_persistence_paths_with_import,
+            system_storage_key,
+        },
+    };
     use nerust_contract_core::identity::SystemIdentity;
     use nerust_contract_input::SystemId;
     use nerust_gui_settings::{
@@ -270,18 +112,30 @@ mod tests {
         shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
     };
     use nerust_persistence::sidecar::resolve_sidecars;
-    use serde_yaml::{Mapping, Value};
 
-    use super::{
-        HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot,
-        apply::{derive_apply_plan, validate_shared_settings},
-        manager::SettingsManager,
-        persistence::{
-            resolve_central_storage_paths, resolve_persistence_paths_with_import,
-            system_storage_key,
-        },
-        store::merge_with_defaults,
-    };
+    fn tao_caps() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        }
+    }
+
+    fn gtk_caps() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        }
+    }
 
     fn test_system_identity() -> SystemIdentity {
         SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])
@@ -307,24 +161,6 @@ mod tests {
             .join("target")
             .join("gui-runtime-settings")
             .join(name)
-    }
-
-    #[test]
-    fn merge_with_defaults_backfills_missing_fields() {
-        let merged = merge_with_defaults(
-            serde_yaml::to_value(test_shared_defaults()).unwrap(),
-            Value::Mapping(Mapping::from_iter([(
-                Value::String("general".into()),
-                Value::Mapping(Mapping::from_iter([(
-                    Value::String("language".into()),
-                    Value::String("english".into()),
-                )])),
-            )])),
-        );
-
-        let decoded: DesktopSharedSettings = serde_yaml::from_value(merged).unwrap();
-        assert_eq!(decoded.general.language, AppLanguage::English);
-        assert!(decoded.systems.contains_key(&SystemId::new("nes")));
     }
 
     #[test]
@@ -426,11 +262,7 @@ mod tests {
         shared.persistence.storage_policy = StoragePolicy::AppSharedData;
         shared.persistence.storage_directory = Some(custom_root);
         let paths = super::SettingsPaths {
-            config_dir: root.join("config"),
-            data_dir: root.join("data"),
-            shared_settings_file: root.join("config/shared.yaml"),
-            local_settings_file: root.join("config/local.yaml"),
-            app_state_file: root.join("data/app-state.yaml"),
+            settings_file: root.join("config/settings.yaml"),
             central_storage_root: root.join("data/persistence"),
         };
 
@@ -447,172 +279,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_serialized_value_preserves_unknown_fields() {
-        let merged = super::store::merge_serialized_value(
-            Value::Mapping(Mapping::from_iter([(
-                Value::String("future".into()),
-                Value::String("keep-me".into()),
-            )])),
-            &test_shared_defaults(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            merged
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-me".into())
-        );
-    }
-
-    #[test]
-    fn merge_serialized_value_preserves_unknown_fields_inside_sequence_items() {
-        let mut shared = test_shared_defaults();
-        shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::new("nes"), {
-                let mut system = SystemInputSettings::default();
-                system.keyboard_profiles.insert(
-                    IMPLICIT_PROFILE_ID.to_string(),
-                    nerust_gui_settings::input::KeyboardProfile {
-                        bindings: vec![KeyboardBinding::new(
-                            "nes.attachment.player1",
-                            PersistedControlId::digital("nes.control.a"),
-                            KeyboardKey::KeyZ,
-                        )],
-                    },
-                );
-                system
-            })]),
-            shortcuts: nerust_gui_settings::input::ShortcutSettings {
-                keyboard: vec![ShortcutBinding {
-                    action: ShortcutAction::TogglePause,
-                    key: Some(KeyboardKey::Space),
-                }],
-            },
-        };
-        let existing: Value = serde_yaml::from_str(
-            r#"
-input:
-  systems:
-    nes:
-      keyboard_profiles:
-        default:
-          bindings:
-            - attachment: nes.attachment.player1
-              control:
-                kind: digital
-                id: nes.control.a
-              key: key_z
-              future: keep-binding
-  shortcuts:
-    keyboard:
-      - action: toggle_pause
-        key: space
-        future: keep-shortcut
-"#,
-        )
-        .unwrap();
-
-        let merged = super::store::merge_serialized_value(existing, &shared).unwrap();
-        let input = merged
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("input".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap();
-        let bindings = input
-            .get(Value::String("systems".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("nes".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("keyboard_profiles".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("default".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("bindings".into()))
-            .unwrap()
-            .as_sequence()
-            .unwrap();
-        let shortcuts = input
-            .get(Value::String("shortcuts".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("keyboard".into()))
-            .unwrap()
-            .as_sequence()
-            .unwrap();
-
-        assert_eq!(
-            bindings[0]
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-binding".into())
-        );
-        assert_eq!(
-            shortcuts[0]
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-shortcut".into())
-        );
-    }
-
-    #[test]
-    fn local_settings_save_prunes_legacy_flat_video_fields() {
-        let existing: Value = serde_yaml::from_str(
-            r#"
-schema_version: 1
-video:
-  fullscreen_default: true
-  scaling: x3
-  vsync: false
-  future: keep-video
-"#,
-        )
-        .unwrap();
-        let merged = super::store::merge_serialized_value(
-            super::store::strip_legacy_local_video_fields(existing),
-            &test_local_defaults(),
-        )
-        .unwrap();
-
-        let decoded: HostBackendLocalSettings = serde_yaml::from_value(merged.clone()).unwrap();
-        assert!(!decoded.video.window.fullscreen_default);
-        assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
-        assert!(decoded.video.presentation.vsync);
-
-        let video = merged
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("video".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap();
-        assert!(!video.contains_key(Value::String("fullscreen_default".into())));
-        assert!(!video.contains_key(Value::String("scaling".into())));
-        assert!(!video.contains_key(Value::String("vsync".into())));
-        assert_eq!(
-            video.get(Value::String("future".into())).unwrap(),
-            &Value::String("keep-video".into())
-        );
-    }
-
-    #[test]
     fn apply_plan_flags_changed_categories() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
@@ -624,7 +290,7 @@ video:
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert_eq!(
             plan,
@@ -655,7 +321,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.session_rebuild_required);
     }
@@ -671,7 +337,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(!plan.session_rebuild_required);
     }
@@ -686,7 +352,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
+        let plan = derive_apply_plan(&gtk_caps(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -703,7 +369,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -720,7 +386,7 @@ video:
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -770,8 +436,7 @@ video:
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
-        let paths =
-            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::gtk_opengl());
+        let paths = super::SettingsPaths::from_root(root.clone());
         let manager = SettingsManager::load_with_paths(
             paths.clone(),
             test_shared_defaults(),
@@ -807,31 +472,23 @@ video:
     }
 
     #[test]
-    fn update_window_size_records_host_specific_app_state() {
+    fn update_window_size_uses_fixed_key() {
         let manager = SettingsManager::ephemeral(
             test_shared_defaults(),
             test_local_defaults(),
             DesktopAppState::default(),
         );
 
-        manager
-            .update_window_size(&HostBackendIdentity::tao_wgpu(), 960, 720)
-            .unwrap();
-        manager
-            .update_window_size(&HostBackendIdentity::gtk_opengl(), 800, 600)
-            .unwrap();
+        manager.update_window_size(960, 720).unwrap();
+        manager.update_window_size(800, 600).unwrap();
 
         let app_state = manager.app_state().unwrap();
 
+        // All callers use the same fixed key, so the second value replaces the first.
+        assert!(app_state.window_size("tao+wgpu").is_none());
+        assert!(app_state.window_size("gtk+opengl").is_none());
         assert_eq!(
-            app_state.window_size("tao+wgpu"),
-            Some(RememberedWindowSize {
-                width: 960,
-                height: 720,
-            })
-        );
-        assert_eq!(
-            app_state.window_size("gtk+opengl"),
+            app_state.window_size("main"),
             Some(RememberedWindowSize {
                 width: 800,
                 height: 600,
@@ -856,64 +513,113 @@ video:
     }
 
     #[test]
-    fn host_backend_identity_formats_stably() {
-        assert_eq!(
-            HostBackendIdentity::android_wgpu().to_string(),
-            "android+wgpu"
-        );
-        assert_eq!(HostBackendIdentity::gtk_opengl().to_string(), "gtk+opengl");
-        assert_eq!(
-            HostBackendIdentity::glutin_opengl().to_string(),
-            "glutin+opengl"
-        );
-        assert_eq!(HostBackendIdentity::tao_wgpu().to_string(), "tao+wgpu");
-    }
-
-    #[test]
-    fn android_wgpu_profile_exposes_mobile_capabilities() {
-        let profile = HostBackendIdentity::android_wgpu();
-
-        assert_eq!(profile.audio_backend(), super::AudioBackendKind::Android);
-        assert_eq!(
-            profile.capabilities(),
-            super::HostBackendCapabilities {
-                window: super::HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: false,
-                    supports_scaling: false,
-                },
-                presentation: Some(super::BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            }
-        );
+    fn host_backend_capabilities_carry_individual_backend_values() {
+        let caps = super::HostBackendCapabilities {
+            window: super::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: Some(super::BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
+        assert!(!caps.window.remembers_window_size);
+        assert!(!caps.window.supports_fullscreen_default);
+        assert!(!caps.window.supports_scaling);
+        assert!(caps.presentation.is_some_and(|p| p.supports_vsync));
     }
 
     #[test]
     fn settings_paths_can_be_built_from_an_explicit_root() {
-        let root = PathBuf::from("/tmp/nerust-android");
-        let paths =
-            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
+        let root = PathBuf::from("/tmp/nerust-test");
+        let paths = super::SettingsPaths::from_root(root.clone());
 
-        assert_eq!(paths.config_dir, root.join("config"));
-        assert_eq!(paths.data_dir, root.join("data"));
         assert_eq!(
-            paths.shared_settings_file,
-            root.join("config").join("shared-settings.yaml")
-        );
-        assert_eq!(
-            paths.local_settings_file,
-            root.join("config")
-                .join("local-settings")
-                .join("android+wgpu.yaml")
-        );
-        assert_eq!(
-            paths.app_state_file,
-            root.join("data").join("app-state.yaml")
+            paths.settings_file,
+            root.join("config").join("settings.yaml")
         );
         assert_eq!(
             paths.central_storage_root,
             root.join("data").join("persistence")
         );
+    }
+
+    #[test]
+    fn unknown_enum_variant_resets_only_that_field() {
+        use nerust_gui_settings::language::AppLanguage;
+
+        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        let path = dir.join("config").join("settings.yaml");
+        std::fs::write(
+            &path,
+            b"shared:\n  general:\n    language: future_variant\n",
+        )
+        .unwrap();
+
+        let paths = super::SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap = manager.snapshot().unwrap();
+
+        assert_eq!(
+            snap.shared.general.language,
+            AppLanguage::SystemDefault,
+            "unknown variant should fall back to default",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ntsc_filter_survives_save_reload_cycle() {
+        use nerust_contract_input::SystemId;
+        use nerust_gui_settings::nes::NesVideoFilter;
+
+        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let paths = super::SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        // Change NTSC filter
+        let mut snap = manager.snapshot().unwrap();
+        let nes = snap.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes;
+        nes_settings.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snap.clone()).unwrap();
+        drop(manager);
+
+        // Reload
+        let manager2 = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap2 = manager2.snapshot().unwrap();
+        let nes2 = snap2.shared.systems.get(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes2;
+        assert_eq!(
+            nes_settings.video.filter,
+            NesVideoFilter::NtscRgb,
+            "NTSC filter should persist across save/reload",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

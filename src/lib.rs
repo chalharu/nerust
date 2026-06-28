@@ -1,60 +1,8 @@
-use std::path::PathBuf;
-
-use clap::{Arg, Command};
-use log::LevelFilter;
-use nerust_run_options::RunOptions;
-use nerust_screen_video::GpuFactory;
-use simple_logger::SimpleLogger;
-
-fn create_factory() -> Box<dyn GpuFactory> {
-    #[cfg(feature = "wgpu")]
-    return Box::new(nerust_backend_wgpu::WgpuFactory);
-    #[cfg(feature = "opengl")]
-    return Box::new(nerust_backend_opengl::GlFactory);
-    #[cfg(not(any(feature = "wgpu", feature = "opengl")))]
-    compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
-}
-
-fn parse_cli_args() -> RunOptions {
-    let app = Command::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::new("filename").help("Rom file name"))
-        .arg(
-            Arg::new("mmc3-irq-variant")
-                .long("mmc3-irq-variant")
-                .value_parser(["sharp", "nec"])
-                .help("Override mapper 4 MMC3 IRQ behavior"),
-        );
-
-    let matches = app.get_matches();
-    RunOptions {
-        rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
-        mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").cloned(),
-    }
-}
+mod inner;
 
 pub fn run() {
-    SimpleLogger::new()
-        .with_level(LevelFilter::Warn)
-        .env()
-        .init()
-        .unwrap();
-
-    let options = parse_cli_args();
-    let factory = create_factory();
-
-    #[cfg(all(feature = "gtk", not(clippy)))]
-    nerust_gtk::run(factory, options);
-    #[cfg(all(feature = "tao", not(clippy)))]
-    nerust_tao::run(factory, options);
     #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
-    #[cfg(clippy)]
-    {
-        // This is a workaround for clippy, which does not support conditional compilation of the main function.
-        let _ = factory;
-        let _ = options;
-    }
+    #[cfg(any(feature = "gtk", feature = "tao"))]
+    inner::run();
 }
