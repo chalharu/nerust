@@ -225,10 +225,9 @@ fn test_session() -> SessionHandle {
         },
         presentation: None,
     };
-    let (core, adapter) = build_test_core_and_adapter();
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let descriptor = factory.system_descriptor();
-    SessionHandle::new_with_core(capabilities, descriptor, factory, core, adapter)
+    SessionHandle::new_with_core(capabilities, descriptor, factory)
 }
 
 fn test_rom() -> Vec<u8> {
