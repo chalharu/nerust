@@ -7,6 +7,7 @@ use std::{
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    audio::{AudioBackend, AudioBackendRegistry},
     identity::SystemIdentity,
     input::{InputStatePersistence, SystemInputAdapter},
 };
@@ -174,6 +175,7 @@ impl CoreFactory for MockFactory {
     fn create_core_and_adapter(
         &self,
         _: &SettingsSnapshot,
+        _speaker: Box<dyn AudioBackend>,
     ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
         Ok(build_test_core_and_adapter())
     }
@@ -225,8 +227,9 @@ fn test_session() -> SessionHandle {
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let descriptor = factory.system_descriptor();
+    let audio_registry = Arc::new(AudioBackendRegistry::new());
     // Use ephemeral settings so tests are not affected by disk state.
-    SessionHandle::new_ephemeral(capabilities, descriptor, factory)
+    SessionHandle::new_ephemeral(capabilities, descriptor, factory, audio_registry)
 }
 
 fn test_rom() -> Vec<u8> {

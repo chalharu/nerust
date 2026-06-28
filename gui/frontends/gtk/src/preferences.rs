@@ -191,7 +191,8 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
     ));
     let sample_rate_combo = {
-        let rates = nerust_gui_shell::settings::audio_registry().supported_rates();
+        let registry = &state.borrow().ctx.audio_registry;
+        let rates = registry.supported_rates();
         let rates: &[u32] = if rates.is_empty() {
             &[44_100, 48_000]
         } else {

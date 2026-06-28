@@ -52,13 +52,16 @@ nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 nerust_render_gl = { workspace = true, optional = true }
 nerust_render_wgpu = { workspace = true, optional = true }
+nerust_core_traits.workspace = true
 nerust_render_base.workspace = true
+nerust_sound_cpal = { workspace = true, optional = true }
+nerust_sound_openal = { workspace = true, optional = true }
 simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = ["nerust_gtk", "nerust_factory_nes", "nerust_gui_shell"]
-tao = ["nerust_tao", "nerust_factory_nes", "nerust_gui_shell"]
+gtk = ["nerust_gtk", "nerust_factory_nes", "nerust_gui_shell", "nerust_sound_cpal", "nerust_sound_openal"]
+tao = ["nerust_tao", "nerust_factory_nes", "nerust_gui_shell", "nerust_sound_cpal", "nerust_sound_openal"]
 wgpu = ["nerust_render_wgpu"]
 opengl = ["nerust_render_gl"]
 
