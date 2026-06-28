@@ -61,19 +61,28 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    pub fn new(
+    fn new_inner(
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
+        use_persistent: bool,
     ) -> Self {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let settings = SettingsManager::load_or_ephemeral(
-            default_shared_settings(),
-            default_local_settings(),
-            default_app_state(),
-        );
+        let settings = if use_persistent {
+            SettingsManager::load_or_ephemeral(
+                default_shared_settings(),
+                default_local_settings(),
+                default_app_state(),
+            )
+        } else {
+            SettingsManager::ephemeral(
+                default_shared_settings(),
+                default_local_settings(),
+                default_app_state(),
+            )
+        };
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
@@ -92,6 +101,23 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
         }
+    }
+
+    pub fn new(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+    ) -> Self {
+        Self::new_inner(capabilities, descriptor, factory, true)
+    }
+
+    #[cfg(test)]
+    pub fn new_ephemeral(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+    ) -> Self {
+        Self::new_inner(capabilities, descriptor, factory, false)
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {

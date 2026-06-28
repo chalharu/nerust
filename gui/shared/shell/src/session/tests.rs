@@ -227,7 +227,8 @@ fn test_session() -> SessionHandle {
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let descriptor = factory.system_descriptor();
-    SessionHandle::new(capabilities, descriptor, factory)
+    // Use ephemeral settings so tests are not affected by disk state.
+    SessionHandle::new_ephemeral(capabilities, descriptor, factory)
 }
 
 fn test_rom() -> Vec<u8> {
