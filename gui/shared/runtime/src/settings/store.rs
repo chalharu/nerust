@@ -104,7 +104,7 @@ pub(super) fn save_snapshot_store(
     }
 }
 
-pub(super) fn normalize_loaded_settings<T: serde::Serialize + serde::de::DeserializeOwned>(
+pub(super) fn normalize_loaded_settings<T: Clone + serde::Serialize + serde::de::DeserializeOwned>(
     defaults: &T,
     loaded: T,
 ) -> Result<T, SettingsError> {
@@ -168,14 +168,39 @@ fn write_yaml<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), Setting
     Ok(())
 }
 
-fn decode_settings_document<T: serde::Serialize + serde::de::DeserializeOwned>(
+/// Deserialize `loaded` (overlaid on `defaults`), recovering field-by-field
+/// when individual enum variants fail to decode.
+///
+/// A single unknown enum variant (e.g. a field written by a newer version)
+/// no longer resets the entire document — only the field that contains it
+/// falls back to its default.
+fn decode_settings_document<T: Clone + serde::Serialize + serde::de::DeserializeOwned>(
     defaults: &T,
     loaded: Value,
 ) -> Result<T, SettingsError> {
-    Ok(serde_yaml::from_value(merge_with_defaults(
-        serde_yaml::to_value(defaults)?,
-        loaded,
-    ))?)
+    let merged = merge_with_defaults(serde_yaml::to_value(defaults)?, loaded.clone());
+    match serde_yaml::from_value(merged.clone()) {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            // Recover field-by-field: walk top-level keys, keep the ones that
+            // deserialize, fall back to default for the ones that don't.
+            let Some(loaded_map) = loaded.as_mapping() else {
+                return Ok(serde_yaml::from_value(merged)?);
+            };
+            let mut best = defaults.clone();
+            for key in loaded_map.keys() {
+                let mut candidate = serde_yaml::to_value(&best)?;
+                if let Some(cm) = candidate.as_mapping_mut() {
+                    cm.insert(key.clone(), loaded_map[key].clone());
+                }
+                if let Ok(patched) = serde_yaml::from_value::<T>(candidate) {
+                    best = patched;
+                }
+                // On failure, keep best as-is (field stays at default)
+            }
+            Ok(best)
+        }
+    }
 }
 
 fn ensure_supported_schema_version(value: &Value, expected: u32) -> Result<(), SettingsError> {
