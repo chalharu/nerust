@@ -64,8 +64,8 @@ impl SessionHandle {
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
-        emu_core: EmuCore,
-        input_adapter: Box<dyn SystemInputAdapter>,
+        mut emu_core: EmuCore,
+        mut input_adapter: Box<dyn SystemInputAdapter>,
     ) -> Self {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
@@ -76,6 +76,15 @@ impl SessionHandle {
             default_app_state(),
         );
         let settings_snapshot = settings.snapshot().expect("settings snapshot should be readable");
+        // The passed-in core was built with default settings. Rebuild with
+        // the persisted settings so that values like the NTSC filter are
+        // reflected in the emulation core from the start.
+        if let Ok((rebuilt_core, rebuilt_adapter)) =
+            factory.create_core_and_adapter(&settings_snapshot)
+        {
+            emu_core = rebuilt_core;
+            input_adapter = rebuilt_adapter;
+        }
         Self {
             emu_core,
             input_adapter,
