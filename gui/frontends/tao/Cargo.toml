@@ -10,14 +10,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-clap.workspace = true
 iced = { workspace = true, features = ["advanced"] }
 iced_tiny_skia.workspace = true
 iced_winit.workspace = true
 log.workspace = true
 muda.workspace = true
-nerust_backend_opengl = { workspace = true, optional = true }
-nerust_backend_wgpu = { workspace = true, optional = true }
 nerust_contract_core.workspace = true
 nerust_screen_video.workspace = true
 nerust_factory_nes.workspace = true
@@ -26,18 +23,11 @@ nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_contract_input.workspace = true
 nerust_persistence.workspace = true
-nerust_sound_openal.workspace = true
+nerust_run_options.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
-rmp-serde.workspace = true
 serde.workspace = true
-simple_logger.workspace = true
 tao.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"
-
-[features]
-default = ["wgpu"]
-opengl = ["nerust_backend_opengl"]
-wgpu = ["nerust_backend_wgpu"]

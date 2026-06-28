@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::{glib, prelude::*};
-use nerust_screen_video::SurfaceSize;
+use nerust_screen_video::{GpuFactory, SurfaceSize};
 
 use super::{State, renderer::GtkRenderer};
 
@@ -16,14 +16,22 @@ pub(crate) struct SurfaceCore {
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
 
 pub(crate) trait SurfaceExtend {
-    fn bind(window: &gtk::ApplicationWindow, state: Rc<RefCell<State>>) -> Surface;
+    fn bind(
+        window: &gtk::ApplicationWindow,
+        state: Rc<RefCell<State>>,
+        factory: Rc<dyn GpuFactory>,
+    ) -> Surface;
     fn tick(&self) -> bool;
 }
 
 impl SurfaceExtend for Surface {
-    fn bind(window: &gtk::ApplicationWindow, state: Rc<RefCell<State>>) -> Surface {
+    fn bind(
+        window: &gtk::ApplicationWindow,
+        state: Rc<RefCell<State>>,
+        factory: Rc<dyn GpuFactory>,
+    ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
-        let renderer = Rc::new(RefCell::new(GtkRenderer::new()));
+        let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.clone(),
             renderer,

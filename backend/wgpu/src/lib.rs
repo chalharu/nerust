@@ -158,13 +158,8 @@ impl GpuRenderer for WgpuRenderer {
 // WgpuFactory
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Default)]
 pub struct WgpuFactory;
-
-impl Default for WgpuFactory {
-    fn default() -> Self {
-        Self
-    }
-}
 
 impl WgpuFactory {
     fn device_limit_profile() -> DeviceLimitProfile {

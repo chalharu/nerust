@@ -1,0 +1,8 @@
+[package]
+name = "nerust_run_options"
+version.workspace = true
+authors.workspace = true
+description = "CLI startup options shared between frontends and the root crate"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true

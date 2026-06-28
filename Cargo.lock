@@ -3152,6 +3152,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "log",
+ "nerust_backend_opengl",
+ "nerust_backend_wgpu",
+ "nerust_gtk",
+ "nerust_run_options",
+ "nerust_screen_video",
+ "nerust_tao",
+ "simple_logger",
+]
+
+[[package]]
 name = "nerust_android"
 version = "0.1.0-dev"
 dependencies = [
@@ -3258,22 +3273,18 @@ dependencies = [
  "gdk4-x11-sys",
  "gio 0.22.6",
  "gtk4",
- "libc",
  "log",
- "nerust_backend_opengl",
- "nerust_backend_wgpu",
  "nerust_contract_input",
  "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_persistence",
+ "nerust_run_options",
  "nerust_screen_video",
- "nerust_sound_openal",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
- "simple_logger",
 ]
 
 [[package]]
@@ -3400,6 +3411,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_run_options"
+version = "0.1.0-dev"
+
+[[package]]
 name = "nerust_screen_opengl"
 version = "0.1.0-dev"
 dependencies = [
@@ -3462,15 +3477,12 @@ version = "0.1.0-dev"
 name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
- "clap",
  "gtk",
  "iced",
  "iced_tiny_skia",
  "iced_winit",
  "log",
  "muda",
- "nerust_backend_opengl",
- "nerust_backend_wgpu",
  "nerust_contract_core",
  "nerust_contract_input",
  "nerust_factory_nes",
@@ -3478,13 +3490,11 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_persistence",
+ "nerust_run_options",
  "nerust_screen_video",
- "nerust_sound_openal",
  "raw-window-handle",
  "rfd",
- "rmp-serde",
  "serde",
- "simple_logger",
  "tao",
 ]
 
