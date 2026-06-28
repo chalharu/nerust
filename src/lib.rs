@@ -9,8 +9,7 @@ use nerust_gui_runtime::{rom::load_rom_path, settings::HostBackendIdentity};
 use nerust_gui_shell::{
     context::FrontendContext,
     factory::CoreFactory,
-    load::{MediaObject, RomLoader, RomLoaderError, SystemLoadOptions},
-    session::SessionHandle,
+    load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
     session::commands::SessionCommand,
 };
 use nerust_run_options::RunOptions;
@@ -63,22 +62,26 @@ struct LiveRomLoader {
 }
 
 impl RomLoader for LiveRomLoader {
-    fn load_rom(&self, path: &Path, session: &mut SessionHandle) -> Result<(), RomLoaderError> {
+    fn load_rom(
+        &mut self,
+        path: &Path,
+        target: &mut dyn RomLoadTarget,
+    ) -> Result<(), RomLoaderError> {
         let loaded = load_rom_path(path).map_err(|e| RomLoaderError(e.to_string()))?;
         let (rom_path, data) = loaded.into_parts();
         let media = MediaObject::new(Some(rom_path), data);
         let options = self
             .pending_options
-            .clone()
-            .unwrap_or_else(|| session.default_load_options());
+            .take()
+            .unwrap_or_else(|| target.default_load_options());
         let resolved = self
             .factory
-            .resolve_load_request(session.settings_snapshot(), options)
+            .resolve_load_request(target.settings_snapshot(), options)
             .map_err(|e| RomLoaderError(format!("resolve: {e}")))?;
-        session
+        target
             .load_resolved(media, resolved)
             .map_err(|e| RomLoaderError(format!("load: {e}")))?;
-        let _ = session.run_command(SessionCommand::Resume);
+        let _ = target.run_command(SessionCommand::Resume);
         Ok(())
     }
 }
@@ -127,5 +130,121 @@ pub fn run() {
     {
         let _ = ctx;
         let _ = options;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use nerust_factory_nes::NesFactory;
+    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_shell::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use nerust_gui_shell::{
+        factory::CoreFactory,
+        load::{MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, SystemLoadOptions},
+        session::SessionError,
+        session::commands::{SessionCommand, SessionCommandOutcome},
+    };
+
+    use crate::LiveRomLoader;
+
+    struct LoadRecorder {
+        resolved: Vec<u8>,
+        resumed: bool,
+    }
+
+    fn snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        }
+    }
+
+    impl RomLoadTarget for LoadRecorder {
+        fn default_load_options(&self) -> SystemLoadOptions {
+            SystemLoadOptions::default()
+        }
+        fn settings_snapshot(&self) -> &SettingsSnapshot {
+            // Use leak to get a static reference for the test
+            Box::leak(Box::new(snapshot()))
+        }
+        fn load_resolved(
+            &mut self,
+            _media: MediaObject,
+            resolved: ResolvedLoadRequest,
+        ) -> Result<(), SessionError> {
+            self.resolved = resolved.core_options_bytes;
+            Ok(())
+        }
+        fn run_command(
+            &mut self,
+            command: SessionCommand,
+        ) -> Result<SessionCommandOutcome, SessionError> {
+            if matches!(command, SessionCommand::Resume) {
+                self.resumed = true;
+            }
+            Ok(SessionCommandOutcome::default())
+        }
+    }
+
+    #[test]
+    fn live_rom_loader_uses_pending_options_when_set() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let pending = Some(SystemLoadOptions {
+            options_bytes: b"sharp".to_vec(),
+        });
+        let mut loader = LiveRomLoader {
+            factory,
+            pending_options: pending,
+        };
+        let mut target = LoadRecorder {
+            resolved: Vec::new(),
+            resumed: false,
+        };
+
+        // load_rom reads from disk; use a path we know exists
+        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
+        assert!(result.is_ok());
+        assert!(target.resumed);
+        // core_options_bytes should be non-empty (serialized from pending_options)
+        assert!(
+            !target.resolved.is_empty(),
+            "expected non-empty core options"
+        );
+    }
+
+    #[test]
+    fn live_rom_loader_pending_options_consumed_once() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let pending = Some(SystemLoadOptions {
+            options_bytes: b"nec".to_vec(),
+        });
+        let mut loader = LiveRomLoader {
+            factory,
+            pending_options: pending,
+        };
+        let mut target = LoadRecorder {
+            resolved: Vec::new(),
+            resumed: false,
+        };
+
+        // First call consumes pending_options — resumes
+        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
+        assert!(result.is_ok());
+        assert!(target.resumed, "expected resume on first load");
+
+        // Second call uses default options since pending_options was taken — still succeeds
+        let mut target2 = LoadRecorder {
+            resolved: Vec::new(),
+            resumed: false,
+        };
+        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target2);
+        assert!(result.is_ok());
+        assert!(target2.resumed, "expected resume on second load");
     }
 }
