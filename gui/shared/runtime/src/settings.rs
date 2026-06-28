@@ -786,4 +786,49 @@ video:
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn ntsc_filter_survives_save_reload_cycle() {
+        use nerust_contract_input::SystemId;
+        use nerust_gui_settings::nes::NesVideoFilter;
+
+        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let paths = super::SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        // Change NTSC filter
+        let mut snap = manager.snapshot().unwrap();
+        let nes = snap.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes;
+        nes_settings.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snap.clone()).unwrap();
+        drop(manager);
+
+        // Reload
+        let manager2 = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap2 = manager2.snapshot().unwrap();
+        let nes2 = snap2.shared.systems.get(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes2;
+        assert_eq!(
+            nes_settings.video.filter,
+            NesVideoFilter::NtscRgb,
+            "NTSC filter should persist across save/reload",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
