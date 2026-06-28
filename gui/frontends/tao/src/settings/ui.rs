@@ -17,7 +17,6 @@ use iced::{
 };
 use iced_winit::program::Program;
 use nerust_contract_input::InputTopologyDescriptor;
-use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
@@ -95,6 +94,7 @@ pub(crate) enum Message {
 
 pub(crate) struct SettingsAppProgram {
     pub(crate) snapshot: SettingsSnapshot,
+    pub(crate) factory: Arc<dyn CoreFactory>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
@@ -122,6 +122,7 @@ impl Program for SettingsAppProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         let state = SettingsAppState::new_with_shared(
             &self.snapshot,
+            self.factory.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
             self.capture_target.clone(),
@@ -163,7 +164,7 @@ pub(crate) struct SettingsAppState {
 }
 
 impl SettingsAppState {
-    pub(crate) fn new(snapshot: &SettingsSnapshot) -> Self {
+    pub(crate) fn new(snapshot: &SettingsSnapshot, factory: Arc<dyn CoreFactory>) -> Self {
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -175,7 +176,7 @@ impl SettingsAppState {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
-            factory: Arc::new(NesFactory),
+            factory,
             draft: snapshot.clone(),
             page: SettingsPage::General,
             input_section: InputPageSection::Attachment(0),
@@ -186,11 +187,12 @@ impl SettingsAppState {
 
     pub(crate) fn new_with_shared(
         snapshot: &SettingsSnapshot,
+        factory: Arc<dyn CoreFactory>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
-        let mut state = Self::new(snapshot);
+        let mut state = Self::new(snapshot, factory);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
         state.capture_target = capture_target;

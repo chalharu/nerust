@@ -12,7 +12,9 @@ use nerust_contract_core::{
 };
 use nerust_contract_emuthread::EmuThread;
 use nerust_contract_input::SystemId;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+use nerust_gui_runtime::settings::{
+    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
+};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_video::{
     FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile,
@@ -215,11 +217,18 @@ impl CoreFactory for MockFactory {
 }
 
 fn test_session() -> SessionHandle {
-    let identity = HostBackendIdentity::gtk_opengl();
-    let (core, adapter) = build_test_core_and_adapter();
+    let capabilities = HostBackendCapabilities {
+        window: HostWindowCapabilities {
+            remembers_window_size: false,
+            supports_fullscreen_default: true,
+            supports_scaling: true,
+        },
+        presentation: None,
+    };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let descriptor = factory.system_descriptor();
-    SessionHandle::new_with_core(identity, descriptor, factory, core, adapter)
+    // Use ephemeral settings so tests are not affected by disk state.
+    SessionHandle::new_ephemeral(capabilities, descriptor, factory)
 }
 
 fn test_rom() -> Vec<u8> {

@@ -7,6 +7,7 @@ mod storage;
 use std::{
     collections::HashMap,
     ffi::c_void,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,16 +21,16 @@ use nerust_factory_nes::{
     },
 };
 use nerust_gui_runtime::{
-    settings::{HostBackendIdentity, SettingsSnapshot},
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsPaths,
+    },
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
     factory::CoreFactory,
     load::MediaObject,
     session::{SessionHandle, commands::SessionCommand},
-    settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    },
 };
 use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use winit::{
@@ -118,7 +119,7 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(frontend_app, storage);
+    let mut state = AndroidFrontend::new(frontend_app, storage, storage_root.join("nerust"));
     log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
@@ -145,20 +146,28 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
+    fn new(app: AndroidApp, storage: AndroidStorage, settings_root: PathBuf) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
-        let identity = HostBackendIdentity::android_wgpu();
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
-        let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        };
-        let (core, adapter) = factory
-            .create_core_and_adapter(&snapshot)
-            .expect("failed to create core");
-        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let settings_paths =
+            SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
+        let session = SessionHandle::new_with_settings_paths(
+            capabilities,
+            descriptor,
+            Arc::clone(&factory),
+            settings_paths,
+        );
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
@@ -457,24 +466,22 @@ impl AndroidFrontend {
                     }
                 }
                 self.session.flush_before_exit();
-                // Finish the activity so the app exits cleanly and is not
-                // restored on next launch (no swipe-kill scenario).
+                // Finish the activity and kill the process so the next launch
+                // starts with a clean slate (swipe-kill semantics).
                 let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                if let Err(error) = vm.attach_current_thread(|env| {
+                let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
                     let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                     let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-                    if let Err(error) = env.call_method(
-                        &activity,
-                        jni_str!("finishAndRemoveTask"),
-                        jni_sig!("()V"),
-                        &[],
-                    ) {
-                        log::warn!("failed to call finishAndRemoveTask: {error}");
-                    }
-                    Ok::<_, jni::errors::Error>(())
-                }) {
-                    log::warn!("failed to attach JNI thread for exit: {error}");
-                }
+                    let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
+                    let system = env.find_class(jni_str!("java/lang/System"))?;
+                    let _ = env.call_static_method(
+                        &system,
+                        jni_str!("exit"),
+                        jni_sig!("(I)V"),
+                        &[jni::objects::JValue::Int(0)],
+                    );
+                    Ok(())
+                });
             }
             MenuAction::Unload => {
                 if self.session.loaded() {

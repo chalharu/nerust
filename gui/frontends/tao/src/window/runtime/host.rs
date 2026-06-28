@@ -1,13 +1,10 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 
-use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::{
-    rom::load_rom_path,
-    settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot},
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsSnapshot,
+    },
     shell::NativeShellState,
 };
 use nerust_gui_settings::{
@@ -15,19 +12,18 @@ use nerust_gui_settings::{
     input::{KeyboardKey, ShortcutAction},
 };
 use nerust_gui_shell::{
-    factory::CoreFactory,
-    load::{LoadRequest, MediaObject, SystemLoadOptions},
+    context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle, WindowSize,
-        commands::{SessionCommand, SessionCommandOutcome},
+        access::{FrontendSession, SettingsResult},
+        commands::SessionCommand,
     },
     settings::{
-        defaults::seed::{default_app_state, default_local_settings, default_shared_settings},
         i18n::{UiText, text},
         scaling_factor,
     },
 };
-use nerust_screen_video::{RenderResult, SurfaceSize};
+use nerust_screen_video::{GpuFactory, RenderResult, SurfaceSize};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
@@ -52,44 +48,48 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     session: SessionHandle,
+    ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
-    pending_load_request: Option<LoadRequest>,
     pub(crate) active: bool,
     auto_paused: bool,
 }
 
 impl HostState {
-    pub(crate) fn new(app_menu: AppMenu) -> Self {
-        let identity = HostBackendIdentity::tao_wgpu();
-        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let descriptor = factory.system_descriptor();
-        let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
+    pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Self {
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
         };
-        let (core, adapter) = factory
-            .create_core_and_adapter(&snapshot)
-            .expect("failed to create core");
-        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let descriptor = ctx.core_factory.system_descriptor();
+        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&ctx.core_factory));
         Self {
             window: None,
             session,
+            ctx,
             app_menu,
             shell: NativeShellState::new(),
             settings_window: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
-            pending_load_request: None,
             active: true,
             auto_paused: false,
         }
+    }
+
+    pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
+        &self.ctx.gpu_factory
     }
 
     pub(crate) fn session(&self) -> &SessionHandle {
@@ -105,11 +105,11 @@ impl HostState {
     }
 
     pub(crate) fn resume_session(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        FrontendSession::resume(self);
     }
 
     pub(crate) fn pause_session(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        FrontendSession::pause(self);
     }
 
     pub(crate) fn auto_paused(&self) -> bool {
@@ -171,60 +171,15 @@ impl HostState {
             .map(|window| window_surface_size(window.inner_size()))
     }
 
-    pub(crate) fn set_pending_load_request(&mut self, request: LoadRequest) {
-        self.pending_load_request = Some(request);
-    }
-
-    pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_inner(None, data, None)
-    }
-
-    pub(crate) fn load_with_options(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        request: LoadRequest,
-    ) -> bool {
-        let options = match request {
-            LoadRequest::Auto => self.session.default_load_options(),
-            LoadRequest::Explicit { options } => options,
-        };
-        self.load_inner(rom_path, data, Some(options))
-    }
-
-    fn load_inner(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        options_override: Option<SystemLoadOptions>,
-    ) -> bool {
-        let media = MediaObject::new(rom_path, data);
-        let options = options_override.unwrap_or_else(|| self.session.default_load_options());
-        if let Ok(resolved) = self
-            .session
-            .factory()
-            .resolve_load_request(self.session.settings_snapshot(), options)
-            && self.session.load_resolved(media, resolved).is_ok()
-        {
-            let _ = self.session.run_command(SessionCommand::Resume);
-            self.after_rom_load();
-            return true;
-        }
-        false
-    }
-
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
-        let request = self.pending_load_request.take();
-        match load_rom_path(path) {
-            Ok(loaded_rom) => {
-                let (rom_path, data) = loaded_rom.into_parts();
-                match request {
-                    Some(request) => self.load_with_options(Some(rom_path), data, request),
-                    None => self.load_inner(Some(rom_path), data, None),
-                }
+        let result = self.ctx.rom_loader.load_rom(path, &mut self.session);
+        match result {
+            Ok(()) => {
+                self.after_rom_load();
+                true
             }
-            Err(error) => {
-                log::warn!("ROM open failed: {error}");
+            Err(e) => {
+                log::warn!("ROM load failed: {e}");
                 false
             }
         }
@@ -260,7 +215,9 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                self.apply_session_command(command);
+                let _ = self.session.run_command(command);
+                self.sync_menu_state();
+                self.refresh_window_title();
                 HostAction::None
             }
             MenuCommand::Quit => {
@@ -368,28 +325,18 @@ impl HostState {
     pub(crate) fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<SettingsApplyPlan, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
-        let fullscreen_default = self
-            .session
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default;
-        if plan.fullscreen_default_changed && !fullscreen_default {
+    ) -> Result<SettingsResult, SessionError> {
+        let result = FrontendSession::apply_settings(self, settings)?;
+        if result.fullscreen_default_changed {
             self.sync_fullscreen_from_settings();
         }
-        if plan.scaling_changed {
+        if result.scaling_changed {
             self.update_window_size_for_scaling();
-        }
-        if plan.fullscreen_default_changed && fullscreen_default {
-            self.sync_fullscreen_from_settings();
         }
         self.sync_menu_state();
         self.refresh_window_title();
         self.request_redraw();
-        Ok(plan)
+        Ok(result)
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
@@ -400,7 +347,7 @@ impl HostState {
         self.settings_open = false;
         let should_resume = std::mem::take(&mut self.resume_after_settings);
         if should_resume {
-            self.apply_session_command(SessionCommand::Resume);
+            self.resume();
         } else {
             self.sync_menu_state();
             self.refresh_window_title();
@@ -435,19 +382,6 @@ impl HostState {
         );
     }
 
-    fn apply_session_command(&mut self, command: SessionCommand) {
-        let outcome = self.session.run_command(command).unwrap_or_default();
-        self.apply_command_outcome(outcome);
-    }
-
-    fn apply_command_outcome(&mut self, outcome: SessionCommandOutcome) {
-        if outcome.needs_redraw {
-            self.request_redraw();
-        }
-        self.sync_menu_state();
-        self.refresh_window_title();
-    }
-
     fn refresh_window_title(&mut self) {
         if let Some(window) = self.window.as_ref() {
             window.set_title(&self.session.window_title());
@@ -463,22 +397,14 @@ impl HostState {
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
         match shortcut {
             KeyboardShortcut::Session(action) => match action {
-                ShortcutAction::TogglePause => {
-                    self.apply_session_command(SessionCommand::TogglePause)
-                }
-                ShortcutAction::SaveActiveSlot => {
-                    self.apply_session_command(SessionCommand::SaveActiveSlotOrNew)
-                }
-                ShortcutAction::SelectNextSlot => {
-                    self.apply_session_command(SessionCommand::SelectNextSlot)
-                }
-                ShortcutAction::SelectPreviousSlot => {
-                    self.apply_session_command(SessionCommand::SelectPreviousSlot)
-                }
+                ShortcutAction::TogglePause => self.toggle_pause(),
+                ShortcutAction::SaveActiveSlot => self.save_active_slot(),
+                ShortcutAction::SelectNextSlot => self.select_next_slot(),
+                ShortcutAction::SelectPreviousSlot => self.select_previous_slot(),
                 ShortcutAction::LoadActiveSlot => {
-                    self.apply_session_command(SessionCommand::LoadActiveSlot)
+                    let _ = self.load_active_slot();
                 }
-                ShortcutAction::Reset => self.apply_session_command(SessionCommand::Reset),
+                ShortcutAction::Reset => self.reset(),
                 ShortcutAction::ToggleFullscreen => self.toggle_fullscreen(),
             },
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
@@ -507,13 +433,14 @@ impl HostState {
         self.settings_open = true;
         self.resume_after_settings = self.session.loaded() && !self.session.paused();
         if self.resume_after_settings {
-            self.apply_session_command(SessionCommand::Pause);
+            self.pause();
         } else {
             self.sync_menu_state();
         }
 
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
+            self.ctx.core_factory.clone(),
             event_loop,
         ) {
             Some(handle) => self.settings_window = Some(handle),
@@ -521,7 +448,7 @@ impl HostState {
                 log::error!("failed to open settings window");
                 self.settings_open = false;
                 if self.resume_after_settings {
-                    self.apply_session_command(SessionCommand::Resume);
+                    self.resume();
                 } else {
                     self.sync_menu_state();
                 }
@@ -532,7 +459,7 @@ impl HostState {
     pub(crate) fn close_settings_window(
         &mut self,
         mut handle: crate::settings_window::SettingsWindowHandle,
-    ) -> Option<SettingsApplyPlan> {
+    ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
         drop(handle);
         self.on_settings_closed();
@@ -591,20 +518,24 @@ impl HostState {
     fn persist_fullscreen_default(
         &mut self,
         fullscreen: bool,
-    ) -> Result<SettingsApplyPlan, SessionError> {
+    ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
         self.refresh_window_title();
         self.request_redraw();
-        Ok(plan)
+        Ok(SettingsResult {
+            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: false,
+        })
     }
 
     fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
         self.session
             .settings_snapshot()
             .app_state
-            .window_size(&HostBackendIdentity::tao_wgpu().to_string())
+            .window_size("main")
     }
 
     fn remember_fit_window_size(&self) {
@@ -621,13 +552,86 @@ impl HostState {
         let width = logical_size.width.round().max(1.0) as u32;
         let height = logical_size.height.round().max(1.0) as u32;
 
-        if let Err(error) = self.session.settings_manager().update_window_size(
-            &HostBackendIdentity::tao_wgpu(),
-            width,
-            height,
-        ) {
+        if let Err(error) = self
+            .session
+            .settings_manager()
+            .update_window_size(width, height)
+        {
             log::warn!("failed to remember tao window size: {error}");
         }
+    }
+}
+
+impl FrontendSession for HostState {
+    fn pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Pause);
+    }
+    fn resume(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Resume);
+    }
+    fn toggle_pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::TogglePause);
+    }
+    fn save_active_slot(&mut self) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SaveActiveSlotOrNew);
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadActiveSlot)
+            .unwrap_or_default()
+            .executed
+    }
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadSlot(slot_id))
+            .unwrap_or_default()
+            .executed
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::DeleteSlot(slot_id));
+    }
+    fn select_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SelectActiveSlot(slot_id));
+    }
+    fn create_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::CreateSlot);
+    }
+    fn reset(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Reset);
+    }
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.apply_settings(settings)?;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: plan.scaling_changed,
+        })
+    }
+    fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: false,
+        })
     }
 }
 

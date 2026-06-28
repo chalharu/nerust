@@ -4,7 +4,7 @@ mod renderer;
 mod surface;
 mod window;
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::{
     gio, glib,
@@ -14,21 +14,19 @@ use gtk::{
     },
 };
 use nerust_contract_input::InputTopologyDescriptor;
-use nerust_factory_nes::NesFactory;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+use nerust_gui_runtime::settings::{
+    HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
+};
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
+    context::FrontendContext,
     descriptor::SystemSettingsPageModel,
-    factory::CoreFactory,
-    load::{LoadRequest, MediaObject, SystemLoadOptions},
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome},
+        access::{FrontendSession, SettingsResult},
+        commands::SessionCommand,
     },
-    settings::{
-        defaults::seed::{default_app_state, default_local_settings, default_shared_settings},
-        i18n::{UiText, text},
-    },
+    settings::i18n::{UiText, text},
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_run_options::RunOptions;
@@ -40,32 +38,27 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
     session: SessionHandle,
-    factory: Arc<dyn CoreFactory>,
+    ctx: FrontendContext,
     renderer_reload_pending: bool,
-    pending_load_request: Option<LoadRequest>,
 }
 
 impl State {
-    pub(crate) fn new(pending_load_request: Option<LoadRequest>) -> Self {
-        let identity = HostBackendIdentity::gtk_opengl();
-        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let descriptor = factory.system_descriptor();
-        let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
+    pub(crate) fn new(ctx: FrontendContext) -> Self {
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
         };
-        let (core, adapter) = factory
-            .create_core_and_adapter(&snapshot)
-            .expect("failed to create core");
-        let session =
-            SessionHandle::new_with_core(identity, descriptor, Arc::clone(&factory), core, adapter);
+        let descriptor = ctx.core_factory.system_descriptor();
+        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&ctx.core_factory));
 
         Self {
             session,
-            factory,
+            ctx,
             renderer_reload_pending: false,
-            pending_load_request,
         }
     }
 
@@ -78,11 +71,13 @@ impl State {
     }
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        self.factory.settings_page(self.session.settings_snapshot())
+        self.ctx
+            .core_factory
+            .settings_page(self.session.settings_snapshot())
     }
 
     pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
-        self.factory.system_descriptor().input_topology
+        self.ctx.core_factory.system_descriptor().input_topology
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
@@ -97,19 +92,9 @@ impl State {
         self.session.can_resume()
     }
 
-    pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
-        let media = MediaObject::new(rom_path, data);
-        let request = self.pending_load_request.take();
-        let options = match request {
-            Some(LoadRequest::Explicit { options }) => options,
-            _ => self.factory.default_load_options(),
-        };
-        if let Ok(resolved) = self
-            .factory
-            .resolve_load_request(self.session.settings_snapshot(), options)
-            && self.session.load_resolved(media, resolved).is_ok()
-        {
-            let _ = self.session.run_command(SessionCommand::Resume);
+    pub(crate) fn load_path(&mut self, path: &Path) {
+        if let Err(e) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
+            log::warn!("ROM load failed: {e}");
         }
     }
 
@@ -133,10 +118,89 @@ impl State {
         self.session.flush_before_exit();
     }
 
-    pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        self.session.run_command(command).unwrap_or_default()
+    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
+        std::mem::take(&mut self.renderer_reload_pending)
     }
+}
 
+impl FrontendSession for State {
+    fn pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Pause);
+    }
+    fn resume(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Resume);
+    }
+    fn toggle_pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::TogglePause);
+    }
+    fn save_active_slot(&mut self) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SaveActiveSlotOrNew);
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadActiveSlot)
+            .unwrap_or_default()
+            .executed
+    }
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadSlot(slot_id))
+            .unwrap_or_default()
+            .executed
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::DeleteSlot(slot_id));
+    }
+    fn select_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SelectActiveSlot(slot_id));
+    }
+    fn create_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::CreateSlot);
+    }
+    fn reset(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Reset);
+    }
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.apply_settings(settings)?;
+        self.renderer_reload_pending =
+            plan.session_rebuild_required || plan.window_settings_changed;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: self.renderer_reload_pending,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: plan.scaling_changed,
+        })
+    }
+    fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        self.renderer_reload_pending =
+            plan.session_rebuild_required || plan.window_settings_changed;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: self.renderer_reload_pending,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: false,
+        })
+    }
+}
+
+impl State {
     pub(crate) fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,
@@ -160,38 +224,12 @@ impl State {
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
     }
-
-    pub(crate) fn apply_settings(
-        &mut self,
-        settings: SettingsSnapshot,
-    ) -> Result<SettingsApplyPlan, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
-            self.renderer_reload_pending = true;
-        }
-        Ok(plan)
-    }
-
-    pub(crate) fn set_fullscreen_default(
-        &mut self,
-        fullscreen: bool,
-    ) -> Result<SettingsApplyPlan, SessionError> {
-        let plan = self.session.set_fullscreen_default(fullscreen)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
-            self.renderer_reload_pending = true;
-        }
-        Ok(plan)
-    }
-
-    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
-        std::mem::take(&mut self.renderer_reload_pending)
-    }
 }
 
 fn build_window(
     app: &gtk::Application,
     factory: &Rc<dyn GpuFactory>,
-    request: Option<LoadRequest>,
+    state: Rc<RefCell<State>>,
 ) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
@@ -201,7 +239,6 @@ fn build_window(
     let load_slot_menu = gio::Menu::new();
     let delete_slot_menu = gio::Menu::new();
 
-    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(request)));
     let language = state.borrow().settings_snapshot().shared.general.language;
     let menu_model = build_menu_model(
         language,
@@ -322,56 +359,44 @@ pub(crate) fn build_menu_model(
 fn ensure_window(
     app: &gtk::Application,
     factory: &Rc<dyn GpuFactory>,
-    request: &Option<LoadRequest>,
+    state: &Rc<RefCell<State>>,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
         return window;
     }
 
-    let window = build_window(app, factory, request.clone());
+    let window = build_window(app, factory, Rc::clone(state));
     *current_window.borrow_mut() = Some(window.clone());
     window
 }
 
-pub fn run(factory: Box<dyn GpuFactory>, options: RunOptions) {
-    let factory: Rc<dyn GpuFactory> = Rc::from(factory);
-
-    let pending_request = options.mmc3_irq_variant.as_deref().map(|variant| {
-        let options_bytes = match variant {
-            "sharp" => nerust_factory_nes::MMC3_OPTION_SHARP.to_vec(),
-            "nec" => nerust_factory_nes::MMC3_OPTION_NEC.to_vec(),
-            _ => Vec::new(),
-        };
-        LoadRequest::Explicit {
-            options: SystemLoadOptions { options_bytes },
-        }
-    });
-
+pub fn run(ctx: FrontendContext, _options: RunOptions) {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let pending_request = Rc::new(pending_request);
+    let state = Rc::new(RefCell::new(State::new(ctx)));
     {
-        let factory = Rc::clone(&factory);
-        let pending_request = Rc::clone(&pending_request);
+        let state = Rc::clone(&state);
+        let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
-            let window = ensure_window(app, &factory, &pending_request, &current_window);
+            let window = ensure_window(app, &gpu_factory, &state, &current_window);
             window.window().present();
         });
     }
     {
-        let factory = Rc::clone(&factory);
-        let pending_request = Rc::clone(&pending_request);
+        let state = Rc::clone(&state);
+        let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
-            let window = ensure_window(app, &factory, &pending_request, &current_window);
+            let window = ensure_window(app, &gpu_factory, &state, &current_window);
             if let Some(path) = files.iter().find_map(|file| file.path()) {
-                window.load_path(&path);
+                state.borrow_mut().load_path(&path);
+                window.update_actions();
             }
             window.window().present();
         });

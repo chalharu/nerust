@@ -9,11 +9,11 @@ use gtk::{
     },
 };
 use nerust_contract_input::{InputTopologyDescriptor, SystemId};
-use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
+use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
     descriptor::SystemSettingsFieldKind,
     factory::CoreFactory,
@@ -58,7 +58,7 @@ pub(crate) fn present_preferences_dialog(
     let finish = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
-    let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+    let factory: Arc<dyn CoreFactory> = state.borrow().ctx.core_factory.clone();
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
@@ -252,6 +252,7 @@ pub(crate) fn present_preferences_dialog(
         &capture_target,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
+        factory.as_ref(),
     );
     refresh_validation(
         &draft.borrow(),
@@ -260,6 +261,7 @@ pub(crate) fn present_preferences_dialog(
         &storage_dir_row,
         &storage_error_label,
         &input_conflict_label,
+        factory.as_ref(),
     );
 
     {
@@ -284,6 +286,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         );
         let _ = language_combo.connect_changed(move |combo| {
             draft.borrow_mut().shared.general.language = match combo.active_id().as_deref() {
@@ -319,6 +322,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         ),
     );
     connect_local_updates(
@@ -353,6 +357,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         ),
     );
 
@@ -380,6 +385,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         );
         let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
             let Some(target) = capture_target.borrow().clone() else {
@@ -419,6 +425,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         );
         let target = row.target.clone();
         let _ = row.change_button.connect_clicked(move |_| {
@@ -449,6 +456,7 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         );
         let target = row.target.clone();
         let _ = row.clear_button.connect_clicked(move |_| {
@@ -485,11 +493,13 @@ pub(crate) fn present_preferences_dialog(
             &input_rows,
             &capture_target,
             language,
+            factory.clone(),
         );
+        let factory = factory.clone();
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {
                 let snapshot = draft.borrow().clone();
-                if !validation_errors(&snapshot).is_empty() {
+                if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
@@ -536,6 +546,7 @@ struct WidgetBundle {
     input_rows: Vec<InputRow>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
+    factory: Arc<dyn CoreFactory>,
 }
 
 type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
@@ -544,22 +555,22 @@ trait SettingsApplier {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError>;
+    ) -> Result<SettingsResult, SessionError>;
 }
 
 impl SettingsApplier for State {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
-        State::apply_settings(self, settings)
+    ) -> Result<SettingsResult, SessionError> {
+        FrontendSession::apply_settings(self, settings)
     }
 }
 
 fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     state: &RefCell<T>,
     snapshot: SettingsSnapshot,
-) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
+) -> Result<SettingsResult, SessionError> {
     state.borrow_mut().apply_settings(snapshot)
 }
 
@@ -591,6 +602,7 @@ fn widget_bundle(
     input_rows: &[InputRow],
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
+    factory: Arc<dyn CoreFactory>,
 ) -> WidgetBundle {
     WidgetBundle {
         ok_button: ok_button.clone(),
@@ -612,6 +624,7 @@ fn widget_bundle(
         input_rows: input_rows.to_vec(),
         capture_target: capture_target.clone(),
         language,
+        factory,
     }
 }
 
@@ -635,6 +648,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.capture_target,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
+        widgets.factory.as_ref(),
     );
     refresh_validation(
         snapshot,
@@ -643,6 +657,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.storage_dir_row,
         &widgets.storage_error_label,
         &widgets.input_conflict_label,
+        widgets.factory.as_ref(),
     );
 }
 
@@ -814,8 +829,8 @@ fn refresh_validation(
     storage_dir_row: &gtk::Box,
     storage_error_label: &gtk::Label,
     input_conflict_label: &gtk::Label,
+    factory: &dyn CoreFactory,
 ) {
-    let factory = NesFactory;
     let system = factory.system_id();
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
@@ -846,8 +861,7 @@ fn refresh_validation(
     ok_button.set_sensitive(!has_errors);
 }
 
-fn validation_errors(snapshot: &SettingsSnapshot) -> Vec<String> {
-    let factory = NesFactory;
+fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> Vec<String> {
     let mut errors = Vec::new();
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
@@ -886,6 +900,7 @@ fn apply_snapshot_to_widgets(
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
+    factory: &dyn CoreFactory,
 ) {
     language_combo.set_active_id(Some(match snapshot.shared.general.language {
         AppLanguage::Japanese => "japanese",
@@ -924,7 +939,6 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let factory = NesFactory;
     let system_page = factory.settings_page(snapshot);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
@@ -1172,9 +1186,10 @@ fn run_finish_callback(finish: &FinishCallback) {
 mod tests {
     use std::cell::RefCell;
 
-    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
         session::SessionError,
+        session::access::SettingsResult,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         },
@@ -1192,9 +1207,9 @@ mod tests {
         fn apply_settings(
             &mut self,
             _settings: SettingsSnapshot,
-        ) -> Result<SettingsApplyPlan, SessionError> {
+        ) -> Result<SettingsResult, SessionError> {
             self.apply_calls += 1;
-            Ok(SettingsApplyPlan::default())
+            Ok(SettingsResult::default())
         }
     }
 

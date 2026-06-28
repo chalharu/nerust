@@ -1,3 +1,4 @@
+pub mod access;
 pub mod commands;
 pub mod input;
 mod lifecycle;
@@ -12,7 +13,8 @@ use std::{collections::BTreeSet, sync::Arc};
 pub use lifecycle::WindowSize;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
-    HostBackendIdentity, SettingsError, SettingsSnapshot, manager::SettingsManager,
+    HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
+    manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
@@ -51,7 +53,7 @@ pub struct SessionHandle {
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) input_adapter: Box<dyn SystemInputAdapter>,
-    pub(super) host_backend: HostBackendIdentity,
+    pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
     pub(super) pressed_keys: BTreeSet<KeyboardKey>,
@@ -60,34 +62,126 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    pub fn new_with_core(
-        identity: HostBackendIdentity,
+    /// Create a core from settings, falling back to defaults on failure.
+    fn create_core_or_default(
+        factory: &Arc<dyn CoreFactory>,
+        snapshot: &SettingsSnapshot,
+    ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
+        factory
+            .create_core_and_adapter(snapshot)
+            .unwrap_or_else(|_| {
+                log::warn!("core creation with loaded settings failed; using defaults");
+                use crate::settings::defaults::seed::{
+                    default_app_state, default_local_settings, default_shared_settings,
+                };
+                let fallback = SettingsSnapshot {
+                    shared: default_shared_settings(),
+                    local: default_local_settings(),
+                    app_state: default_app_state(),
+                };
+                factory
+                    .create_core_and_adapter(&fallback)
+                    .expect("failed to create core even with default settings")
+            })
+    }
+
+    fn new_inner(
+        capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
-        emu_core: EmuCore,
-        input_adapter: Box<dyn SystemInputAdapter>,
+        use_persistent: bool,
     ) -> Self {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let settings = SettingsManager::ephemeral(
-            default_shared_settings(),
-            default_local_settings(),
-            default_app_state(),
-        );
-        let settings_snapshot = settings.snapshot().expect("ephemeral settings should read");
+        let settings = if use_persistent {
+            SettingsManager::load_or_ephemeral(
+                default_shared_settings(),
+                default_local_settings(),
+                default_app_state(),
+            )
+        } else {
+            SettingsManager::ephemeral(
+                default_shared_settings(),
+                default_local_settings(),
+                default_app_state(),
+            )
+        };
+        let settings_snapshot = settings
+            .snapshot()
+            .expect("settings snapshot should be readable");
+        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
         Self {
             emu_core,
             input_adapter,
             descriptor,
             factory,
-            host_backend: identity,
+            capabilities,
             settings,
             settings_snapshot,
             pressed_keys: BTreeSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
         }
+    }
+
+    pub fn new(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+    ) -> Self {
+        Self::new_inner(capabilities, descriptor, factory, true)
+    }
+
+    /// Create a session with settings persisted at the given paths.
+    ///
+    /// On platforms where `ProjectDirs` is unavailable (e.g. Android),
+    /// the frontend provides an explicit settings root instead.
+    pub fn new_with_settings_paths(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+        paths: SettingsPaths,
+    ) -> Self {
+        use crate::settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        };
+        let defaults = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let settings = SettingsManager::load_or_ephemeral_with_paths(
+            paths,
+            defaults.shared.clone(),
+            defaults.local.clone(),
+            defaults.app_state.clone(),
+        );
+        let settings_snapshot = settings
+            .snapshot()
+            .expect("settings snapshot should be readable");
+        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
+        Self {
+            emu_core,
+            input_adapter,
+            descriptor,
+            factory,
+            capabilities,
+            settings,
+            settings_snapshot,
+            pressed_keys: BTreeSet::new(),
+            loaded_media: None,
+            persistence: PersistenceManager::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_ephemeral(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+    ) -> Self {
+        Self::new_inner(capabilities, descriptor, factory, false)
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -150,4 +244,27 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
+}
+
+use crate::load::{ResolvedLoadRequest, RomLoadTarget, RomLoaderError};
+use crate::session::commands::SessionCommand;
+
+impl RomLoadTarget for SessionHandle {
+    fn default_load_options(&self) -> SystemLoadOptions {
+        SessionHandle::default_load_options(self)
+    }
+    fn settings_snapshot(&self) -> &SettingsSnapshot {
+        SessionHandle::settings_snapshot(self)
+    }
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError> {
+        SessionHandle::load_resolved(self, media, resolved)
+            .map_err(|e| RomLoaderError::Load(e.to_string()))
+    }
+    fn resume(&mut self) {
+        let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+    }
 }
