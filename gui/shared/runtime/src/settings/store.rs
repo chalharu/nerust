@@ -60,10 +60,19 @@ pub(super) fn load_settings_document<T: Clone + serde::de::DeserializeOwned + se
         Ok(contents) => {
             let raw: Value = serde_yaml::from_str(&contents)?;
             ensure_supported_schema_version(&raw, schema_version)?;
-            Ok(LoadedSettingsDocument {
-                settings: decode_settings_document(defaults, raw.clone())?,
-                raw,
-            })
+            match decode_settings_document(defaults, raw.clone()) {
+                Ok(settings) => Ok(LoadedSettingsDocument { settings, raw }),
+                Err(error) => {
+                    log::warn!(
+                        "settings file {} is corrupt, resetting to defaults: {error}",
+                        path.display(),
+                    );
+                    Ok(LoadedSettingsDocument {
+                        settings: defaults.clone(),
+                        raw: serde_yaml::to_value(defaults).unwrap_or_else(|_| empty_mapping()),
+                    })
+                }
+            }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(LoadedSettingsDocument {
             settings: defaults.clone(),
