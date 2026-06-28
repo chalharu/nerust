@@ -10,7 +10,6 @@ use nerust_gui_shell::{
     context::FrontendContext,
     factory::CoreFactory,
     load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
-    session::commands::SessionCommand,
 };
 use nerust_run_options::RunOptions;
 use nerust_screen_video::GpuFactory;
@@ -67,10 +66,8 @@ impl RomLoader for LiveRomLoader {
             .factory
             .resolve_load_request(target.settings_snapshot(), options)
             .map_err(|e| RomLoaderError(format!("resolve: {e}")))?;
-        target
-            .load_resolved(media, resolved)
-            .map_err(|e| RomLoaderError(format!("load: {e}")))?;
-        let _ = target.run_command(SessionCommand::Resume);
+        target.load_resolved(media, resolved)?;
+        target.resume();
         Ok(())
     }
 }
@@ -131,9 +128,7 @@ mod tests {
     };
     use nerust_gui_shell::{
         factory::CoreFactory,
-        load::{MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, SystemLoadOptions},
-        session::SessionError,
-        session::commands::{SessionCommand, SessionCommandOutcome},
+        load::{MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
     };
 
     use crate::LiveRomLoader;
@@ -156,25 +151,19 @@ mod tests {
             SystemLoadOptions::default()
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
-            // Use leak to get a static reference for the test
-            Box::leak(Box::new(snapshot()))
+            static SNAPSHOT: std::sync::OnceLock<SettingsSnapshot> = std::sync::OnceLock::new();
+            SNAPSHOT.get_or_init(snapshot)
         }
         fn load_resolved(
             &mut self,
             _media: MediaObject,
             resolved: ResolvedLoadRequest,
-        ) -> Result<(), SessionError> {
+        ) -> Result<(), RomLoaderError> {
             self.resolved = resolved.core_options_bytes;
             Ok(())
         }
-        fn run_command(
-            &mut self,
-            command: SessionCommand,
-        ) -> Result<SessionCommandOutcome, SessionError> {
-            if matches!(command, SessionCommand::Resume) {
-                self.resumed = true;
-            }
-            Ok(SessionCommandOutcome::default())
+        fn resume(&mut self) {
+            self.resumed = true;
         }
     }
 

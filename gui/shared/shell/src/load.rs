@@ -3,10 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::session::{
-    SessionError, SessionHandle,
-    commands::{SessionCommand, SessionCommandOutcome},
-};
+use crate::session::SessionHandle;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug)]
@@ -29,11 +26,8 @@ pub trait RomLoadTarget {
         &mut self,
         media: MediaObject,
         resolved: ResolvedLoadRequest,
-    ) -> Result<(), SessionError>;
-    fn run_command(
-        &mut self,
-        command: SessionCommand,
-    ) -> Result<SessionCommandOutcome, SessionError>;
+    ) -> Result<(), RomLoaderError>;
+    fn resume(&mut self);
 }
 
 impl RomLoadTarget for SessionHandle {
@@ -47,14 +41,15 @@ impl RomLoadTarget for SessionHandle {
         &mut self,
         media: MediaObject,
         resolved: ResolvedLoadRequest,
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), RomLoaderError> {
         SessionHandle::load_resolved(self, media, resolved)
+            .map_err(|e| RomLoaderError(e.to_string()))
     }
-    fn run_command(
-        &mut self,
-        command: SessionCommand,
-    ) -> Result<SessionCommandOutcome, SessionError> {
-        SessionHandle::run_command(self, command)
+    fn resume(&mut self) {
+        let _ = SessionHandle::run_command(
+            self,
+            crate::session::commands::SessionCommand::Resume,
+        );
     }
 }
 
