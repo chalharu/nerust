@@ -13,7 +13,8 @@ use std::{collections::BTreeSet, sync::Arc};
 pub use lifecycle::WindowSize;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, SettingsError, SettingsSnapshot, manager::SettingsManager,
+    HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
+    manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
@@ -109,6 +110,50 @@ impl SessionHandle {
         factory: Arc<dyn CoreFactory>,
     ) -> Self {
         Self::new_inner(capabilities, descriptor, factory, true)
+    }
+
+    /// Create a session with settings persisted at the given paths.
+    ///
+    /// On platforms where `ProjectDirs` is unavailable (e.g. Android),
+    /// the frontend provides an explicit settings root instead.
+    pub fn new_with_settings_paths(
+        capabilities: HostBackendCapabilities,
+        descriptor: SystemDescriptor,
+        factory: Arc<dyn CoreFactory>,
+        paths: SettingsPaths,
+    ) -> Self {
+        use crate::settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        };
+        let defaults = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let settings = SettingsManager::load_or_ephemeral_with_paths(
+            paths,
+            defaults.shared.clone(),
+            defaults.local.clone(),
+            defaults.app_state.clone(),
+        );
+        let settings_snapshot = settings
+            .snapshot()
+            .expect("settings snapshot should be readable");
+        let (emu_core, input_adapter) = factory
+            .create_core_and_adapter(&settings_snapshot)
+            .expect("failed to create core");
+        Self {
+            emu_core,
+            input_adapter,
+            descriptor,
+            factory,
+            capabilities,
+            settings,
+            settings_snapshot,
+            pressed_keys: BTreeSet::new(),
+            loaded_media: None,
+            persistence: PersistenceManager::new(),
+        }
     }
 
     #[cfg(test)]

@@ -7,6 +7,7 @@ mod storage;
 use std::{
     collections::HashMap,
     ffi::c_void,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,7 +21,10 @@ use nerust_factory_nes::{
     },
 };
 use nerust_gui_runtime::{
-    settings::{BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities},
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsPaths,
+    },
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
@@ -115,7 +119,7 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(frontend_app, storage);
+    let mut state = AndroidFrontend::new(frontend_app, storage, storage_root.join("nerust"));
     log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
@@ -142,7 +146,7 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
+    fn new(app: AndroidApp, storage: AndroidStorage, settings_root: PathBuf) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
@@ -156,7 +160,14 @@ impl AndroidFrontend {
         };
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
-        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&factory));
+        let settings_paths =
+            SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
+        let session = SessionHandle::new_with_settings_paths(
+            capabilities,
+            descriptor,
+            Arc::clone(&factory),
+            settings_paths,
+        );
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,

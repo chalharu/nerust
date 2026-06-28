@@ -138,7 +138,7 @@ mod tests {
         },
     };
 
-    use crate::LiveRomLoader;
+    use super::LiveRomLoader;
 
     struct LoadRecorder {
         resolved: Vec<u8>,
