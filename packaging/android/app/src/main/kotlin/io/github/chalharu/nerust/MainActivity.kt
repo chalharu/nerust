@@ -242,6 +242,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         super.onDestroy()
     }
 
+    @Deprecated("Deprecated upstream in Activity; NativeActivity cannot use OnBackPressedDispatcher")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (removeDrawerOverlay()) {
