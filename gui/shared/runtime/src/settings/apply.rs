@@ -3,19 +3,19 @@ use std::path::Path;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
 
 use super::{
-    HostBackendLocalSettings, HostBackendProfile, SettingsApplyPlan, SettingsError,
+    HostBackendCapabilities, HostBackendLocalSettings, SettingsApplyPlan, SettingsError,
     SettingsSnapshot,
 };
 
 pub fn derive_apply_plan(
-    host_backend: HostBackendProfile,
+    capabilities: &HostBackendCapabilities,
     before: &SettingsSnapshot,
     after: &SettingsSnapshot,
 ) -> SettingsApplyPlan {
     let audio_changed = before.local.audio != after.local.audio;
     let visual_changed = live_system_settings_changed(&before.shared, &after.shared);
-    let window_capabilities = host_backend.capabilities().window;
-    let presentation_capabilities = host_backend.capabilities().presentation;
+    let window_capabilities = capabilities.window;
+    let presentation_capabilities = capabilities.presentation;
     let scaling_changed = before.local.video.window.scaling != after.local.video.window.scaling;
     let vsync_changed =
         before.local.video.presentation.vsync != after.local.video.presentation.vsync;

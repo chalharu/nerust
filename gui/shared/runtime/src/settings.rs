@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::path::PathBuf;
 
 use nerust_gui_settings::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
@@ -39,48 +39,6 @@ pub enum SettingsError {
     LockPoisoned,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostKind {
-    Android,
-    Gtk,
-    Glutin,
-    Tao,
-}
-
-impl HostKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Android => "android",
-            Self::Gtk => "gtk",
-            Self::Glutin => "glutin",
-            Self::Tao => "tao",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AudioBackendKind {
-    OpenAl,
-    Android,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RenderBackendKind {
-    OpenGl,
-    Wgpu,
-}
-
-impl RenderBackendKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::OpenGl => "opengl",
-            Self::Wgpu => "wgpu",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostWindowCapabilities {
     pub remembers_window_size: bool,
@@ -93,118 +51,15 @@ pub struct BackendPresentationCapabilities {
     pub supports_vsync: bool,
 }
 
+/// Frontend/backend capabilities, constructed directly by each frontend.
+///
+/// Replaces the closed `HostBackendProfile` enum. Each frontend specifies
+/// its own capabilities rather than being matched against a fixed set of
+/// (host_kind, render_backend_kind) pairs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostBackendCapabilities {
     pub window: HostWindowCapabilities,
     pub presentation: Option<BackendPresentationCapabilities>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HostBackendProfile {
-    host: HostKind,
-    backend: RenderBackendKind,
-}
-
-pub type HostBackendIdentity = HostBackendProfile;
-
-impl HostBackendProfile {
-    pub fn new(host: HostKind, backend: RenderBackendKind) -> Self {
-        Self { host, backend }
-    }
-
-    pub fn host(&self) -> HostKind {
-        self.host
-    }
-
-    pub fn backend(&self) -> RenderBackendKind {
-        self.backend
-    }
-
-    pub fn capabilities(&self) -> HostBackendCapabilities {
-        match (self.host, self.backend) {
-            (HostKind::Android, RenderBackendKind::Wgpu) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: false,
-                    supports_scaling: false,
-                },
-                presentation: Some(BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            },
-            (HostKind::Gtk, RenderBackendKind::OpenGl) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-            (HostKind::Glutin, RenderBackendKind::OpenGl) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-            (HostKind::Tao, RenderBackendKind::Wgpu) => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: Some(BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            },
-            _ => HostBackendCapabilities {
-                window: HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-        }
-    }
-
-    pub fn audio_backend(self) -> AudioBackendKind {
-        match (self.host, self.backend) {
-            (HostKind::Android, RenderBackendKind::Wgpu) => AudioBackendKind::Android,
-            _ => AudioBackendKind::OpenAl,
-        }
-    }
-
-    pub fn android_wgpu() -> Self {
-        Self::new(HostKind::Android, RenderBackendKind::Wgpu)
-    }
-
-    pub fn gtk_opengl() -> Self {
-        Self::new(HostKind::Gtk, RenderBackendKind::OpenGl)
-    }
-
-    pub fn glutin_opengl() -> Self {
-        Self::new(HostKind::Glutin, RenderBackendKind::OpenGl)
-    }
-
-    pub fn tao_wgpu() -> Self {
-        Self::new(HostKind::Tao, RenderBackendKind::Wgpu)
-    }
-
-    fn file_stem(&self) -> String {
-        format!(
-            "{}+{}",
-            sanitize_path_component(self.host.label()),
-            sanitize_path_component(self.backend.label())
-        )
-    }
-}
-
-impl fmt::Display for HostBackendProfile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}+{}", self.host.label(), self.backend.label())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,19 +94,6 @@ pub struct SettingsApplyPlan {
     pub fullscreen_default_changed: bool,
 }
 
-fn sanitize_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, env, fs, path::PathBuf};
@@ -273,7 +115,8 @@ mod tests {
     use serde_yaml::{Mapping, Value};
 
     use super::{
-        HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot,
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsApplyPlan, SettingsSnapshot,
         apply::{derive_apply_plan, validate_shared_settings},
         manager::SettingsManager,
         persistence::{
@@ -282,6 +125,30 @@ mod tests {
         },
         store::merge_with_defaults,
     };
+
+    fn tao_caps() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        }
+    }
+
+    fn gtk_caps() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        }
+    }
 
     fn test_system_identity() -> SystemIdentity {
         SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])
@@ -624,7 +491,7 @@ video:
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert_eq!(
             plan,
@@ -655,7 +522,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.session_rebuild_required);
     }
@@ -671,7 +538,7 @@ video:
         let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(!plan.session_rebuild_required);
     }
@@ -686,7 +553,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(HostBackendIdentity::gtk_opengl(), &before, &after);
+        let plan = derive_apply_plan(&gtk_caps(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -703,7 +570,7 @@ video:
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -720,7 +587,7 @@ video:
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(HostBackendIdentity::tao_wgpu(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -770,8 +637,7 @@ video:
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
-        let paths =
-            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::gtk_opengl());
+        let paths = super::SettingsPaths::from_root(root.clone());
         let manager = SettingsManager::load_with_paths(
             paths.clone(),
             test_shared_defaults(),
@@ -807,31 +673,23 @@ video:
     }
 
     #[test]
-    fn update_window_size_records_host_specific_app_state() {
+    fn update_window_size_uses_fixed_key() {
         let manager = SettingsManager::ephemeral(
             test_shared_defaults(),
             test_local_defaults(),
             DesktopAppState::default(),
         );
 
-        manager
-            .update_window_size(&HostBackendIdentity::tao_wgpu(), 960, 720)
-            .unwrap();
-        manager
-            .update_window_size(&HostBackendIdentity::gtk_opengl(), 800, 600)
-            .unwrap();
+        manager.update_window_size(960, 720).unwrap();
+        manager.update_window_size(800, 600).unwrap();
 
         let app_state = manager.app_state().unwrap();
 
+        // All callers use the same fixed key, so the second value replaces the first.
+        assert!(app_state.window_size("tao+wgpu").is_none());
+        assert!(app_state.window_size("gtk+opengl").is_none());
         assert_eq!(
-            app_state.window_size("tao+wgpu"),
-            Some(RememberedWindowSize {
-                width: 960,
-                height: 720,
-            })
-        );
-        assert_eq!(
-            app_state.window_size("gtk+opengl"),
+            app_state.window_size("main"),
             Some(RememberedWindowSize {
                 width: 800,
                 height: 600,
@@ -856,44 +714,27 @@ video:
     }
 
     #[test]
-    fn host_backend_identity_formats_stably() {
-        assert_eq!(
-            HostBackendIdentity::android_wgpu().to_string(),
-            "android+wgpu"
-        );
-        assert_eq!(HostBackendIdentity::gtk_opengl().to_string(), "gtk+opengl");
-        assert_eq!(
-            HostBackendIdentity::glutin_opengl().to_string(),
-            "glutin+opengl"
-        );
-        assert_eq!(HostBackendIdentity::tao_wgpu().to_string(), "tao+wgpu");
-    }
-
-    #[test]
-    fn android_wgpu_profile_exposes_mobile_capabilities() {
-        let profile = HostBackendIdentity::android_wgpu();
-
-        assert_eq!(profile.audio_backend(), super::AudioBackendKind::Android);
-        assert_eq!(
-            profile.capabilities(),
-            super::HostBackendCapabilities {
-                window: super::HostWindowCapabilities {
-                    remembers_window_size: false,
-                    supports_fullscreen_default: false,
-                    supports_scaling: false,
-                },
-                presentation: Some(super::BackendPresentationCapabilities {
-                    supports_vsync: true,
-                }),
-            }
-        );
+    fn host_backend_capabilities_carry_individual_backend_values() {
+        let caps = super::HostBackendCapabilities {
+            window: super::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: Some(super::BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
+        assert!(!caps.window.remembers_window_size);
+        assert!(!caps.window.supports_fullscreen_default);
+        assert!(!caps.window.supports_scaling);
+        assert!(caps.presentation.is_some_and(|p| p.supports_vsync));
     }
 
     #[test]
     fn settings_paths_can_be_built_from_an_explicit_root() {
         let root = PathBuf::from("/tmp/nerust-android");
-        let paths =
-            super::SettingsPaths::from_root(root.clone(), &HostBackendIdentity::android_wgpu());
+        let paths = super::SettingsPaths::from_root(root.clone());
 
         assert_eq!(paths.config_dir, root.join("config"));
         assert_eq!(paths.data_dir, root.join("data"));
@@ -905,7 +746,7 @@ video:
             paths.local_settings_file,
             root.join("config")
                 .join("local-settings")
-                .join("android+wgpu.yaml")
+                .join("local-settings.yaml")
         );
         assert_eq!(
             paths.app_state_file,

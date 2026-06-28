@@ -1,12 +1,9 @@
-use nerust_gui_runtime::settings::{
-    HostBackendIdentity, SettingsError, SettingsSnapshot, manager::SettingsManager,
-};
+use nerust_gui_runtime::settings::{SettingsError, SettingsSnapshot, manager::SettingsManager};
 
 use super::seed::{default_app_state, default_local_settings, default_shared_settings};
 
-pub fn load_settings_manager(identity: HostBackendIdentity) -> SettingsManager {
+pub fn load_settings_manager() -> SettingsManager {
     SettingsManager::load_or_ephemeral(
-        identity,
         default_shared_settings(),
         default_local_settings(),
         default_app_state(),

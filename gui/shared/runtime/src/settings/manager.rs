@@ -14,7 +14,7 @@ use nerust_persistence::sidecar::SidecarPaths;
 use serde_yaml::Value;
 
 use super::{
-    HostBackendIdentity, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
+    SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
     apply::{validate_local_settings, validate_shared_settings},
     persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
     store::{
@@ -43,12 +43,11 @@ struct SettingsState {
 
 impl SettingsManager {
     pub fn load(
-        identity: HostBackendIdentity,
         shared_defaults: DesktopSharedSettings,
         local_defaults: HostBackendLocalSettings,
         app_state_defaults: DesktopAppState,
     ) -> Result<Self, SettingsError> {
-        let paths = settings_paths(&identity)?;
+        let paths = settings_paths()?;
         Self::load_with_paths(paths, shared_defaults, local_defaults, app_state_defaults)
     }
 
@@ -93,13 +92,11 @@ impl SettingsManager {
     }
 
     pub fn load_or_ephemeral(
-        identity: HostBackendIdentity,
         shared_defaults: DesktopSharedSettings,
         local_defaults: HostBackendLocalSettings,
         app_state_defaults: DesktopAppState,
     ) -> Self {
         match Self::load(
-            identity,
             shared_defaults.clone(),
             local_defaults.clone(),
             app_state_defaults.clone(),
@@ -296,16 +293,14 @@ impl SettingsManager {
         self.save_snapshot(snapshot)
     }
 
-    pub fn update_window_size(
-        &self,
-        identity: &HostBackendIdentity,
-        width: u32,
-        height: u32,
-    ) -> Result<(), SettingsError> {
+    const WINDOW_SIZE_KEY: &'static str = "main";
+
+    pub fn update_window_size(&self, width: u32, height: u32) -> Result<(), SettingsError> {
         let mut snapshot = self.snapshot()?;
-        snapshot
-            .app_state
-            .set_window_size(identity.to_string(), RememberedWindowSize { width, height });
+        snapshot.app_state.set_window_size(
+            Self::WINDOW_SIZE_KEY,
+            RememberedWindowSize { width, height },
+        );
         self.save_snapshot(snapshot)
     }
 
