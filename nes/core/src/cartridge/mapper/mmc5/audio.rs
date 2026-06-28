@@ -5,7 +5,7 @@ use crate::{
         length_counter::{
             HaveLengthCounter, HaveLengthCounterDao, LengthCounter, LengthCounterDao,
         },
-        timer::{HaveTimerDao, TimerDao},
+        timer::TimerDao,
     },
     interrupt::Interrupt,
     persistence_error::PersistenceError,
@@ -55,20 +55,6 @@ impl HaveLengthCounter for Mmc5Pulse {
 
     fn length_counter(&self) -> &Self::LengthCounter {
         self
-    }
-
-    fn length_counter_mut(&mut self) -> &mut Self::LengthCounter {
-        self
-    }
-}
-
-impl HaveTimerDao for Mmc5Pulse {
-    fn timer_dao(&self) -> &TimerDao {
-        &self.timer
-    }
-
-    fn timer_dao_mut(&mut self) -> &mut TimerDao {
-        &mut self.timer
     }
 }
 

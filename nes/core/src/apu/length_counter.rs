@@ -122,5 +122,4 @@ impl<T: HaveLengthCounterDao> LengthCounter for T {}
 pub(crate) trait HaveLengthCounter {
     type LengthCounter: LengthCounter;
     fn length_counter(&self) -> &Self::LengthCounter;
-    fn length_counter_mut(&mut self) -> &mut Self::LengthCounter;
 }

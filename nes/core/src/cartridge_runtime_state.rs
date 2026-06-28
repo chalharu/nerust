@@ -12,7 +12,6 @@ pub(crate) struct CartridgeRuntimeState {
     pub extra_body: Vec<u8>,
 }
 
-pub(crate) const MAPPER_KIND_NONE: &str = "";
 pub(crate) const MAPPER_KIND_ACTION53: &str = "action53";
 pub(crate) const MAPPER_KIND_FME7: &str = "fme7";
 pub(crate) const MAPPER_KIND_MMC2: &str = "mmc2";
