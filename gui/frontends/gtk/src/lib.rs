@@ -1,4 +1,3 @@
-mod crash_handler;
 mod gdk_raw;
 mod preferences;
 mod renderer;
@@ -14,7 +13,6 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use log::LevelFilter;
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
@@ -22,7 +20,7 @@ use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     descriptor::SystemSettingsPageModel,
     factory::CoreFactory,
-    load::MediaObject,
+    load::{LoadRequest, MediaObject, SystemLoadOptions},
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
@@ -33,9 +31,8 @@ use nerust_gui_shell::{
     },
 };
 use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::{FrameBuffer, VideoRenderProfile};
-use nerust_sound_openal::prepare_macos_runtime;
-use simple_logger::SimpleLogger;
+use nerust_run_options::RunOptions;
+use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -45,10 +42,11 @@ pub(crate) struct State {
     session: SessionHandle,
     factory: Arc<dyn CoreFactory>,
     renderer_reload_pending: bool,
+    pending_load_request: Option<LoadRequest>,
 }
 
 impl State {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(pending_load_request: Option<LoadRequest>) -> Self {
         let identity = HostBackendIdentity::gtk_opengl();
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
@@ -62,10 +60,12 @@ impl State {
             .expect("failed to create core");
         let session =
             SessionHandle::new_with_core(identity, descriptor, Arc::clone(&factory), core, adapter);
+
         Self {
             session,
             factory,
             renderer_reload_pending: false,
+            pending_load_request,
         }
     }
 
@@ -99,7 +99,11 @@ impl State {
 
     pub(crate) fn load_from_path(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) {
         let media = MediaObject::new(rom_path, data);
-        let options = self.factory.default_load_options();
+        let request = self.pending_load_request.take();
+        let options = match request {
+            Some(LoadRequest::Explicit { options }) => options,
+            _ => self.factory.default_load_options(),
+        };
         if let Ok(resolved) = self
             .factory
             .resolve_load_request(self.session.settings_snapshot(), options)
@@ -184,7 +188,11 @@ impl State {
     }
 }
 
-fn build_window(app: &gtk::Application) -> Window {
+fn build_window(
+    app: &gtk::Application,
+    factory: &Rc<dyn GpuFactory>,
+    request: Option<LoadRequest>,
+) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let state_menu = gio::Menu::new();
@@ -193,7 +201,7 @@ fn build_window(app: &gtk::Application) -> Window {
     let load_slot_menu = gio::Menu::new();
     let delete_slot_menu = gio::Menu::new();
 
-    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new()));
+    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::new(request)));
     let language = state.borrow().settings_snapshot().shared.general.language;
     let menu_model = build_menu_model(
         language,
@@ -251,6 +259,7 @@ fn build_window(app: &gtk::Application) -> Window {
         app.clone(),
         window,
         state,
+        Rc::clone(factory),
         StateMenus {
             select_active_slot_menu,
             save_slot_menu,
@@ -310,25 +319,34 @@ pub(crate) fn build_menu_model(
     menu
 }
 
-fn ensure_window(app: &gtk::Application, current_window: &Rc<RefCell<Option<Window>>>) -> Window {
+fn ensure_window(
+    app: &gtk::Application,
+    factory: &Rc<dyn GpuFactory>,
+    request: &Option<LoadRequest>,
+    current_window: &Rc<RefCell<Option<Window>>>,
+) -> Window {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
         return window;
     }
 
-    let window = build_window(app);
+    let window = build_window(app, factory, request.clone());
     *current_window.borrow_mut() = Some(window.clone());
     window
 }
 
-fn main() {
-    // log initialize
-    SimpleLogger::new()
-        .with_level(LevelFilter::Warn)
-        .env()
-        .init()
-        .unwrap();
-    crash_handler::install();
-    prepare_macos_runtime();
+pub fn run(factory: Box<dyn GpuFactory>, options: RunOptions) {
+    let factory: Rc<dyn GpuFactory> = Rc::from(factory);
+
+    let pending_request = options.mmc3_irq_variant.as_deref().map(|variant| {
+        let options_bytes = match variant {
+            "sharp" => nerust_factory_nes::MMC3_OPTION_SHARP.to_vec(),
+            "nec" => nerust_factory_nes::MMC3_OPTION_NEC.to_vec(),
+            _ => Vec::new(),
+        };
+        LoadRequest::Explicit {
+            options: SystemLoadOptions { options_bytes },
+        }
+    });
 
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
@@ -336,17 +354,22 @@ fn main() {
     );
 
     let current_window = Rc::new(RefCell::new(None));
+    let pending_request = Rc::new(pending_request);
     {
+        let factory = Rc::clone(&factory);
+        let pending_request = Rc::clone(&pending_request);
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
-            let window = ensure_window(app, &current_window);
+            let window = ensure_window(app, &factory, &pending_request, &current_window);
             window.window().present();
         });
     }
     {
+        let factory = Rc::clone(&factory);
+        let pending_request = Rc::clone(&pending_request);
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
-            let window = ensure_window(app, &current_window);
+            let window = ensure_window(app, &factory, &pending_request, &current_window);
             if let Some(path) = files.iter().find_map(|file| file.path()) {
                 window.load_path(&path);
             }

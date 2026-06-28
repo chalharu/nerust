@@ -1,8 +1,10 @@
 mod runtime;
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use nerust_gui_shell::load::{LoadRequest, SystemLoadOptions};
+use nerust_screen_video::GpuFactory;
 use runtime::WindowRuntime;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -32,16 +34,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new() -> Self {
+    pub fn new(factory: Rc<dyn GpuFactory>, options: Option<WindowLoadOptions>) -> Self {
+        let request = options.map(system_load_request_from_window_options);
         Self {
-            runtime: Box::new(WindowRuntime::new()),
-        }
-    }
-
-    pub fn with_load_options(options: WindowLoadOptions) -> Self {
-        let _ = options;
-        Self {
-            runtime: Box::new(WindowRuntime::new()),
+            runtime: Box::new(WindowRuntime::new(factory, request)),
         }
     }
 
@@ -69,12 +65,6 @@ impl Window {
     pub fn run(self) {
         let runtime = self.runtime;
         (*runtime).run();
-    }
-}
-
-impl Default for Window {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

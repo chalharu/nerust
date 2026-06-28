@@ -1,7 +1,5 @@
-#[cfg(feature = "opengl")]
-use nerust_backend_opengl::GlFactory as Factory;
-#[cfg(feature = "wgpu")]
-use nerust_backend_wgpu::WgpuFactory as Factory;
+use std::rc::Rc;
+
 use nerust_screen_video::{
     FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, RendererError, SurfaceSize,
     VideoRenderProfile,
@@ -10,13 +8,15 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
+    factory: Rc<dyn GpuFactory>,
     renderer: Option<Box<dyn GpuRenderer>>,
     last_size: SurfaceSize,
 }
 
 impl GtkRenderer {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
         Self {
+            factory,
             renderer: None,
             last_size: SurfaceSize::new(0, 0),
         }
@@ -35,7 +35,7 @@ impl GtkRenderer {
             render_profile: profile.clone(),
             vsync: true,
         };
-        match Factory.create_renderer(&config, display_handle) {
+        match self.factory.create_renderer(&config, display_handle) {
             Ok(mut r) => {
                 if let Err(e) = r.attach(window_handle, display_handle, physical_size) {
                     log::error!("GtkRenderer: attach failed: {e}");

@@ -35,9 +35,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy (default members)
-        run: cargo clippy --quiet
+        run: cargo clippy -p nerust_nes_core -p nerust_persistence --quiet
       - name: Unit tests (default members)
-        run: cargo test --quiet
+        run: cargo test -p nerust_nes_core -p nerust_persistence --quiet
       - name: Support crate tests
         run: |
           cargo test -p nerust_screen_video --lib --quiet
@@ -82,8 +82,8 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-tao-
-      - name: Build nerust_tao (release)
-        run: cargo build -p nerust_tao --release --quiet
+      - name: Build nerust (Tao + wgpu)
+        run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -123,8 +123,8 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-gtk-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gtk-
-      - name: Build nerust_gtk (release)
-        run: cargo build -p nerust_gtk --release --quiet
+      - name: Build nerust (GTK + opengl)
+        run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

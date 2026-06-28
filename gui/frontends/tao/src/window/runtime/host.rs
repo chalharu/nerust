@@ -16,7 +16,7 @@ use nerust_gui_settings::{
 };
 use nerust_gui_shell::{
     factory::CoreFactory,
-    load::{LoadRequest, MediaObject},
+    load::{LoadRequest, MediaObject, SystemLoadOptions},
     session::{
         KeyboardShortcut, SessionError, SessionHandle, WindowSize,
         commands::{SessionCommand, SessionCommandOutcome},
@@ -58,6 +58,7 @@ pub(crate) struct HostState {
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
+    pending_load_request: Option<LoadRequest>,
     pub(crate) active: bool,
     auto_paused: bool,
 }
@@ -85,6 +86,7 @@ impl HostState {
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
+            pending_load_request: None,
             active: true,
             auto_paused: false,
         }
@@ -169,22 +171,35 @@ impl HostState {
             .map(|window| window_surface_size(window.inner_size()))
     }
 
+    pub(crate) fn set_pending_load_request(&mut self, request: LoadRequest) {
+        self.pending_load_request = Some(request);
+    }
+
     pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_inner(None, data)
+        self.load_inner(None, data, None)
     }
 
     pub(crate) fn load_with_options(
         &mut self,
         rom_path: Option<PathBuf>,
         data: Vec<u8>,
-        _request: LoadRequest,
+        request: LoadRequest,
     ) -> bool {
-        self.load_inner(rom_path, data)
+        let options = match request {
+            LoadRequest::Auto => self.session.default_load_options(),
+            LoadRequest::Explicit { options } => options,
+        };
+        self.load_inner(rom_path, data, Some(options))
     }
 
-    fn load_inner(&mut self, rom_path: Option<PathBuf>, data: Vec<u8>) -> bool {
+    fn load_inner(
+        &mut self,
+        rom_path: Option<PathBuf>,
+        data: Vec<u8>,
+        options_override: Option<SystemLoadOptions>,
+    ) -> bool {
         let media = MediaObject::new(rom_path, data);
-        let options = self.session.default_load_options();
+        let options = options_override.unwrap_or_else(|| self.session.default_load_options());
         if let Ok(resolved) = self
             .session
             .factory()
@@ -199,10 +214,14 @@ impl HostState {
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
+        let request = self.pending_load_request.take();
         match load_rom_path(path) {
             Ok(loaded_rom) => {
                 let (rom_path, data) = loaded_rom.into_parts();
-                self.load_inner(Some(rom_path), data)
+                match request {
+                    Some(request) => self.load_with_options(Some(rom_path), data, request),
+                    None => self.load_inner(Some(rom_path), data, None),
+                }
             }
             Err(error) => {
                 log::warn!("ROM open failed: {error}");
