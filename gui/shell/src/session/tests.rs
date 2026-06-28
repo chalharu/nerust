@@ -5,17 +5,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use nerust_core_traits::SystemId;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
     audio::{AudioBackend, AudioBackendRegistry},
     identity::SystemIdentity,
 };
-use nerust_input_traits::{InputStatePersistence, SystemInputAdapter};
 use nerust_emu_thread::EmuThread;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
 };
-use nerust_core_traits::SystemId;
+use nerust_input_traits::{InputStatePersistence, SystemInputAdapter};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile};
 
@@ -151,10 +151,7 @@ impl SystemInputAdapter for MockAdapter {
     }
 }
 impl InputStatePersistence for MockAdapter {
-    fn sync_from_runtime_state(
-        &mut self,
-        _: &[u8],
-    ) -> Result<(), nerust_input_traits::InputError> {
+    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), nerust_input_traits::InputError> {
         Ok(())
     }
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_input_traits::InputError> {

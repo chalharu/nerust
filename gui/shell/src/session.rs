@@ -12,12 +12,12 @@ use std::{collections::BTreeSet, sync::Arc};
 
 pub use lifecycle::WindowSize;
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_input_traits::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_input_traits::SystemInputAdapter;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
