@@ -22,7 +22,6 @@ use nerust_factory_nes::{
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-        SettingsSnapshot,
     },
     shell::NativeShellState,
 };
@@ -30,9 +29,6 @@ use nerust_gui_shell::{
     factory::CoreFactory,
     load::MediaObject,
     session::{SessionHandle, commands::SessionCommand},
-    settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    },
 };
 use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use winit::{
@@ -162,16 +158,8 @@ impl AndroidFrontend {
         };
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
-        let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        };
-        let (core, adapter) = factory
-            .create_core_and_adapter(&snapshot)
-            .expect("failed to create core");
         let session =
-            SessionHandle::new_with_core(capabilities, descriptor, factory, core, adapter);
+            SessionHandle::new_with_core(capabilities, descriptor, Arc::clone(&factory));
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,

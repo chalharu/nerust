@@ -26,7 +26,6 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
     settings::{
-        defaults::seed::{default_app_state, default_local_settings, default_shared_settings},
         i18n::{UiText, text},
     },
 };
@@ -55,21 +54,10 @@ impl State {
             presentation: None,
         };
         let descriptor = ctx.core_factory.system_descriptor();
-        let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        };
-        let (core, adapter) = ctx
-            .core_factory
-            .create_core_and_adapter(&snapshot)
-            .expect("failed to create core");
         let session = SessionHandle::new_with_core(
             capabilities,
             descriptor,
             Arc::clone(&ctx.core_factory),
-            core,
-            adapter,
         );
 
         Self {
