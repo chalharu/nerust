@@ -60,7 +60,7 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    pub fn new_with_core(
+    pub fn new(
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,

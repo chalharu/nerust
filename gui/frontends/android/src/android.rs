@@ -159,7 +159,7 @@ impl AndroidFrontend {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
         let session =
-            SessionHandle::new_with_core(capabilities, descriptor, Arc::clone(&factory));
+            SessionHandle::new(capabilities, descriptor, Arc::clone(&factory));
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,

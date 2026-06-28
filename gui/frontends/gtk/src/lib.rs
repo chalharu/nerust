@@ -54,7 +54,7 @@ impl State {
             presentation: None,
         };
         let descriptor = ctx.core_factory.system_descriptor();
-        let session = SessionHandle::new_with_core(
+        let session = SessionHandle::new(
             capabilities,
             descriptor,
             Arc::clone(&ctx.core_factory),
