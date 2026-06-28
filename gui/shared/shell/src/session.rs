@@ -1,3 +1,4 @@
+pub mod access;
 pub mod commands;
 pub mod input;
 mod lifecycle;

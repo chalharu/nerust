@@ -10,10 +10,7 @@ use nerust_gui_settings::{
     input::{KeyboardKey, ShortcutAction},
     local::ScalingMode,
 };
-use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError,
-    commands::{SessionCommand, SessionCommandOutcome},
-};
+use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_screen_video::GpuFactory;
 
@@ -147,31 +144,10 @@ fn key_event_pressed(event: KeyEventState) -> bool {
     matches!(event, KeyEventState::Press)
 }
 
-trait ActiveSlotLoader {
-    fn active_slot_id(&self) -> Option<u64>;
-    fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome;
-}
-
-impl ActiveSlotLoader for State {
-    fn active_slot_id(&self) -> Option<u64> {
-        State::active_slot_id(self)
-    }
-
-    fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        State::run_command(self, command)
-    }
-}
-
-fn load_active_slot<T: ActiveSlotLoader>(state: &RefCell<T>) -> bool {
-    let active_slot_id = { state.borrow().active_slot_id() };
-    if let Some(slot_id) = active_slot_id {
-        state
-            .borrow_mut()
-            .run_command(SessionCommand::LoadSlot(slot_id))
-            .executed
-    } else {
-        false
-    }
+fn load_active_slot(state: &RefCell<State>) -> bool {
+    let active_slot_id = state.borrow().active_slot_id();
+    active_slot_id
+        .is_some_and(|slot_id| FrontendSession::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
@@ -282,10 +258,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = pause_action.connect_activate(move |_, _| {
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::Pause);
+                result.state().borrow_mut().pause();
                 result.update_actions();
             });
         }
@@ -294,10 +267,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = resume_action.connect_activate(move |_, _| {
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::Resume);
+                result.state().borrow_mut().resume();
                 result.update_actions();
             });
         }
@@ -306,10 +276,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = state_create_action.connect_activate(move |_, _| {
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::CreateSlot);
+                result.state().borrow_mut().create_slot();
                 result.update_actions();
             });
         }
@@ -318,10 +285,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = state_save_active_action.connect_activate(move |_, _| {
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::SaveActiveSlotOrNew);
+                result.state().borrow_mut().save_active_slot();
                 result.update_actions();
             });
         }
@@ -342,10 +306,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_select_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::SelectActiveSlot(slot_id));
+                    result.state().borrow_mut().select_slot(slot_id);
                     result.update_actions();
                 }
             });
@@ -356,10 +317,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_save_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::SaveSlot(slot_id));
+                    result.state().borrow_mut().save_slot(slot_id);
                     result.update_actions();
                 }
             });
@@ -370,10 +328,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_load_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::LoadSlot(slot_id));
+                    let _ = result.state().borrow_mut().load_slot(slot_id);
                     result.update_actions();
                 }
             });
@@ -384,10 +339,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_delete_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::DeleteSlot(slot_id));
+                    result.state().borrow_mut().delete_slot(slot_id);
                     result.update_actions();
                 }
             });
@@ -398,19 +350,13 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = settings_action.connect_activate(move |_, _| {
                 let was_running = !result.state().borrow().paused();
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .run_command(SessionCommand::Pause);
+                result.state().borrow_mut().pause();
                 let state = result.state();
                 let window = result.window();
                 let result_for_close = result.clone();
                 present_preferences_dialog(&window, state, move || {
                     if was_running {
-                        let _ = result_for_close
-                            .state()
-                            .borrow_mut()
-                            .run_command(SessionCommand::Resume);
+                        result_for_close.state().borrow_mut().resume();
                     }
                     result_for_close.update_actions();
                 });
@@ -604,37 +550,22 @@ impl WindowExtend for Window {
         match shortcut {
             KeyboardShortcut::Session(action) => match action {
                 ShortcutAction::TogglePause => {
-                    let _ = self
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::TogglePause);
+                    self.state().borrow_mut().toggle_pause();
                 }
                 ShortcutAction::SaveActiveSlot => {
-                    let _ = self
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::SaveActiveSlotOrNew);
+                    self.state().borrow_mut().save_active_slot();
                 }
                 ShortcutAction::SelectNextSlot => {
-                    let _ = self
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::SelectNextSlot);
+                    self.state().borrow_mut().select_next_slot();
                 }
                 ShortcutAction::SelectPreviousSlot => {
-                    let _ = self
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::SelectPreviousSlot);
+                    self.state().borrow_mut().select_previous_slot();
                 }
                 ShortcutAction::LoadActiveSlot => {
-                    let _ = self
-                        .state()
-                        .borrow_mut()
-                        .run_command(SessionCommand::LoadActiveSlot);
+                    let _ = self.state().borrow_mut().load_active_slot();
                 }
                 ShortcutAction::Reset => {
-                    let _ = self.state().borrow_mut().run_command(SessionCommand::Reset);
+                    self.state().borrow_mut().reset();
                 }
                 ShortcutAction::ToggleFullscreen => {
                     toggle_window_fullscreen(self);
@@ -702,55 +633,9 @@ fn rebuild_slot_menu(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use nerust_gui_settings::input::KeyboardKey;
-    use nerust_gui_shell::session::commands::{SessionCommand, SessionCommandOutcome};
 
-    use super::{ActiveSlotLoader, gdk_key_controller_input, load_active_slot};
-
-    #[derive(Default)]
-    struct FakeState {
-        active_slot_id: Option<u64>,
-        loaded_slot_id: Option<u64>,
-    }
-
-    impl ActiveSlotLoader for FakeState {
-        fn active_slot_id(&self) -> Option<u64> {
-            self.active_slot_id
-        }
-
-        fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-            if let SessionCommand::LoadSlot(slot_id) = command {
-                self.loaded_slot_id = Some(slot_id);
-                SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                }
-            } else {
-                SessionCommandOutcome::default()
-            }
-        }
-    }
-
-    #[test]
-    fn load_active_slot_releases_shared_borrow_before_mutating() {
-        let state = RefCell::new(FakeState {
-            active_slot_id: Some(8),
-            loaded_slot_id: None,
-        });
-
-        assert!(load_active_slot(&state));
-        assert_eq!(state.borrow().loaded_slot_id, Some(8));
-    }
-
-    #[test]
-    fn load_active_slot_is_noop_without_selection() {
-        let state = RefCell::new(FakeState::default());
-
-        assert!(!load_active_slot(&state));
-        assert_eq!(state.borrow().loaded_slot_id, None);
-    }
+    use super::gdk_key_controller_input;
 
     #[test]
     fn gdk_key_mapping_matches_controller_layout() {
