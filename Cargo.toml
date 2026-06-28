@@ -44,7 +44,7 @@ clap.workspace = true
 log.workspace = true
 nerust_factory_nes.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_gui_shell.workspace = true
+nerust_gui_shell = { workspace = true, optional = true }
 nerust_run_options.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
@@ -55,8 +55,8 @@ simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = ["nerust_gtk"]
-tao = ["nerust_tao"]
+gtk = ["nerust_gtk", "nerust_gui_shell"]
+tao = ["nerust_tao", "nerust_gui_shell"]
 wgpu = ["nerust_backend_wgpu"]
 opengl = ["nerust_backend_opengl"]
 
