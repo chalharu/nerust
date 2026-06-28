@@ -5,7 +5,7 @@ use std::sync::Arc;
 use clap::{Arg, Command};
 use log::LevelFilter;
 use nerust_factory_nes::NesFactory;
-use nerust_gui_runtime::{rom::load_rom_path, settings::HostBackendIdentity};
+use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::{
     context::FrontendContext,
     factory::CoreFactory,
@@ -44,16 +44,6 @@ fn parse_cli_args() -> RunOptions {
         rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
         mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").cloned(),
     }
-}
-
-#[allow(unreachable_code)]
-fn create_identity() -> HostBackendIdentity {
-    #[cfg(feature = "gtk")]
-    return HostBackendIdentity::gtk_opengl();
-    #[cfg(feature = "tao")]
-    return HostBackendIdentity::tao_wgpu();
-    #[cfg(not(any(feature = "gtk", feature = "tao")))]
-    compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
 }
 
 struct LiveRomLoader {
@@ -111,13 +101,10 @@ pub fn run() {
         pending_options,
     });
 
-    let identity = create_identity();
-
     let ctx = FrontendContext {
         gpu_factory: Rc::from(gpu_factory),
         core_factory,
         rom_loader,
-        host_backend_identity: identity,
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]

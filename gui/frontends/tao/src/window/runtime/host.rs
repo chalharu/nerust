@@ -1,7 +1,7 @@
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 
 use nerust_gui_runtime::{
-    settings::{SettingsApplyPlan, SettingsSnapshot},
+    settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot},
     shell::NativeShellState,
 };
 use nerust_gui_settings::{
@@ -58,7 +58,7 @@ pub(crate) struct HostState {
 
 impl HostState {
     pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Self {
-        let identity = ctx.host_backend_identity;
+        let identity = HostBackendIdentity::tao_wgpu();
         let descriptor = ctx.core_factory.system_descriptor();
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(),
@@ -563,7 +563,7 @@ impl HostState {
         self.session
             .settings_snapshot()
             .app_state
-            .window_size(&self.ctx.host_backend_identity.to_string())
+            .window_size(&HostBackendIdentity::tao_wgpu().to_string())
     }
 
     fn remember_fit_window_size(&self) {
@@ -581,7 +581,7 @@ impl HostState {
         let height = logical_size.height.round().max(1.0) as u32;
 
         if let Err(error) = self.session.settings_manager().update_window_size(
-            &self.ctx.host_backend_identity,
+            &HostBackendIdentity::tao_wgpu(),
             width,
             height,
         ) {
