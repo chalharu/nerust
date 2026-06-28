@@ -4,6 +4,8 @@ use std::{
 };
 
 use directories::ProjectDirs;
+use serde_yaml::Value;
+
 use super::{SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
 
 const SETTINGS_FILE_NAME: &str = "settings.yaml";
@@ -41,21 +43,50 @@ pub(super) fn load_snapshot(
         Ok(contents) => {
             match serde_yaml::from_str::<SettingsSnapshot>(&contents) {
                 Ok(snapshot) => snapshot,
-                Err(error) => {
+                Err(err) => {
                     log::warn!(
-                        "settings file {} is corrupt, using defaults: {error}",
+                        "settings file {} has corrupt fields, recovering: {err}",
                         path.display(),
                     );
-                    defaults.clone()
+                    match serde_yaml::from_str::<Value>(&contents) {
+                        Ok(raw) => recover_snapshot(defaults, raw),
+                        Err(_) => defaults.clone(),
+                    }
                 }
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => defaults.clone(),
         Err(error) => {
-            log::warn!("settings file {} unreadable, using defaults: {error}", path.display());
+            log::warn!(
+                "settings file {} unreadable, using defaults: {error}",
+                path.display(),
+            );
             defaults.clone()
         }
     }
+}
+
+/// Recover a `SettingsSnapshot` from raw YAML by trying each top-level field
+/// independently.  A corrupt field (e.g. an enum variant from a future version)
+/// is reset to its default while the remaining fields are preserved.
+fn recover_snapshot(defaults: &SettingsSnapshot, raw: Value) -> SettingsSnapshot {
+    let Some(map) = raw.as_mapping() else {
+        return defaults.clone();
+    };
+    let mut result = defaults.clone();
+    for key_str in ["shared", "local", "app_state"] {
+        let key = Value::String(key_str.into());
+        if let Some(field_val) = map.get(&key) {
+            let mut candidate = serde_yaml::to_value(&result).unwrap();
+            if let Some(m) = candidate.as_mapping_mut() {
+                m.insert(key, field_val.clone());
+            }
+            if let Ok(patched) = serde_yaml::from_value::<SettingsSnapshot>(candidate) {
+                result = patched;
+            }
+        }
+    }
+    result
 }
 
 pub(super) fn save_snapshot_store(
