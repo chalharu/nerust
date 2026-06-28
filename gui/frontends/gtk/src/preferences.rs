@@ -13,6 +13,7 @@ use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_sett
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
+use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
     descriptor::SystemSettingsFieldKind,
     factory::CoreFactory,
@@ -554,22 +555,22 @@ trait SettingsApplier {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError>;
+    ) -> Result<SettingsResult, SessionError>;
 }
 
 impl SettingsApplier for State {
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
-        State::apply_settings(self, settings)
+    ) -> Result<SettingsResult, SessionError> {
+        FrontendSession::apply_settings(self, settings)
     }
 }
 
 fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     state: &RefCell<T>,
     snapshot: SettingsSnapshot,
-) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
+) -> Result<SettingsResult, SessionError> {
     state.borrow_mut().apply_settings(snapshot)
 }
 
@@ -1185,9 +1186,10 @@ fn run_finish_callback(finish: &FinishCallback) {
 mod tests {
     use std::cell::RefCell;
 
-    use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+    use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
         session::SessionError,
+        session::access::SettingsResult,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         },
@@ -1205,9 +1207,9 @@ mod tests {
         fn apply_settings(
             &mut self,
             _settings: SettingsSnapshot,
-        ) -> Result<SettingsApplyPlan, SessionError> {
+        ) -> Result<SettingsResult, SessionError> {
             self.apply_calls += 1;
-            Ok(SettingsApplyPlan::default())
+            Ok(SettingsResult::default())
         }
     }
 

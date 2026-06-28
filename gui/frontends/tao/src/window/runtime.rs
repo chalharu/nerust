@@ -149,7 +149,7 @@ impl WindowRuntime {
                 {
                     let handle = self.host.settings_window.take().unwrap();
                     let plan = self.host.close_settings_window(handle);
-                    if plan.is_some_and(|p| p.renderer_rebuild_required) {
+                    if plan.is_some_and(|p| p.renderer_needs_rebuild) {
                         self.recreate_renderer();
                     }
                     self.host.request_redraw();

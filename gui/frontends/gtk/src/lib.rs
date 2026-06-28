@@ -15,7 +15,7 @@ use gtk::{
 };
 use nerust_contract_input::InputTopologyDescriptor;
 use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
+    HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
@@ -23,7 +23,8 @@ use nerust_gui_shell::{
     descriptor::SystemSettingsPageModel,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome},
+        access::{FrontendSession, SettingsResult},
+        commands::SessionCommand,
     },
     settings::i18n::{UiText, text},
 };
@@ -117,10 +118,89 @@ impl State {
         self.session.flush_before_exit();
     }
 
-    pub(crate) fn run_command(&mut self, command: SessionCommand) -> SessionCommandOutcome {
-        self.session.run_command(command).unwrap_or_default()
+    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
+        std::mem::take(&mut self.renderer_reload_pending)
     }
+}
 
+impl FrontendSession for State {
+    fn pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Pause);
+    }
+    fn resume(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Resume);
+    }
+    fn toggle_pause(&mut self) {
+        let _ = self.session.run_command(SessionCommand::TogglePause);
+    }
+    fn save_active_slot(&mut self) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SaveActiveSlotOrNew);
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadActiveSlot)
+            .unwrap_or_default()
+            .executed
+    }
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.session
+            .run_command(SessionCommand::LoadSlot(slot_id))
+            .unwrap_or_default()
+            .executed
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::DeleteSlot(slot_id));
+    }
+    fn select_slot(&mut self, slot_id: u64) {
+        let _ = self
+            .session
+            .run_command(SessionCommand::SelectActiveSlot(slot_id));
+    }
+    fn create_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::CreateSlot);
+    }
+    fn reset(&mut self) {
+        let _ = self.session.run_command(SessionCommand::Reset);
+    }
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.apply_settings(settings)?;
+        self.renderer_reload_pending =
+            plan.session_rebuild_required || plan.window_settings_changed;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: self.renderer_reload_pending,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: plan.scaling_changed,
+        })
+    }
+    fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        self.renderer_reload_pending =
+            plan.session_rebuild_required || plan.window_settings_changed;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: self.renderer_reload_pending,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: false,
+        })
+    }
+}
+
+impl State {
     pub(crate) fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,
@@ -143,32 +223,6 @@ impl State {
 
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
-    }
-
-    pub(crate) fn apply_settings(
-        &mut self,
-        settings: SettingsSnapshot,
-    ) -> Result<SettingsApplyPlan, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
-            self.renderer_reload_pending = true;
-        }
-        Ok(plan)
-    }
-
-    pub(crate) fn set_fullscreen_default(
-        &mut self,
-        fullscreen: bool,
-    ) -> Result<SettingsApplyPlan, SessionError> {
-        let plan = self.session.set_fullscreen_default(fullscreen)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
-            self.renderer_reload_pending = true;
-        }
-        Ok(plan)
-    }
-
-    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
-        std::mem::take(&mut self.renderer_reload_pending)
     }
 }
 
