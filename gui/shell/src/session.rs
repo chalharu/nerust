@@ -12,7 +12,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 pub use lifecycle::WindowSize;
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_core_traits::input::SystemInputAdapter;
+use nerust_input_traits::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
