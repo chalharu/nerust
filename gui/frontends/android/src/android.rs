@@ -469,12 +469,10 @@ impl AndroidFrontend {
                 // Finish the activity and kill the process so the next launch
                 // starts with a clean slate (swipe-kill semantics).
                 let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                let _ = vm.attach_current_thread(|env| {
+                let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
                     let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                     let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
                     let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
-                    // Kill the VM so that all native resources (file handles,
-                    // threads, event loops) are released before the next launch.
                     let system = env.find_class(jni_str!("java/lang/System"))?;
                     let _ = env.call_static_method(
                         &system,
