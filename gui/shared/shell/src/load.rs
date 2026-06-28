@@ -3,6 +3,21 @@ use std::{
     sync::Arc,
 };
 
+use crate::session::SessionHandle;
+
+#[derive(Debug)]
+pub struct RomLoaderError(pub String);
+
+impl std::fmt::Display for RomLoaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub trait RomLoader {
+    fn load_rom(&self, path: &Path, session: &mut SessionHandle) -> Result<(), RomLoaderError>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaObject {
     pub bytes: Arc<[u8]>,
