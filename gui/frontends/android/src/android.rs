@@ -475,14 +475,14 @@ impl AndroidFrontend {
                     let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
                     // Kill the VM so that all native resources (file handles,
                     // threads, event loops) are released before the next launch.
-                    let system = env.find_class(jni_str!("java/lang/System")).ok()?;
+                    let system = env.find_class(jni_str!("java/lang/System"))?;
                     let _ = env.call_static_method(
                         &system,
                         jni_str!("exit"),
                         jni_sig!("(I)V"),
                         &[jni::objects::JValue::Int(0)],
                     );
-                    Some(())
+                    Ok(())
                 });
             }
             MenuAction::Unload => {
