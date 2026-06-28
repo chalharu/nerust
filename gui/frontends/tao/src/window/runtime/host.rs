@@ -1,13 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 
-use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::{
-    rom::load_rom_path,
-    settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot},
+    settings::{SettingsApplyPlan, SettingsSnapshot},
     shell::NativeShellState,
 };
 use nerust_gui_settings::{
@@ -15,8 +9,7 @@ use nerust_gui_settings::{
     input::{KeyboardKey, ShortcutAction},
 };
 use nerust_gui_shell::{
-    factory::CoreFactory,
-    load::{LoadRequest, MediaObject, SystemLoadOptions},
+    context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle, WindowSize,
         commands::{SessionCommand, SessionCommandOutcome},
@@ -27,7 +20,7 @@ use nerust_gui_shell::{
         scaling_factor,
     },
 };
-use nerust_screen_video::{RenderResult, SurfaceSize};
+use nerust_screen_video::{GpuFactory, RenderResult, SurfaceSize};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
@@ -52,44 +45,54 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     session: SessionHandle,
+    ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
-    pending_load_request: Option<LoadRequest>,
     pub(crate) active: bool,
     auto_paused: bool,
 }
 
 impl HostState {
-    pub(crate) fn new(app_menu: AppMenu) -> Self {
-        let identity = HostBackendIdentity::tao_wgpu();
-        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let descriptor = factory.system_descriptor();
+    pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Self {
+        let identity = ctx.host_backend_identity;
+        let descriptor = ctx.core_factory.system_descriptor();
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(),
             local: default_local_settings(),
             app_state: default_app_state(),
         };
-        let (core, adapter) = factory
+        let (core, adapter) = ctx
+            .core_factory
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
-        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let session = SessionHandle::new_with_core(
+            identity,
+            descriptor,
+            Arc::clone(&ctx.core_factory),
+            core,
+            adapter,
+        );
         Self {
             window: None,
             session,
+            ctx,
             app_menu,
             shell: NativeShellState::new(),
             settings_window: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
-            pending_load_request: None,
             active: true,
             auto_paused: false,
         }
+    }
+
+    pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
+        &self.ctx.gpu_factory
     }
 
     pub(crate) fn session(&self) -> &SessionHandle {
@@ -171,60 +174,15 @@ impl HostState {
             .map(|window| window_surface_size(window.inner_size()))
     }
 
-    pub(crate) fn set_pending_load_request(&mut self, request: LoadRequest) {
-        self.pending_load_request = Some(request);
-    }
-
-    pub(crate) fn load(&mut self, data: Vec<u8>) -> bool {
-        self.load_inner(None, data, None)
-    }
-
-    pub(crate) fn load_with_options(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        request: LoadRequest,
-    ) -> bool {
-        let options = match request {
-            LoadRequest::Auto => self.session.default_load_options(),
-            LoadRequest::Explicit { options } => options,
-        };
-        self.load_inner(rom_path, data, Some(options))
-    }
-
-    fn load_inner(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        options_override: Option<SystemLoadOptions>,
-    ) -> bool {
-        let media = MediaObject::new(rom_path, data);
-        let options = options_override.unwrap_or_else(|| self.session.default_load_options());
-        if let Ok(resolved) = self
-            .session
-            .factory()
-            .resolve_load_request(self.session.settings_snapshot(), options)
-            && self.session.load_resolved(media, resolved).is_ok()
-        {
-            let _ = self.session.run_command(SessionCommand::Resume);
-            self.after_rom_load();
-            return true;
-        }
-        false
-    }
-
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
-        let request = self.pending_load_request.take();
-        match load_rom_path(path) {
-            Ok(loaded_rom) => {
-                let (rom_path, data) = loaded_rom.into_parts();
-                match request {
-                    Some(request) => self.load_with_options(Some(rom_path), data, request),
-                    None => self.load_inner(Some(rom_path), data, None),
-                }
+        let result = self.ctx.rom_loader.load_rom(path, &mut self.session);
+        match result {
+            Ok(()) => {
+                self.after_rom_load();
+                true
             }
-            Err(error) => {
-                log::warn!("ROM open failed: {error}");
+            Err(e) => {
+                log::warn!("ROM load failed: {e}");
                 false
             }
         }
@@ -324,9 +282,6 @@ impl HostState {
         self.maybe_refresh_window_title(Instant::now());
         *control_flow = ControlFlow::Wait;
 
-        // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
-        // On other platforms, it fires on the next event loop iteration.
-        // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
         if self.active
             && let Some(window) = self.window.as_ref()
         {
@@ -514,6 +469,7 @@ impl HostState {
 
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
+            self.ctx.core_factory.clone(),
             event_loop,
         ) {
             Some(handle) => self.settings_window = Some(handle),
@@ -604,7 +560,7 @@ impl HostState {
         self.session
             .settings_snapshot()
             .app_state
-            .window_size(&HostBackendIdentity::tao_wgpu().to_string())
+            .window_size(&self.ctx.host_backend_identity.to_string())
     }
 
     fn remember_fit_window_size(&self) {
@@ -622,7 +578,7 @@ impl HostState {
         let height = logical_size.height.round().max(1.0) as u32;
 
         if let Err(error) = self.session.settings_manager().update_window_size(
-            &HostBackendIdentity::tao_wgpu(),
+            &self.ctx.host_backend_identity,
             width,
             height,
         ) {

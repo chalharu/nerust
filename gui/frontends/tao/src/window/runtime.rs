@@ -1,10 +1,9 @@
 mod host;
 
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::path::Path;
 
-use nerust_gui_shell::load::LoadRequest;
-use nerust_screen_video::{GpuFactory, GpuRenderer, RendererConfig, SurfaceSize};
+use nerust_gui_shell::context::FrontendContext;
+use nerust_screen_video::{GpuRenderer, RendererConfig, SurfaceSize};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -19,12 +18,11 @@ use crate::app_menu::{UserEvent, imp::AppMenu};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    factory: Rc<dyn GpuFactory>,
     renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(factory: Rc<dyn GpuFactory>, request: Option<LoadRequest>) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -35,15 +33,11 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let mut host = HostState::new(app_menu);
-        if let Some(request) = request {
-            host.set_pending_load_request(request);
-        }
+        let host = HostState::new(ctx, app_menu);
 
         Self {
             event_loop: Some(event_loop),
             host,
-            factory,
             renderer: None,
         }
     }
@@ -65,7 +59,8 @@ impl WindowRuntime {
             vsync,
         };
         let mut renderer = self
-            .factory
+            .host
+            .gpu_factory()
             .create_renderer(&config, raw_display_handle)
             .expect("failed to create renderer");
         renderer
@@ -77,23 +72,6 @@ impl WindowRuntime {
             .expect("failed to attach");
         self.renderer = Some(renderer);
         Some(())
-    }
-
-    pub(crate) fn load(&mut self, data: Vec<u8>) {
-        if self.host.load(data) {
-            self.recreate_renderer();
-        }
-    }
-
-    pub(crate) fn load_with_options(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        request: LoadRequest,
-    ) {
-        if self.host.load_with_options(rom_path, data, request) {
-            self.recreate_renderer();
-        }
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
