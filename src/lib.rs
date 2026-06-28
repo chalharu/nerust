@@ -16,7 +16,6 @@ use nerust_run_options::RunOptions;
 use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
-#[allow(unreachable_code)]
 fn create_factory() -> Box<dyn GpuFactory> {
     #[cfg(feature = "wgpu")]
     return Box::new(nerust_backend_wgpu::WgpuFactory);

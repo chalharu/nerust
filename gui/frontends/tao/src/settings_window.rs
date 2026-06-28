@@ -185,7 +185,7 @@ impl SettingsWindowHandle {
         let pending_apply = Arc::new(Mutex::new(None));
         let capture_target = Arc::new(Mutex::new(None));
 
-        #[allow(unused_mut)]
+        #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
         let mut wb = WindowBuilder::new()
             .with_title("Preferences")
             .with_inner_size(tao::dpi::LogicalSize::new(960.0, 720.0));
