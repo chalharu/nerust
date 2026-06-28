@@ -14,7 +14,7 @@ use gtk::{
     },
 };
 use nerust_contract_input::InputTopologyDescriptor;
-use nerust_gui_runtime::settings::{SettingsApplyPlan, SettingsSnapshot};
+use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     context::FrontendContext,
@@ -44,7 +44,7 @@ pub(crate) struct State {
 
 impl State {
     pub(crate) fn new(ctx: FrontendContext) -> Self {
-        let identity = ctx.host_backend_identity;
+        let identity = HostBackendIdentity::gtk_opengl();
         let descriptor = ctx.core_factory.system_descriptor();
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(),
