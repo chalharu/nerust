@@ -70,12 +70,12 @@ impl SessionHandle {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let settings = SettingsManager::ephemeral(
+        let settings = SettingsManager::load_or_ephemeral(
             default_shared_settings(),
             default_local_settings(),
             default_app_state(),
         );
-        let settings_snapshot = settings.snapshot().expect("ephemeral settings should read");
+        let settings_snapshot = settings.snapshot().expect("settings snapshot should be readable");
         Self {
             emu_core,
             input_adapter,
