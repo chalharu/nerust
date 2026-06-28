@@ -13,8 +13,7 @@ use nerust_contract_core::{
 use nerust_contract_emuthread::EmuThread;
 use nerust_contract_input::SystemId;
 use nerust_gui_runtime::settings::{
-    BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-    SettingsApplyPlan, SettingsSnapshot,
+    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
 };
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_screen_video::{
