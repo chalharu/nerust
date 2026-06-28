@@ -14,7 +14,8 @@ use iced_winit::{
     runtime::user_interface::{Cache, UserInterface},
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::settings::editor::CaptureTarget;
+use nerust_gui_shell::{factory::CoreFactory, settings::editor::CaptureTarget};
+
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
@@ -177,6 +178,7 @@ impl SettingsRenderer {
 impl SettingsWindowHandle {
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
+        factory: Arc<dyn CoreFactory>,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
@@ -202,6 +204,7 @@ impl SettingsWindowHandle {
 
         let program = SettingsAppProgram {
             snapshot,
+            factory,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
             capture_target: capture_target.clone(),
