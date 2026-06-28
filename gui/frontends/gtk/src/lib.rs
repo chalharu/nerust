@@ -14,7 +14,9 @@ use gtk::{
     },
 };
 use nerust_contract_input::InputTopologyDescriptor;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot};
+use nerust_gui_runtime::settings::{
+    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
+};
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     context::FrontendContext,
@@ -44,7 +46,14 @@ pub(crate) struct State {
 
 impl State {
     pub(crate) fn new(ctx: FrontendContext) -> Self {
-        let identity = HostBackendIdentity::gtk_opengl();
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
         let descriptor = ctx.core_factory.system_descriptor();
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(),
@@ -56,7 +65,7 @@ impl State {
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
         let session = SessionHandle::new_with_core(
-            identity,
+            capabilities,
             descriptor,
             Arc::clone(&ctx.core_factory),
             core,

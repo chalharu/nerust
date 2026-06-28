@@ -1,7 +1,10 @@
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 
 use nerust_gui_runtime::{
-    settings::{HostBackendIdentity, SettingsApplyPlan, SettingsSnapshot},
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsApplyPlan, SettingsSnapshot,
+    },
     shell::NativeShellState,
 };
 use nerust_gui_settings::{
@@ -58,7 +61,16 @@ pub(crate) struct HostState {
 
 impl HostState {
     pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Self {
-        let identity = HostBackendIdentity::tao_wgpu();
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
         let descriptor = ctx.core_factory.system_descriptor();
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(),
@@ -70,7 +82,7 @@ impl HostState {
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
         let session = SessionHandle::new_with_core(
-            identity,
+            capabilities,
             descriptor,
             Arc::clone(&ctx.core_factory),
             core,
@@ -563,7 +575,7 @@ impl HostState {
         self.session
             .settings_snapshot()
             .app_state
-            .window_size(&HostBackendIdentity::tao_wgpu().to_string())
+            .window_size("main")
     }
 
     fn remember_fit_window_size(&self) {
@@ -580,11 +592,11 @@ impl HostState {
         let width = logical_size.width.round().max(1.0) as u32;
         let height = logical_size.height.round().max(1.0) as u32;
 
-        if let Err(error) = self.session.settings_manager().update_window_size(
-            &HostBackendIdentity::tao_wgpu(),
-            width,
-            height,
-        ) {
+        if let Err(error) = self
+            .session
+            .settings_manager()
+            .update_window_size(width, height)
+        {
             log::warn!("failed to remember tao window size: {error}");
         }
     }

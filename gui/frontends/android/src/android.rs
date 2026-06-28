@@ -20,7 +20,10 @@ use nerust_factory_nes::{
     },
 };
 use nerust_gui_runtime::{
-    settings::{HostBackendIdentity, SettingsSnapshot},
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsSnapshot,
+    },
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
@@ -147,7 +150,16 @@ struct AndroidFrontend {
 impl AndroidFrontend {
     fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
-        let identity = HostBackendIdentity::android_wgpu();
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
         let snapshot = SettingsSnapshot {
@@ -158,7 +170,8 @@ impl AndroidFrontend {
         let (core, adapter) = factory
             .create_core_and_adapter(&snapshot)
             .expect("failed to create core");
-        let session = SessionHandle::new_with_core(identity, descriptor, factory, core, adapter);
+        let session =
+            SessionHandle::new_with_core(capabilities, descriptor, factory, core, adapter);
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,

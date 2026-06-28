@@ -12,7 +12,7 @@ use std::{collections::BTreeSet, sync::Arc};
 pub use lifecycle::WindowSize;
 use nerust_contract_core::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::{
-    HostBackendIdentity, SettingsError, SettingsSnapshot, manager::SettingsManager,
+    HostBackendCapabilities, SettingsError, SettingsSnapshot, manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
@@ -51,7 +51,7 @@ pub struct SessionHandle {
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) input_adapter: Box<dyn SystemInputAdapter>,
-    pub(super) host_backend: HostBackendIdentity,
+    pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
     pub(super) pressed_keys: BTreeSet<KeyboardKey>,
@@ -61,7 +61,7 @@ pub struct SessionHandle {
 
 impl SessionHandle {
     pub fn new_with_core(
-        identity: HostBackendIdentity,
+        capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         emu_core: EmuCore,
@@ -81,7 +81,7 @@ impl SessionHandle {
             input_adapter,
             descriptor,
             factory,
-            host_backend: identity,
+            capabilities,
             settings,
             settings_snapshot,
             pressed_keys: BTreeSet::new(),

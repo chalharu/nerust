@@ -57,7 +57,7 @@ impl SessionHandle {
     ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         let previous = self.settings_snapshot.clone();
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            self.host_backend,
+            &self.capabilities,
             &previous,
             &next_settings,
         );
@@ -99,7 +99,7 @@ impl SessionHandle {
         let mut next_settings = self.settings_snapshot.clone();
         next_settings.local.video.window.fullscreen_default = fullscreen;
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            self.host_backend,
+            &self.capabilities,
             &self.settings_snapshot,
             &next_settings,
         );
