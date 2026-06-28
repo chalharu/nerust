@@ -62,6 +62,29 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
+    /// Create a core from settings, falling back to defaults on failure.
+    fn create_core_or_default(
+        factory: &Arc<dyn CoreFactory>,
+        snapshot: &SettingsSnapshot,
+    ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
+        factory
+            .create_core_and_adapter(snapshot)
+            .unwrap_or_else(|_| {
+                log::warn!("core creation with loaded settings failed; using defaults");
+                use crate::settings::defaults::seed::{
+                    default_app_state, default_local_settings, default_shared_settings,
+                };
+                let fallback = SettingsSnapshot {
+                    shared: default_shared_settings(),
+                    local: default_local_settings(),
+                    app_state: default_app_state(),
+                };
+                factory
+                    .create_core_and_adapter(&fallback)
+                    .expect("failed to create core even with default settings")
+            })
+    }
+
     fn new_inner(
         capabilities: HostBackendCapabilities,
         descriptor: SystemDescriptor,
@@ -87,9 +110,7 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) = factory
-            .create_core_and_adapter(&settings_snapshot)
-            .expect("failed to create core");
+        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
         Self {
             emu_core,
             input_adapter,
@@ -139,9 +160,7 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) = factory
-            .create_core_and_adapter(&settings_snapshot)
-            .expect("failed to create core");
+        let (emu_core, input_adapter) = Self::create_core_or_default(&factory, &settings_snapshot);
         Self {
             emu_core,
             input_adapter,

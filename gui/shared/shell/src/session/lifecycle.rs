@@ -162,6 +162,10 @@ impl SessionHandle {
         if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
             log::warn!("mapper save flush before close failed: {error}");
         }
+        // Persist in-memory settings to disk so the next launch sees them.
+        if let Err(error) = self.settings.save_snapshot(self.settings_snapshot.clone()) {
+            log::warn!("settings save on exit failed: {error}");
+        }
     }
 
     pub fn run_command(
