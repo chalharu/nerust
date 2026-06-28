@@ -580,7 +580,8 @@ impl WindowExtend for Window {
             && snapshot.local.video.window.scaling == ScalingMode::FitToWindow
             && let Some(size) = snapshot.app_state.window_size("main")
         {
-            self.window().set_default_size(size.width as i32, size.height as i32);
+            self.window()
+                .set_default_size(size.width as i32, size.height as i32);
         }
 
         set_window_fullscreen(&self.window(), fullscreen);

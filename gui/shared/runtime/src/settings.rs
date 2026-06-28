@@ -88,6 +88,16 @@ pub struct SettingsApplyPlan {
 mod tests {
     use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+    use super::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsApplyPlan, SettingsSnapshot,
+        apply::{derive_apply_plan, validate_shared_settings},
+        manager::SettingsManager,
+        persistence::{
+            resolve_central_storage_paths, resolve_persistence_paths_with_import,
+            system_storage_key,
+        },
+    };
     use nerust_contract_core::identity::SystemIdentity;
     use nerust_contract_input::SystemId;
     use nerust_gui_settings::{
@@ -102,16 +112,6 @@ mod tests {
         shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
     };
     use nerust_persistence::sidecar::resolve_sidecars;
-    use super::{
-        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-        SettingsApplyPlan, SettingsSnapshot,
-        apply::{derive_apply_plan, validate_shared_settings},
-        manager::SettingsManager,
-        persistence::{
-            resolve_central_storage_paths, resolve_persistence_paths_with_import,
-            system_storage_key,
-        },
-    };
 
     fn tao_caps() -> HostBackendCapabilities {
         HostBackendCapabilities {
@@ -553,7 +553,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("config")).unwrap();
         let path = dir.join("config").join("settings.yaml");
-        std::fs::write(&path, b"shared:\n  general:\n    language: future_variant\n").unwrap();
+        std::fs::write(
+            &path,
+            b"shared:\n  general:\n    language: future_variant\n",
+        )
+        .unwrap();
 
         let paths = super::SettingsPaths::from_root(dir.clone());
         let manager = SettingsManager::load_with_paths(

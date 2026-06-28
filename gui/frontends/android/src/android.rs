@@ -20,9 +20,7 @@ use nerust_factory_nes::{
     },
 };
 use nerust_gui_runtime::{
-    settings::{
-        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-    },
+    settings::{BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities},
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
@@ -158,8 +156,7 @@ impl AndroidFrontend {
         };
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let descriptor = factory.system_descriptor();
-        let session =
-            SessionHandle::new(capabilities, descriptor, Arc::clone(&factory));
+        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&factory));
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,

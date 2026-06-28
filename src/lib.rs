@@ -128,7 +128,10 @@ mod tests {
     };
     use nerust_gui_shell::{
         factory::CoreFactory,
-        load::{MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
+        load::{
+            MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError,
+            SystemLoadOptions,
+        },
     };
 
     use crate::LiveRomLoader;
