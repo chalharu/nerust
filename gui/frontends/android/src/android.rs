@@ -23,14 +23,18 @@ use nerust_factory_nes::{
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-        SettingsPaths,
+        SettingsPaths, SettingsSnapshot,
     },
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
     factory::CoreFactory,
     load::MediaObject,
-    session::{SessionHandle, commands::SessionCommand},
+    session::{
+        SessionError, SessionHandle,
+        access::{FrontendSession, SettingsResult},
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
 };
 use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use winit::{
@@ -124,6 +128,30 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
     event_loop
         .run_app(&mut state)
         .map_err(|error| format!("Android event loop failed: {error}"))
+}
+
+fn show_toast(app: &AndroidApp, message: &str) {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+
+        let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
+        let text = env.new_string(message)?;
+        let toast = env.call_static_method(
+            &toast_class,
+            jni_str!("makeText"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"),
+            &[
+                jni::objects::JValue::Object(&activity),
+                jni::objects::JValue::Object(text.as_ref()),
+                jni::objects::JValue::Int(0),
+            ],
+        )?;
+        let toast_obj = toast.l()?;
+        let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
+        Ok(())
+    });
 }
 
 struct AndroidFrontend {
@@ -354,9 +382,9 @@ impl AndroidFrontend {
         };
         let mut next = self.session.settings_snapshot().clone();
         android_settings.apply_to_snapshot(&mut next);
-        match self.session.apply_settings(next) {
-            Ok(plan) => {
-                if plan.renderer_rebuild_required {
+        match self.apply_settings(next) {
+            Ok(result) => {
+                if result.renderer_needs_rebuild {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
                     if let Some(window) = self.window.as_ref().cloned() {
@@ -373,13 +401,6 @@ impl AndroidFrontend {
         }
     }
 
-    fn run_session_command(&mut self, command: SessionCommand) {
-        let outcome = self.session.run_command(command).unwrap_or_default();
-        if outcome.needs_redraw {
-            self.request_redraw();
-        }
-    }
-
     fn save_lifecycle_state(&mut self) {
         log::info!(
             "save_lifecycle_state: paused={} lifecycle_auto_paused={} restore_pending={}",
@@ -388,7 +409,7 @@ impl AndroidFrontend {
             self.lifecycle_restore_pending
         );
         if !self.lifecycle_auto_paused && !self.session.paused() {
-            let _ = self.session.run_command(SessionCommand::Pause);
+            self.pause();
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
         }
@@ -492,12 +513,16 @@ impl AndroidFrontend {
                 self.session.clear_display();
                 self.request_redraw();
             }
-            MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
+            MenuAction::LoadState => {
+                if !self.load_active_slot() {
+                    show_toast(&self.app, "No save state to load");
+                }
+            }
             MenuAction::OpenLibrary => self.request_library_dialog(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
-            MenuAction::Reset => self.run_session_command(SessionCommand::Reset),
-            MenuAction::SaveState => self.run_session_command(SessionCommand::SaveActiveSlotOrNew),
-            MenuAction::TogglePause => self.run_session_command(SessionCommand::TogglePause),
+            MenuAction::Reset => self.reset(),
+            MenuAction::SaveState => self.save_active_slot(),
+            MenuAction::TogglePause => self.toggle_pause(),
         }
     }
 
@@ -612,9 +637,7 @@ impl AndroidFrontend {
         self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
         self.storage.clear_restore_pending();
-        if let Err(error) = self.session.run_command(SessionCommand::Resume) {
-            log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
-        }
+        self.resume();
 
         // Ensure a window and renderer exist immediately when resuming so that
         // request_redraw() takes effect without requiring a user tap.
@@ -749,7 +772,7 @@ impl AndroidFrontend {
                     }
                 }
                 if self.lifecycle_auto_paused {
-                    let _ = self.session.run_command(SessionCommand::Resume);
+                    self.resume();
                     self.lifecycle_auto_paused = false;
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
@@ -866,6 +889,98 @@ impl AndroidFrontend {
                 self.sync_touch_target(touch.id, None);
             }
         }
+    }
+
+    fn exec(&mut self, cmd: SessionCommand) -> Option<SessionCommandOutcome> {
+        match self.session.run_command(cmd) {
+            Ok(o) => {
+                if o.needs_redraw {
+                    self.request_redraw();
+                }
+                Some(o)
+            }
+            Err(e) => {
+                log::warn!("command {cmd:?} failed: {e}");
+                None
+            }
+        }
+    }
+}
+
+impl FrontendSession for AndroidFrontend {
+    fn pause(&mut self) {
+        self.exec(SessionCommand::Pause);
+    }
+
+    fn resume(&mut self) {
+        self.exec(SessionCommand::Resume);
+    }
+
+    fn toggle_pause(&mut self) {
+        self.exec(SessionCommand::TogglePause);
+    }
+
+    fn save_active_slot(&mut self) {
+        self.exec(SessionCommand::SaveActiveSlotOrNew);
+    }
+
+    fn load_active_slot(&mut self) -> bool {
+        self.exec(SessionCommand::LoadActiveSlot)
+            .unwrap_or_default()
+            .executed
+    }
+
+    fn select_next_slot(&mut self) {
+        self.exec(SessionCommand::SelectNextSlot);
+    }
+
+    fn select_previous_slot(&mut self) {
+        self.exec(SessionCommand::SelectPreviousSlot);
+    }
+
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.exec(SessionCommand::LoadSlot(slot_id))
+            .unwrap_or_default()
+            .executed
+    }
+
+    fn save_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::SaveSlot(slot_id));
+    }
+
+    fn delete_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::DeleteSlot(slot_id));
+    }
+
+    fn select_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::SelectActiveSlot(slot_id));
+    }
+
+    fn create_slot(&mut self) {
+        self.exec(SessionCommand::CreateSlot);
+    }
+
+    fn reset(&mut self) {
+        self.exec(SessionCommand::Reset);
+    }
+
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.apply_settings(settings)?;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: plan.renderer_rebuild_required,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: plan.scaling_changed,
+        })
+    }
+
+    fn set_fullscreen_default(
+        &mut self,
+        _fullscreen: bool,
+    ) -> Result<SettingsResult, SessionError> {
+        Ok(SettingsResult::default())
     }
 }
 
