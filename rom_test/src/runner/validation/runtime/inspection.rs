@@ -1,4 +1,4 @@
-use nerust_contract_core::audio::AudioBackend;
+use nerust_core_traits::audio::AudioBackend;
 
 use super::ValidationRuntime;
 use crate::{

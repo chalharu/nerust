@@ -5,10 +5,10 @@ mod inspection;
 
 use std::sync::Arc;
 
+use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::{Core, input_types::Buttons};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_screen_video::{FrameBuffer, PixelFormat};
+use nerust_render_base::{FrameBuffer, PixelFormat};
 
 use crate::media::HashingMixer;
 

@@ -1,8 +1,8 @@
-use nerust_contract_core::input::InputState;
-use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Buttons};
-use nerust_nes_runtime::{
+use nerust_core_traits::input::InputState;
+use nerust_nes_controller::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
+use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Buttons};
 
 /// NES パッドの Device 実装。
 ///
@@ -105,7 +105,7 @@ impl<S: InputState<3>> Controller for NesPadDevice<S> {
 mod tests {
     use std::sync::Arc;
 
-    use nerust_contract_core::input::InputCell;
+    use nerust_core_traits::input::InputCell;
 
     use super::*;
 
