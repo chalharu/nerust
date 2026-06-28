@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use nerust_gui_settings::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
-use serde_yaml::Value;
 
 pub mod apply;
 pub mod manager;
@@ -14,11 +13,6 @@ mod store;
 pub(super) enum SettingsStore {
     FileBacked(SettingsPaths),
     Ephemeral,
-}
-
-pub(super) struct LoadedSettingsDocument<T> {
-    pub(super) settings: T,
-    pub(super) raw: Value,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -64,11 +58,7 @@ pub struct HostBackendCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsPaths {
-    pub config_dir: PathBuf,
-    pub data_dir: PathBuf,
-    pub shared_settings_file: PathBuf,
-    pub local_settings_file: PathBuf,
-    pub app_state_file: PathBuf,
+    pub settings_file: PathBuf,
     pub central_storage_root: PathBuf,
 }
 
@@ -112,8 +102,6 @@ mod tests {
         shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
     };
     use nerust_persistence::sidecar::resolve_sidecars;
-    use serde_yaml::{Mapping, Value};
-
     use super::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
         SettingsApplyPlan, SettingsSnapshot,
@@ -123,7 +111,6 @@ mod tests {
             resolve_central_storage_paths, resolve_persistence_paths_with_import,
             system_storage_key,
         },
-        store::merge_with_defaults,
     };
 
     fn tao_caps() -> HostBackendCapabilities {
@@ -174,24 +161,6 @@ mod tests {
             .join("target")
             .join("gui-runtime-settings")
             .join(name)
-    }
-
-    #[test]
-    fn merge_with_defaults_backfills_missing_fields() {
-        let merged = merge_with_defaults(
-            serde_yaml::to_value(test_shared_defaults()).unwrap(),
-            Value::Mapping(Mapping::from_iter([(
-                Value::String("general".into()),
-                Value::Mapping(Mapping::from_iter([(
-                    Value::String("language".into()),
-                    Value::String("english".into()),
-                )])),
-            )])),
-        );
-
-        let decoded: DesktopSharedSettings = serde_yaml::from_value(merged).unwrap();
-        assert_eq!(decoded.general.language, AppLanguage::English);
-        assert!(decoded.systems.contains_key(&SystemId::new("nes")));
     }
 
     #[test]
@@ -293,11 +262,7 @@ mod tests {
         shared.persistence.storage_policy = StoragePolicy::AppSharedData;
         shared.persistence.storage_directory = Some(custom_root);
         let paths = super::SettingsPaths {
-            config_dir: root.join("config"),
-            data_dir: root.join("data"),
-            shared_settings_file: root.join("config/shared.yaml"),
-            local_settings_file: root.join("config/local.yaml"),
-            app_state_file: root.join("data/app-state.yaml"),
+            settings_file: root.join("config/settings.yaml"),
             central_storage_root: root.join("data/persistence"),
         };
 
@@ -311,172 +276,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"custom");
-    }
-
-    #[test]
-    fn merge_serialized_value_preserves_unknown_fields() {
-        let merged = super::store::merge_serialized_value(
-            Value::Mapping(Mapping::from_iter([(
-                Value::String("future".into()),
-                Value::String("keep-me".into()),
-            )])),
-            &test_shared_defaults(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            merged
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-me".into())
-        );
-    }
-
-    #[test]
-    fn merge_serialized_value_preserves_unknown_fields_inside_sequence_items() {
-        let mut shared = test_shared_defaults();
-        shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::new("nes"), {
-                let mut system = SystemInputSettings::default();
-                system.keyboard_profiles.insert(
-                    IMPLICIT_PROFILE_ID.to_string(),
-                    nerust_gui_settings::input::KeyboardProfile {
-                        bindings: vec![KeyboardBinding::new(
-                            "nes.attachment.player1",
-                            PersistedControlId::digital("nes.control.a"),
-                            KeyboardKey::KeyZ,
-                        )],
-                    },
-                );
-                system
-            })]),
-            shortcuts: nerust_gui_settings::input::ShortcutSettings {
-                keyboard: vec![ShortcutBinding {
-                    action: ShortcutAction::TogglePause,
-                    key: Some(KeyboardKey::Space),
-                }],
-            },
-        };
-        let existing: Value = serde_yaml::from_str(
-            r#"
-input:
-  systems:
-    nes:
-      keyboard_profiles:
-        default:
-          bindings:
-            - attachment: nes.attachment.player1
-              control:
-                kind: digital
-                id: nes.control.a
-              key: key_z
-              future: keep-binding
-  shortcuts:
-    keyboard:
-      - action: toggle_pause
-        key: space
-        future: keep-shortcut
-"#,
-        )
-        .unwrap();
-
-        let merged = super::store::merge_serialized_value(existing, &shared).unwrap();
-        let input = merged
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("input".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap();
-        let bindings = input
-            .get(Value::String("systems".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("nes".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("keyboard_profiles".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("default".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("bindings".into()))
-            .unwrap()
-            .as_sequence()
-            .unwrap();
-        let shortcuts = input
-            .get(Value::String("shortcuts".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("keyboard".into()))
-            .unwrap()
-            .as_sequence()
-            .unwrap();
-
-        assert_eq!(
-            bindings[0]
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-binding".into())
-        );
-        assert_eq!(
-            shortcuts[0]
-                .as_mapping()
-                .unwrap()
-                .get(Value::String("future".into()))
-                .unwrap(),
-            &Value::String("keep-shortcut".into())
-        );
-    }
-
-    #[test]
-    fn local_settings_save_prunes_legacy_flat_video_fields() {
-        let existing: Value = serde_yaml::from_str(
-            r#"
-schema_version: 1
-video:
-  fullscreen_default: true
-  scaling: x3
-  vsync: false
-  future: keep-video
-"#,
-        )
-        .unwrap();
-        let merged = super::store::merge_serialized_value(
-            super::store::strip_legacy_local_video_fields(existing),
-            &test_local_defaults(),
-        )
-        .unwrap();
-
-        let decoded: HostBackendLocalSettings = serde_yaml::from_value(merged.clone()).unwrap();
-        assert!(!decoded.video.window.fullscreen_default);
-        assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
-        assert!(decoded.video.presentation.vsync);
-
-        let video = merged
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("video".into()))
-            .unwrap()
-            .as_mapping()
-            .unwrap();
-        assert!(!video.contains_key(Value::String("fullscreen_default".into())));
-        assert!(!video.contains_key(Value::String("scaling".into())));
-        assert!(!video.contains_key(Value::String("vsync".into())));
-        assert_eq!(
-            video.get(Value::String("future".into())).unwrap(),
-            &Value::String("keep-video".into())
-        );
     }
 
     #[test]
@@ -733,24 +532,12 @@ video:
 
     #[test]
     fn settings_paths_can_be_built_from_an_explicit_root() {
-        let root = PathBuf::from("/tmp/nerust-android");
+        let root = PathBuf::from("/tmp/nerust-test");
         let paths = super::SettingsPaths::from_root(root.clone());
 
-        assert_eq!(paths.config_dir, root.join("config"));
-        assert_eq!(paths.data_dir, root.join("data"));
         assert_eq!(
-            paths.shared_settings_file,
-            root.join("config").join("shared-settings.yaml")
-        );
-        assert_eq!(
-            paths.local_settings_file,
-            root.join("config")
-                .join("local-settings")
-                .join("local-settings.yaml")
-        );
-        assert_eq!(
-            paths.app_state_file,
-            root.join("data").join("app-state.yaml")
+            paths.settings_file,
+            root.join("config").join("settings.yaml")
         );
         assert_eq!(
             paths.central_storage_root,
@@ -765,8 +552,8 @@ video:
         let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("config")).unwrap();
-        let path = dir.join("config").join("shared-settings.yaml");
-        std::fs::write(&path, b"language: future_variant\n").unwrap();
+        let path = dir.join("config").join("settings.yaml");
+        std::fs::write(&path, b"shared:\n  general:\n    language: future_variant\n").unwrap();
 
         let paths = super::SettingsPaths::from_root(dir.clone());
         let manager = SettingsManager::load_with_paths(
