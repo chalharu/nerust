@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "emulator components include future mapper/APU hooks"
-)]
-
 mod apu;
 mod cart_device;
 mod cartridge;

@@ -10,6 +10,7 @@ bitflags::bitflags! {
         const EXTERNAL = 0b0000_0001;
         const FRAME_COUNTER = 0b0000_0010;
         const DMC = 0b0000_0100;
+        #[allow(dead_code, reason = "FDS IRQ placeholder")]
         const FDS_DISK = 0b0000_1000;
         const ALL = 0xFF;
     }
@@ -26,12 +27,10 @@ pub(crate) struct Interrupt {
     pub nmi: bool,
     pub executing: bool,
     pub detected: bool,
-    pub running_dma: bool,
     pub irq_mask: IrqSource,
     pub irq_flag: IrqSource,
     pub oam_dma: Option<u8>,
     pub dmc_dma_request: Option<DmcDmaKind>,
-    pub write: bool,
 }
 
 impl Interrupt {
@@ -40,12 +39,10 @@ impl Interrupt {
             nmi: false,
             executing: false,
             detected: false,
-            running_dma: false,
             irq_mask: IrqSource::empty(),
             irq_flag: IrqSource::empty(),
             oam_dma: None,
             dmc_dma_request: None,
-            write: false,
         }
     }
 
@@ -65,10 +62,8 @@ impl Interrupt {
         self.nmi = false;
         self.executing = false;
         self.detected = false;
-        self.running_dma = false;
         self.oam_dma = None;
         self.dmc_dma_request = None;
-        self.write = false;
     }
 }
 

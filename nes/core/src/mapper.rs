@@ -8,10 +8,15 @@ use crate::{
 };
 
 pub(crate) trait CartridgeDataDao {
+    #[allow(dead_code, reason = "dispatching via blanket impl to concrete mappers")]
     fn data_mut(&mut self) -> &mut CartridgeData;
     fn data_ref(&self) -> &CartridgeData;
 }
 
+#[allow(
+    dead_code,
+    reason = "trait methods dispatched through Cartridge/MapperCartridge blanket impls"
+)]
 pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
     fn name(&self) -> &str;
     fn program_page_len(&self) -> usize;

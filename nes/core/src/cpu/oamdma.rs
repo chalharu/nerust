@@ -92,6 +92,7 @@ impl OamDmaState {
         );
     }
 
+    #[allow(dead_code, reason = "OAM DMA state query")]
     pub(crate) fn count(&self) -> Option<u8> {
         if self.state == OamDmaStateEnumValue::None {
             None

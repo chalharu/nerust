@@ -1108,17 +1108,6 @@ impl Core {
     }
 
     #[inline]
-    fn write_vram(
-        &mut self,
-        address: usize,
-        value: u8,
-        cartridge: &mut dyn Cartridge,
-        interrupt: &mut Interrupt,
-    ) {
-        self.write_vram_internal(address, value, cartridge, interrupt, false);
-    }
-
-    #[inline]
     fn write_vram_internal(
         &mut self,
         mut address: usize,
@@ -1287,18 +1276,6 @@ impl Core {
         }
 
         self.sprite_index += 1;
-    }
-
-    #[inline]
-    fn show_background(&self) -> bool {
-        (self.cycle > 300 || self.mask.show_background)
-            && (self.cycle > 8 || self.mask.show_left_background)
-    }
-
-    #[inline]
-    fn show_sprite(&self) -> bool {
-        (self.cycle > 300 || self.mask.show_sprites)
-            && (self.cycle > 8 || self.mask.show_left_sprites)
     }
 
     #[inline]
