@@ -24,7 +24,7 @@ impl SettingsPaths {
 }
 
 pub(super) fn settings_paths() -> Result<SettingsPaths, SettingsError> {
-    let Some(project_dirs) = ProjectDirs::from("com", "github.chalharu", "nerust") else {
+    let Some(project_dirs) = ProjectDirs::from("io", "github.chalharu", "nerust") else {
         return Err(SettingsError::DirectoriesUnavailable);
     };
     Ok(SettingsPaths::new(
