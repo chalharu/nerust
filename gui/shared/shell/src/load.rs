@@ -3,7 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::session::SessionHandle;
+use crate::session::{
+    SessionError, SessionHandle,
+    commands::{SessionCommand, SessionCommandOutcome},
+};
+use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug)]
 pub struct RomLoaderError(pub String);
@@ -14,8 +18,60 @@ impl std::fmt::Display for RomLoaderError {
     }
 }
 
+/// Target for a ROM load operation.
+///
+/// Abstracts the session operations needed by `RomLoader` implementations,
+/// allowing them to work with any type (not just `SessionHandle`).
+pub trait RomLoadTarget {
+    fn default_load_options(&self) -> SystemLoadOptions;
+    fn settings_snapshot(&self) -> &SettingsSnapshot;
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), SessionError>;
+    fn run_command(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<SessionCommandOutcome, SessionError>;
+}
+
+impl RomLoadTarget for SessionHandle {
+    fn default_load_options(&self) -> SystemLoadOptions {
+        SessionHandle::default_load_options(self)
+    }
+    fn settings_snapshot(&self) -> &SettingsSnapshot {
+        SessionHandle::settings_snapshot(self)
+    }
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), SessionError> {
+        SessionHandle::load_resolved(self, media, resolved)
+    }
+    fn run_command(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<SessionCommandOutcome, SessionError> {
+        SessionHandle::run_command(self, command)
+    }
+}
+
+/// Loads and resolves a ROM file into a [`RomLoadTarget`].
+///
+/// Implementations handle:
+/// - Reading the file from disk
+/// - Creating a `MediaObject` from the file contents
+/// - Resolving system-specific load options (e.g., MMC3 IRQ variant)
+/// - Calling `target.load_resolved()` to start emulation
+/// - Calling `SessionCommand::Resume` after successful load
 pub trait RomLoader {
-    fn load_rom(&self, path: &Path, session: &mut SessionHandle) -> Result<(), RomLoaderError>;
+    fn load_rom(
+        &mut self,
+        path: &Path,
+        target: &mut dyn RomLoadTarget,
+    ) -> Result<(), RomLoaderError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
