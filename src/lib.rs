@@ -136,14 +136,7 @@ mod tests {
     struct LoadRecorder {
         resolved: Vec<u8>,
         resumed: bool,
-    }
-
-    fn snapshot() -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        }
+        snapshot: SettingsSnapshot,
     }
 
     impl RomLoadTarget for LoadRecorder {
@@ -151,8 +144,7 @@ mod tests {
             SystemLoadOptions::default()
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
-            static SNAPSHOT: std::sync::OnceLock<SettingsSnapshot> = std::sync::OnceLock::new();
-            SNAPSHOT.get_or_init(snapshot)
+            &self.snapshot
         }
         fn load_resolved(
             &mut self,
@@ -177,9 +169,18 @@ mod tests {
             factory,
             pending_options: pending,
         };
+        fn make_snapshot() -> SettingsSnapshot {
+            SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            }
+        }
+
         let mut target = LoadRecorder {
             resolved: Vec::new(),
             resumed: false,
+            snapshot: make_snapshot(),
         };
 
         // load_rom reads from disk; use a path we know exists
@@ -203,9 +204,18 @@ mod tests {
             factory,
             pending_options: pending,
         };
+        fn make_snap() -> SettingsSnapshot {
+            SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            }
+        }
+
         let mut target = LoadRecorder {
             resolved: Vec::new(),
             resumed: false,
+            snapshot: make_snap(),
         };
 
         // First call consumes pending_options — resumes
@@ -217,6 +227,7 @@ mod tests {
         let mut target2 = LoadRecorder {
             resolved: Vec::new(),
             resumed: false,
+            snapshot: make_snap(),
         };
         let result = loader.load_rom(Path::new("Cargo.toml"), &mut target2);
         assert!(result.is_ok());
