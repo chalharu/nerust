@@ -3,8 +3,8 @@ mod builder;
 mod input_state;
 mod settings;
 
+use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
-use nerust_input_traits::SystemInputAdapter;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
     descriptor::{
@@ -14,7 +14,7 @@ use nerust_gui_shell::{
     factory::FactoryError,
     load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
 };
-use nerust_core_traits::SystemId;
+use nerust_input_traits::SystemInputAdapter;
 
 pub mod touch;
 

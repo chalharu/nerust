@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use nerust_core_traits::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
@@ -14,7 +15,6 @@ use nerust_gui_shell::{
     load::{ResolvedLoadRequest, SystemLoadOptions},
     settings::i18n::{UiText, text},
 };
-use nerust_core_traits::SystemId;
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 

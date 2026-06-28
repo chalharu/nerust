@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use nerust_core_traits::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
     input::{
@@ -10,7 +11,6 @@ use nerust_gui_settings::{
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},
 };
-use nerust_core_traits::SystemId;
 use nerust_input_traits::DigitalControlId;
 
 const P1: &str = "nes.attachment.player1";

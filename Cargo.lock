@@ -3245,6 +3245,7 @@ dependencies = [
  "gio 0.22.6",
  "gtk4",
  "log",
+ "nerust_core_traits",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",

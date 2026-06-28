@@ -5,8 +5,8 @@ mod time;
 
 use std::{env, fs, path::PathBuf, time::SystemTime};
 
-use nerust_core_traits::identity::SystemIdentity;
 use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{
     metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata},
