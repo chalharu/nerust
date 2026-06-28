@@ -110,7 +110,7 @@ mod tests {
         nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter},
         shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
     };
-    use nerust_input_traits::SystemId;
+    use nerust_core_traits::SystemId;
     use nerust_persistence::sidecar::resolve_sidecars;
 
     fn tao_caps() -> HostBackendCapabilities {
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn ntsc_filter_survives_save_reload_cycle() {
         use nerust_gui_settings::nes::NesVideoFilter;
-        use nerust_input_traits::SystemId;
+        use nerust_core_traits::SystemId;
 
         let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

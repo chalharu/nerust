@@ -27,7 +27,8 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
-use nerust_input_traits::{InputTopologyDescriptor, SystemId};
+use nerust_core_traits::SystemId;
+use nerust_input_traits::InputTopologyDescriptor;
 
 use crate::State;
 

@@ -3279,7 +3279,7 @@ dependencies = [
 name = "nerust_gui_settings"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_input_traits",
+ "nerust_core_traits",
  "serde",
  "serde_yaml",
 ]
@@ -3305,9 +3305,6 @@ dependencies = [
 [[package]]
 name = "nerust_input_traits"
 version = "0.1.0-dev"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "nerust_nes_controller"

@@ -15,7 +15,7 @@ use nerust_emu_thread::EmuThread;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
 };
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile};
 
@@ -58,7 +58,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            nerust_input_traits::SystemId::new("nes"),
+            nerust_core_traits::SystemId::new("nes"),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
