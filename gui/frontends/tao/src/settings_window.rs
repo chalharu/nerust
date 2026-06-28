@@ -13,6 +13,7 @@ use iced_winit::{
     program,
     runtime::user_interface::{Cache, UserInterface},
 };
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{factory::CoreFactory, settings::editor::CaptureTarget};
 
@@ -179,6 +180,7 @@ impl SettingsWindowHandle {
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
@@ -205,6 +207,7 @@ impl SettingsWindowHandle {
         let program = SettingsAppProgram {
             snapshot,
             factory,
+            audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
             capture_target: capture_target.clone(),

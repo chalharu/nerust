@@ -304,8 +304,10 @@ impl SessionHandle {
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let (rebuilt_core, rebuilt_adapter) =
-            self.factory.create_core_and_adapter(next_settings)?;
+        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
+        let (rebuilt_core, rebuilt_adapter) = self
+            .factory
+            .create_core_and_adapter(next_settings, speaker)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, Vec::new())?;

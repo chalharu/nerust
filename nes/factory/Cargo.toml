@@ -18,7 +18,3 @@ nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_device.workspace = true
 nerust_render_base.workspace = true
-nerust_sound_cpal.workspace = true
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-nerust_sound_openal.workspace = true

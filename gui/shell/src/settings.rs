@@ -3,25 +3,13 @@ pub mod defaults;
 pub mod editor;
 pub mod i18n;
 
-use std::sync::OnceLock;
-
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
 
-fn build_registry() -> AudioBackendRegistry {
-    let mut reg = AudioBackendRegistry::new();
-    reg.register(0, &nerust_sound_cpal::CPAL);
-    #[cfg(not(target_os = "android"))]
-    reg.register(1, &nerust_sound_openal::OPENAL);
-    reg
-}
-
-pub fn audio_registry() -> &'static AudioBackendRegistry {
-    static REGISTRY: OnceLock<AudioBackendRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(build_registry)
-}
-
-pub fn build_speaker(settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend> {
+pub fn build_speaker(
+    registry: &AudioBackendRegistry,
+    settings: &HostBackendLocalSettings,
+) -> Box<dyn AudioBackend> {
     let sample_rate = if settings.audio.sample_rate > 0 {
         settings.audio.sample_rate
     } else {
@@ -33,7 +21,6 @@ pub fn build_speaker(settings: &HostBackendLocalSettings) -> Box<dyn AudioBacken
         f32::from(settings.audio.master_volume_percent.min(100)) / 100.0
     };
 
-    let registry = audio_registry();
     let rate = {
         let supported = registry.supported_rates();
         if supported.is_empty() || supported.contains(&sample_rate) {
