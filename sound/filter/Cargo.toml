@@ -1,5 +1,5 @@
 [package]
-name = "nerust_soundfilter"
+name = "nerust_sound_filter"
 version.workspace = true
 authors.workspace = true
 license.workspace = true

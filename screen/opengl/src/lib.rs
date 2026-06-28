@@ -6,7 +6,7 @@ use std::{ffi::CStr, os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
-use nerust_screen_video::{VideoFrameFormat, VideoRenderProfile};
+use nerust_render_base::{VideoFrameFormat, VideoRenderProfile};
 
 use self::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
@@ -148,7 +148,7 @@ impl GlView {
                     2,
                     self.ntsc_texture,
                     64,
-                    nerust_screen_video::NTSC_TEXTURE_HEIGHT as usize,
+                    nerust_render_base::NTSC_TEXTURE_HEIGHT as usize,
                     ntsc_data,
                 );
                 uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
@@ -157,7 +157,7 @@ impl GlView {
                 let mut ntsc_names = [0; 1];
                 gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
                 self.ntsc_texture = ntsc_names[0];
-                let ntsc_height = nerust_screen_video::NTSC_TEXTURE_HEIGHT as usize;
+                let ntsc_height = nerust_render_base::NTSC_TEXTURE_HEIGHT as usize;
                 let dummy = vec![0u8; 64 * ntsc_height * 4];
                 configure_frame_texture(
                     2,

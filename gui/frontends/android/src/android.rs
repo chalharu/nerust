@@ -36,7 +36,7 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
 };
-use nerust_screen_video::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
+use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,

@@ -7,6 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_screen_video.workspace = true
+nerust_render_base.workspace = true
 raw-window-handle.workspace = true
 wgpu.workspace = true

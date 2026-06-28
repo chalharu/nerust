@@ -1,4 +1,4 @@
-use nerust_screen_video::{
+use nerust_render_base::{
     FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
     SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
 };

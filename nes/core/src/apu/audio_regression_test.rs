@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-use nerust_contract_core::audio::AudioBackend;
-use nerust_screen_video::FrameBuffer;
+use nerust_core_traits::audio::AudioBackend;
+use nerust_render_base::FrameBuffer;
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::{
@@ -31,7 +31,7 @@ fn null_fb() -> FrameBuffer {
     let mut fb = FrameBuffer::with_capacity(
         256,
         240,
-        nerust_screen_video::PixelFormat::PaletteIndex {
+        nerust_render_base::PixelFormat::PaletteIndex {
             palette: Box::new([0u32; 256]),
         },
     );

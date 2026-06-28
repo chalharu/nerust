@@ -1,4 +1,4 @@
-use nerust_contract_core::{
+use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat,
     VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
 };
@@ -145,8 +145,8 @@ impl ConsoleCore for NesConsoleCore {
 mod tests {
     use std::collections::HashMap;
 
-    use nerust_contract_core::CoreConfig;
-    use nerust_screen_video::PixelFormat;
+    use nerust_core_traits::CoreConfig;
+    use nerust_render_base::PixelFormat;
 
     use super::*;
     use crate::{OpenBusReadResult, controller::Controller};
@@ -180,7 +180,7 @@ mod tests {
         let mut core = NesConsoleCore::new(
             cartridge,
             Box::new(MockController),
-            Box::new(nerust_contract_core::audio::NullAudio),
+            Box::new(nerust_core_traits::audio::NullAudio),
         )
         .expect("NesConsoleCore::new should succeed");
 
@@ -201,7 +201,7 @@ mod tests {
         let rom = test_rom();
         let mut core = NesConsoleCore::new_empty(
             Box::new(MockController),
-            Box::new(nerust_contract_core::audio::NullAudio),
+            Box::new(nerust_core_traits::audio::NullAudio),
         );
         let config = CoreConfig {
             region: None,

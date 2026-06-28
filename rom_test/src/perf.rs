@@ -4,10 +4,10 @@ use std::{
 };
 
 use clap::{Arg, ArgAction, Command};
-use nerust_contract_core::audio::AudioBackend;
+use nerust_core_traits::audio::AudioBackend;
 use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_screen_video::{FilterType, FrameBuffer, PixelFormat};
+use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
 
 use crate::{
     error::RomTestError,
@@ -237,7 +237,7 @@ impl Aggregate {
     }
 }
 
-use nerust_nes_runtime::nes_input_cell::{NesInputCell, SharedNesInputCell};
+use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
 
 struct PerfRunner {
     core: Core,

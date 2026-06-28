@@ -1,4 +1,4 @@
-use nerust_screen_video::{
+use nerust_render_base::{
     LogicalSize, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoFrameFormat, VideoPresentation,
 };
 use wgpu::{

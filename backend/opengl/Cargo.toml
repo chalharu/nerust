@@ -10,5 +10,5 @@ rust-version.workspace = true
 glutin.workspace = true
 log.workspace = true
 nerust_screen_opengl.workspace = true
-nerust_screen_video.workspace = true
+nerust_render_base.workspace = true
 raw-window-handle.workspace = true

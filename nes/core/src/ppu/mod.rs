@@ -3,7 +3,7 @@ mod tileinfo;
 
 use std::{cmp, mem};
 
-use nerust_screen_video::FrameBuffer;
+use nerust_render_base::FrameBuffer;
 
 use self::{spriteinfo::SpriteInfo, tileinfo::TileInfo};
 use crate::{
@@ -35,7 +35,7 @@ struct DecayableOpenBus {
 
 #[cfg(test)]
 mod tests {
-    use nerust_screen_video::FrameBuffer;
+    use nerust_render_base::FrameBuffer;
 
     use super::{Core, Mask, NMI_SCAN_LINE};
     use crate::{
@@ -45,7 +45,7 @@ mod tests {
     };
 
     fn null_fb() -> FrameBuffer {
-        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_render_base::PixelFormat::Rgba);
         fb.resize(256, 240);
         fb
     }
@@ -212,7 +212,7 @@ mod tests {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
         let mut screen =
-            FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+            FrameBuffer::with_capacity(256, 240, nerust_render_base::PixelFormat::Rgba);
         screen.resize(256, 240);
         let mut result = false;
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
@@ -229,7 +229,7 @@ mod tests {
         let mut cartridge = nrom_cartridge();
         let mut interrupt = Interrupt::new();
         let mut screen =
-            FrameBuffer::with_capacity(256, 240, nerust_screen_video::PixelFormat::Rgba);
+            FrameBuffer::with_capacity(256, 240, nerust_render_base::PixelFormat::Rgba);
         screen.resize(256, 240);
         let mut ppu_cartridge = crate::cartridge_bus::mapper_cartridge_bus(cartridge.as_mut());
         let result = ppu.step_exact_many(&mut screen, &mut ppu_cartridge, &mut interrupt, cycles);

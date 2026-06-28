@@ -9,11 +9,11 @@ use glutin::{
     display::{Display, DisplayApiPreference, GlDisplay as _},
     surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface},
 };
-use nerust_screen_opengl::GlView;
-use nerust_screen_video::{
+use nerust_render_base::{
     FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
     SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
+use nerust_screen_opengl::GlView;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 pub struct GlRenderer {

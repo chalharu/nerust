@@ -3,28 +3,32 @@ resolver = "3"
 members = [
   "backend/opengl",
   "backend/wgpu",
-  "contract/core",
-  "contract/emuthread",
-  "gui/factory/nes",
-  "gui/shared/settings",
-  "gui/shared/run-options",
-  "persistence",
-  "rom_test",
+  "traits/core",
+  "traits/emu-thread",
+  "traits/input",
+  "nes/core",
+  "nes/device",
+  "nes/factory",
+  "nes/controller",
+  "gui/settings",
+  "gui/run-options",
+  "gui/runtime",
+  "gui/shell",
   "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/tao",
-  "gui/shared/runtime",
-  "gui/shared/shell",
-  "nes_ntsc",
-  "screen/glwrap",
+  "persistence",
+  "render/base",
+  "render/glwrap",
+  "render/ntsc",
   "screen/opengl",
   "screen/wgpu",
-  "screen/video",
   "serialize",
   "sound/cpal",
   "sound/openal",
   "sound/filter",
   "timer",
+  "rom_test",
 ]
 default-members = [".", "nes/core"]
 
@@ -50,7 +54,7 @@ nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 nerust_backend_opengl = { workspace = true, optional = true }
 nerust_backend_wgpu = { workspace = true, optional = true }
-nerust_screen_video.workspace = true
+nerust_render_base.workspace = true
 simple_logger.workspace = true
 
 [features]
@@ -104,34 +108,34 @@ lazy_static = { version = "=1.5.0" }
 libc = { version = "=0.2.186" }
 log = { version = "=0.4.33", default-features = false }
 muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
-nerust_contract_core = { path = "contract/core" }
-nerust_contract_emuthread = { path = "contract/emuthread" }
-nerust_factory_nes = { path = "gui/factory/nes" }
-nerust_gui_settings = { path = "gui/shared/settings" }
-nerust_run_options = { path = "gui/shared/run-options" }
+nerust_core_traits = { path = "traits/core" }
+nerust_emu_thread = { path = "traits/emu-thread" }
+nerust_factory_nes = { path = "nes/factory" }
+nerust_gui_settings = { path = "gui/settings" }
+nerust_run_options = { path = "gui/run-options" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
-nerust_gui_runtime = { path = "gui/shared/runtime" }
-nerust_gui_shell = { path = "gui/shared/shell" }
-nerust_contract_input = { path = "contract/input" }
-nerust_nes_runtime = { path = "nes/runtime" }
+nerust_gui_runtime = { path = "gui/runtime" }
+nerust_gui_shell = { path = "gui/shell" }
+nerust_input_traits = { path = "traits/input" }
+nerust_nes_controller = { path = "nes/controller" }
 nerust_persistence = { path = "persistence" }
 nerust_rom_test = { path = "rom_test" }
 nerust_backend_opengl = { path = "backend/opengl" }
 nerust_backend_wgpu = { path = "backend/wgpu" }
-nerust_glwrap = { path = "screen/glwrap" }
+nerust_glwrap = { path = "render/glwrap" }
 nerust_screen_opengl = { path = "screen/opengl" }
 nerust_screen_wgpu = { path = "screen/wgpu" }
-nerust_screen_video = { path = "screen/video" }
+nerust_render_base = { path = "render/base" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
-nerust_soundfilter = { path = "sound/filter" }
+nerust_sound_filter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_tao = { path = "gui/frontends/tao" }
 nerust_android = { path = "gui/frontends/android" }
-nes_ntsc = { path = "nes_ntsc" }
+nerust_render_ntsc = { path = "render/ntsc" }
 objc2 = { version = "=0.6.4" }
 objc2-app-kit = { version = "=0.3.2" }
 pollster = { version = "=0.4.0" }

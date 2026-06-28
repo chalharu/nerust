@@ -3160,8 +3160,8 @@ dependencies = [
  "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
+ "nerust_render_base",
  "nerust_run_options",
- "nerust_screen_video",
  "nerust_tao",
  "simple_logger",
 ]
@@ -3174,12 +3174,12 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_backend_wgpu",
- "nerust_contract_input",
  "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
- "nerust_screen_video",
+ "nerust_input_traits",
+ "nerust_render_base",
  "nerust_screen_wgpu",
  "winit",
 ]
@@ -3190,8 +3190,8 @@ version = "0.1.0-dev"
 dependencies = [
  "glutin",
  "log",
+ "nerust_render_base",
  "nerust_screen_opengl",
- "nerust_screen_video",
  "raw-window-handle",
 ]
 
@@ -3200,7 +3200,7 @@ name = "nerust_backend_wgpu"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_screen_video",
+ "nerust_render_base",
  "nerust_screen_wgpu",
  "pollster",
  "raw-window-handle",
@@ -3208,30 +3208,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_contract_core"
+name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_contract_input",
- "nerust_screen_video",
+ "nerust_input_traits",
+ "nerust_render_base",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "nerust_contract_emuthread"
+name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_contract_core",
+ "nerust_core_traits",
  "nerust_timer",
-]
-
-[[package]]
-name = "nerust_contract_input"
-version = "0.1.0-dev"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -3239,16 +3232,16 @@ name = "nerust_factory_nes"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_contract_core",
- "nerust_contract_emuthread",
- "nerust_contract_input",
+ "nerust_core_traits",
+ "nerust_emu_thread",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_input_traits",
+ "nerust_nes_controller",
  "nerust_nes_core",
  "nerust_nes_device",
- "nerust_nes_runtime",
- "nerust_screen_video",
+ "nerust_render_base",
  "nerust_sound_cpal",
  "nerust_sound_openal",
 ]
@@ -3274,13 +3267,13 @@ dependencies = [
  "gio 0.22.6",
  "gtk4",
  "log",
- "nerust_contract_input",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_input_traits",
  "nerust_persistence",
+ "nerust_render_base",
  "nerust_run_options",
- "nerust_screen_video",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
@@ -3293,11 +3286,11 @@ dependencies = [
  "crc",
  "directories",
  "log",
- "nerust_contract_core",
- "nerust_contract_input",
+ "nerust_core_traits",
  "nerust_gui_settings",
+ "nerust_input_traits",
  "nerust_persistence",
- "nerust_screen_video",
+ "nerust_render_base",
  "serde",
  "serde_yaml",
  "thiserror 2.0.18",
@@ -3307,7 +3300,7 @@ dependencies = [
 name = "nerust_gui_settings"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_contract_input",
+ "nerust_input_traits",
  "serde",
  "serde_yaml",
 ]
@@ -3317,19 +3310,37 @@ name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_contract_core",
- "nerust_contract_emuthread",
- "nerust_contract_input",
+ "nerust_core_traits",
+ "nerust_emu_thread",
  "nerust_gui_runtime",
  "nerust_gui_settings",
+ "nerust_input_traits",
  "nerust_persistence",
- "nerust_screen_video",
+ "nerust_render_base",
  "nerust_sound_cpal",
  "nerust_sound_openal",
  "rmp-serde",
  "serde",
  "serde_bytes",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nerust_input_traits"
+version = "0.1.0-dev"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "nerust_nes_controller"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_input_traits",
+ "nerust_nes_core",
+ "rmp-serde",
+ "serde",
 ]
 
 [[package]]
@@ -3340,11 +3351,11 @@ dependencies = [
  "crc",
  "hound",
  "log",
- "nerust_contract_core",
- "nerust_contract_input",
- "nerust_screen_video",
+ "nerust_core_traits",
+ "nerust_input_traits",
+ "nerust_render_base",
  "nerust_serialize",
- "nerust_soundfilter",
+ "nerust_sound_filter",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3358,20 +3369,9 @@ dependencies = [
 name = "nerust_nes_device"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_contract_core",
+ "nerust_core_traits",
+ "nerust_nes_controller",
  "nerust_nes_core",
- "nerust_nes_runtime",
-]
-
-[[package]]
-name = "nerust_nes_runtime"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_contract_core",
- "nerust_contract_input",
- "nerust_nes_core",
- "rmp-serde",
- "serde",
 ]
 
 [[package]]
@@ -3381,8 +3381,8 @@ dependencies = [
  "fs2",
  "libc",
  "log",
- "nerust_contract_core",
- "nerust_contract_input",
+ "nerust_core_traits",
+ "nerust_input_traits",
  "png",
  "rmp-serde",
  "serde",
@@ -3393,16 +3393,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_render_base"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_render_ntsc",
+ "raw-window-handle",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nerust_render_ntsc"
+version = "0.1.0-dev"
+dependencies = [
+ "lazy_static 1.5.0",
+ "log",
+]
+
+[[package]]
 name = "nerust_rom_test"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
  "crc",
- "nerust_contract_core",
+ "nerust_core_traits",
+ "nerust_nes_controller",
  "nerust_nes_core",
  "nerust_nes_device",
- "nerust_nes_runtime",
- "nerust_screen_video",
+ "nerust_render_base",
  "png",
  "serde",
  "serde_yaml",
@@ -3420,25 +3439,14 @@ dependencies = [
  "gl",
  "log",
  "nerust_glwrap",
- "nerust_screen_video",
-]
-
-[[package]]
-name = "nerust_screen_video"
-version = "0.1.0-dev"
-dependencies = [
- "log",
- "nes_ntsc",
- "raw-window-handle",
- "serde",
- "thiserror 2.0.18",
+ "nerust_render_base",
 ]
 
 [[package]]
 name = "nerust_screen_wgpu"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_screen_video",
+ "nerust_render_base",
  "raw-window-handle",
  "wgpu 29.0.3",
 ]
@@ -3456,8 +3464,12 @@ version = "0.1.0-dev"
 dependencies = [
  "cpal",
  "log",
- "nerust_contract_core",
+ "nerust_core_traits",
 ]
+
+[[package]]
+name = "nerust_sound_filter"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_sound_openal"
@@ -3465,12 +3477,8 @@ version = "0.1.0-dev"
 dependencies = [
  "alto",
  "log",
- "nerust_contract_core",
+ "nerust_core_traits",
 ]
-
-[[package]]
-name = "nerust_soundfilter"
-version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_tao"
@@ -3482,14 +3490,14 @@ dependencies = [
  "iced_winit",
  "log",
  "muda",
- "nerust_contract_core",
- "nerust_contract_input",
+ "nerust_core_traits",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_input_traits",
  "nerust_persistence",
+ "nerust_render_base",
  "nerust_run_options",
- "nerust_screen_video",
  "raw-window-handle",
  "rfd",
  "serde",
@@ -3499,14 +3507,6 @@ dependencies = [
 [[package]]
 name = "nerust_timer"
 version = "0.1.0-dev"
-
-[[package]]
-name = "nes_ntsc"
-version = "0.1.0-dev"
-dependencies = [
- "lazy_static 1.5.0",
- "log",
-]
 
 [[package]]
 name = "num-conv"

@@ -1,4 +1,4 @@
-use nerust_screen_video::LogicalSize;
+use nerust_render_base::LogicalSize;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct FrameUploadLayout {
@@ -63,7 +63,7 @@ pub(crate) fn pack_frame_rows(
 
 #[cfg(test)]
 mod tests {
-    use nerust_screen_video::LogicalSize;
+    use nerust_render_base::LogicalSize;
 
     use super::{FrameUploadLayout, pack_frame_rows};
 
