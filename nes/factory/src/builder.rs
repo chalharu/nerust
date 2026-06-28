@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
+use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::input::SystemInputAdapter;
 use nerust_emu_thread::EmuThread;
 use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -13,8 +14,8 @@ use crate::adapter::NesAdapter;
 
 pub(crate) fn create_core_and_adapter(
     settings: &SettingsSnapshot,
+    speaker: Box<dyn AudioBackend>,
 ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
-    let speaker = nerust_gui_shell::settings::build_speaker(&settings.local);
     let filter = crate::settings::filter_type(&settings.shared);
     let cell = Arc::new(NesInputCell::new());
     let device = NesPadDevice::new(SharedNesInputCell(cell.clone()));

@@ -1,5 +1,6 @@
 use std::{fmt, rc::Rc, sync::Arc};
 
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_render_base::GpuFactory;
 
 use crate::factory::CoreFactory;
@@ -9,6 +10,7 @@ pub struct FrontendContext {
     pub gpu_factory: Rc<dyn GpuFactory>,
     pub core_factory: Arc<dyn CoreFactory>,
     pub rom_loader: Box<dyn RomLoader>,
+    pub audio_registry: Arc<AudioBackendRegistry>,
 }
 
 impl fmt::Debug for FrontendContext {

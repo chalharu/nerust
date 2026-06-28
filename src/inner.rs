@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use clap::{Arg, Command};
 use log::LevelFilter;
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::{
@@ -26,6 +27,15 @@ fn create_factory() -> Box<dyn GpuFactory> {
     compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
     #[cfg(all(feature = "wgpu", feature = "opengl"))]
     compile_error!("Multiple backends selected. Enable only one of 'wgpu' or 'opengl'.");
+}
+
+fn create_audio_registry() -> AudioBackendRegistry {
+    let mut reg = AudioBackendRegistry::new();
+    #[cfg(any(feature = "gtk", feature = "tao"))]
+    reg.register(0, &nerust_sound_cpal::CPAL);
+    #[cfg(all(any(feature = "gtk", feature = "tao"), not(target_os = "android")))]
+    reg.register(1, &nerust_sound_openal::OPENAL);
+    reg
 }
 
 fn parse_cli_args() -> RunOptions {
@@ -86,6 +96,7 @@ pub fn run() {
     let options = parse_cli_args();
     let gpu_factory = create_factory();
     let core_factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+    let audio_registry = Arc::new(create_audio_registry());
 
     let pending_options = options.mmc3_irq_variant.as_deref().map(|variant| {
         let options_bytes = match variant {
@@ -105,6 +116,7 @@ pub fn run() {
         gpu_factory: Rc::from(gpu_factory),
         core_factory,
         rom_loader,
+        audio_registry,
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]

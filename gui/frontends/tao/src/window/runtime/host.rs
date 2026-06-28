@@ -72,7 +72,12 @@ impl HostState {
             }),
         };
         let descriptor = ctx.core_factory.system_descriptor();
-        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&ctx.core_factory));
+        let session = SessionHandle::new(
+            capabilities,
+            descriptor,
+            Arc::clone(&ctx.core_factory),
+            ctx.audio_registry.clone(),
+        );
         Self {
             window: None,
             session,
@@ -441,6 +446,7 @@ impl HostState {
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
             self.ctx.core_factory.clone(),
+            self.ctx.audio_registry.clone(),
             event_loop,
         ) {
             Some(handle) => self.settings_window = Some(handle),

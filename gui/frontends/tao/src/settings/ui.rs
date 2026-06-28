@@ -16,6 +16,7 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
@@ -95,6 +96,7 @@ pub(crate) enum Message {
 pub(crate) struct SettingsAppProgram {
     pub(crate) snapshot: SettingsSnapshot,
     pub(crate) factory: Arc<dyn CoreFactory>,
+    pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
@@ -123,6 +125,7 @@ impl Program for SettingsAppProgram {
         let state = SettingsAppState::new_with_shared(
             &self.snapshot,
             self.factory.clone(),
+            self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
             self.capture_target.clone(),
@@ -156,6 +159,7 @@ pub(crate) struct SettingsAppState {
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     factory: Arc<dyn CoreFactory>,
+    audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
     page: SettingsPage,
     input_section: InputPageSection,
@@ -164,7 +168,11 @@ pub(crate) struct SettingsAppState {
 }
 
 impl SettingsAppState {
-    pub(crate) fn new(snapshot: &SettingsSnapshot, factory: Arc<dyn CoreFactory>) -> Self {
+    pub(crate) fn new(
+        snapshot: &SettingsSnapshot,
+        factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
+    ) -> Self {
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -177,6 +185,7 @@ impl SettingsAppState {
             pending_apply: Arc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
             factory,
+            audio_registry,
             draft: snapshot.clone(),
             page: SettingsPage::General,
             input_section: InputPageSection::Attachment(0),
@@ -188,11 +197,12 @@ impl SettingsAppState {
     pub(crate) fn new_with_shared(
         snapshot: &SettingsSnapshot,
         factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
-        let mut state = Self::new(snapshot, factory);
+        let mut state = Self::new(snapshot, factory, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
         state.capture_target = capture_target;
@@ -548,8 +558,11 @@ impl SettingsAppState {
             ),
             labeled_pick_list(
                 ui_text(language, UiText::SampleRate),
-                sample_rate_options(),
-                selected_choice(self.draft.local.audio.sample_rate, sample_rate_options()),
+                sample_rate_options(&self.audio_registry),
+                selected_choice(
+                    self.draft.local.audio.sample_rate,
+                    sample_rate_options(&self.audio_registry)
+                ),
                 Message::SetSampleRate
             ),
             labeled_slider(
@@ -753,8 +766,8 @@ fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
 
 const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
 
-fn sample_rate_options() -> Vec<Choice<u32>> {
-    let rates = nerust_gui_shell::settings::audio_registry().supported_rates();
+fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
+    let rates = registry.supported_rates();
     let rates = if rates.is_empty() {
         &FALLBACK_SAMPLE_RATES
     } else {

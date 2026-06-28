@@ -15,14 +15,10 @@ nerust_gui_runtime.workspace = true
 nerust_input_traits.workspace = true
 nerust_persistence.workspace = true
 nerust_render_base.workspace = true
-nerust_sound_cpal.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
 thiserror.workspace = true
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-nerust_sound_openal.workspace = true
 
 [dev-dependencies]
 nerust_core_traits.workspace = true

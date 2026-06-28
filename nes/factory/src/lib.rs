@@ -3,6 +3,7 @@ mod builder;
 mod input_state;
 mod settings;
 
+use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::input::SystemInputAdapter;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
@@ -38,8 +39,9 @@ impl CoreFactory for NesFactory {
     fn create_core_and_adapter(
         &self,
         settings: &SettingsSnapshot,
+        speaker: Box<dyn AudioBackend>,
     ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
-        builder::create_core_and_adapter(settings)
+        builder::create_core_and_adapter(settings, speaker)
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
@@ -80,7 +82,8 @@ impl CoreFactory for NesFactory {
 
 pub fn create_test_core_and_adapter(
     settings: &SettingsSnapshot,
+    speaker: Box<dyn AudioBackend>,
 ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
     let factory = NesFactory;
-    factory.create_core_and_adapter(settings)
+    factory.create_core_and_adapter(settings, speaker)
 }

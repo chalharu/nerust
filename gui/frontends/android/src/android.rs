@@ -13,6 +13,7 @@ use std::{
 };
 
 use jni::{jni_sig, jni_str};
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_factory_nes::{
     NesFactory,
     touch::{
@@ -190,10 +191,14 @@ impl AndroidFrontend {
         let descriptor = factory.system_descriptor();
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
+        let mut audio_registry = AudioBackendRegistry::new();
+        audio_registry.register(0, &nerust_sound_cpal::CPAL);
+        let audio_registry = Arc::new(audio_registry);
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
             descriptor,
             Arc::clone(&factory),
+            audio_registry,
             settings_paths,
         );
         let restore_pending = storage.has_restore_pending();
