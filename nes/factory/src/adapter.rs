@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use nerust_core_traits::input::{InputError, InputStatePersistence, SystemInputAdapter};
 use nerust_input_traits::DigitalInputEvent;
+use nerust_input_traits::{InputError, InputStatePersistence, SystemInputAdapter};
 use nerust_nes_controller::{
     codec::{decode_input_state, encode_input_state},
     nes_input_cell::NesInputCell,

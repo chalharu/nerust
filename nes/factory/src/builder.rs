@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 use nerust_core_traits::audio::AudioBackend;
-use nerust_core_traits::input::SystemInputAdapter;
+use nerust_input_traits::SystemInputAdapter;
 use nerust_emu_thread::EmuThread;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{emu_core::EmuCore, factory::FactoryError};

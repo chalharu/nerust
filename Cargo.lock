@@ -3193,7 +3193,6 @@ name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_input_traits",
  "nerust_render_base",
  "serde",
  "thiserror 2.0.18",
@@ -3305,6 +3304,9 @@ dependencies = [
 [[package]]
 name = "nerust_input_traits"
 version = "0.1.0-dev"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "nerust_nes_controller"

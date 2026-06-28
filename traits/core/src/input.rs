@@ -66,36 +66,4 @@ impl<const N: usize> InputSink<N> for std::sync::Arc<InputCell<N>> {
     }
 }
 
-use nerust_input_traits::DigitalInputEvent;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum InputError {
-    #[error("input encode failed: {0}")]
-    Encode(String),
-    #[error("input decode failed: {0}")]
-    Decode(String),
-}
-
-/// 実行時の入力イベントをシステム固有のアダプタに転送する (infallible)。
-///
-/// frontend (shell) はこの trait を通じてのみ入力処理を行う。
-/// 各システム (NES/SNES) の実装は factory crate で行う。
-pub trait SystemInputAdapter: Send {
-    fn apply_event(&mut self, event: DigitalInputEvent);
-    fn clear(&mut self);
-    fn decode_persisted_input(
-        &self,
-        attachment_id: &str,
-        control_id: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent>;
-}
-
-/// 拡張: ランタイム状態のシリアライズ/デシリアライズ (fallible)。
-///
-/// 現在 production では未使用。save/restore 実装時に利用。
-pub trait InputStatePersistence: SystemInputAdapter {
-    fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), InputError>;
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, InputError>;
-}
+// SystemInputAdapter and InputStatePersistence moved to nerust_input_traits.

@@ -4,7 +4,7 @@ mod input_state;
 mod settings;
 
 use nerust_core_traits::audio::AudioBackend;
-use nerust_core_traits::input::SystemInputAdapter;
+use nerust_input_traits::SystemInputAdapter;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
     descriptor::{
