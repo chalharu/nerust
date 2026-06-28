@@ -13,7 +13,7 @@ use std::{
 };
 
 use alto::*;
-use nerust_contract_core::audio::{AudioBackend, AudioBackendFactory};
+use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 #[cfg(any(target_os = "macos", test))]
 const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
@@ -500,7 +500,7 @@ impl OpenAl {
     }
 }
 
-impl nerust_contract_core::audio::AudioBackend for OpenAl {
+impl nerust_core_traits::audio::AudioBackend for OpenAl {
     fn start(&mut self) {
         if self.playing_sender.send(true).is_err() {
             log::warn!("OpenAL channel (playing) send failed");
@@ -563,7 +563,7 @@ impl AudioBackendFactory for OpenAlFactory {
     }
 }
 
-/// Static singleton for use with [`AudioBackendRegistry`](nerust_contract_core::audio::AudioBackendRegistry).
+/// Static singleton for use with [`AudioBackendRegistry`](nerust_core_traits::audio::AudioBackendRegistry).
 pub static OPENAL: OpenAlFactory = OpenAlFactory;
 
 impl Drop for OpenAl {

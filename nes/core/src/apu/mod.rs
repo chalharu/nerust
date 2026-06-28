@@ -11,7 +11,7 @@ mod pulse;
 pub(crate) mod timer;
 mod triangle;
 
-use nerust_contract_core::audio::AudioBackend;
+use nerust_core_traits::audio::AudioBackend;
 
 use self::{
     dmc::DMC, envelope::*, frame_counter::*, length_counter::*, noise::Noise, pulse::Pulse,
@@ -444,7 +444,7 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use nerust_contract_core::audio::AudioBackend;
+    use nerust_core_traits::audio::AudioBackend;
 
     use super::Core;
     use crate::{cpu::Core as Cpu, interrupt::Interrupt};

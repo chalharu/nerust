@@ -5,7 +5,7 @@ use std::{
     time::SystemTime,
 };
 
-use nerust_contract_core::identity::SystemIdentity;
+use nerust_core_traits::identity::SystemIdentity;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{

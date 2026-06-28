@@ -13,7 +13,6 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use nerust_contract_input::InputTopologyDescriptor;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -28,9 +27,10 @@ use nerust_gui_shell::{
     },
     settings::i18n::{UiText, text},
 };
+use nerust_input_traits::InputTopologyDescriptor;
 use nerust_persistence::model::StateSlotSummary;
+use nerust_render_base::{FrameBuffer, GpuFactory, VideoRenderProfile};
 use nerust_run_options::RunOptions;
-use nerust_screen_video::{FrameBuffer, GpuFactory, VideoRenderProfile};
 
 use self::window::{StateMenus, Window, WindowExtend};
 

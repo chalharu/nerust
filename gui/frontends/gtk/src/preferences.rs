@@ -8,7 +8,6 @@ use gtk::{
         EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
     },
 };
-use nerust_contract_input::{InputTopologyDescriptor, SystemId};
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
@@ -28,6 +27,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
+use nerust_input_traits::{InputTopologyDescriptor, SystemId};
 
 use crate::State;
 

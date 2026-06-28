@@ -23,7 +23,7 @@ use nerust_gui_shell::{
         scaling_factor,
     },
 };
-use nerust_screen_video::{GpuFactory, RenderResult, SurfaceSize};
+use nerust_render_base::{GpuFactory, RenderResult, SurfaceSize};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},

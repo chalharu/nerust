@@ -12,7 +12,7 @@ use nerust_gui_settings::{
 };
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
-use nerust_screen_video::GpuFactory;
+use nerust_render_base::GpuFactory;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,
