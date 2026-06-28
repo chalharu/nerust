@@ -6,7 +6,10 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::{
+    input::{KeyboardKey, ShortcutAction},
+    local::ScalingMode,
+};
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
     commands::{SessionCommand, SessionCommandOutcome},
@@ -475,6 +478,16 @@ impl WindowExtend for Window {
 
     fn close_request(&self) -> bool {
         self.state().borrow_mut().flush_before_exit();
+        let w = self.window().width();
+        let h = self.window().height();
+        if w > 0 && h > 0 {
+            let state = self.state();
+            let _ = state
+                .borrow()
+                .session
+                .settings_manager()
+                .update_window_size(w as u32, h as u32);
+        }
         self.application().quit();
         false
     }
@@ -558,14 +571,18 @@ impl WindowExtend for Window {
     }
 
     fn sync_fullscreen_from_settings(&self) {
-        let fullscreen = self
-            .state()
-            .borrow()
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default;
+        let state = self.state();
+        let snapshot = state.borrow().settings_snapshot().clone();
+        let fullscreen = snapshot.local.video.window.fullscreen_default;
+
+        // Restore remembered window size when not in fullscreen or scaling mode.
+        if !fullscreen
+            && snapshot.local.video.window.scaling == ScalingMode::FitToWindow
+            && let Some(size) = snapshot.app_state.window_size("main")
+        {
+            self.window().set_default_size(size.width as i32, size.height as i32);
+        }
+
         set_window_fullscreen(&self.window(), fullscreen);
     }
 
