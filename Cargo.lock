@@ -3176,6 +3176,7 @@ dependencies = [
  "android_logger",
  "jni 0.22.4",
  "log",
+ "nerust_core_traits",
  "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
