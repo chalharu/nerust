@@ -673,6 +673,7 @@ impl Mapper for Mapper4Shared {
 }
 
 pub(super) trait Mapper4Wrapper {
+    #[allow(dead_code, reason = "mapper identification for debugging")]
     const NAME: &'static str;
 
     fn shared_ref(&self) -> &Mapper4Shared;

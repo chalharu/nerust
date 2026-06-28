@@ -6,6 +6,7 @@ use crate::{
     ppu_memory_access::{PpuBusEvent, PpuReadAccess},
 };
 
+#[allow(dead_code, reason = "dispatched through MapperCartridge blanket impl")]
 pub(crate) trait PpuCartridgeBus {
     fn read_ppu_pattern(
         &mut self,
