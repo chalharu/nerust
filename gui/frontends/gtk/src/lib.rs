@@ -47,7 +47,7 @@ impl State {
     pub(crate) fn new(ctx: FrontendContext) -> Self {
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
-                remembers_window_size: false,
+                remembers_window_size: true,
                 supports_fullscreen_default: true,
                 supports_scaling: true,
             },
