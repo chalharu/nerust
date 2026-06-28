@@ -31,15 +31,6 @@ pub(crate) struct DMC {
     timer: TimerDao,
 }
 
-impl HaveTimerDao for DMC {
-    fn timer_dao(&self) -> &TimerDao {
-        &self.timer
-    }
-    fn timer_dao_mut(&mut self) -> &mut TimerDao {
-        &mut self.timer
-    }
-}
-
 impl DMC {
     pub(crate) fn new() -> Self {
         Self {

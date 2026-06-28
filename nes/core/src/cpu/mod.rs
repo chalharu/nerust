@@ -341,6 +341,7 @@ impl Core {
         self.sample_interrupt();
     }
 
+    #[allow(dead_code, reason = "CPU step utility not yet wired")]
     pub(crate) fn step_until_instruction_boundary(
         &mut self,
         ppu: &mut Ppu,
@@ -1080,7 +1081,8 @@ impl Core {
         self.internal_stat.set_opcode(value);
     }
 
-    fn process_dma_cycle(
+    #[cfg(test)]
+    pub(crate) fn process_dma_cycle_for_test(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
@@ -1374,7 +1376,12 @@ mod tests {
 
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+            if cpu.process_dma_cycle_for_test(
+                &mut ppu,
+                cartridge.as_mut(),
+                &mut controller,
+                &mut apu,
+            ) {
                 stalled_cycles += 1;
             }
         }
@@ -1436,7 +1443,7 @@ mod tests {
 
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu);
+            cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu);
         }
 
         assert_eq!(
@@ -1464,7 +1471,12 @@ mod tests {
 
         set_write_cycle(&mut cpu);
         cpu.cycles += 1;
-        assert!(!cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu));
+        assert!(!cpu.process_dma_cycle_for_test(
+            &mut ppu,
+            cartridge.as_mut(),
+            &mut controller,
+            &mut apu
+        ));
 
         cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
         cpu.internal_stat.step = 1;
@@ -1472,7 +1484,12 @@ mod tests {
         let mut stalled = 0;
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+            if cpu.process_dma_cycle_for_test(
+                &mut ppu,
+                cartridge.as_mut(),
+                &mut controller,
+                &mut apu,
+            ) {
                 stalled += 1;
             }
         }
@@ -1499,7 +1516,12 @@ mod tests {
 
         set_write_cycle(&mut cpu);
         cpu.cycles += 1;
-        assert!(!cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu));
+        assert!(!cpu.process_dma_cycle_for_test(
+            &mut ppu,
+            cartridge.as_mut(),
+            &mut controller,
+            &mut apu
+        ));
 
         cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
         cpu.internal_stat.step = 1;
@@ -1507,7 +1529,12 @@ mod tests {
         let mut stalled = 0;
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu) {
+            if cpu.process_dma_cycle_for_test(
+                &mut ppu,
+                cartridge.as_mut(),
+                &mut controller,
+                &mut apu,
+            ) {
                 stalled += 1;
             }
         }

@@ -57,7 +57,6 @@ impl Memory {
                 OpenBusReadResult::new(0, 0)
             }
         };
-        interrupt.write = false;
         let value = self.openbus.unite(result);
         cartridge.notify_cpu_read(address, value, interrupt);
         value
@@ -129,6 +128,5 @@ impl Memory {
                 log::error!("unhandled cpu memory write at address: 0x{:04X}", address);
             }
         }
-        interrupt.write = true;
     }
 }
