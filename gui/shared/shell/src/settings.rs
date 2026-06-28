@@ -2,7 +2,6 @@ pub mod bindings;
 pub mod defaults;
 pub mod editor;
 pub mod i18n;
-pub mod ui_policy;
 
 use std::sync::OnceLock;
 
