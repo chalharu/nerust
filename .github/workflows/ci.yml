@@ -40,7 +40,7 @@ jobs:
         run: cargo test -p nerust_nes_core -p nerust_persistence --quiet
       - name: Support crate tests
         run: |
-          cargo test -p nerust_screen_video --lib --quiet
+          cargo test -p nerust_render_base --lib --quiet
           cargo test -p nerust_timer --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
