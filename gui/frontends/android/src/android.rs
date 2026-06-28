@@ -13,7 +13,6 @@ use std::{
 };
 
 use jni::{jni_sig, jni_str};
-use nerust_backend_wgpu::WgpuFactory;
 use nerust_factory_nes::{
     NesFactory,
     touch::{
@@ -37,6 +36,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
+use nerust_render_wgpu::WgpuFactory;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,

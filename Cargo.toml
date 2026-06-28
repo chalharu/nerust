@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-  "backend/opengl",
-  "backend/wgpu",
   "traits/core",
   "traits/emu-thread",
   "traits/input",
@@ -19,10 +17,10 @@ members = [
   "gui/frontends/tao",
   "persistence",
   "render/base",
+  "render/gl",
   "render/glwrap",
   "render/ntsc",
-  "screen/opengl",
-  "screen/wgpu",
+  "render/wgpu",
   "serialize",
   "sound/cpal",
   "sound/openal",
@@ -52,8 +50,8 @@ nerust_gui_shell = { workspace = true, optional = true }
 nerust_run_options.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
-nerust_backend_opengl = { workspace = true, optional = true }
-nerust_backend_wgpu = { workspace = true, optional = true }
+nerust_render_gl = { workspace = true, optional = true }
+nerust_render_wgpu = { workspace = true, optional = true }
 nerust_render_base.workspace = true
 simple_logger.workspace = true
 
@@ -61,8 +59,8 @@ simple_logger.workspace = true
 default = ["wgpu"]
 gtk = ["nerust_gtk", "nerust_factory_nes", "nerust_gui_shell"]
 tao = ["nerust_tao", "nerust_factory_nes", "nerust_gui_shell"]
-wgpu = ["nerust_backend_wgpu"]
-opengl = ["nerust_backend_opengl"]
+wgpu = ["nerust_render_wgpu"]
+opengl = ["nerust_render_gl"]
 
 [profile.release]
 debug = false
@@ -121,11 +119,9 @@ nerust_input_traits = { path = "traits/input" }
 nerust_nes_controller = { path = "nes/controller" }
 nerust_persistence = { path = "persistence" }
 nerust_rom_test = { path = "rom_test" }
-nerust_backend_opengl = { path = "backend/opengl" }
-nerust_backend_wgpu = { path = "backend/wgpu" }
 nerust_glwrap = { path = "render/glwrap" }
-nerust_screen_opengl = { path = "screen/opengl" }
-nerust_screen_wgpu = { path = "screen/wgpu" }
+nerust_render_gl = { path = "render/gl" }
+nerust_render_wgpu = { path = "render/wgpu" }
 nerust_render_base = { path = "render/base" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }

@@ -1,4 +1,4 @@
-use super::Vec2D;
+use crate::vec2d::Vec2D;
 
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]

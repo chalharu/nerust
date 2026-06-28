@@ -19,9 +19,9 @@ use simple_logger::SimpleLogger;
 
 fn create_factory() -> Box<dyn GpuFactory> {
     #[cfg(all(feature = "wgpu", not(feature = "opengl")))]
-    return Box::new(nerust_backend_wgpu::WgpuFactory);
+    return Box::new(nerust_render_wgpu::WgpuFactory);
     #[cfg(all(feature = "opengl", not(feature = "wgpu")))]
-    return Box::new(nerust_backend_opengl::GlFactory);
+    return Box::new(nerust_render_gl::GlFactory);
     #[cfg(not(any(feature = "wgpu", feature = "opengl")))]
     compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
     #[cfg(all(feature = "wgpu", feature = "opengl"))]

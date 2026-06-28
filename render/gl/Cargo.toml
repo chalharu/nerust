@@ -1,5 +1,5 @@
 [package]
-name = "nerust_backend_wgpu"
+name = "nerust_render_gl"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -7,9 +7,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+gl.workspace = true
+glutin.workspace = true
 log.workspace = true
+nerust_glwrap.workspace = true
 nerust_render_base.workspace = true
-nerust_screen_wgpu.workspace = true
-pollster.workspace = true
 raw-window-handle.workspace = true
-wgpu.workspace = true

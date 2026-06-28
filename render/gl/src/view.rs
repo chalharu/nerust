@@ -1,14 +1,10 @@
-mod mat4;
-mod vec2d;
-mod vertex_data;
-
 use std::{ffi::CStr, os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
 use nerust_render_base::{VideoFrameFormat, VideoRenderProfile};
 
-use self::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
+use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
 const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
