@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::session::SessionHandle;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug, thiserror::Error)]
@@ -29,26 +28,6 @@ pub trait RomLoadTarget {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), RomLoaderError>;
     fn resume(&mut self);
-}
-
-impl RomLoadTarget for SessionHandle {
-    fn default_load_options(&self) -> SystemLoadOptions {
-        SessionHandle::default_load_options(self)
-    }
-    fn settings_snapshot(&self) -> &SettingsSnapshot {
-        SessionHandle::settings_snapshot(self)
-    }
-    fn load_resolved(
-        &mut self,
-        media: MediaObject,
-        resolved: ResolvedLoadRequest,
-    ) -> Result<(), RomLoaderError> {
-        SessionHandle::load_resolved(self, media, resolved)
-            .map_err(|e| RomLoaderError::Load(e.to_string()))
-    }
-    fn resume(&mut self) {
-        let _ = SessionHandle::run_command(self, crate::session::commands::SessionCommand::Resume);
-    }
 }
 
 /// Loads and resolves a ROM file into a [`RomLoadTarget`].

@@ -181,3 +181,26 @@ pub enum SessionError {
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
 }
+
+use crate::load::{ResolvedLoadRequest, RomLoadTarget, RomLoaderError};
+use crate::session::commands::SessionCommand;
+
+impl RomLoadTarget for SessionHandle {
+    fn default_load_options(&self) -> SystemLoadOptions {
+        SessionHandle::default_load_options(self)
+    }
+    fn settings_snapshot(&self) -> &SettingsSnapshot {
+        SessionHandle::settings_snapshot(self)
+    }
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError> {
+        SessionHandle::load_resolved(self, media, resolved)
+            .map_err(|e| RomLoaderError::Load(e.to_string()))
+    }
+    fn resume(&mut self) {
+        let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+    }
+}
