@@ -46,10 +46,7 @@ impl RomLoadTarget for SessionHandle {
             .map_err(|e| RomLoaderError(e.to_string()))
     }
     fn resume(&mut self) {
-        let _ = SessionHandle::run_command(
-            self,
-            crate::session::commands::SessionCommand::Resume,
-        );
+        let _ = SessionHandle::run_command(self, crate::session::commands::SessionCommand::Resume);
     }
 }
 

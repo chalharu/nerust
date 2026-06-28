@@ -25,9 +25,7 @@ use nerust_gui_shell::{
         KeyboardShortcut, SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
     },
-    settings::{
-        i18n::{UiText, text},
-    },
+    settings::i18n::{UiText, text},
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_run_options::RunOptions;
@@ -54,11 +52,7 @@ impl State {
             presentation: None,
         };
         let descriptor = ctx.core_factory.system_descriptor();
-        let session = SessionHandle::new(
-            capabilities,
-            descriptor,
-            Arc::clone(&ctx.core_factory),
-        );
+        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&ctx.core_factory));
 
         Self {
             session,

@@ -71,11 +71,7 @@ impl HostState {
             }),
         };
         let descriptor = ctx.core_factory.system_descriptor();
-        let session = SessionHandle::new(
-            capabilities,
-            descriptor,
-            Arc::clone(&ctx.core_factory),
-        );
+        let session = SessionHandle::new(capabilities, descriptor, Arc::clone(&ctx.core_factory));
         Self {
             window: None,
             session,

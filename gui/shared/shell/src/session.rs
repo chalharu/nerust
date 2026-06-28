@@ -73,7 +73,9 @@ impl SessionHandle {
             default_local_settings(),
             default_app_state(),
         );
-        let settings_snapshot = settings.snapshot().expect("settings snapshot should be readable");
+        let settings_snapshot = settings
+            .snapshot()
+            .expect("settings snapshot should be readable");
         let (emu_core, input_adapter) = factory
             .create_core_and_adapter(&settings_snapshot)
             .expect("failed to create core");
