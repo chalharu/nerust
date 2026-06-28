@@ -17,14 +17,15 @@ use nerust_run_options::RunOptions;
 use nerust_screen_video::GpuFactory;
 use simple_logger::SimpleLogger;
 
-#[allow(unreachable_code)]
 fn create_factory() -> Box<dyn GpuFactory> {
-    #[cfg(feature = "wgpu")]
+    #[cfg(all(feature = "wgpu", not(feature = "opengl")))]
     return Box::new(nerust_backend_wgpu::WgpuFactory);
-    #[cfg(feature = "opengl")]
+    #[cfg(all(feature = "opengl", not(feature = "wgpu")))]
     return Box::new(nerust_backend_opengl::GlFactory);
     #[cfg(not(any(feature = "wgpu", feature = "opengl")))]
     compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
+    #[cfg(all(feature = "wgpu", feature = "opengl"))]
+    compile_error!("Multiple backends selected. Enable only one of 'wgpu' or 'opengl'.");
 }
 
 fn parse_cli_args() -> RunOptions {
