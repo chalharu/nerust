@@ -55,7 +55,7 @@ impl RomLoader for LiveRomLoader {
         path: &Path,
         target: &mut dyn RomLoadTarget,
     ) -> Result<(), RomLoaderError> {
-        let loaded = load_rom_path(path).map_err(|e| RomLoaderError(e.to_string()))?;
+        let loaded = load_rom_path(path).map_err(|e| RomLoaderError::Io(e.to_string()))?;
         let (rom_path, data) = loaded.into_parts();
         let media = MediaObject::new(Some(rom_path), data);
         let options = self
@@ -65,7 +65,7 @@ impl RomLoader for LiveRomLoader {
         let resolved = self
             .factory
             .resolve_load_request(target.settings_snapshot(), options)
-            .map_err(|e| RomLoaderError(format!("resolve: {e}")))?;
+            .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
         target.load_resolved(media, resolved)?;
         target.resume();
         Ok(())
