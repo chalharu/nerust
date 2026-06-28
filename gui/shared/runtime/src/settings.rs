@@ -757,4 +757,33 @@ video:
             root.join("data").join("persistence")
         );
     }
+
+    #[test]
+    fn unknown_enum_variant_resets_only_that_field() {
+        use nerust_gui_settings::language::AppLanguage;
+
+        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        let path = dir.join("config").join("shared-settings.yaml");
+        std::fs::write(&path, b"language: future_variant\n").unwrap();
+
+        let paths = super::SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap = manager.snapshot().unwrap();
+
+        assert_eq!(
+            snap.shared.general.language,
+            AppLanguage::SystemDefault,
+            "unknown variant should fall back to default",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
