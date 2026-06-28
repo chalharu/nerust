@@ -6,13 +6,14 @@ use std::{
 use crate::session::SessionHandle;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
-#[derive(Debug)]
-pub struct RomLoaderError(pub String);
-
-impl std::fmt::Display for RomLoaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum RomLoaderError {
+    #[error("I/O error: {0}")]
+    Io(String),
+    #[error("load request resolution failed: {0}")]
+    Resolve(String),
+    #[error("ROM load failed: {0}")]
+    Load(String),
 }
 
 /// Target for a ROM load operation.
@@ -43,7 +44,7 @@ impl RomLoadTarget for SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), RomLoaderError> {
         SessionHandle::load_resolved(self, media, resolved)
-            .map_err(|e| RomLoaderError(e.to_string()))
+            .map_err(|e| RomLoaderError::Load(e.to_string()))
     }
     fn resume(&mut self) {
         let _ = SessionHandle::run_command(self, crate::session::commands::SessionCommand::Resume);
