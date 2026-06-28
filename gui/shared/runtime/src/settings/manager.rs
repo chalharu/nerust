@@ -6,22 +6,17 @@ use std::{
 use nerust_contract_core::identity::SystemIdentity;
 use nerust_contract_input::SystemId;
 use nerust_gui_settings::{
-    app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
-    local::{HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings},
-    shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
+    app_state::{DesktopAppState, RememberedWindowSize},
+    local::HostBackendLocalSettings,
+    shared::DesktopSharedSettings,
 };
 use nerust_persistence::sidecar::SidecarPaths;
-use serde_yaml::Value;
 
 use super::{
     SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
     apply::{validate_local_settings, validate_shared_settings},
     persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
-    store::{
-        empty_mapping, load_settings_document, merge_serialized_value, normalize_app_state,
-        normalize_loaded_settings, normalize_local_settings, normalize_shared_settings,
-        save_snapshot_store, settings_paths, strip_legacy_local_video_fields,
-    },
+    store::{load_snapshot, save_snapshot_store, settings_paths},
 };
 
 #[derive(Clone, Debug)]
@@ -31,13 +26,8 @@ pub struct SettingsManager {
 
 #[derive(Debug)]
 struct SettingsState {
-    shared_defaults: DesktopSharedSettings,
-    local_defaults: HostBackendLocalSettings,
-    app_state_defaults: DesktopAppState,
+    defaults: SettingsSnapshot,
     current: SettingsSnapshot,
-    shared_document: Value,
-    local_document: Value,
-    app_state_document: Value,
     store: SettingsStore,
 }
 
@@ -57,35 +47,16 @@ impl SettingsManager {
         local_defaults: HostBackendLocalSettings,
         app_state_defaults: DesktopAppState,
     ) -> Result<Self, SettingsError> {
-        let shared_document = load_settings_document(
-            &paths.shared_settings_file,
-            &shared_defaults,
-            DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION,
-        )?;
-        let local_document = load_settings_document(
-            &paths.local_settings_file,
-            &local_defaults,
-            HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION,
-        )?;
-        let app_state_document = load_settings_document(
-            &paths.app_state_file,
-            &app_state_defaults,
-            DESKTOP_APP_STATE_SCHEMA_VERSION,
-        )?;
-        let current = SettingsSnapshot {
-            shared: shared_document.settings,
-            local: local_document.settings,
-            app_state: app_state_document.settings,
+        let defaults = SettingsSnapshot {
+            shared: shared_defaults,
+            local: local_defaults,
+            app_state: app_state_defaults,
         };
+        let current = load_snapshot(&paths.settings_file, &defaults);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
-                shared_defaults,
-                local_defaults,
-                app_state_defaults,
+                defaults: defaults.clone(),
                 current,
-                shared_document: shared_document.raw,
-                local_document: local_document.raw,
-                app_state_document: app_state_document.raw,
                 store: SettingsStore::FileBacked(paths),
             })),
         })
@@ -115,18 +86,32 @@ impl SettingsManager {
         local_defaults: HostBackendLocalSettings,
         app_state_defaults: DesktopAppState,
     ) -> Self {
-        match Self::load_with_paths(
-            paths,
-            shared_defaults.clone(),
-            local_defaults.clone(),
-            app_state_defaults.clone(),
-        ) {
+        let defaults = SettingsSnapshot {
+            shared: shared_defaults,
+            local: local_defaults,
+            app_state: app_state_defaults,
+        };
+        match Self::load_with_paths_inner(paths, &defaults) {
             Ok(manager) => manager,
             Err(error) => {
                 log::warn!("settings persistence unavailable; using ephemeral settings: {error}");
-                Self::ephemeral(shared_defaults, local_defaults, app_state_defaults)
+                Self::ephemeral(defaults.shared, defaults.local, defaults.app_state)
             }
         }
+    }
+
+    fn load_with_paths_inner(
+        paths: SettingsPaths,
+        defaults: &SettingsSnapshot,
+    ) -> Result<Self, SettingsError> {
+        let current = load_snapshot(&paths.settings_file, defaults);
+        Ok(Self {
+            inner: Arc::new(RwLock::new(SettingsState {
+                defaults: defaults.clone(),
+                current,
+                store: SettingsStore::FileBacked(paths),
+            })),
+        })
     }
 
     pub fn ephemeral(
@@ -134,19 +119,15 @@ impl SettingsManager {
         local_defaults: HostBackendLocalSettings,
         app_state_defaults: DesktopAppState,
     ) -> Self {
+        let defaults = SettingsSnapshot {
+            shared: shared_defaults,
+            local: local_defaults,
+            app_state: app_state_defaults,
+        };
         Self {
             inner: Arc::new(RwLock::new(SettingsState {
-                current: SettingsSnapshot {
-                    shared: shared_defaults.clone(),
-                    local: local_defaults.clone(),
-                    app_state: app_state_defaults.clone(),
-                },
-                shared_defaults,
-                local_defaults,
-                app_state_defaults,
-                shared_document: empty_mapping(),
-                local_document: empty_mapping(),
-                app_state_document: empty_mapping(),
+                current: defaults.clone(),
+                defaults,
                 store: SettingsStore::Ephemeral,
             })),
         }
@@ -181,24 +162,6 @@ impl SettingsManager {
         })
     }
 
-    pub fn save_shared(&self, shared: DesktopSharedSettings) -> Result<(), SettingsError> {
-        let mut snapshot = self.snapshot()?;
-        snapshot.shared = normalize_shared_settings(shared);
-        self.save_snapshot(snapshot)
-    }
-
-    pub fn save_local(&self, local: HostBackendLocalSettings) -> Result<(), SettingsError> {
-        let mut snapshot = self.snapshot()?;
-        snapshot.local = normalize_local_settings(local);
-        self.save_snapshot(snapshot)
-    }
-
-    pub fn save_app_state(&self, app_state: DesktopAppState) -> Result<(), SettingsError> {
-        let mut snapshot = self.snapshot()?;
-        snapshot.app_state = normalize_app_state(app_state);
-        self.save_snapshot(snapshot)
-    }
-
     pub fn save_snapshot(&self, snapshot: SettingsSnapshot) -> Result<(), SettingsError> {
         validate_shared_settings(&snapshot.shared)?;
         validate_local_settings(&snapshot.local)?;
@@ -207,29 +170,8 @@ impl SettingsManager {
             .inner
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
-        let normalized = SettingsSnapshot {
-            shared: normalize_loaded_settings(&guard.shared_defaults, snapshot.shared)?,
-            local: normalize_loaded_settings(&guard.local_defaults, snapshot.local)?,
-            app_state: normalize_loaded_settings(&guard.app_state_defaults, snapshot.app_state)?,
-        };
-        let shared_document =
-            merge_serialized_value(guard.shared_document.clone(), &normalized.shared)?;
-        let local_document = merge_serialized_value(
-            strip_legacy_local_video_fields(guard.local_document.clone()),
-            &normalized.local,
-        )?;
-        let app_state_document =
-            merge_serialized_value(guard.app_state_document.clone(), &normalized.app_state)?;
-        save_snapshot_store(
-            &guard.store,
-            &shared_document,
-            &local_document,
-            &app_state_document,
-        )?;
-        guard.current = normalized;
-        guard.shared_document = shared_document;
-        guard.local_document = local_document;
-        guard.app_state_document = app_state_document;
+        save_snapshot_store(&guard.store, &snapshot)?;
+        guard.current = snapshot;
         Ok(())
     }
 
@@ -238,49 +180,13 @@ impl SettingsManager {
             .inner
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
-        let (loaded, shared_document, local_document, app_state_document) = match &guard.store {
+        let loaded = match &guard.store {
             SettingsStore::FileBacked(paths) => {
-                let shared_document = load_settings_document(
-                    &paths.shared_settings_file,
-                    &guard.shared_defaults,
-                    DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION,
-                )?;
-                let local_document = load_settings_document(
-                    &paths.local_settings_file,
-                    &guard.local_defaults,
-                    HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION,
-                )?;
-                let app_state_document = load_settings_document(
-                    &paths.app_state_file,
-                    &guard.app_state_defaults,
-                    DESKTOP_APP_STATE_SCHEMA_VERSION,
-                )?;
-                (
-                    SettingsSnapshot {
-                        shared: shared_document.settings,
-                        local: local_document.settings,
-                        app_state: app_state_document.settings,
-                    },
-                    shared_document.raw,
-                    local_document.raw,
-                    app_state_document.raw,
-                )
+                load_snapshot(&paths.settings_file, &guard.defaults)
             }
-            SettingsStore::Ephemeral => (
-                SettingsSnapshot {
-                    shared: guard.current.shared.clone(),
-                    local: guard.current.local.clone(),
-                    app_state: guard.current.app_state.clone(),
-                },
-                guard.shared_document.clone(),
-                guard.local_document.clone(),
-                guard.app_state_document.clone(),
-            ),
+            SettingsStore::Ephemeral => guard.current.clone(),
         };
         guard.current = loaded.clone();
-        guard.shared_document = shared_document;
-        guard.local_document = local_document;
-        guard.app_state_document = app_state_document;
         Ok(loaded)
     }
 
