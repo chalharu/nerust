@@ -5,7 +5,7 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
-use nerust_gui_runtime::{rom::load_rom_path, slots::slot_label};
+use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
@@ -462,13 +462,8 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        if let Ok(loaded_rom) = load_rom_path(path) {
-            let (rom_path, data) = loaded_rom.into_parts();
-            self.state()
-                .borrow_mut()
-                .load_from_path(Some(rom_path), data);
-            self.update_actions();
-        }
+        self.state().borrow_mut().load_path(path);
+        self.update_actions();
     }
 
     fn close(&self) {
