@@ -1,11 +1,9 @@
+use crate::renderer::{DeviceLimitProfile, PresentationOptions, RenderOutcome, RenderPipeline};
+use crate::surface;
 use nerust_render_base::{
     FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
     SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
 };
-use nerust_screen_wgpu::renderer::{
-    DeviceLimitProfile, PresentationOptions, RenderOutcome, RenderPipeline,
-};
-use nerust_screen_wgpu::surface;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 // ---------------------------------------------------------------------------

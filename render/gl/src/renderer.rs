@@ -1,5 +1,6 @@
 use std::num::NonZeroU32;
 
+use crate::view::GlView;
 use glutin::{
     config::ConfigTemplateBuilder,
     context::{
@@ -13,7 +14,6 @@ use nerust_render_base::{
     FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
     SurfaceSize, VideoFrameFormat, VideoRenderProfile,
 };
-use nerust_screen_opengl::GlView;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 pub struct GlRenderer {

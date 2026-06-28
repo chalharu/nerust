@@ -3154,13 +3154,13 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "log",
- "nerust_backend_opengl",
- "nerust_backend_wgpu",
  "nerust_factory_nes",
  "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_render_base",
+ "nerust_render_gl",
+ "nerust_render_wgpu",
  "nerust_run_options",
  "nerust_tao",
  "simple_logger",
@@ -3173,38 +3173,14 @@ dependencies = [
  "android_logger",
  "jni 0.22.4",
  "log",
- "nerust_backend_wgpu",
  "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_render_base",
- "nerust_screen_wgpu",
+ "nerust_render_wgpu",
  "winit",
-]
-
-[[package]]
-name = "nerust_backend_opengl"
-version = "0.1.0-dev"
-dependencies = [
- "glutin",
- "log",
- "nerust_render_base",
- "nerust_screen_opengl",
- "raw-window-handle",
-]
-
-[[package]]
-name = "nerust_backend_wgpu"
-version = "0.1.0-dev"
-dependencies = [
- "log",
- "nerust_render_base",
- "nerust_screen_wgpu",
- "pollster",
- "raw-window-handle",
- "wgpu 29.0.3",
 ]
 
 [[package]]
@@ -3404,11 +3380,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_render_gl"
+version = "0.1.0-dev"
+dependencies = [
+ "gl",
+ "glutin",
+ "log",
+ "nerust_glwrap",
+ "nerust_render_base",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "nerust_render_ntsc"
 version = "0.1.0-dev"
 dependencies = [
  "lazy_static 1.5.0",
  "log",
+]
+
+[[package]]
+name = "nerust_render_wgpu"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_render_base",
+ "pollster",
+ "raw-window-handle",
+ "wgpu 29.0.3",
 ]
 
 [[package]]
@@ -3431,25 +3430,6 @@ dependencies = [
 [[package]]
 name = "nerust_run_options"
 version = "0.1.0-dev"
-
-[[package]]
-name = "nerust_screen_opengl"
-version = "0.1.0-dev"
-dependencies = [
- "gl",
- "log",
- "nerust_glwrap",
- "nerust_render_base",
-]
-
-[[package]]
-name = "nerust_screen_wgpu"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_render_base",
- "raw-window-handle",
- "wgpu 29.0.3",
-]
 
 [[package]]
 name = "nerust_serialize"
