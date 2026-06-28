@@ -85,7 +85,7 @@ impl CpalAudio {
 
         let stream = device
             .build_output_stream(
-                &stream_config,
+                stream_config,
                 move |output: &mut [f32], _info: &cpal::OutputCallbackInfo| {
                     if callback_needs_clear.swap(false, Ordering::AcqRel) {
                         while data_receiver.try_recv().is_ok() {}
