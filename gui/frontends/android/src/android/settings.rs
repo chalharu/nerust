@@ -15,7 +15,7 @@ use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
 };
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -514,7 +514,7 @@ mod tests {
         nes::{NesSettings, NesVideoFilter},
         shared::{DesktopSharedSettings, SystemSettings},
     };
-    use nerust_input_traits::SystemId;
+    use nerust_core_traits::SystemId;
 
     use super::*;
 

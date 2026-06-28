@@ -9,7 +9,7 @@ use nerust_gui_settings::{
     local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{

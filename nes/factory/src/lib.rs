@@ -14,7 +14,7 @@ use nerust_gui_shell::{
     factory::FactoryError,
     load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
 };
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 
 pub mod touch;
 

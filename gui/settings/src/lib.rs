@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 
 pub mod language {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]

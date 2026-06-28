@@ -2,7 +2,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 
 use crate::settings::bindings::keys::keyboard_key_label;
 
@@ -103,7 +103,7 @@ pub fn apply_capture_target(
 mod tests {
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-    use nerust_input_traits::SystemId;
+    use nerust_core_traits::SystemId;
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{

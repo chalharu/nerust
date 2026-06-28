@@ -4,7 +4,7 @@ use std::{
 };
 
 use nerust_core_traits::identity::SystemIdentity;
-use nerust_input_traits::SystemId;
+use nerust_core_traits::SystemId;
 use zip::ZipArchive;
 
 use crate::{error::PersistenceError, time::unix_millis};
