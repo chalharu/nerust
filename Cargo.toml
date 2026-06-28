@@ -42,7 +42,7 @@ rust-version.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
-nerust_factory_nes = {workspace = true, optional = true }
+nerust_factory_nes = { workspace = true, optional = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell = { workspace = true, optional = true }
 nerust_run_options.workspace = true
