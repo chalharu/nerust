@@ -11,7 +11,7 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
-use nerust_input_traits::SystemInputAdapter;
+
 
 pub mod touch;
 
