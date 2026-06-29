@@ -1,20 +1,18 @@
 use std::{borrow::Cow, sync::Arc};
 
 use nerust_core_traits::SystemId;
+use nerust_core_traits::factory::descriptor::{
+    SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
+    SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+};
+use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
+use nerust_core_traits::factory::FactoryError;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
 };
-use nerust_gui_shell::{
-    descriptor::{
-        SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
-        SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
-    },
-    factory::FactoryError,
-    load::{ResolvedLoadRequest, SystemLoadOptions},
-    settings::i18n::{UiText, text},
-};
+use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 
@@ -210,9 +208,12 @@ mod tests {
 
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
+    use nerust_core_traits::factory::descriptor::{
+        SystemSettingsChoiceId, SystemSettingsFieldId,
+    };
+    use nerust_core_traits::factory::load::SystemLoadOptions;
     use nerust_gui_shell::{
         factory::CoreFactory,
-        load::SystemLoadOptions,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         },
@@ -321,10 +322,10 @@ mod tests {
 
         apply_nes_settings_choice(
             &mut settings,
-            &nerust_gui_shell::descriptor::SystemSettingsFieldId(Cow::Borrowed(
+            &SystemSettingsFieldId(Cow::Borrowed(
                 "core.mmc3_irq_variant",
             )),
-            &nerust_gui_shell::descriptor::SystemSettingsChoiceId(Cow::Borrowed("sharp")),
+            &SystemSettingsChoiceId(Cow::Borrowed("sharp")),
         )
         .unwrap();
 
