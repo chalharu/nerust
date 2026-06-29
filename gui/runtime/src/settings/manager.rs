@@ -3,13 +3,13 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use nerust_core_traits::SystemId;
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_gui_settings::{
     app_state::{DesktopAppState, RememberedWindowSize},
     local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
-use nerust_input_traits::SystemId;
 use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{

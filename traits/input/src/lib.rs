@@ -1,59 +1,3 @@
-use std::fmt;
-
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, Unexpected, Visitor},
-};
-
-/// システム識別子。CoreFactory impl のみが生成する。
-/// 比較は `Eq` 経由のみ。生文字列の取り出しは不可。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SystemId(&'static str);
-
-impl SystemId {
-    pub const fn new(id: &'static str) -> Self {
-        Self(id)
-    }
-}
-
-impl fmt::Display for SystemId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-impl Serialize for SystemId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for SystemId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_str(SystemIdVisitor)
-    }
-}
-
-struct SystemIdVisitor;
-
-impl<'de> Visitor<'de> for SystemIdVisitor {
-    type Value = SystemId;
-
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("a system identifier string")
-    }
-
-    fn visit_str<E: de::Error>(self, v: &str) -> Result<SystemId, E> {
-        Ok(SystemId(match v {
-            "Nes" | "nes" => "nes",
-            "Snes" | "snes" => "snes",
-            "Ps1" | "ps1" => "ps1",
-            "MegaDrive" | "megadrive" => "megadrive",
-            other => return Err(E::invalid_value(Unexpected::Str(other), &self)),
-        }))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PortId(&'static str);
 
@@ -232,6 +176,39 @@ impl DigitalInputEvent {
     pub const fn is_pressed(self) -> bool {
         matches!(self.state, DigitalInputState::Pressed)
     }
+}
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum InputError {
+    #[error("input encode failed: {0}")]
+    Encode(String),
+    #[error("input decode failed: {0}")]
+    Decode(String),
+}
+
+/// 実行時の入力イベントをシステム固有のアダプタに転送する (infallible)。
+///
+/// frontend (shell) はこの trait を通じてのみ入力処理を行う。
+/// 各システム (NES/SNES) の実装は factory crate で行う。
+pub trait SystemInputAdapter: Send {
+    fn apply_event(&mut self, event: DigitalInputEvent);
+    fn clear(&mut self);
+    fn decode_persisted_input(
+        &self,
+        attachment_id: &str,
+        control_id: &str,
+        pressed: bool,
+    ) -> Option<DigitalInputEvent>;
+}
+
+/// 拡張: ランタイム状態のシリアライズ/デシリアライズ (fallible)。
+///
+/// 現在 production では未使用。save/restore 実装時に利用。
+pub trait InputStatePersistence: SystemInputAdapter {
+    fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), InputError>;
+    fn runtime_state_bytes(&self) -> Result<Vec<u8>, InputError>;
 }
 
 #[cfg(test)]

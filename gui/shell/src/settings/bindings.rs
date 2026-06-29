@@ -4,8 +4,9 @@ pub mod keys;
 
 use std::collections::BTreeMap;
 
+use nerust_core_traits::SystemId;
 use nerust_gui_settings::{input::KeyboardKey, shared::DesktopSharedSettings};
-use nerust_input_traits::{InputTopologyDescriptor, SystemId};
+use nerust_input_traits::InputTopologyDescriptor;
 
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,
@@ -55,8 +56,8 @@ pub fn conflicting_keys(
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::SystemId;
     use nerust_gui_settings::input::KeyboardKey;
-    use nerust_input_traits::SystemId;
 
     use super::conflicting_keys;
     use crate::{

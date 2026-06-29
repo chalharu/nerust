@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use nerust_core_traits::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
     input::{
@@ -10,7 +11,7 @@ use nerust_gui_settings::{
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},
 };
-use nerust_input_traits::{DigitalControlId, SystemId};
+use nerust_input_traits::DigitalControlId;
 
 const P1: &str = "nes.attachment.player1";
 const A: DigitalControlId = DigitalControlId::new("nes.control.a");
@@ -116,13 +117,13 @@ mod tests {
         assert!(
             settings
                 .systems
-                .contains_key(&nerust_input_traits::SystemId::new("nes"))
+                .contains_key(&nerust_core_traits::SystemId::new("nes"))
         );
         assert!(
             settings
                 .input
                 .systems
-                .contains_key(&nerust_input_traits::SystemId::new("nes"))
+                .contains_key(&nerust_core_traits::SystemId::new("nes"))
         );
         assert!(
             settings
@@ -136,7 +137,7 @@ mod tests {
             !settings
                 .input
                 .systems
-                .get(&nerust_input_traits::SystemId::new("nes"))
+                .get(&nerust_core_traits::SystemId::new("nes"))
                 .unwrap()
                 .implicit_keyboard_profile()
                 .unwrap()
