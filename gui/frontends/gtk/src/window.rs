@@ -6,7 +6,11 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::{input::{KeyboardKey, ShortcutAction}, language::AppLanguage, local::ScalingMode};
+use nerust_gui_settings::{
+    input::{KeyboardKey, ShortcutAction},
+    language::AppLanguage,
+    local::ScalingMode,
+};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::GpuFactory;
