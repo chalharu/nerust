@@ -852,7 +852,7 @@ impl AndroidFrontend {
         for action in actions {
             match action {
                 TouchOverlayAction::Input(event) => {
-                    let _ = self.session.apply_input_event(event);
+                    self.session.apply_input_event(event);
                     self.request_redraw();
                 }
             }
