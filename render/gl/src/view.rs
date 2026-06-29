@@ -1,4 +1,4 @@
-use std::{ffi::CStr, os::raw::c_void, ptr, rc::Rc};
+use std::{os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
@@ -276,8 +276,8 @@ impl GlView {
         active_texture(gl::TEXTURE0).unwrap();
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_update(&self, screen_ptr: *const u8) {
+    pub fn on_update(&self, screen: &[u8]) {
+        let screen_ptr = screen.as_ptr().cast();
         self.shader.as_ref().unwrap().use_program();
 
         active_texture(gl::TEXTURE0).unwrap();
@@ -299,7 +299,7 @@ impl GlView {
                 self.logical_height,
                 gl::RED,
                 gl::UNSIGNED_BYTE,
-                screen_ptr as *const _,
+                screen_ptr,
             )
             .unwrap();
         }
@@ -322,7 +322,7 @@ impl GlView {
                 self.logical_height,
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                screen_ptr as *const _,
+                screen_ptr,
             )
             .unwrap();
         }
@@ -563,19 +563,6 @@ fn compile_shader_program(is_palette: bool) -> Shader {
 
 fn is_gles_context(version: Option<&str>) -> bool {
     version.is_some_and(|value| value.contains("OpenGL ES"))
-}
-
-fn gl_string(name: u32) -> Option<String> {
-    let value = unsafe { gl::GetString(name) };
-    if value.is_null() {
-        return None;
-    }
-
-    Some(
-        unsafe { CStr::from_ptr(value.cast()) }
-            .to_string_lossy()
-            .into_owned(),
-    )
 }
 
 #[cfg(test)]
