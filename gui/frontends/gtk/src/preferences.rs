@@ -943,7 +943,8 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let view = nerust_gui_shell::settings::settings_view(snapshot);
+    let system_id = factory.system_id();
+    let view = nerust_gui_shell::settings::settings_view(snapshot, &system_id);
     let system_page = factory.settings_page(&view);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);

@@ -74,7 +74,8 @@ impl SessionHandle {
         snapshot: &SettingsSnapshot,
     ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
-        let view = crate::settings::settings_view(snapshot);
+        let system_id = factory.system_id();
+        let view = crate::settings::settings_view(snapshot, &system_id);
         let result = factory.create_core_and_adapter(&view, speaker);
         match result {
             Ok(parts) => EmuCore::from_parts(parts),
@@ -89,7 +90,7 @@ impl SessionHandle {
                     app_state: default_app_state(),
                 };
                 let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                let fallback_view = crate::settings::settings_view(&fallback);
+                let fallback_view = crate::settings::settings_view(&fallback, &system_id);
                 let parts = factory
                     .create_core_and_adapter(&fallback_view, fallback_speaker)
                     .expect("failed to create core even with default settings");
@@ -243,7 +244,8 @@ impl SessionHandle {
     }
 
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        let view = crate::settings::settings_view(settings);
+        let system_id = self.factory.system_id();
+        let view = crate::settings::settings_view(settings, &system_id);
         self.factory.settings_page(&view)
     }
 

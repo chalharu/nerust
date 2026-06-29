@@ -218,7 +218,8 @@ fn test_rom_with_mapper4() -> Vec<u8> {
 }
 
 fn test_view(session: &SessionHandle) -> FactorySettingsView {
-    crate::settings::settings_view(session.settings_snapshot())
+    let system_id = session.factory().system_id();
+    crate::settings::settings_view(session.settings_snapshot(), &system_id)
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {

@@ -75,7 +75,9 @@ impl RomLoader for LiveRomLoader {
             .pending_options
             .take()
             .unwrap_or_else(|| target.default_load_options());
-        let view = nerust_gui_shell::settings::settings_view(target.settings_snapshot());
+        let system_id = self.factory.system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(target.settings_snapshot(), &system_id);
         let resolved = self
             .factory
             .resolve_load_request(&view, options)

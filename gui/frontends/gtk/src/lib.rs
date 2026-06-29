@@ -76,7 +76,9 @@ impl State {
     }
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        let view = nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
+        let system_id = self.ctx.core_factory.system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
         self.ctx.core_factory.settings_page(&view)
     }
 

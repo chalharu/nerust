@@ -584,7 +584,8 @@ impl SettingsAppState {
 
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
-        let view = nerust_gui_shell::settings::settings_view(&self.draft);
+        let system_id = self.factory.system_id();
+        let view = nerust_gui_shell::settings::settings_view(&self.draft, &system_id);
         let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
