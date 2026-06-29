@@ -8,7 +8,7 @@ pub const NTSC_TEXTURE_WIDTH: u32 = nerust_render_ntsc::SHADER_COLOR_COUNT as u3
 pub const NTSC_TEXTURE_HEIGHT: u32 =
     (nerust_render_ntsc::SHADER_PHASE_COUNT * nerust_render_ntsc::SHADER_PHASE_ENTRY_COUNT) as u32;
 
-pub trait NesFilter: Send {
+pub trait VideoFilter: Send {
     fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
 
     fn logical_size(&self) -> LogicalSize;
@@ -19,7 +19,7 @@ pub trait FilterFunc {
     fn filter_func(&mut self, value: RGB);
 }
 
-impl<F: filters::FilterUnit<Input = u8, Output = RGB>> NesFilter for F {
+impl<F: filters::FilterUnit<Input = u8, Output = RGB>> VideoFilter for F {
     fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc) {
         filters::FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
     }
@@ -42,12 +42,12 @@ pub enum FilterType {
 }
 
 impl FilterType {
-    pub fn generate(self, size: LogicalSize) -> Box<dyn NesFilter> {
+    pub fn generate(self, size: LogicalSize) -> Box<dyn VideoFilter> {
         match self {
-            FilterType::None => Box::new(filters::rgb::NesRgb::new(size)),
-            FilterType::NtscRGB => Box::new(filters::ntsc::NesNtsc::rgb(size)),
-            FilterType::NtscComposite => Box::new(filters::ntsc::NesNtsc::composite(size)),
-            FilterType::NtscSVideo => Box::new(filters::ntsc::NesNtsc::svideo(size)),
+            FilterType::None => Box::new(filters::rgb::DirectRgb::new(size)),
+            FilterType::NtscRGB => Box::new(filters::ntsc::NtscSimulator::rgb(size)),
+            FilterType::NtscComposite => Box::new(filters::ntsc::NtscSimulator::composite(size)),
+            FilterType::NtscSVideo => Box::new(filters::ntsc::NtscSimulator::svideo(size)),
         }
     }
 }
@@ -269,7 +269,7 @@ mod tests {
             width: 256,
             height: 240,
         });
-        let assets = FilterType::None.palette_nes_video_assets();
+        let assets = FilterType::None.palette_assets();
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
         assert_eq!(
@@ -287,7 +287,7 @@ mod tests {
             width: 256,
             height: 240,
         });
-        let assets = FilterType::NtscComposite.palette_nes_video_assets();
+        let assets = FilterType::NtscComposite.palette_assets();
 
         assert_eq!(presentation.frame_format(), VideoFrameFormat::Palette);
         assert_eq!(assets.pipeline_kind(), VideoPresentationPipelineKind::Ntsc);
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn nes_video_assets_some_for_palette_format() {
-        let assets = FilterType::NtscComposite.palette_nes_video_assets();
+        let assets = FilterType::NtscComposite.palette_assets();
         assert!(assets.uses_ntsc_pipeline());
     }
 
