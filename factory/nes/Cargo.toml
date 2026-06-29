@@ -12,7 +12,6 @@ nerust_core_traits.workspace = true
 nerust_emu_thread.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
-nerust_gui_shell.workspace = true
 nerust_nes_controller.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
