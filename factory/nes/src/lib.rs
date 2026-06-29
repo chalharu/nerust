@@ -70,7 +70,7 @@ impl CoreFactory for NesFactory {
         options: SystemLoadOptions,
     ) -> Result<ResolvedLoadRequest, FactoryError> {
         let nes = settings::deserialize_settings(&view.system_config_bytes);
-        settings::resolve_nes_load_request_inner(&nes, view.language, options)
+        settings::resolve_nes_load_request_inner(&nes, &view.language, options)
     }
 
     fn default_load_options(&self) -> SystemLoadOptions {

@@ -6,7 +6,7 @@ use nerust_core_traits::factory::descriptor::{
     SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
-use nerust_core_traits::factory::settings::FactorySettingsView;
+use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
@@ -113,7 +113,7 @@ fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
 
 pub(crate) fn resolve_nes_load_request_inner(
     nes: &NesSettings,
-    _language: u8,
+    _language: &Language,
     options: SystemLoadOptions,
 ) -> Result<ResolvedLoadRequest, FactoryError> {
     let saved = nes.core.mmc3_irq_variant.map(convert_mmc3);
@@ -176,7 +176,7 @@ mod tests {
     use nerust_core_traits::factory::CoreFactory;
     use nerust_core_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
     use nerust_core_traits::factory::load::SystemLoadOptions;
-    use nerust_core_traits::factory::settings::FactorySettingsView;
+    use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 
     use nerust_gui_settings::nes::NesVideoFilter;
 
@@ -196,7 +196,7 @@ mod tests {
 
     fn test_view() -> FactorySettingsView {
         FactorySettingsView {
-            language: 0,
+            language: Language::SystemDefault,
             system_config_bytes: vec![],
         }
     }
@@ -270,7 +270,8 @@ mod tests {
     fn resolved_load_request_uses_saved_defaults() {
         let view = test_view();
         let nes = super::deserialize_settings(&view.system_config_bytes);
-        let resolved = resolve_nes_load_request_inner(&nes, 0, nec_options()).unwrap();
+        let resolved =
+            resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
 
         let core_opts =
             CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
@@ -288,7 +289,7 @@ mod tests {
         .unwrap();
 
         let view = FactorySettingsView {
-            language: 0,
+            language: Language::SystemDefault,
             system_config_bytes: super::serialize_settings(&nes),
         };
         let page = nes_settings_page(&view);
@@ -300,7 +301,8 @@ mod tests {
         let mut nes = super::deserialize_settings(&[]);
         nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
-        let resolved = resolve_nes_load_request_inner(&nes, 0, nec_options()).unwrap();
+        let resolved =
+            resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
 
         let core_opts =
             CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
@@ -336,7 +338,7 @@ mod tests {
         let nes = super::deserialize_settings(&[]); // defaults
         let resolved = resolve_nes_load_request_inner(
             &nes,
-            0,
+            &Language::SystemDefault,
             SystemLoadOptions {
                 options_bytes: crate::MMC3_OPTION_SHARP.to_vec(),
             },
@@ -347,7 +349,7 @@ mod tests {
 
         let resolved = resolve_nes_load_request_inner(
             &nes,
-            0,
+            &Language::SystemDefault,
             SystemLoadOptions {
                 options_bytes: crate::MMC3_OPTION_NEC.to_vec(),
             },
