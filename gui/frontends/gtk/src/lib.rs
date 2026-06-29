@@ -186,8 +186,9 @@ impl FrontendSession for State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
-        self.renderer_reload_pending =
-            plan.session_rebuild_required || plan.window_settings_changed;
+        if plan.session_rebuild_required || plan.window_settings_changed {
+            self.renderer_reload_pending = true;
+        }
         Ok(SettingsResult {
             renderer_needs_rebuild: self.renderer_reload_pending,
             fullscreen_default_changed: plan.fullscreen_default_changed,
@@ -196,8 +197,9 @@ impl FrontendSession for State {
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
-        self.renderer_reload_pending =
-            plan.session_rebuild_required || plan.window_settings_changed;
+        if plan.session_rebuild_required || plan.window_settings_changed {
+            self.renderer_reload_pending = true;
+        }
         Ok(SettingsResult {
             renderer_needs_rebuild: self.renderer_reload_pending,
             fullscreen_default_changed: plan.fullscreen_default_changed,
