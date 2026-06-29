@@ -204,11 +204,10 @@ mod tests {
         SystemSettingsChoiceId, SystemSettingsFieldId,
     };
     use nerust_core_traits::factory::load::SystemLoadOptions;
-    use nerust_gui_shell::{
-        factory::CoreFactory,
-        settings::defaults::seed::{
-            default_app_state, default_local_settings, default_shared_settings,
-        },
+    use nerust_core_traits::factory::settings::FactorySettingsView;
+    use nerust_core_traits::factory::CoreFactory;
+    use nerust_gui_shell::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
     };
     use nerust_input_traits::ControlDescriptor;
     use nerust_nes_controller::topology::{
@@ -219,16 +218,15 @@ mod tests {
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 
     use super::{
-        apply_nes_settings_choice, effective_load_options, filter_type, nes_settings_page,
-        resolve_nes_load_request,
+        apply_nes_settings_choice_inner, filter_type, nes_settings_page,
+        resolve_nes_load_request_inner,
     };
     use crate::NesFactory;
 
-    fn snapshot() -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
+    fn test_view() -> FactorySettingsView {
+        FactorySettingsView {
+            language: 0,
+            system_config_bytes: vec![],
         }
     }
 
@@ -299,9 +297,9 @@ mod tests {
 
     #[test]
     fn resolved_load_request_uses_saved_defaults() {
-        let settings = snapshot();
-
-        let resolved = resolve_nes_load_request(&settings, nec_options()).unwrap();
+        let view = test_view();
+        let nes = super::deserialize_settings(&view.system_config_bytes);
+        let resolved = resolve_nes_load_request_inner(&nes, 0, nec_options()).unwrap();
 
         let core_opts =
             CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
@@ -310,10 +308,9 @@ mod tests {
 
     #[test]
     fn system_page_choice_writeback_updates_snapshot() {
-        let mut settings = snapshot();
-
-        apply_nes_settings_choice(
-            &mut settings,
+        let mut nes = super::deserialize_settings(&[]);
+        apply_nes_settings_choice_inner(
+            &mut nes,
             &SystemSettingsFieldId(Cow::Borrowed(
                 "core.mmc3_irq_variant",
             )),
@@ -321,23 +318,23 @@ mod tests {
         )
         .unwrap();
 
-        let page = nes_settings_page(&settings);
+        let view = FactorySettingsView {
+            language: 0,
+            system_config_bytes: super::serialize_settings(&nes),
+        };
+        let page = nes_settings_page(&view);
         assert_eq!(page.fields.len(), 2);
     }
 
     #[test]
     fn explicit_load_options_win_over_saved_defaults() {
-        let mut settings = default_shared_settings();
-        let SystemSettings::Nes(nes) = settings
-            .systems
-            .get_mut(&nerust_core_traits::SystemId::new("nes"))
-            .unwrap();
+        let mut nes = super::deserialize_settings(&[]);
         nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
-        let resolved = effective_load_options(&settings, nec_options());
+        let resolved = resolve_nes_load_request_inner(&nes, 0, nec_options()).unwrap();
 
         let core_opts =
-            CoreOptions::from_bytes(&resolved.options_bytes).expect("valid core options");
+            CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
@@ -370,24 +367,27 @@ mod tests {
 
     #[test]
     fn mmc3_irq_variant_round_trips_via_load_options() {
-        let settings = default_shared_settings();
-
-        let resolved = effective_load_options(
-            &settings,
+        let nes = super::deserialize_settings(&[]); // defaults
+        let resolved = resolve_nes_load_request_inner(
+            &nes,
+            0,
             SystemLoadOptions {
                 options_bytes: crate::MMC3_OPTION_SHARP.to_vec(),
             },
-        );
-        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        )
+        .unwrap();
+        let core_opts = CoreOptions::from_bytes(&resolved.core_options_bytes).unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
 
-        let resolved = effective_load_options(
-            &settings,
+        let resolved = resolve_nes_load_request_inner(
+            &nes,
+            0,
             SystemLoadOptions {
                 options_bytes: crate::MMC3_OPTION_NEC.to_vec(),
             },
-        );
-        let core_opts = CoreOptions::from_bytes(&resolved.options_bytes).unwrap();
+        )
+        .unwrap();
+        let core_opts = CoreOptions::from_bytes(&resolved.core_options_bytes).unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 }
