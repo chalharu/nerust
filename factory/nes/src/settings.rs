@@ -6,8 +6,8 @@ use nerust_core_traits::factory::descriptor::{
     SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
+use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::FactoryError;
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
@@ -16,13 +16,20 @@ use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 
-const FILTER_FIELD: &str = "video.filter";
-const MMC3_FIELD: &str = "core.mmc3_irq_variant";
+pub(crate) fn deserialize_settings(bytes: &[u8]) -> NesSettings {
+    if bytes.is_empty() {
+        return NesSettings::default();
+    }
+    rmp_serde::from_slice(bytes).unwrap_or_default()
+}
 
-pub(crate) fn filter_type(
-    settings: &nerust_gui_settings::shared::DesktopSharedSettings,
-) -> FilterType {
-    match system_settings(settings).video.filter {
+pub(crate) fn serialize_settings(s: &NesSettings) -> Vec<u8> {
+    rmp_serde::to_vec(s).unwrap_or_default()
+}
+
+pub(crate) fn filter_type_from_bytes(bytes: &[u8]) -> FilterType {
+    let settings = deserialize_settings(bytes);
+    match settings.video.filter {
         NesVideoFilter::None => FilterType::None,
         NesVideoFilter::NtscComposite => FilterType::NtscComposite,
         NesVideoFilter::NtscSVideo => FilterType::NtscSVideo,
@@ -30,75 +37,24 @@ pub(crate) fn filter_type(
     }
 }
 
-fn system_settings(settings: &nerust_gui_settings::shared::DesktopSharedSettings) -> NesSettings {
-    settings
-        .systems
-        .get(&SystemId::new("nes"))
-        .map(|settings| match settings {
-            SystemSettings::Nes(nes) => nes.clone(),
-        })
-        .unwrap_or_default()
-}
-
-fn system_settings_mut(settings: &mut SettingsSnapshot) -> &mut NesSettings {
-    let current = settings
-        .shared
-        .systems
-        .entry(SystemId::new("nes"))
-        .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
-    match current {
-        SystemSettings::Nes(nes) => nes,
-    }
-}
-
-fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
+fn language_from_u8(v: u8) -> nerust_gui_settings::language::AppLanguage {
     match v {
-        nerust_gui_settings::nes::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
-        nerust_gui_settings::nes::Mmc3IrqVariant::Nec => Mmc3IrqVariant::Nec,
+        1 => nerust_gui_settings::language::AppLanguage::Japanese,
+        2 => nerust_gui_settings::language::AppLanguage::English,
+        _ => nerust_gui_settings::language::AppLanguage::SystemDefault,
     }
 }
 
-pub(crate) fn effective_load_options(
-    settings: &nerust_gui_settings::shared::DesktopSharedSettings,
-    explicit: SystemLoadOptions,
-) -> SystemLoadOptions {
-    let saved = system_settings(settings)
-        .core
-        .mmc3_irq_variant
-        .map(convert_mmc3);
-    let explicit_val = if explicit.options_bytes.is_empty() {
-        None
-    } else if explicit.options_bytes == crate::MMC3_OPTION_SHARP {
-        Some(Mmc3IrqVariant::Sharp)
-    } else if explicit.options_bytes == crate::MMC3_OPTION_NEC {
-        Some(Mmc3IrqVariant::Nec)
-    } else {
-        None
-    };
-    let core_opts = CoreOptions {
-        mmc3_irq_variant: explicit_val.or(saved),
-    };
-    SystemLoadOptions {
-        options_bytes: core_opts.into_bytes(),
-    }
+pub(crate) fn nes_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
+    let language = language_from_u8(view.language);
+    let current = deserialize_settings(&view.system_config_bytes);
+    nes_settings_page_inner(&current, language)
 }
 
-pub(crate) fn resolve_nes_load_request(
-    settings: &SettingsSnapshot,
-    options: SystemLoadOptions,
-) -> Result<ResolvedLoadRequest, FactoryError> {
-    let resolved = effective_load_options(&settings.shared, options);
-    let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
-        .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
-    Ok(ResolvedLoadRequest {
-        options: resolved,
-        core_options_bytes: core_opts.into_bytes(),
-    })
-}
-
-pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-    let language = settings.shared.general.language;
-    let current = system_settings(&settings.shared);
+fn nes_settings_page_inner(
+    current: &NesSettings,
+    language: nerust_gui_settings::language::AppLanguage,
+) -> SystemSettingsPageModel {
     SystemSettingsPageModel {
         fields: Arc::from([
             SystemSettingsFieldModel {
@@ -135,13 +91,11 @@ pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPa
                 id: SystemSettingsFieldId(Cow::Borrowed(MMC3_FIELD)),
                 label: text(language, UiText::Mmc3IrqVariant).to_string(),
                 kind: SystemSettingsFieldKind::Choice {
-                    selected: SystemSettingsChoiceId(Cow::Borrowed(
-                        match current.core.mmc3_irq_variant {
-                            None => "auto",
-                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
-                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
-                        },
-                    )),
+                    selected: SystemSettingsChoiceId(Cow::Borrowed(match current.core.mmc3_irq_variant {
+                        Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
+                        Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
+                        None => "auto",
+                    })),
                     options: Arc::from([
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("auto")),
@@ -162,45 +116,96 @@ pub(crate) fn nes_settings_page(settings: &SettingsSnapshot) -> SystemSettingsPa
     }
 }
 
-pub(crate) fn apply_nes_settings_choice(
-    settings: &mut SettingsSnapshot,
+const FILTER_FIELD: &str = "video.filter";
+const MMC3_FIELD: &str = "core.mmc3_irq_variant";
+
+pub(crate) fn filter_type(
+    settings: &nerust_gui_settings::shared::DesktopSharedSettings,
+) -> FilterType {
+    match system_settings(settings).video.filter {
+        NesVideoFilter::None => FilterType::None,
+        NesVideoFilter::NtscComposite => FilterType::NtscComposite,
+        NesVideoFilter::NtscSVideo => FilterType::NtscSVideo,
+        NesVideoFilter::NtscRgb => FilterType::NtscRGB,
+    }
+}
+
+fn system_settings(settings: &nerust_gui_settings::shared::DesktopSharedSettings) -> NesSettings {
+    settings
+        .systems
+        .get(&SystemId::new("nes"))
+        .map(|settings| match settings {
+            SystemSettings::Nes(nes) => nes.clone(),
+        })
+        .unwrap_or_default()
+}
+
+fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
+    match v {
+        nerust_gui_settings::nes::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
+        nerust_gui_settings::nes::Mmc3IrqVariant::Nec => Mmc3IrqVariant::Nec,
+    }
+}
+
+pub(crate) fn resolve_nes_load_request_inner(
+    nes: &NesSettings,
+    language: u8,
+    options: SystemLoadOptions,
+) -> Result<ResolvedLoadRequest, FactoryError> {
+    let saved = nes.core.mmc3_irq_variant.map(convert_mmc3);
+    let explicit_val = if options.options_bytes.is_empty() {
+        None
+    } else if options.options_bytes == crate::MMC3_OPTION_SHARP {
+        Some(Mmc3IrqVariant::Sharp)
+    } else if options.options_bytes == crate::MMC3_OPTION_NEC {
+        Some(Mmc3IrqVariant::Nec)
+    } else {
+        None
+    };
+    let core_opts = CoreOptions {
+        mmc3_irq_variant: explicit_val.or(saved),
+    };
+    let resolved = SystemLoadOptions {
+        options_bytes: core_opts.into_bytes(),
+    };
+    let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
+        .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
+    Ok(ResolvedLoadRequest {
+        options: resolved,
+        core_options_bytes: core_opts.into_bytes(),
+    })
+}
+
+pub(crate) fn apply_nes_settings_choice_inner(
+    s: &mut NesSettings,
     field: &SystemSettingsFieldId,
     choice: &SystemSettingsChoiceId,
 ) -> Result<(), FactoryError> {
-    let current = system_settings_mut(settings);
     match field.as_str() {
         FILTER_FIELD => {
-            current.video.filter = match choice.as_str() {
+            s.video.filter = match choice.as_str() {
                 "none" => NesVideoFilter::None,
                 "ntsc_composite" => NesVideoFilter::NtscComposite,
                 "ntsc_svideo" => NesVideoFilter::NtscSVideo,
                 "ntsc_rgb" => NesVideoFilter::NtscRgb,
-                other => {
-                    return Err(FactoryError::InvalidChoice(format!(
-                        "unsupported filter choice: {other}"
-                    )));
-                }
+                other => return Err(FactoryError::InvalidChoice(other.to_string())),
             };
             Ok(())
         }
         MMC3_FIELD => {
-            current.core.mmc3_irq_variant = match choice.as_str() {
-                "auto" => None,
+            s.core.mmc3_irq_variant = match choice.as_str() {
                 "sharp" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp),
                 "nec" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec),
-                other => {
-                    return Err(FactoryError::InvalidChoice(format!(
-                        "unsupported mmc3 choice: {other}"
-                    )));
-                }
+                "auto" => None,
+                other => return Err(FactoryError::InvalidChoice(other.to_string())),
             };
             Ok(())
         }
-        other => Err(FactoryError::InvalidChoice(format!(
-            "unsupported system settings field: {other}"
-        ))),
+        _ => Err(FactoryError::InvalidChoice(field.as_str().to_string())),
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {

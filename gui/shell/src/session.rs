@@ -74,9 +74,11 @@ impl SessionHandle {
         snapshot: &SettingsSnapshot,
     ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
-        factory
-            .create_core_and_adapter(snapshot, speaker)
-            .unwrap_or_else(|_| {
+        let view = crate::settings::settings_view(snapshot);
+        let result = factory.create_core_and_adapter(&view, speaker);
+        match result {
+            Ok(parts) => EmuCore::from_parts(parts),
+            Err(_) => {
                 log::warn!("core creation with loaded settings failed; using defaults");
                 use crate::settings::defaults::seed::{
                     default_app_state, default_local_settings, default_shared_settings,
@@ -87,10 +89,13 @@ impl SessionHandle {
                     app_state: default_app_state(),
                 };
                 let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                factory
-                    .create_core_and_adapter(&fallback, fallback_speaker)
-                    .expect("failed to create core even with default settings")
-            })
+                let fallback_view = crate::settings::settings_view(&fallback);
+                let parts = factory
+                    .create_core_and_adapter(&fallback_view, fallback_speaker)
+                    .expect("failed to create core even with default settings");
+                EmuCore::from_parts(parts)
+            }
+        }
     }
 
     fn new_inner(
@@ -238,7 +243,8 @@ impl SessionHandle {
     }
 
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        self.factory.settings_page(settings)
+        let view = crate::settings::settings_view(settings);
+        self.factory.settings_page(&view)
     }
 
     pub fn default_load_options(&self) -> SystemLoadOptions {

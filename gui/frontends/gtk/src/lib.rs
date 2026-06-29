@@ -76,9 +76,8 @@ impl State {
     }
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        self.ctx
-            .core_factory
-            .settings_page(self.session.settings_snapshot())
+        let view = nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
+        self.ctx.core_factory.settings_page(&view)
     }
 
     pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {

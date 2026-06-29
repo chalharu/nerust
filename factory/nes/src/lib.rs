@@ -9,14 +9,11 @@ use nerust_core_traits::factory::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use nerust_core_traits::factory::FactoryError;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::emu_core::EmuCore;
+use nerust_core_traits::factory::settings::FactorySettingsView;
+use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
 use nerust_input_traits::SystemInputAdapter;
 
 pub mod touch;
-
-pub use nerust_gui_shell::factory::CoreFactory;
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
@@ -36,10 +33,10 @@ impl CoreFactory for NesFactory {
 
     fn create_core_and_adapter(
         &self,
-        settings: &SettingsSnapshot,
+        view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
-        builder::create_core_and_adapter(settings, speaker)
+    ) -> Result<CoreParts, FactoryError> {
+        builder::create_core_and_adapter(view, speaker)
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
@@ -52,25 +49,29 @@ impl CoreFactory for NesFactory {
         }
     }
 
-    fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        settings::nes_settings_page(settings)
+    fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+        settings::nes_settings_page(view)
     }
 
     fn apply_settings_choice(
         &self,
-        settings: &mut SettingsSnapshot,
+        view: &mut FactorySettingsView,
         field: &SystemSettingsFieldId,
         choice: &SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
-        settings::apply_nes_settings_choice(settings, field, choice)
+        let mut s = settings::deserialize_settings(&view.system_config_bytes);
+        settings::apply_nes_settings_choice_inner(&mut s, field, choice)?;
+        view.system_config_bytes = settings::serialize_settings(&s);
+        Ok(())
     }
 
     fn resolve_load_request(
         &self,
-        settings: &SettingsSnapshot,
+        view: &FactorySettingsView,
         options: SystemLoadOptions,
     ) -> Result<ResolvedLoadRequest, FactoryError> {
-        settings::resolve_nes_load_request(settings, options)
+        let nes = settings::deserialize_settings(&view.system_config_bytes);
+        settings::resolve_nes_load_request_inner(&nes, view.language, options)
     }
 
     fn default_load_options(&self) -> SystemLoadOptions {
@@ -79,9 +80,9 @@ impl CoreFactory for NesFactory {
 }
 
 pub fn create_test_core_and_adapter(
-    settings: &SettingsSnapshot,
+    view: &FactorySettingsView,
     speaker: Box<dyn AudioBackend>,
-) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
+) -> Result<CoreParts, FactoryError> {
     let factory = NesFactory;
-    factory.create_core_and_adapter(settings, speaker)
+    factory.create_core_and_adapter(view, speaker)
 }

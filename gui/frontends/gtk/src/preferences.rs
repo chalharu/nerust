@@ -783,10 +783,13 @@ fn connect_local_updates(
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*factory,
                     &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                        "video.filter".into(),
+                    ),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         combo
                             .active_id()
                             .map(|value| value.to_string())
@@ -805,12 +808,13 @@ fn connect_local_updates(
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*factory,
                     &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
                         "core.mmc3_irq_variant".into(),
                     ),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         combo
                             .active_id()
                             .map(|value| value.to_string())
@@ -941,7 +945,8 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = factory.settings_page(snapshot);
+    let view = nerust_gui_shell::settings::settings_view(snapshot);
+    let system_page = factory.settings_page(&view);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 

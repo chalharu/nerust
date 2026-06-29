@@ -288,10 +288,11 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = self.factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*self.factory,
                     &mut self.draft,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
-                    &SystemSettingsChoiceId(choice.value.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(choice.value.into()),
                 );
             }
             Message::StartCapture(target) => {
@@ -580,7 +581,8 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let model = self.factory.settings_page(&self.draft);
+        let view = nerust_gui_shell::settings::settings_view(&self.draft);
+        let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field));
