@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::{SyncSender, TrySendError, sync_channel},
 };
@@ -37,8 +37,6 @@ impl CubebAudio {
         let playing_clone = playing.clone();
 
         let (sender, receiver) = sync_channel::<f32>(sample_rate as usize);
-        let receiver = Arc::new(Mutex::new(receiver));
-        let receiver_clone = receiver.clone();
 
         let mut builder = cubeb::StreamBuilder::<MonoFrame<f32>>::new();
         builder
@@ -50,10 +48,8 @@ impl CubebAudio {
                     if !playing_clone.load(Ordering::Relaxed) {
                         return 0;
                     }
-                    if let Ok(recv) = receiver_clone.lock() {
-                        for frame in output.iter_mut() {
-                            frame.m = recv.try_recv().unwrap_or(0.0);
-                        }
+                    for frame in output.iter_mut() {
+                        frame.m = receiver.try_recv().unwrap_or(0.0);
                     }
                     output.len() as isize
                 },
