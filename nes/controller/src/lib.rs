@@ -2,6 +2,7 @@ pub mod codec;
 pub mod nes_input_cell;
 pub mod persisted;
 pub mod topology;
+pub mod touch;
 
 use nerust_nes_core::{
     controller::Controller,
