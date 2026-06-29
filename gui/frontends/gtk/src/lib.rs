@@ -181,6 +181,9 @@ impl FrontendSession for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
+    fn run_command(&mut self, command: SessionCommand) {
+        let _ = self.session.run_command(command);
+    }
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,

@@ -3361,7 +3361,6 @@ name = "nerust_persistence"
 version = "0.1.0-dev"
 dependencies = [
  "fs2",
- "libc",
  "log",
  "nerust_core_traits",
  "nerust_input_traits",
@@ -3370,6 +3369,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.18",
+ "time",
  "windows-sys 0.61.2",
  "zip",
 ]
@@ -3414,6 +3414,7 @@ dependencies = [
  "pollster",
  "raw-window-handle",
  "wgpu 29.0.3",
+ "zerocopy",
 ]
 
 [[package]]

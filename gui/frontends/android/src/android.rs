@@ -908,6 +908,10 @@ impl AndroidFrontend {
 }
 
 impl FrontendSession for AndroidFrontend {
+    fn run_command(&mut self, command: SessionCommand) {
+        self.exec(command);
+    }
+
     fn pause(&mut self) {
         self.exec(SessionCommand::Pause);
     }

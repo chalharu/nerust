@@ -67,6 +67,7 @@ pub(crate) trait WindowExtend {
     fn load_path(&self, path: &Path);
     fn close(&self);
     fn update_actions(&self);
+    fn rebuild_menubar(&self);
     fn refresh_title(&self);
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
@@ -358,6 +359,7 @@ impl WindowExtend for Window {
                     if was_running {
                         result_for_close.state().borrow_mut().resume();
                     }
+                    result_for_close.rebuild_menubar();
                     result_for_close.update_actions();
                 });
             });
@@ -371,6 +373,8 @@ impl WindowExtend for Window {
                 glib::ControlFlow::Continue
             });
         }
+
+        result.rebuild_menubar();
 
         result.update_actions();
         window.present();
@@ -473,6 +477,7 @@ impl WindowExtend for Window {
         self.borrow()
             .state_delete_slot_action
             .set_enabled(state.loaded() && !state.slots().is_empty());
+
         rebuild_slot_menu(
             &self.borrow().select_active_slot_menu,
             state.slots(),
@@ -497,7 +502,18 @@ impl WindowExtend for Window {
             state.active_slot_id(),
             "win.state-delete-slot",
         );
-        let language = state.settings_snapshot().shared.general.language;
+        drop(state);
+        self.refresh_title();
+    }
+
+    fn rebuild_menubar(&self) {
+        let language = self
+            .state()
+            .borrow()
+            .settings_snapshot()
+            .shared
+            .general
+            .language;
         let menu_model = build_menu_model(
             language,
             &gio::Menu::new(),
@@ -507,8 +523,6 @@ impl WindowExtend for Window {
             &self.borrow().delete_slot_menu,
         );
         self.application().set_menubar(Some(&menu_model));
-        drop(state);
-        self.refresh_title();
     }
 
     fn refresh_title(&self) {

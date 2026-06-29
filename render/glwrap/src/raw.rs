@@ -222,3 +222,16 @@ pub fn generate_mipmap(target: GLenum) -> Result<(), Error> {
 pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Viewport(x, y, width, height) })
 }
+
+pub fn gl_string(name: u32) -> Option<String> {
+    let value = unsafe { gl::GetString(name) };
+    if value.is_null() {
+        return None;
+    }
+
+    Some(
+        unsafe { CStr::from_ptr(value.cast()) }
+            .to_string_lossy()
+            .into_owned(),
+    )
+}

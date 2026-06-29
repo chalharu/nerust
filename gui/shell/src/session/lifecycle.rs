@@ -162,7 +162,17 @@ impl SessionHandle {
         if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
             log::warn!("mapper save flush before close failed: {error}");
         }
-        // Persist in-memory settings to disk so the next launch sees them.
+        // Persist the latest settings to disk.  Reload from the manager first
+        // so that any pending changes (e.g. window size from
+        // remember_fit_window_size) are not overwritten by a stale snapshot.
+        match self.settings.reload() {
+            Ok(snapshot) => {
+                self.settings_snapshot = snapshot;
+            }
+            Err(error) => {
+                log::warn!("settings reload before exit failed: {error}");
+            }
+        }
         if let Err(error) = self.settings.save_snapshot(self.settings_snapshot.clone()) {
             log::warn!("settings save on exit failed: {error}");
         }
