@@ -10,27 +10,13 @@ use std::{
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
-use nerust_emu_thread::EmuThread;
+use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
-use thiserror::Error;
 
 use crate::{
     load::MediaObject,
-    session::{
-        metrics::ConsoleMetrics,
-        persistence::{CorePersistence, CorePersistenceError},
-    },
+    session::persistence::{CorePersistence, CorePersistenceError},
 };
-
-#[derive(Debug, Error)]
-pub enum OperationError {
-    #[error("emu thread channel unavailable")]
-    WorkerUnavailable,
-    #[error("emu thread reply channel closed")]
-    NoReply,
-    #[error("{0}")]
-    Reply(String),
-}
 
 pub struct EmuCore {
     emu: EmuThread,

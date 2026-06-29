@@ -1,4 +1,4 @@
-use super::metrics::ConsoleMetrics;
+use nerust_emu_thread::ConsoleMetrics;
 
 pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
     let state = if paused { "Nes -- Paused" } else { "Nes" };
@@ -15,7 +15,7 @@ pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
 #[cfg(test)]
 mod tests {
     use super::window_title;
-    use crate::session::metrics::ConsoleMetrics;
+    use nerust_emu_thread::ConsoleMetrics;
 
     #[test]
     fn window_title_surfaces_runtime_metrics() {

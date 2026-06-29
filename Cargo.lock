@@ -3205,6 +3205,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_timer",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

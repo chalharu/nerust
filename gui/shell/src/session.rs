@@ -22,12 +22,14 @@ use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
 
+use nerust_emu_thread::{ConsoleMetrics, OperationError};
+
 use crate::{
     descriptor::{SystemDescriptor, SystemSettingsPageModel},
-    emu_core::{EmuCore, OperationError},
+    emu_core::EmuCore,
     factory::{CoreFactory, FactoryError},
     load::{MediaObject, SystemLoadOptions},
-    session::{metrics::ConsoleMetrics, persistence::PersistenceManager},
+    session::persistence::PersistenceManager,
     settings,
 };
 
