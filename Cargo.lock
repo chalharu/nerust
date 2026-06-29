@@ -3224,6 +3224,7 @@ dependencies = [
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_render_base",
+ "rmp-serde",
 ]
 
 [[package]]

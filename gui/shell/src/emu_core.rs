@@ -10,8 +10,9 @@ use std::{
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
+use nerust_core_traits::factory::CoreParts;
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
-use nerust_render_base::{FrameBuffer, VideoRenderProfile};
+use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
 use crate::{
     load::MediaObject,
@@ -48,6 +49,38 @@ impl EmuCore {
             frame_ready,
             metrics,
         }
+    }
+
+    /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
+    /// Returns the core and the input adapter separately.
+    pub fn from_parts(parts: CoreParts) -> (Self, Box<dyn nerust_input_traits::SystemInputAdapter>) {
+        use std::sync::Mutex;
+        let src_w = parts.render_profile.source_logical_size.width as usize;
+        let src_h = parts.render_profile.source_logical_size.height as usize;
+        let pixel_format = PixelFormat::PaletteIndex {
+            palette: parts.palette.clone(),
+        };
+
+        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            src_w, src_h, pixel_format.clone(),
+        )));
+        if let Ok(mut guard) = shared_fb.lock() {
+            guard.resize(src_w, src_h);
+            guard.resize_data(src_w * src_h);
+        }
+
+        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
+        disp_fb.resize(src_w, src_h);
+        disp_fb.resize_data(src_w * src_h);
+
+        let frame_ready = Arc::new(AtomicBool::new(false));
+        let emu = EmuThread::spawn(
+            parts.core,
+            Arc::clone(&shared_fb),
+            Arc::clone(&frame_ready),
+            parts.palette,
+        );
+        (Self::new(emu, parts.render_profile, shared_fb, disp_fb, frame_ready), parts.adapter)
     }
 
     pub fn render_profile(&self) -> &VideoRenderProfile {

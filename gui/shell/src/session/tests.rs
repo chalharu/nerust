@@ -1,26 +1,25 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use nerust_core_traits::SystemId;
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer,
     audio::{AudioBackend, AudioBackendRegistry},
+    factory::settings::FactorySettingsView,
     identity::SystemIdentity,
 };
-use nerust_emu_thread::EmuThread;
 use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan, SettingsSnapshot,
+    HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
 use nerust_input_traits::{InputStatePersistence, SystemInputAdapter};
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_render_base::{FrameBuffer, LogicalSize, PhysicalSize, PixelFormat, VideoRenderProfile};
+use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
 
 use crate::{
-    emu_core::EmuCore,
     factory::{CoreFactory, FactoryError},
     load::{MediaObject, SystemLoadOptions},
     session::{KeyboardShortcut, SessionHandle},
@@ -84,37 +83,9 @@ impl ConsoleCore for MockConsoleCore {
     }
 }
 
-fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
-    let src_w = 256usize;
-    let src_h = 240usize;
-    let pixel_format = PixelFormat::PaletteIndex {
-        palette: Box::new([0u32; 256]),
-    };
-
-    let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-        src_w,
-        src_h,
-        pixel_format.clone(),
-    )));
-    if let Ok(mut guard) = shared_fb.lock() {
-        guard.resize(src_w, src_h);
-        guard.resize_data(src_w * src_h);
-    }
-
-    let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-    disp_fb.resize(src_w, src_h);
-    disp_fb.resize_data(src_w * src_h);
-
+fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
+    use nerust_core_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
-    let frame_ready = Arc::new(AtomicBool::new(false));
-    let palette = Box::new([0u32; 256]);
-    let emu = EmuThread::spawn(
-        Box::new(core),
-        Arc::clone(&shared_fb),
-        Arc::clone(&frame_ready),
-        palette,
-    );
-
     let render_profile = VideoRenderProfile {
         source_logical_size: LogicalSize {
             width: 256,
@@ -131,10 +102,12 @@ fn build_test_core_and_adapter() -> (EmuCore, Box<dyn SystemInputAdapter>) {
         frame_format: nerust_render_base::VideoFrameFormat::Palette,
         ntsc_packed_rgba8: None,
     };
-
-    let emu_core = EmuCore::new(emu, render_profile, shared_fb, disp_fb, frame_ready);
-    let adapter = Box::new(MockAdapter);
-    (emu_core, adapter)
+    CoreParts {
+        core: Box::new(core),
+        adapter: Box::new(MockAdapter),
+        render_profile,
+        palette: Box::new([0u32; 256]),
+    }
 }
 
 struct MockAdapter;
@@ -171,39 +144,42 @@ impl CoreFactory for MockFactory {
 
     fn create_core_and_adapter(
         &self,
-        _: &SettingsSnapshot,
+        _: &nerust_core_traits::factory::settings::FactorySettingsView,
         _speaker: Box<dyn AudioBackend>,
-    ) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
-        Ok(build_test_core_and_adapter())
+    ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+        Ok(build_test_core_parts())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {
         true
     }
-    fn system_descriptor(&self) -> crate::descriptor::SystemDescriptor {
-        crate::descriptor::SystemDescriptor {
+    fn system_descriptor(&self) -> nerust_core_traits::factory::descriptor::SystemDescriptor {
+        nerust_core_traits::factory::descriptor::SystemDescriptor {
             input_topology: single_port_topology(),
         }
     }
-    fn settings_page(&self, _: &SettingsSnapshot) -> crate::descriptor::SystemSettingsPageModel {
-        crate::descriptor::SystemSettingsPageModel {
+    fn settings_page(
+        &self,
+        _: &nerust_core_traits::factory::settings::FactorySettingsView,
+    ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+        nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
             fields: Arc::from([]),
         }
     }
     fn apply_settings_choice(
         &self,
-        _: &mut SettingsSnapshot,
-        _: &crate::descriptor::SystemSettingsFieldId,
-        _: &crate::descriptor::SystemSettingsChoiceId,
+        _: &mut nerust_core_traits::factory::settings::FactorySettingsView,
+        _: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
+        _: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
         Ok(())
     }
     fn resolve_load_request(
         &self,
-        _: &SettingsSnapshot,
+        _: &nerust_core_traits::factory::settings::FactorySettingsView,
         options: SystemLoadOptions,
-    ) -> Result<crate::load::ResolvedLoadRequest, FactoryError> {
+    ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
         let bytes = options.options_bytes.clone();
-        Ok(crate::load::ResolvedLoadRequest {
+        Ok(nerust_core_traits::factory::load::ResolvedLoadRequest {
             options,
             core_options_bytes: bytes,
         })
@@ -241,6 +217,10 @@ fn test_rom_with_mapper4() -> Vec<u8> {
     data
 }
 
+fn test_view(session: &SessionHandle) -> FactorySettingsView {
+    crate::settings::settings_view(session.settings_snapshot())
+}
+
 fn unique_temp_dir(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -271,7 +251,7 @@ fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), SystemLoadOptions::default())
+        .resolve_load_request(&test_view(&session), SystemLoadOptions::default())
         .unwrap();
     assert!(
         session
@@ -286,7 +266,7 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     let options = session.factory().default_load_options();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
@@ -310,7 +290,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let options = session.factory().default_load_options();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
@@ -341,7 +321,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let options = session.factory().default_load_options();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
@@ -378,7 +358,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     let options = session.factory().default_load_options();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
@@ -408,7 +388,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     let options = session.factory().default_load_options();
     let resolved = session
         .factory()
-        .resolve_load_request(session.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(
@@ -431,7 +411,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     let options = session2.factory().default_load_options();
     let resolved = session2
         .factory()
-        .resolve_load_request(session2.settings_snapshot(), options)
+        .resolve_load_request(&test_view(&session2), options)
         .unwrap();
     session2
         .load_resolved(

@@ -3,8 +3,32 @@ pub mod defaults;
 pub mod editor;
 pub mod i18n;
 
+use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
+use nerust_core_traits::factory::settings::FactorySettingsView;
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
+use nerust_gui_settings::shared::SystemSettings;
+
+pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
+    let language = match snapshot.shared.general.language {
+        nerust_gui_settings::language::AppLanguage::Japanese => 1,
+        nerust_gui_settings::language::AppLanguage::English => 2,
+        _ => 0,
+    };
+    let system_config_bytes = snapshot
+        .shared
+        .systems
+        .get(&SystemId::new("nes"))
+        .map(|s| match s {
+            SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).unwrap_or_default(),
+        })
+        .unwrap_or_default();
+    FactorySettingsView {
+        language,
+        system_config_bytes,
+    }
+}
 
 pub fn build_speaker(
     registry: &AudioBackendRegistry,
@@ -31,6 +55,31 @@ pub fn build_speaker(
     };
     let backend = registry.autoselect(rate, u32::from(settings.audio.latency_ms));
     Box::new(GainBackend::new(backend, gain))
+}
+
+pub fn apply_settings_choice(
+    factory: &dyn nerust_core_traits::factory::CoreFactory,
+    snapshot: &mut SettingsSnapshot,
+    field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
+    choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+) -> Result<(), nerust_core_traits::factory::FactoryError> {
+    let mut view = settings_view(snapshot);
+    factory.apply_settings_choice(&mut view, field, choice)?;
+    // Write back system config to snapshot
+    if !view.system_config_bytes.is_empty() {
+        if let Ok(nes) = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(
+            &view.system_config_bytes,
+        ) {
+            snapshot
+                .shared
+                .systems
+                .insert(
+                    nerust_core_traits::SystemId::new("nes"),
+                    nerust_gui_settings::shared::SystemSettings::Nes(nes),
+                );
+        }
+    }
+    Ok(())
 }
 
 pub fn scaling_factor(mode: ScalingMode) -> Option<u32> {

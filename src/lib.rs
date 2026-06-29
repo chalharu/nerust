@@ -75,9 +75,10 @@ impl RomLoader for LiveRomLoader {
             .pending_options
             .take()
             .unwrap_or_else(|| target.default_load_options());
+        let view = nerust_gui_shell::settings::settings_view(target.settings_snapshot());
         let resolved = self
             .factory
-            .resolve_load_request(target.settings_snapshot(), options)
+            .resolve_load_request(&view, options)
             .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
         target.load_resolved(media, resolved)?;
         target.resume();
