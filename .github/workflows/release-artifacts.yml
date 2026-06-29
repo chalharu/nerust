@@ -193,7 +193,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \
-            libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \
@@ -260,7 +259,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \
-            libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \

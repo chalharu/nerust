@@ -65,7 +65,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \
-            libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \
@@ -111,7 +110,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev \
             libepoxy-dev \
-            libopenal-dev \
             libasound2-dev \
             libcubeb-dev
       - name: Install Rust toolchain
