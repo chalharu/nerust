@@ -7,10 +7,10 @@ pub mod rgb;
 pub use crate::{
     filter::{
         BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH,
-        NesFilter, PALETTE_TEXTURE_WIDTH,
+        PALETTE_TEXTURE_WIDTH, VideoFilter,
         presentation::{
             ConsoleVideoAssets, EncodedNtscTextures, EncodedPackedNtscTexture, FilterLayout,
-            NesVideoAssets, VideoFilterPipeline, VideoPresentationPipelineKind,
+            PaletteAssets, VideoFilterPipeline, VideoPresentationPipelineKind,
         },
     },
     logical::LogicalSize,

@@ -1,36 +1,9 @@
-use nerust_input_traits::DigitalInputEvent;
-use nerust_nes_controller::topology::{
+use crate::topology::{
     NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
     NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TouchPoint {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TouchRect {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl TouchRect {
-    fn contains(self, point: TouchPoint) -> bool {
-        point.x >= self.x
-            && point.x <= self.x + self.width
-            && point.y >= self.y
-            && point.y <= self.y + self.height
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TouchOverlayAction {
-    Input(DigitalInputEvent),
-}
+use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint, TouchRect};
+use nerust_input_traits::DigitalInputEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchTarget {
@@ -200,15 +173,13 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
 
 #[cfg(test)]
 mod tests {
-    use nerust_input_traits::DigitalInputEvent;
-    use nerust_nes_controller::topology::{
+    use crate::topology::{
         NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
     };
+    use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint, TouchRect};
+    use nerust_input_traits::DigitalInputEvent;
 
-    use super::{
-        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchRect, TouchTarget,
-        actions_for_target,
-    };
+    use super::{PortraitTouchOverlay, TouchTarget, actions_for_target};
 
     fn zone_center(bounds: TouchRect) -> TouchPoint {
         TouchPoint {

@@ -1,13 +1,13 @@
-use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState};
-use nerust_nes_controller::topology::{
+use crate::topology::{
     FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
     NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT, NES_CONTROL_RIGHT,
     NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
 };
+use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState};
 use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
 #[derive(Debug, Default)]
-pub(crate) struct NesInputState {
+pub struct NesInputState {
     held: NesInputFrame,
     dirty_player_one: bool,
     dirty_player_two: bool,
@@ -110,11 +110,11 @@ impl NesInputState {
 
 #[cfg(test)]
 mod tests {
-    use nerust_input_traits::DigitalInputEvent;
-    use nerust_nes_controller::topology::{
+    use crate::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
         NES_CONTROL_A, NES_CONTROL_RIGHT,
     };
+    use nerust_input_traits::DigitalInputEvent;
     use nerust_nes_core::input_types::{Buttons, NesInputFrame};
 
     use super::NesInputState;
