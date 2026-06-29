@@ -57,8 +57,8 @@ impl EmuCore {
         parts: CoreParts,
     ) -> (Self, Box<dyn nerust_input_traits::SystemInputAdapter>) {
         use std::sync::Mutex;
-        let src_w = parts.render_profile.source_logical_size.width as usize;
-        let src_h = parts.render_profile.source_logical_size.height as usize;
+        let src_w = parts.render_profile.source_logical_size.width;
+        let src_h = parts.render_profile.source_logical_size.height;
         let pixel_format = PixelFormat::PaletteIndex {
             palette: parts.palette.clone(),
         };

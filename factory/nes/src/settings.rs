@@ -177,11 +177,9 @@ mod tests {
     use nerust_core_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
     use nerust_core_traits::factory::load::SystemLoadOptions;
     use nerust_core_traits::factory::settings::FactorySettingsView;
-    use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
-    use nerust_gui_shell::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
+
+    use nerust_gui_settings::nes::NesVideoFilter;
+
     use nerust_input_traits::ControlDescriptor;
     use nerust_nes_controller::topology::{
         FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,

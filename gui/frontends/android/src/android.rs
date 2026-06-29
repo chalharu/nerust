@@ -260,13 +260,8 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
         let options = self.session.default_load_options();
-        let view =
-            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
-        let resolved = match self
-            .session
-            .factory()
-            .resolve_load_request(&view, options)
-        {
+        let view = nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
                 return Err(format!("failed to start ROM {id} from library: {error}"));
@@ -332,13 +327,8 @@ impl AndroidFrontend {
             })?;
         let media = MediaObject::new(Some(path), bytes);
         let options = self.session.default_load_options();
-        let view =
-            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
-        let resolved = match self
-            .session
-            .factory()
-            .resolve_load_request(&view, options)
-        {
+        let view = nerust_gui_shell::settings::settings_view(self.session.settings_snapshot());
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
                 return Err(format!(
