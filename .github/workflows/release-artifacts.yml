@@ -196,7 +196,8 @@ jobs:
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -209,10 +210,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-release-x86_64-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-x86_64-
-      - name: Build nerust (release, tao + wgpu)
+          key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-tao-
+      - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --features tao,wgpu --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -260,23 +263,26 @@ jobs:
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: 1.96.0
       - name: Restore Cargo registry and build cache
         id: cargo-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386ccfae # v5.0.5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-aarch64-
-      - name: Build nerust (release, tao + wgpu)
+          key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-tao-
+      - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --features tao,wgpu --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
