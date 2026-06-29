@@ -24,7 +24,6 @@ members = [
   "serialize",
   "sound/cpal",
   "sound/cubeb",
-  "sound/openal",
   "sound/filter",
   "timer",
   "rom_test",
@@ -57,13 +56,12 @@ nerust_core_traits.workspace = true
 nerust_render_base.workspace = true
 nerust_sound_cpal = { workspace = true, optional = true }
 nerust_sound_cubeb = { workspace = true, optional = true }
-nerust_sound_openal = { workspace = true, optional = true }
 simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_sound_openal"]
-tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_sound_openal"]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
+tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb"]
 wgpu = ["nerust_render_wgpu"]
 opengl = ["nerust_render_gl"]
 
@@ -84,7 +82,6 @@ edition = "2024"
 rust-version = "1.89"
 
 [workspace.dependencies]
-alto = { version = "=3.0.4" }
 android_logger = { version = "=0.15.1" }
 bitflags = { version = "=2.13.0", features = ["serde"] }
 clap = { version = "=4.6.1" }
@@ -131,7 +128,6 @@ nerust_render_base = { path = "render/base" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }
-nerust_sound_openal = { path = "sound/openal" }
 nerust_sound_filter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
 nerust_gtk = { path = "gui/frontends/gtk" }
