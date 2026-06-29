@@ -10,7 +10,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
 use nerust_gui_settings::shared::SystemSettings;
 
-pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
+pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
     let language = match snapshot.shared.general.language {
         nerust_gui_settings::language::AppLanguage::Japanese => 1,
         nerust_gui_settings::language::AppLanguage::English => 2,
@@ -19,7 +19,7 @@ pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
     let system_config_bytes = snapshot
         .shared
         .systems
-        .get(&SystemId::new("nes"))
+        .get(system_id)
         .map(|s| match s {
             SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).unwrap_or_default(),
         })
@@ -30,44 +30,39 @@ pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
     }
 }
 
-pub fn resolve_label(
+fn resolve_nes_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> String {
     use nerust_gui_settings::language::AppLanguage;
-    let label = |id: &str, map: &[(&str, &str, &str)]| -> String {
-        for &(en, ja, id_match) in map {
-            if id == id_match {
-                return match language {
-                    AppLanguage::Japanese => ja.to_string(),
-                    _ => en.to_string(),
-                };
-            }
+    let localized = |en: &str, ja: &str| -> String {
+        match language {
+            AppLanguage::Japanese => ja.to_string(),
+            _ => en.to_string(),
         }
-        id.to_string()
     };
-    label(
-        label_id,
-        &[
-            ("Filter", "フィルター", "nes.video.filter"),
-            ("None", "なし", "nes.filter.none"),
-            (
-                "NTSC Composite",
-                "NTSC コンポジット",
-                "nes.filter.ntsc_composite",
-            ),
-            ("NTSC S-Video", "NTSC S-ビデオ", "nes.filter.ntsc_svideo"),
-            ("NTSC RGB", "NTSC RGB", "nes.filter.ntsc_rgb"),
-            (
-                "MMC3 IRQ Variant",
-                "MMC3 IRQ バリアント",
-                "nes.core.mmc3_irq_variant",
-            ),
-            ("Auto", "自動", "nes.mmc3.auto"),
-            ("Sharp", "Sharp", "nes.mmc3.sharp"),
-            ("Nec", "Nec", "nes.mmc3.nec"),
-        ],
-    )
+    match label_id {
+        "nes.video.filter" => localized("Filter", "フィルター"),
+        "nes.filter.none" => localized("None", "なし"),
+        "nes.filter.ntsc_composite" => localized("NTSC Composite", "NTSC コンポジット"),
+        "nes.filter.ntsc_svideo" => localized("NTSC S-Video", "NTSC S-ビデオ"),
+        "nes.filter.ntsc_rgb" => localized("NTSC RGB", "NTSC RGB"),
+        "nes.core.mmc3_irq_variant" => localized("MMC3 IRQ Variant", "MMC3 IRQ バリアント"),
+        "nes.mmc3.auto" => localized("Auto", "自動"),
+        "nes.mmc3.sharp" => localized("Sharp", "Sharp"),
+        "nes.mmc3.nec" => localized("Nec", "Nec"),
+        _ => label_id.to_string(),
+    }
+}
+
+pub fn resolve_label(
+    label_id: &str,
+    language: nerust_gui_settings::language::AppLanguage,
+) -> String {
+    if label_id.starts_with("nes.") {
+        return resolve_nes_label(label_id, language);
+    }
+    label_id.to_string()
 }
 
 pub fn build_speaker(
@@ -103,7 +98,8 @@ pub fn apply_settings_choice(
     field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
     choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
 ) -> Result<(), nerust_core_traits::factory::FactoryError> {
-    let mut view = settings_view(snapshot);
+    let system_id = factory.system_id();
+    let mut view = settings_view(snapshot, &system_id);
     factory.apply_settings_choice(&mut view, field, choice)?;
     // Write back system config to snapshot
     if !view.system_config_bytes.is_empty()
@@ -112,7 +108,7 @@ pub fn apply_settings_choice(
         )
     {
         snapshot.shared.systems.insert(
-            nerust_core_traits::SystemId::new("nes"),
+            system_id,
             nerust_gui_settings::shared::SystemSettings::Nes(nes),
         );
     }

@@ -305,7 +305,8 @@ impl SessionHandle {
         let restored_runtime_state = exported_core_bytes.is_some();
 
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
-        let view = crate::settings::settings_view(next_settings);
+        let system_id = self.factory.system_id();
+        let view = crate::settings::settings_view(next_settings, &system_id);
         let parts = self.factory.create_core_and_adapter(&view, speaker)?;
         let (rebuilt_core, rebuilt_adapter) = crate::emu_core::EmuCore::from_parts(parts);
 
