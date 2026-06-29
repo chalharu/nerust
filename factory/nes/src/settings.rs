@@ -12,7 +12,6 @@ use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
 };
-use nerust_gui_shell::settings::i18n::{UiText, text};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 
@@ -37,29 +36,17 @@ pub(crate) fn filter_type_from_bytes(bytes: &[u8]) -> FilterType {
     }
 }
 
-fn language_from_u8(v: u8) -> nerust_gui_settings::language::AppLanguage {
-    match v {
-        1 => nerust_gui_settings::language::AppLanguage::Japanese,
-        2 => nerust_gui_settings::language::AppLanguage::English,
-        _ => nerust_gui_settings::language::AppLanguage::SystemDefault,
-    }
-}
-
 pub(crate) fn nes_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
-    let language = language_from_u8(view.language);
     let current = deserialize_settings(&view.system_config_bytes);
-    nes_settings_page_inner(&current, language)
+    nes_settings_page_inner(&current)
 }
 
-fn nes_settings_page_inner(
-    current: &NesSettings,
-    language: nerust_gui_settings::language::AppLanguage,
-) -> SystemSettingsPageModel {
+fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
     SystemSettingsPageModel {
         fields: Arc::from([
             SystemSettingsFieldModel {
                 id: SystemSettingsFieldId(Cow::Borrowed(FILTER_FIELD)),
-                label: text(language, UiText::Filter).to_string(),
+                label_id: "nes.video.filter",
                 kind: SystemSettingsFieldKind::Choice {
                     selected: SystemSettingsChoiceId(Cow::Borrowed(match current.video.filter {
                         NesVideoFilter::None => "none",
@@ -70,26 +57,26 @@ fn nes_settings_page_inner(
                     options: Arc::from([
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("none")),
-                            label: text(language, UiText::None).to_string(),
+                            label_id: "nes.filter.none",
                         },
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_composite")),
-                            label: text(language, UiText::NtscComposite).to_string(),
+                            label_id: "nes.filter.ntsc_composite",
                         },
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_svideo")),
-                            label: text(language, UiText::NtscSVideo).to_string(),
+                            label_id: "nes.filter.ntsc_svideo",
                         },
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("ntsc_rgb")),
-                            label: text(language, UiText::NtscRgb).to_string(),
+                            label_id: "nes.filter.ntsc_rgb",
                         },
                     ]),
                 },
             },
             SystemSettingsFieldModel {
                 id: SystemSettingsFieldId(Cow::Borrowed(MMC3_FIELD)),
-                label: text(language, UiText::Mmc3IrqVariant).to_string(),
+                label_id: "nes.core.mmc3_irq_variant",
                 kind: SystemSettingsFieldKind::Choice {
                     selected: SystemSettingsChoiceId(Cow::Borrowed(match current.core.mmc3_irq_variant {
                         Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
@@ -99,15 +86,15 @@ fn nes_settings_page_inner(
                     options: Arc::from([
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("auto")),
-                            label: text(language, UiText::Auto).to_string(),
+                            label_id: "nes.mmc3.auto",
                         },
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("sharp")),
-                            label: text(language, UiText::Sharp).to_string(),
+                            label_id: "nes.mmc3.sharp",
                         },
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("nec")),
-                            label: text(language, UiText::Nec).to_string(),
+                            label_id: "nes.mmc3.nec",
                         },
                     ]),
                 },

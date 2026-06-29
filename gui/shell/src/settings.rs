@@ -30,6 +30,35 @@ pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
     }
 }
 
+pub fn resolve_label(label_id: &str, language: nerust_gui_settings::language::AppLanguage) -> String {
+    use nerust_gui_settings::language::AppLanguage;
+    let label = |id: &str, map: &[(&str, &str, &str)]| -> String {
+        for &(en, ja, id_match) in map {
+            if id == id_match {
+                return match language {
+                    AppLanguage::Japanese => ja.to_string(),
+                    _ => en.to_string(),
+                };
+            }
+        }
+        id.to_string()
+    };
+    label(
+        label_id,
+        &[
+            ("Filter", "フィルター", "nes.video.filter"),
+            ("None", "なし", "nes.filter.none"),
+            ("NTSC Composite", "NTSC コンポジット", "nes.filter.ntsc_composite"),
+            ("NTSC S-Video", "NTSC S-ビデオ", "nes.filter.ntsc_svideo"),
+            ("NTSC RGB", "NTSC RGB", "nes.filter.ntsc_rgb"),
+            ("MMC3 IRQ Variant", "MMC3 IRQ バリアント", "nes.core.mmc3_irq_variant"),
+            ("Auto", "自動", "nes.mmc3.auto"),
+            ("Sharp", "Sharp", "nes.mmc3.sharp"),
+            ("Nec", "Nec", "nes.mmc3.nec"),
+        ],
+    )
+}
+
 pub fn build_speaker(
     registry: &AudioBackendRegistry,
     settings: &HostBackendLocalSettings,

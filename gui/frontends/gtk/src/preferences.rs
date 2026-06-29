@@ -219,21 +219,17 @@ pub(crate) fn present_preferences_dialog(
     let _snapshot = state.borrow().settings_snapshot().clone();
     let system_page_model = state.borrow().settings_page();
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
-    let filter_combo = combo_from_optional_system_field(filter_field);
-    system_page.append(&labeled_row(
-        filter_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Filter)),
-        &filter_combo,
-    ));
+    let filter_combo = combo_from_optional_system_field(filter_field, language);
+    let filter_label = filter_field
+        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
+        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.video.filter", language));
+    system_page.append(&labeled_row(&filter_label, &filter_combo));
     let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
-    let mmc3_combo = combo_from_optional_system_field(mmc3_field);
-    system_page.append(&labeled_row(
-        mmc3_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Mmc3IrqVariant)),
-        &mmc3_combo,
-    ));
+    let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
+    let mmc3_label = mmc3_field
+        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
+        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language));
+    system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
@@ -1073,12 +1069,14 @@ fn system_field_by_id<'a>(
 
 fn combo_from_optional_system_field(
     field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+    language: nerust_gui_settings::language::AppLanguage,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     if let Some(field) = field {
         let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
         for option in options.iter() {
-            combo.append(Some(option.id.as_str()), &option.label);
+            let label = nerust_gui_shell::settings::resolve_label(option.label_id, language);
+            combo.append(Some(option.id.as_str()), &label);
         }
     }
     combo

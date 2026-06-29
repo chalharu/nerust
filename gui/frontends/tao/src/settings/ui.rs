@@ -581,11 +581,12 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
+        let language = self.draft.shared.general.language;
         let view = nerust_gui_shell::settings::settings_view(&self.draft);
         let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
-            content = content.push(system_choice_row(field));
+            content = content.push(system_choice_row(field, language));
         }
         content.spacing(16).into()
     }
@@ -662,13 +663,16 @@ fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) 
         .unwrap()
 }
 
-fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
+fn system_choice_row(
+    field: &SystemSettingsFieldModel,
+    language: nerust_gui_settings::language::AppLanguage,
+) -> El<'static> {
     let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
     let choices = options
         .iter()
         .map(|option| Choice {
             value: option.id.as_str().to_string(),
-            label: option.label.clone(),
+            label: nerust_gui_shell::settings::resolve_label(option.label_id, language),
         })
         .collect::<Vec<_>>();
     let selected = choices
@@ -682,7 +686,7 @@ fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(field.label.clone()).width(Length::Fixed(220.0)),
+        text(nerust_gui_shell::settings::resolve_label(field.label_id, language)).width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })

@@ -33,7 +33,7 @@ pub struct SystemSettingsPageModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemSettingsFieldModel {
     pub id: SystemSettingsFieldId,
-    pub label: String,
+    pub label_id: &'static str,
     pub kind: SystemSettingsFieldKind,
 }
 
@@ -48,5 +48,5 @@ pub enum SystemSettingsFieldKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemSettingsChoiceOption {
     pub id: SystemSettingsChoiceId,
-    pub label: String,
+    pub label_id: &'static str,
 }
