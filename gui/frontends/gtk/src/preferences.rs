@@ -228,7 +228,9 @@ pub(crate) fn present_preferences_dialog(
     let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
     let mmc3_label = mmc3_field
         .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
-        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language));
+        .unwrap_or_else(|| {
+            nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language)
+        });
     system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
     apply_snapshot_to_widgets(

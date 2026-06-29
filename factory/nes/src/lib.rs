@@ -12,7 +12,6 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, System
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
 
-
 pub mod touch;
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".

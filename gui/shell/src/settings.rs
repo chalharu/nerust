@@ -30,7 +30,10 @@ pub fn settings_view(snapshot: &SettingsSnapshot) -> FactorySettingsView {
     }
 }
 
-pub fn resolve_label(label_id: &str, language: nerust_gui_settings::language::AppLanguage) -> String {
+pub fn resolve_label(
+    label_id: &str,
+    language: nerust_gui_settings::language::AppLanguage,
+) -> String {
     use nerust_gui_settings::language::AppLanguage;
     let label = |id: &str, map: &[(&str, &str, &str)]| -> String {
         for &(en, ja, id_match) in map {
@@ -48,10 +51,18 @@ pub fn resolve_label(label_id: &str, language: nerust_gui_settings::language::Ap
         &[
             ("Filter", "フィルター", "nes.video.filter"),
             ("None", "なし", "nes.filter.none"),
-            ("NTSC Composite", "NTSC コンポジット", "nes.filter.ntsc_composite"),
+            (
+                "NTSC Composite",
+                "NTSC コンポジット",
+                "nes.filter.ntsc_composite",
+            ),
             ("NTSC S-Video", "NTSC S-ビデオ", "nes.filter.ntsc_svideo"),
             ("NTSC RGB", "NTSC RGB", "nes.filter.ntsc_rgb"),
-            ("MMC3 IRQ Variant", "MMC3 IRQ バリアント", "nes.core.mmc3_irq_variant"),
+            (
+                "MMC3 IRQ Variant",
+                "MMC3 IRQ バリアント",
+                "nes.core.mmc3_irq_variant",
+            ),
             ("Auto", "自動", "nes.mmc3.auto"),
             ("Sharp", "Sharp", "nes.mmc3.sharp"),
             ("Nec", "Nec", "nes.mmc3.nec"),
@@ -99,13 +110,10 @@ pub fn apply_settings_choice(
         if let Ok(nes) = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(
             &view.system_config_bytes,
         ) {
-            snapshot
-                .shared
-                .systems
-                .insert(
-                    nerust_core_traits::SystemId::new("nes"),
-                    nerust_gui_settings::shared::SystemSettings::Nes(nes),
-                );
+            snapshot.shared.systems.insert(
+                nerust_core_traits::SystemId::new("nes"),
+                nerust_gui_settings::shared::SystemSettings::Nes(nes),
+            );
         }
     }
     Ok(())
