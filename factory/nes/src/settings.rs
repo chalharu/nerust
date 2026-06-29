@@ -1,6 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-use nerust_core_traits::SystemId;
 use nerust_core_traits::factory::FactoryError;
 use nerust_core_traits::factory::descriptor::{
     SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
@@ -8,10 +7,7 @@ use nerust_core_traits::factory::descriptor::{
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
-use nerust_gui_settings::{
-    nes::{NesSettings, NesVideoFilter},
-    shared::SystemSettings,
-};
+use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 
@@ -36,8 +32,8 @@ pub(crate) fn filter_type_from_bytes(bytes: &[u8]) -> FilterType {
     }
 }
 
-pub(crate) fn nes_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
-    let current = deserialize_settings(&view.system_config_bytes);
+pub(crate) fn nes_settings_page(_view: &FactorySettingsView) -> SystemSettingsPageModel {
+    let current = deserialize_settings(&_view.system_config_bytes);
     nes_settings_page_inner(&current)
 }
 
@@ -108,27 +104,6 @@ fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
 const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
 
-pub(crate) fn filter_type(
-    settings: &nerust_gui_settings::shared::DesktopSharedSettings,
-) -> FilterType {
-    match system_settings(settings).video.filter {
-        NesVideoFilter::None => FilterType::None,
-        NesVideoFilter::NtscComposite => FilterType::NtscComposite,
-        NesVideoFilter::NtscSVideo => FilterType::NtscSVideo,
-        NesVideoFilter::NtscRgb => FilterType::NtscRGB,
-    }
-}
-
-fn system_settings(settings: &nerust_gui_settings::shared::DesktopSharedSettings) -> NesSettings {
-    settings
-        .systems
-        .get(&SystemId::new("nes"))
-        .map(|settings| match settings {
-            SystemSettings::Nes(nes) => nes.clone(),
-        })
-        .unwrap_or_default()
-}
-
 fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
     match v {
         nerust_gui_settings::nes::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
@@ -138,7 +113,7 @@ fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
 
 pub(crate) fn resolve_nes_load_request_inner(
     nes: &NesSettings,
-    language: u8,
+    _language: u8,
     options: SystemLoadOptions,
 ) -> Result<ResolvedLoadRequest, FactoryError> {
     let saved = nes.core.mmc3_irq_variant.map(convert_mmc3);
@@ -216,7 +191,7 @@ mod tests {
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 
     use super::{
-        apply_nes_settings_choice_inner, filter_type, nes_settings_page,
+        apply_nes_settings_choice_inner, filter_type_from_bytes, nes_settings_page,
         resolve_nes_load_request_inner,
     };
     use crate::NesFactory;
@@ -336,15 +311,12 @@ mod tests {
 
     #[test]
     fn saved_nes_filter_maps_to_screen_filter_type() {
-        let mut settings = default_shared_settings();
-        let SystemSettings::Nes(nes) = settings
-            .systems
-            .get_mut(&nerust_core_traits::SystemId::new("nes"))
-            .unwrap();
+        let mut nes = super::deserialize_settings(&[]);
         nes.video.filter = NesVideoFilter::NtscSVideo;
+        let bytes = super::serialize_settings(&nes);
 
         assert!(matches!(
-            filter_type(&settings),
+            filter_type_from_bytes(&bytes),
             nerust_render_base::FilterType::NtscSVideo
         ));
     }
