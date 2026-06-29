@@ -414,6 +414,8 @@ impl HostState {
             },
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
+        self.sync_menu_state();
+        self.refresh_window_title();
     }
 
     fn toggle_fullscreen(&mut self) {
