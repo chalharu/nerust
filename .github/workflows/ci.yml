@@ -68,7 +68,8 @@ jobs:
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -84,6 +85,8 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -109,7 +112,8 @@ jobs:
             libgtk-4-dev \
             libepoxy-dev \
             libopenal-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -125,6 +129,8 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust (GTK + opengl)
         run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
