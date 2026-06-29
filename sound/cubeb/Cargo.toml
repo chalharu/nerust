@@ -1,0 +1,12 @@
+[package]
+name = "nerust_sound_cubeb"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cubeb = "=0.35.3"
+log.workspace = true
+nerust_core_traits.workspace = true

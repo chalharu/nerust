@@ -33,8 +33,10 @@ fn create_audio_registry() -> AudioBackendRegistry {
     let mut reg = AudioBackendRegistry::new();
     #[cfg(any(feature = "gtk", feature = "tao"))]
     reg.register(0, &nerust_sound_cpal::CPAL);
+    #[cfg(any(feature = "gtk", feature = "tao"))]
+    reg.register(1, &nerust_sound_cubeb::CUBEB);
     #[cfg(all(any(feature = "gtk", feature = "tao"), not(target_os = "android")))]
-    reg.register(1, &nerust_sound_openal::OPENAL);
+    reg.register(2, &nerust_sound_openal::OPENAL);
     reg
 }
 
