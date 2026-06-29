@@ -219,21 +219,19 @@ pub(crate) fn present_preferences_dialog(
     let _snapshot = state.borrow().settings_snapshot().clone();
     let system_page_model = state.borrow().settings_page();
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
-    let filter_combo = combo_from_optional_system_field(filter_field);
-    system_page.append(&labeled_row(
-        filter_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Filter)),
-        &filter_combo,
-    ));
+    let filter_combo = combo_from_optional_system_field(filter_field, language);
+    let filter_label = filter_field
+        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
+        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.video.filter", language));
+    system_page.append(&labeled_row(&filter_label, &filter_combo));
     let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
-    let mmc3_combo = combo_from_optional_system_field(mmc3_field);
-    system_page.append(&labeled_row(
-        mmc3_field
-            .map(|field| field.label.as_str())
-            .unwrap_or(text(language, UiText::Mmc3IrqVariant)),
-        &mmc3_combo,
-    ));
+    let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
+    let mmc3_label = mmc3_field
+        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
+        .unwrap_or_else(|| {
+            nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language)
+        });
+    system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
@@ -510,6 +508,13 @@ pub(crate) fn present_preferences_dialog(
                         if plan.fullscreen_default_changed {
                             parent.set_fullscreened(snapshot.local.video.window.fullscreen_default);
                         }
+                        if plan.scaling_changed {
+                            apply_scaling_to_window(
+                                &parent,
+                                snapshot.local.video.window.scaling,
+                                state.borrow().render_profile(),
+                            );
+                        }
                         dialog.close();
                         run_finish_callback(&finish_for_response);
                     }
@@ -783,10 +788,13 @@ fn connect_local_updates(
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*factory,
                     &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId("video.filter".into()),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                        "video.filter".into(),
+                    ),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         combo
                             .active_id()
                             .map(|value| value.to_string())
@@ -805,12 +813,13 @@ fn connect_local_updates(
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*factory,
                     &mut snapshot,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
                         "core.mmc3_irq_variant".into(),
                     ),
-                    &nerust_gui_shell::descriptor::SystemSettingsChoiceId(
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         combo
                             .active_id()
                             .map(|value| value.to_string())
@@ -941,7 +950,9 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_page = factory.settings_page(snapshot);
+    let system_id = factory.system_id();
+    let view = nerust_gui_shell::settings::settings_view(snapshot, &system_id);
+    let system_page = factory.settings_page(&view);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
@@ -1068,12 +1079,14 @@ fn system_field_by_id<'a>(
 
 fn combo_from_optional_system_field(
     field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+    language: nerust_gui_settings::language::AppLanguage,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     if let Some(field) = field {
         let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
         for option in options.iter() {
-            combo.append(Some(option.id.as_str()), &option.label);
+            let label = nerust_gui_shell::settings::resolve_label(option.label_id, language);
+            combo.append(Some(option.id.as_str()), &label);
         }
     }
     combo
@@ -1090,6 +1103,27 @@ fn apply_system_field_by_id_to_combo(
     };
     let SystemSettingsFieldKind::Choice { selected, .. } = &field.kind;
     combo.set_active_id(Some(selected.as_str()));
+}
+
+fn apply_scaling_to_window(
+    window: &gtk::ApplicationWindow,
+    scaling: nerust_gui_settings::local::ScalingMode,
+    render_profile: &nerust_render_base::VideoRenderProfile,
+) {
+    let base_width = render_profile.physical_size.width as i32;
+    let base_height = render_profile.physical_size.height as i32;
+    let (w, h) = match scaling {
+        nerust_gui_settings::local::ScalingMode::FitToWindow => (0, 0),
+        nerust_gui_settings::local::ScalingMode::X1 => (base_width, base_height),
+        nerust_gui_settings::local::ScalingMode::X2 => (base_width * 2, base_height * 2),
+        nerust_gui_settings::local::ScalingMode::X3 => (base_width * 3, base_height * 3),
+        nerust_gui_settings::local::ScalingMode::X4 => (base_width * 4, base_height * 4),
+        nerust_gui_settings::local::ScalingMode::X5 => (base_width * 5, base_height * 5),
+    };
+    if w > 0 && h > 0 {
+        window.set_default_size(w, h);
+    }
+    window.queue_resize();
 }
 
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {

@@ -2,18 +2,12 @@ use super::FilterUnit;
 use crate::{LogicalSize, PhysicalSize, RGB};
 
 #[derive(Debug)]
-pub(crate) struct NesNtsc {
-    ntsc: nerust_render_ntsc::NesNtsc,
+pub(crate) struct NtscSimulator {
+    ntsc: nerust_render_ntsc::Engine,
     source: LogicalSize,
 }
 
-// pub enum Setup {
-//     Composite,
-//     SVideo,
-//     RGB,
-// }
-
-impl NesNtsc {
+impl NtscSimulator {
     // pub fn new(setup: &Setup, source: LogicalSize) -> Self {
     //     match *setup {
     //         Setup::Composite => Self::composite(source),
@@ -24,7 +18,7 @@ impl NesNtsc {
 
     pub(crate) fn composite(source: LogicalSize) -> Self {
         Self {
-            ntsc: nerust_render_ntsc::NesNtsc::new(
+            ntsc: nerust_render_ntsc::Engine::new(
                 &nerust_render_ntsc::setup::Setup::Composite,
                 source.width,
             ),
@@ -34,7 +28,7 @@ impl NesNtsc {
 
     pub(crate) fn svideo(source: LogicalSize) -> Self {
         Self {
-            ntsc: nerust_render_ntsc::NesNtsc::new(
+            ntsc: nerust_render_ntsc::Engine::new(
                 &nerust_render_ntsc::setup::Setup::SVideo,
                 source.width,
             ),
@@ -44,7 +38,7 @@ impl NesNtsc {
 
     pub(crate) fn rgb(source: LogicalSize) -> Self {
         Self {
-            ntsc: nerust_render_ntsc::NesNtsc::new(
+            ntsc: nerust_render_ntsc::Engine::new(
                 &nerust_render_ntsc::setup::Setup::RGB,
                 source.width,
             ),
@@ -53,7 +47,7 @@ impl NesNtsc {
     }
 }
 
-impl FilterUnit for NesNtsc {
+impl FilterUnit for NtscSimulator {
     type Input = u8;
     type Output = RGB;
 
@@ -77,14 +71,14 @@ impl FilterUnit for NesNtsc {
 
     fn eval_logical_size(source: LogicalSize) -> LogicalSize {
         LogicalSize {
-            width: nerust_render_ntsc::NesNtsc::output_width(source.width),
+            width: nerust_render_ntsc::Engine::output_width(source.width),
             height: source.height,
         }
     }
 
     fn eval_physical_size(source: PhysicalSize) -> PhysicalSize {
         PhysicalSize {
-            width: nerust_render_ntsc::NesNtsc::output_width(source.width as usize) as f32,
+            width: nerust_render_ntsc::Engine::output_width(source.width as usize) as f32,
             height: source.height * 2_f32,
         }
     }

@@ -5,6 +5,4 @@ use std::path::PathBuf;
 pub struct RunOptions {
     /// Path to a ROM file to load on startup.
     pub rom_path: Option<PathBuf>,
-    /// MMC3 IRQ variant override (`"sharp"` or `"nec"`).
-    pub mmc3_irq_variant: Option<String>,
 }

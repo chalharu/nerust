@@ -2,16 +2,17 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use clap::{Arg, Command};
+use clap::Command;
 use log::LevelFilter;
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_factory_nes::NesFactory;
+use nerust_core_traits::factory::cli::CliProvider;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::{
     context::FrontendContext,
     factory::CoreFactory,
     load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
 };
+use nerust_nes_factory::NesFactory;
 use nerust_render_base::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
@@ -37,24 +38,19 @@ fn create_audio_registry() -> AudioBackendRegistry {
     reg
 }
 
-fn parse_cli_args() -> RunOptions {
+fn parse_cli_args(cli_provider: &dyn CliProvider) -> (RunOptions, Vec<u8>) {
     let app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::new("filename").help("Rom file name"))
-        .arg(
-            Arg::new("mmc3-irq-variant")
-                .long("mmc3-irq-variant")
-                .value_parser(["sharp", "nec"])
-                .help("Override mapper 4 MMC3 IRQ behavior"),
-        );
-
+        .arg(clap::Arg::new("filename").help("Rom file name"));
+    let app = cli_provider.extend_command(app);
     let matches = app.get_matches();
-    RunOptions {
+    let options = RunOptions {
         rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
-        mmc3_irq_variant: matches.get_one::<String>("mmc3-irq-variant").cloned(),
-    }
+    };
+    let core_options = cli_provider.parse_core_options(&matches);
+    (options, core_options)
 }
 
 struct LiveRomLoader {
@@ -75,9 +71,12 @@ impl RomLoader for LiveRomLoader {
             .pending_options
             .take()
             .unwrap_or_else(|| target.default_load_options());
+        let system_id = self.factory.system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(target.settings_snapshot(), &system_id);
         let resolved = self
             .factory
-            .resolve_load_request(target.settings_snapshot(), options)
+            .resolve_load_request(&view, options)
             .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
         target.load_resolved(media, resolved)?;
         target.resume();
@@ -92,19 +91,18 @@ pub fn run() {
         .init()
         .unwrap();
 
-    let options = parse_cli_args();
     let gpu_factory = create_factory();
     let core_factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
     let audio_registry = Arc::new(create_audio_registry());
 
-    let pending_options = options.mmc3_irq_variant.as_deref().map(|variant| {
-        let options_bytes = match variant {
-            "sharp" => nerust_factory_nes::MMC3_OPTION_SHARP.to_vec(),
-            "nec" => nerust_factory_nes::MMC3_OPTION_NEC.to_vec(),
-            _ => Vec::new(),
-        };
-        SystemLoadOptions { options_bytes }
-    });
+    let (options, core_options) = parse_cli_args(&NesFactory);
+    let pending_options = if core_options.is_empty() {
+        None
+    } else {
+        Some(SystemLoadOptions {
+            options_bytes: core_options,
+        })
+    };
 
     let rom_loader = Box::new(LiveRomLoader {
         factory: Arc::clone(&core_factory),
@@ -136,7 +134,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use nerust_factory_nes::NesFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
@@ -148,6 +145,7 @@ mod tests {
             SystemLoadOptions,
         },
     };
+    use nerust_nes_factory::NesFactory;
 
     use super::LiveRomLoader;
 

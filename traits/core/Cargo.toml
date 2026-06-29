@@ -7,7 +7,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+clap.workspace = true
 log.workspace = true
+nerust_input_traits.workspace = true
 nerust_render_base.workspace = true
 serde.workspace = true
 thiserror.workspace = true

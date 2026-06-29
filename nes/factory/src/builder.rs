@@ -1,35 +1,37 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::Arc;
 
 use nerust_core_traits::audio::AudioBackend;
-use nerust_emu_thread::EmuThread;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{emu_core::EmuCore, factory::FactoryError};
-use nerust_input_traits::SystemInputAdapter;
+use nerust_core_traits::factory::settings::FactorySettingsView;
+use nerust_core_traits::factory::{CoreParts, FactoryError};
 use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_render_base::{FilterType, FrameBuffer, LogicalSize, PixelFormat, VideoRenderProfile};
+use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
 
 use crate::adapter::NesAdapter;
 
 pub(crate) fn create_core_and_adapter(
-    settings: &SettingsSnapshot,
+    view: &FactorySettingsView,
     speaker: Box<dyn AudioBackend>,
-) -> Result<(EmuCore, Box<dyn SystemInputAdapter>), FactoryError> {
-    let filter = crate::settings::filter_type(&settings.shared);
+) -> Result<CoreParts, FactoryError> {
+    let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
     let cell = Arc::new(NesInputCell::new());
     let device = NesPadDevice::new(SharedNesInputCell(cell.clone()));
 
-    let core = build_emu_core(speaker, filter, Box::new(device))?;
+    let (render_profile, palette) = compute_render_profile(filter);
+    let mut speaker = speaker;
+    speaker.start();
+    let core = NesConsoleCore::new_empty(Box::new(device), speaker);
     let adapter = Box::new(NesAdapter::new(cell));
-    Ok((core, adapter))
+    Ok(CoreParts {
+        core: Box::new(core),
+        adapter,
+        render_profile,
+        palette,
+    })
 }
 
-fn build_emu_core(
-    speaker: Box<dyn nerust_core_traits::audio::AudioBackend + Send>,
-    filter_type: FilterType,
-    controller: Box<dyn nerust_nes_core::controller::Controller + Send>,
-) -> Result<EmuCore, FactoryError> {
+fn compute_render_profile(filter_type: FilterType) -> (VideoRenderProfile, Box<[u32; 256]>) {
     let source_logical_size = LogicalSize {
         width: 256,
         height: 240,
@@ -55,46 +57,5 @@ fn build_emu_core(
             | u32::from(rgba8[pos + 2]) << 8
             | u32::from(rgba8[pos + 3]);
     }
-    let pixel_format = PixelFormat::PaletteIndex {
-        palette: Box::new(palette),
-    };
-    let src_w = source_logical_size.width;
-    let src_h = source_logical_size.height;
-
-    let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-        src_w,
-        src_h,
-        pixel_format.clone(),
-    )));
-    if let Ok(mut guard) = shared_fb.lock() {
-        guard.resize(src_w, src_h);
-        guard.resize_data(src_w * src_h);
-    }
-
-    let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-    disp_fb.resize(src_w, src_h);
-    disp_fb.resize_data(src_w * src_h);
-
-    let mut speaker = speaker;
-    speaker.start();
-    let core = NesConsoleCore::new_empty(controller, speaker);
-    let frame_ready = Arc::new(AtomicBool::new(false));
-    let palette = match &pixel_format {
-        PixelFormat::PaletteIndex { palette } => palette.clone(),
-        PixelFormat::Rgba => Box::new([0u32; 256]),
-    };
-    let emu = EmuThread::spawn(
-        Box::new(core),
-        Arc::clone(&shared_fb),
-        Arc::clone(&frame_ready),
-        palette,
-    );
-
-    Ok(EmuCore::new(
-        emu,
-        render_profile,
-        shared_fb,
-        disp_fb,
-        frame_ready,
-    ))
+    (render_profile, Box::new(palette))
 }

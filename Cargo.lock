@@ -3155,10 +3155,10 @@ dependencies = [
  "clap",
  "log",
  "nerust_core_traits",
- "nerust_factory_nes",
  "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
+ "nerust_nes_factory",
  "nerust_render_base",
  "nerust_render_gl",
  "nerust_render_wgpu",
@@ -3177,11 +3177,12 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
- "nerust_factory_nes",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
+ "nerust_nes_controller",
+ "nerust_nes_factory",
  "nerust_render_base",
  "nerust_render_wgpu",
  "nerust_sound_cpal",
@@ -3192,7 +3193,9 @@ dependencies = [
 name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
+ "clap",
  "log",
+ "nerust_input_traits",
  "nerust_render_base",
  "serde",
  "thiserror 2.0.18",
@@ -3205,23 +3208,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_timer",
-]
-
-[[package]]
-name = "nerust_factory_nes"
-version = "0.1.0-dev"
-dependencies = [
- "log",
- "nerust_core_traits",
- "nerust_emu_thread",
- "nerust_gui_runtime",
- "nerust_gui_settings",
- "nerust_gui_shell",
- "nerust_input_traits",
- "nerust_nes_controller",
- "nerust_nes_core",
- "nerust_nes_device",
- "nerust_render_base",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3349,6 +3336,24 @@ dependencies = [
  "nerust_core_traits",
  "nerust_nes_controller",
  "nerust_nes_core",
+]
+
+[[package]]
+name = "nerust_nes_factory"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "log",
+ "nerust_core_traits",
+ "nerust_gui_runtime",
+ "nerust_gui_settings",
+ "nerust_gui_shell",
+ "nerust_input_traits",
+ "nerust_nes_controller",
+ "nerust_nes_core",
+ "nerust_nes_device",
+ "nerust_render_base",
+ "rmp-serde",
 ]
 
 [[package]]

@@ -76,7 +76,7 @@ impl VideoFilterPipeline {
 }
 
 #[derive(Debug, Clone)]
-pub struct NesVideoAssets {
+pub struct PaletteAssets {
     pipeline: VideoFilterPipeline,
 }
 
@@ -88,13 +88,13 @@ pub struct NesVideoAssets {
 #[derive(Debug, Clone)]
 pub enum ConsoleVideoAssets {
     /// NES palette / NTSC shader textures.
-    Nes(NesVideoAssets),
+    Nes(PaletteAssets),
     // Future: Snes(SnesVideoAssets),
 }
 
 impl ConsoleVideoAssets {
-    /// Return the inner [`NesVideoAssets`] if this is the NES variant.
-    pub fn as_nes(&self) -> Option<&NesVideoAssets> {
+    /// Return the inner [`PaletteAssets`] if this is the NES variant.
+    pub fn as_nes(&self) -> Option<&PaletteAssets> {
         match self {
             Self::Nes(assets) => Some(assets),
         }
@@ -115,7 +115,7 @@ impl ConsoleVideoAssets {
     }
 }
 
-impl NesVideoAssets {
+impl PaletteAssets {
     pub(crate) fn new(pipeline: VideoFilterPipeline) -> Self {
         Self { pipeline }
     }
@@ -151,7 +151,7 @@ impl FilterType {
             FilterType::None => source_logical_size,
             FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo => {
                 LogicalSize {
-                    width: nerust_render_ntsc::NesNtsc::output_width(source_logical_size.width),
+                    width: nerust_render_ntsc::Engine::output_width(source_logical_size.width),
                     height: source_logical_size.height,
                 }
             }
@@ -214,7 +214,7 @@ impl FilterType {
         encoded.into_boxed_slice()
     }
 
-    pub(crate) fn palette_nes_video_assets(self) -> NesVideoAssets {
+    pub(crate) fn palette_assets(self) -> PaletteAssets {
         let pipeline = match self {
             FilterType::None => VideoFilterPipeline::Palette {
                 palette_rgba8: self.encoded_palette_rgba8(),
@@ -232,11 +232,11 @@ impl FilterType {
             }
         };
 
-        NesVideoAssets::new(pipeline)
+        PaletteAssets::new(pipeline)
     }
 
     pub fn palette_console_video_assets(self) -> ConsoleVideoAssets {
-        ConsoleVideoAssets::Nes(self.palette_nes_video_assets())
+        ConsoleVideoAssets::Nes(self.palette_assets())
     }
 
     pub fn palette(self) -> [RGB; 64] {
@@ -262,12 +262,12 @@ impl FilterType {
 
     pub fn shader_kernel_entries(self) -> Option<Box<[ShaderKernelEntry]>> {
         self.ntsc_setup()
-            .map(|setup| nerust_render_ntsc::NesNtsc::shader_kernel_entries(&setup))
+            .map(|setup| nerust_render_ntsc::Engine::shader_kernel_entries(&setup))
     }
 
     pub fn packed_kernel_entries(self) -> Option<Box<[u32]>> {
         self.ntsc_setup()
-            .map(|setup| nerust_render_ntsc::NesNtsc::packed_kernel_entries(&setup))
+            .map(|setup| nerust_render_ntsc::Engine::packed_kernel_entries(&setup))
     }
 
     pub fn encoded_packed_ntsc_texture_rgba8(self) -> Option<EncodedPackedNtscTexture> {

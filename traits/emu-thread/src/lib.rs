@@ -10,6 +10,26 @@ use std::{
 
 use nerust_core_traits::{ConsoleCore, EmuCommand, FrameBuffer, PixelFormat};
 use nerust_timer::Timer;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConsoleMetrics {
+    pub frame_counter: u64,
+    pub emulation_fps: f32,
+    pub speed_multiplier: f32,
+    pub loaded: bool,
+    pub paused: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum OperationError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Reply(String),
+}
 
 pub struct EmuThread {
     cmd_tx: SyncSender<EmuCommand>,

@@ -14,12 +14,7 @@ use std::{
 
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_factory_nes::{
-    NesFactory,
-    touch::{
-        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
-    },
-};
+use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint};
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -36,6 +31,8 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
 };
+use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
+use nerust_nes_factory::NesFactory;
 use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use nerust_render_wgpu::WgpuFactory;
 use winit::{
@@ -260,11 +257,10 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
         let options = self.session.default_load_options();
-        let resolved = match self
-            .session
-            .factory()
-            .resolve_load_request(self.session.settings_snapshot(), options)
-        {
+        let system_id = self.session.factory().system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
                 return Err(format!("failed to start ROM {id} from library: {error}"));
@@ -330,11 +326,10 @@ impl AndroidFrontend {
             })?;
         let media = MediaObject::new(Some(path), bytes);
         let options = self.session.default_load_options();
-        let resolved = match self
-            .session
-            .factory()
-            .resolve_load_request(self.session.settings_snapshot(), options)
-        {
+        let system_id = self.session.factory().system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
                 return Err(format!(
@@ -857,7 +852,7 @@ impl AndroidFrontend {
         for action in actions {
             match action {
                 TouchOverlayAction::Input(event) => {
-                    let _ = self.session.apply_input_event(event);
+                    self.session.apply_input_event(event);
                     self.request_redraw();
                 }
             }

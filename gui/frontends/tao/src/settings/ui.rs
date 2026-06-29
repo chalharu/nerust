@@ -22,7 +22,7 @@ use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
 use nerust_gui_shell::{
-    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldKind, SystemSettingsFieldModel},
+    descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
     factory::CoreFactory,
     settings::{
         bindings::{
@@ -288,10 +288,13 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = self.factory.apply_settings_choice(
+                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                    &*self.factory,
                     &mut self.draft,
-                    &nerust_gui_shell::descriptor::SystemSettingsFieldId(field.into()),
-                    &SystemSettingsChoiceId(choice.value.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                        choice.value.into(),
+                    ),
                 );
             }
             Message::StartCapture(target) => {
@@ -580,10 +583,13 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let model = self.factory.settings_page(&self.draft);
+        let language = self.draft.shared.general.language;
+        let system_id = self.factory.system_id();
+        let view = nerust_gui_shell::settings::settings_view(&self.draft, &system_id);
+        let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
-            content = content.push(system_choice_row(field));
+            content = content.push(system_choice_row(field, language));
         }
         content.spacing(16).into()
     }
@@ -660,13 +666,16 @@ fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) 
         .unwrap()
 }
 
-fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
+fn system_choice_row(
+    field: &SystemSettingsFieldModel,
+    language: nerust_gui_settings::language::AppLanguage,
+) -> El<'static> {
     let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
     let choices = options
         .iter()
         .map(|option| Choice {
             value: option.id.as_str().to_string(),
-            label: option.label.clone(),
+            label: nerust_gui_shell::settings::resolve_label(option.label_id, language),
         })
         .collect::<Vec<_>>();
     let selected = choices
@@ -680,7 +689,11 @@ fn system_choice_row(field: &SystemSettingsFieldModel) -> El<'static> {
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(field.label.clone()).width(Length::Fixed(220.0)),
+        text(nerust_gui_shell::settings::resolve_label(
+            field.label_id,
+            language
+        ))
+        .width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })

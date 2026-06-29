@@ -76,9 +76,10 @@ impl State {
     }
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        self.ctx
-            .core_factory
-            .settings_page(self.session.settings_snapshot())
+        let system_id = self.ctx.core_factory.system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        self.ctx.core_factory.settings_page(&view)
     }
 
     pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
@@ -185,8 +186,9 @@ impl FrontendSession for State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
-        self.renderer_reload_pending =
-            plan.session_rebuild_required || plan.window_settings_changed;
+        if plan.session_rebuild_required || plan.window_settings_changed {
+            self.renderer_reload_pending = true;
+        }
         Ok(SettingsResult {
             renderer_needs_rebuild: self.renderer_reload_pending,
             fullscreen_default_changed: plan.fullscreen_default_changed,
@@ -195,8 +197,9 @@ impl FrontendSession for State {
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
-        self.renderer_reload_pending =
-            plan.session_rebuild_required || plan.window_settings_changed;
+        if plan.session_rebuild_required || plan.window_settings_changed {
+            self.renderer_reload_pending = true;
+        }
         Ok(SettingsResult {
             renderer_needs_rebuild: self.renderer_reload_pending,
             fullscreen_default_changed: plan.fullscreen_default_changed,

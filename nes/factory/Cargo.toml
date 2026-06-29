@@ -1,5 +1,5 @@
 [package]
-name = "nerust_factory_nes"
+name = "nerust_nes_factory"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,12 +9,15 @@ rust-version.workspace = true
 [dependencies]
 log.workspace = true
 nerust_core_traits.workspace = true
-nerust_emu_thread.workspace = true
-nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
-nerust_gui_shell.workspace = true
 nerust_nes_controller.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_device.workspace = true
 nerust_render_base.workspace = true
+clap.workspace = true
+rmp-serde.workspace = true
+
+[dev-dependencies]
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true

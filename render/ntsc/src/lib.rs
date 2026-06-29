@@ -130,7 +130,7 @@ struct ShaderKernelEntryI32 {
 }
 
 // pub trait NesNtscExt<I1: IntoIterator<Item = u8>, I2: Iterator<Item = I1>> {
-//     fn filter(self, kernel: &NesNtsc) -> NesNtscIterator<I1, I2>;
+//     fn filter(self, kernel: &Engine) -> NesNtscIterator<I1, I2>;
 // }
 
 // impl<I1, I2> NesNtscExt<I1, I2::IntoIter> for I2
@@ -138,13 +138,13 @@ struct ShaderKernelEntryI32 {
 //     I1: IntoIterator<Item = u8>,
 //     I2: IntoIterator<Item = I1>,
 // {
-//     fn filter(self, kernel: &NesNtsc) -> NesNtscIterator<I1, I2::IntoIter> {
+//     fn filter(self, kernel: &Engine) -> NesNtscIterator<I1, I2::IntoIter> {
 //         NesNtscIterator::new(self.into_iter(), kernel)
 //     }
 // }
 
 #[derive(Debug)]
-pub struct NesNtsc {
+pub struct Engine {
     burst: usize,
     // table: Vec<u32>,
     width: usize,
@@ -172,7 +172,7 @@ impl Color {
     }
 }
 
-impl NesNtsc {
+impl Engine {
     fn gamma_factor(setup: &Setup) -> f32 {
         let gamma = setup.gamma() * -0.5 + 0.1333;
         gamma.abs().powf(0.73).abs()

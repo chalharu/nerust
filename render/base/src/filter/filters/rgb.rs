@@ -13,17 +13,17 @@ pub(crate) const PALETTE: [u32; 64] = [
 ];
 
 #[derive(Debug)]
-pub(crate) struct NesRgb {
+pub(crate) struct DirectRgb {
     source: LogicalSize,
 }
 
-impl NesRgb {
+impl DirectRgb {
     pub(crate) fn new(source: LogicalSize) -> Self {
         Self { source }
     }
 }
 
-impl FilterUnit for NesRgb {
+impl FilterUnit for DirectRgb {
     type Input = u8;
     type Output = RGB;
 
