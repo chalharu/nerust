@@ -5,13 +5,13 @@ use std::sync::Arc;
 use clap::{Arg, Command};
 use log::LevelFilter;
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::{
     context::FrontendContext,
     factory::CoreFactory,
     load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
 };
+use nerust_nes_factory::NesFactory;
 use nerust_render_base::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
@@ -102,8 +102,8 @@ pub fn run() {
 
     let pending_options = options.mmc3_irq_variant.as_deref().map(|variant| {
         let options_bytes = match variant {
-            "sharp" => nerust_factory_nes::MMC3_OPTION_SHARP.to_vec(),
-            "nec" => nerust_factory_nes::MMC3_OPTION_NEC.to_vec(),
+            "sharp" => nerust_nes_factory::MMC3_OPTION_SHARP.to_vec(),
+            "nec" => nerust_nes_factory::MMC3_OPTION_NEC.to_vec(),
             _ => Vec::new(),
         };
         SystemLoadOptions { options_bytes }
@@ -139,7 +139,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use nerust_factory_nes::NesFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
@@ -151,6 +150,7 @@ mod tests {
             SystemLoadOptions,
         },
     };
+    use nerust_nes_factory::NesFactory;
 
     use super::LiveRomLoader;
 
