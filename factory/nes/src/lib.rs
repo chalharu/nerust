@@ -5,15 +5,13 @@ mod settings;
 
 use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{
-    descriptor::{
-        SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
-    },
-    emu_core::EmuCore,
-    factory::FactoryError,
-    load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+use nerust_core_traits::factory::descriptor::{
+    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
+use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use nerust_core_traits::factory::FactoryError;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::emu_core::EmuCore;
 use nerust_input_traits::SystemInputAdapter;
 
 pub mod touch;

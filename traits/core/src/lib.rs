@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod factory;
 pub mod identity;
 pub mod input;
 pub mod save_state;
