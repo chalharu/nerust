@@ -12,8 +12,6 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, System
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
 
-pub mod touch;
-
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
 /// Opaque option bytes for MMC3 IRQ variant: "nec".

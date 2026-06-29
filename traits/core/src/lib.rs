@@ -3,6 +3,7 @@ pub mod factory;
 pub mod identity;
 pub mod input;
 pub mod save_state;
+pub mod touch;
 
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
 

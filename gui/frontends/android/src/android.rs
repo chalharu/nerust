@@ -14,12 +14,8 @@ use std::{
 
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_factory_nes::{
-    NesFactory,
-    touch::{
-        PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
-    },
-};
+use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint};
+use nerust_factory_nes::NesFactory;
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -36,6 +32,7 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
 };
+use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
 use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
 use nerust_render_wgpu::WgpuFactory;
 use winit::{
