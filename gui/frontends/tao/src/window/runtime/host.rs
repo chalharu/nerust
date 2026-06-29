@@ -220,7 +220,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                let _ = self.session.run_command(command);
+                let _ = self.run_command(command);
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None
@@ -414,6 +414,8 @@ impl HostState {
             },
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
+        self.sync_menu_state();
+        self.refresh_window_title();
     }
 
     fn toggle_fullscreen(&mut self) {
@@ -619,6 +621,9 @@ impl FrontendSession for HostState {
     }
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
+    }
+    fn run_command(&mut self, command: SessionCommand) {
+        let _ = self.session.run_command(command);
     }
     fn apply_settings(
         &mut self,

@@ -12,3 +12,4 @@ nerust_render_base.workspace = true
 pollster.workspace = true
 raw-window-handle.workspace = true
 wgpu.workspace = true
+zerocopy.workspace = true

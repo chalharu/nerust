@@ -181,7 +181,7 @@ impl GpuRenderer for GlRenderer {
         let bytes = bytes
             .get(..self.expected_frame_len)
             .expect("frame buffer too small");
-        view.on_update(bytes.as_ptr());
+        view.on_update(bytes);
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
