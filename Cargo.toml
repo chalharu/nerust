@@ -6,7 +6,7 @@ members = [
   "traits/input",
   "nes/core",
   "nes/device",
-  "nes/factory",
+  "factory/nes",
   "nes/controller",
   "gui/settings",
   "gui/run-options",
@@ -111,7 +111,7 @@ log = { version = "=0.4.33", default-features = false }
 muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
 nerust_core_traits = { path = "traits/core" }
 nerust_emu_thread = { path = "traits/emu-thread" }
-nerust_factory_nes = { path = "nes/factory" }
+nerust_factory_nes = { path = "factory/nes" }
 nerust_gui_settings = { path = "gui/settings" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_nes_core = { path = "nes/core" }
