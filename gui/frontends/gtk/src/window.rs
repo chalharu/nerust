@@ -564,7 +564,7 @@ impl WindowExtend for Window {
         match shortcut {
             KeyboardShortcut::Session(action) => match action {
                 ShortcutAction::TogglePause => {
-                    self.state().borrow_mut().toggle_pause();
+                    self.state().borrow_mut().pause();
                 }
                 ShortcutAction::SaveActiveSlot => {
                     self.state().borrow_mut().save_active_slot();
