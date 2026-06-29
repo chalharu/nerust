@@ -508,6 +508,13 @@ pub(crate) fn present_preferences_dialog(
                         if plan.fullscreen_default_changed {
                             parent.set_fullscreened(snapshot.local.video.window.fullscreen_default);
                         }
+                        if plan.scaling_changed {
+                            apply_scaling_to_window(
+                                &parent,
+                                snapshot.local.video.window.scaling,
+                                state.borrow().render_profile(),
+                            );
+                        }
                         dialog.close();
                         run_finish_callback(&finish_for_response);
                     }
@@ -1096,6 +1103,27 @@ fn apply_system_field_by_id_to_combo(
     };
     let SystemSettingsFieldKind::Choice { selected, .. } = &field.kind;
     combo.set_active_id(Some(selected.as_str()));
+}
+
+fn apply_scaling_to_window(
+    window: &gtk::ApplicationWindow,
+    scaling: nerust_gui_settings::local::ScalingMode,
+    render_profile: &nerust_render_base::VideoRenderProfile,
+) {
+    let base_width = render_profile.physical_size.width as i32;
+    let base_height = render_profile.physical_size.height as i32;
+    let (w, h) = match scaling {
+        nerust_gui_settings::local::ScalingMode::FitToWindow => (0, 0),
+        nerust_gui_settings::local::ScalingMode::X1 => (base_width, base_height),
+        nerust_gui_settings::local::ScalingMode::X2 => (base_width * 2, base_height * 2),
+        nerust_gui_settings::local::ScalingMode::X3 => (base_width * 3, base_height * 3),
+        nerust_gui_settings::local::ScalingMode::X4 => (base_width * 4, base_height * 4),
+        nerust_gui_settings::local::ScalingMode::X5 => (base_width * 5, base_height * 5),
+    };
+    if w > 0 && h > 0 {
+        window.set_default_size(w, h);
+    }
+    window.queue_resize();
 }
 
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
