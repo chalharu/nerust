@@ -1,5 +1,5 @@
 [package]
-name = "nerust_factory_nes"
+name = "nerust_nes_factory"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
