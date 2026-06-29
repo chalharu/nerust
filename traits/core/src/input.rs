@@ -65,5 +65,3 @@ impl<const N: usize> InputSink<N> for std::sync::Arc<InputCell<N>> {
         self.store(src);
     }
 }
-
-// SystemInputAdapter and InputStatePersistence moved to nerust_input_traits.
