@@ -292,7 +292,9 @@ impl SettingsAppState {
                     &*self.factory,
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
-                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(choice.value.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                        choice.value.into(),
+                    ),
                 );
             }
             Message::StartCapture(target) => {
@@ -686,7 +688,11 @@ fn system_choice_row(
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(nerust_gui_shell::settings::resolve_label(field.label_id, language)).width(Length::Fixed(220.0)),
+        text(nerust_gui_shell::settings::resolve_label(
+            field.label_id,
+            language
+        ))
+        .width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })

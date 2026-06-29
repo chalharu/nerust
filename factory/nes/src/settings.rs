@@ -1,13 +1,13 @@
 use std::{borrow::Cow, sync::Arc};
 
 use nerust_core_traits::SystemId;
+use nerust_core_traits::factory::FactoryError;
 use nerust_core_traits::factory::descriptor::{
     SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
     SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
-use nerust_core_traits::factory::FactoryError;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
@@ -78,11 +78,13 @@ fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
                 id: SystemSettingsFieldId(Cow::Borrowed(MMC3_FIELD)),
                 label_id: "nes.core.mmc3_irq_variant",
                 kind: SystemSettingsFieldKind::Choice {
-                    selected: SystemSettingsChoiceId(Cow::Borrowed(match current.core.mmc3_irq_variant {
-                        Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
-                        Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
-                        None => "auto",
-                    })),
+                    selected: SystemSettingsChoiceId(Cow::Borrowed(
+                        match current.core.mmc3_irq_variant {
+                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
+                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
+                            None => "auto",
+                        },
+                    )),
                     options: Arc::from([
                         SystemSettingsChoiceOption {
                             id: SystemSettingsChoiceId(Cow::Borrowed("auto")),
@@ -192,20 +194,16 @@ pub(crate) fn apply_nes_settings_choice_inner(
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
-    use nerust_core_traits::factory::descriptor::{
-        SystemSettingsChoiceId, SystemSettingsFieldId,
-    };
+    use nerust_core_traits::factory::CoreFactory;
+    use nerust_core_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
     use nerust_core_traits::factory::load::SystemLoadOptions;
     use nerust_core_traits::factory::settings::FactorySettingsView;
-    use nerust_core_traits::factory::CoreFactory;
+    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::{nes::NesVideoFilter, shared::SystemSettings};
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };
@@ -311,9 +309,7 @@ mod tests {
         let mut nes = super::deserialize_settings(&[]);
         apply_nes_settings_choice_inner(
             &mut nes,
-            &SystemSettingsFieldId(Cow::Borrowed(
-                "core.mmc3_irq_variant",
-            )),
+            &SystemSettingsFieldId(Cow::Borrowed("core.mmc3_irq_variant")),
             &SystemSettingsChoiceId(Cow::Borrowed("sharp")),
         )
         .unwrap();
