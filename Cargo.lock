@@ -3218,7 +3218,6 @@ dependencies = [
  "nerust_emu_thread",
  "nerust_gui_runtime",
  "nerust_gui_settings",
- "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_nes_controller",
  "nerust_nes_core",
