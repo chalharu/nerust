@@ -1,4 +1,5 @@
 pub mod codec;
+pub mod input_state;
 pub mod nes_input_cell;
 pub mod persisted;
 pub mod topology;

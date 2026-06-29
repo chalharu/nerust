@@ -1,6 +1,5 @@
 mod adapter;
 mod builder;
-mod input_state;
 mod settings;
 
 use nerust_core_traits::SystemId;
