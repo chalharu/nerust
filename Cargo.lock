@@ -3414,6 +3414,7 @@ dependencies = [
  "pollster",
  "raw-window-handle",
  "wgpu 29.0.3",
+ "zerocopy",
 ]
 
 [[package]]

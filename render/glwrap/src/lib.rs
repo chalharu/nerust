@@ -185,7 +185,7 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
             gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
             let mut written = 0;
             let mut buf = info_log_buffer(len);
-            gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr() as *mut GLchar);
+            gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteShader(shader);
             return Err(trim_info_log(&mut buf, written).to_owned());
         }
@@ -208,7 +208,7 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, String> {
             get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).unwrap();
             let mut written = 0;
             let mut buf = info_log_buffer(len);
-            gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr() as *mut GLchar);
+            gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteProgram(program);
             return Err(trim_info_log(&mut buf, written).to_owned());
         }

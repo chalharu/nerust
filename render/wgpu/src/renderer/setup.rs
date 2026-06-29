@@ -9,12 +9,13 @@ use wgpu::{
     TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
     TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
+use zerocopy::{Immutable, IntoBytes};
 
 use super::{DeviceLimitProfile, PresentationOptions, RenderPipeline, fit_surface_size_to_limit};
 use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, surface::SurfaceSize, upload::FrameUploadLayout};
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, IntoBytes, Immutable)]
 struct FilterUniforms {
     source_width: u32,
     source_height: u32,
@@ -166,7 +167,7 @@ impl RenderPipeline {
             usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&uniforms_buffer, 0, cast_bytes(&uniforms));
+        queue.write_buffer(&uniforms_buffer, 0, uniforms.as_bytes());
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("nerust_frame_bind_group_layout"),
@@ -319,12 +320,6 @@ pub(super) fn frame_logical_size(
     match pipeline_kind {
         FramePipelineKind::DirectColor => presentation.logical_size(),
         FramePipelineKind::Palette | FramePipelineKind::Ntsc => presentation.source_logical_size(),
-    }
-}
-
-fn cast_bytes<T>(value: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
     }
 }
 
