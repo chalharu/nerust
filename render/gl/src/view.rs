@@ -270,7 +270,7 @@ impl GlView {
             self.palette_height,
             gl::RGBA,
             gl::UNSIGNED_BYTE,
-            rgba8.as_ptr() as *const _,
+            rgba8.as_ptr().cast(),
         )
         .unwrap();
         active_texture(gl::TEXTURE0).unwrap();
@@ -413,7 +413,7 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
         0,
         gl::RGBA,
         gl::UNSIGNED_BYTE,
-        rgba.as_ptr() as *const _,
+        rgba.as_ptr().cast(),
     )
     .unwrap();
 }
@@ -442,7 +442,7 @@ fn configure_frame_texture(
         0,
         data_fmt,
         gl::UNSIGNED_BYTE,
-        data.as_ptr() as *const _,
+        data.as_ptr().cast(),
     )
     .unwrap();
 }

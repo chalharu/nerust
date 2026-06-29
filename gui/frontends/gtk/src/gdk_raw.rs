@@ -17,8 +17,6 @@ pub(crate) fn with_raw_handles<R>(
     display: &gdk::Display,
     f: impl FnOnce(RawWindowHandle, RawDisplayHandle) -> R,
 ) -> Option<R> {
-    use std::ffi::c_void;
-
     use gio::prelude::Cast;
 
     let ns_window = surface.downcast_ref::<gdk_macos::MacosSurface>()?.native();
@@ -27,7 +25,7 @@ pub(crate) fn with_raw_handles<R>(
         unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast()) }?;
     let ns_view = ns_window.contentView()?;
     let wh = RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
-        NonNull::new(objc2::rc::Retained::as_ptr(&ns_view) as *mut c_void).unwrap(),
+        NonNull::new(objc2::rc::Retained::as_ptr(&ns_view).cast_mut().cast()).unwrap(),
     ));
     let dh = display_to_raw(display)?;
     Some(f(wh, dh))
