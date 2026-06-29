@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod descriptor;
 pub mod load;
 pub mod settings;
