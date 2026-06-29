@@ -19,7 +19,6 @@ use nerust_gui_shell::{
         commands::SessionCommand,
     },
     settings::{
-        bindings::events::shortcut::shortcut_action_to_command,
         i18n::{UiText, text},
         scaling_factor,
     },
@@ -402,13 +401,17 @@ impl HostState {
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
         match shortcut {
-            KeyboardShortcut::Session(action) => {
-                if let Some(command) = shortcut_action_to_command(action) {
-                    let _ = self.session.run_command(command);
-                } else if matches!(action, ShortcutAction::ToggleFullscreen) {
-                    self.toggle_fullscreen();
+            KeyboardShortcut::Session(action) => match action {
+                ShortcutAction::TogglePause => self.toggle_pause(),
+                ShortcutAction::SaveActiveSlot => self.save_active_slot(),
+                ShortcutAction::SelectNextSlot => self.select_next_slot(),
+                ShortcutAction::SelectPreviousSlot => self.select_previous_slot(),
+                ShortcutAction::LoadActiveSlot => {
+                    let _ = self.load_active_slot();
                 }
-            }
+                ShortcutAction::Reset => self.reset(),
+                ShortcutAction::ToggleFullscreen => self.toggle_fullscreen(),
+            },
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
         self.sync_menu_state();
