@@ -37,6 +37,7 @@ impl CubebAudio {
         let playing_clone = playing.clone();
 
         let (sender, receiver) = sync_channel::<f32>(sample_rate as usize);
+        let receiver = Arc::new(receiver);
 
         let mut builder = cubeb::StreamBuilder::<MonoFrame<f32>>::new();
         builder
