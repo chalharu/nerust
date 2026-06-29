@@ -2,8 +2,11 @@ mod adapter;
 mod builder;
 mod settings;
 
+use clap::{Arg, ArgMatches, Command};
+
 use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::factory::cli::CliProvider;
 use nerust_core_traits::factory::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
@@ -72,6 +75,28 @@ impl CoreFactory for NesFactory {
 
     fn default_load_options(&self) -> SystemLoadOptions {
         SystemLoadOptions::default()
+    }
+}
+
+impl CliProvider for NesFactory {
+    fn extend_command(&self, cmd: Command) -> Command {
+        cmd.arg(
+            Arg::new("mmc3-irq-variant")
+                .long("mmc3-irq-variant")
+                .value_parser(["sharp", "nec"])
+                .help("Override mapper 4 MMC3 IRQ behavior"),
+        )
+    }
+
+    fn parse_core_options(&self, matches: &ArgMatches) -> Vec<u8> {
+        match matches
+            .get_one::<String>("mmc3-irq-variant")
+            .map(String::as_str)
+        {
+            Some("sharp") => MMC3_OPTION_SHARP.to_vec(),
+            Some("nec") => MMC3_OPTION_NEC.to_vec(),
+            _ => Vec::new(),
+        }
     }
 }
 

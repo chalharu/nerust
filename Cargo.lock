@@ -3193,6 +3193,7 @@ dependencies = [
 name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
+ "clap",
  "log",
  "nerust_input_traits",
  "nerust_render_base",
@@ -3341,6 +3342,7 @@ dependencies = [
 name = "nerust_nes_factory"
 version = "0.1.0-dev"
 dependencies = [
+ "clap",
  "log",
  "nerust_core_traits",
  "nerust_gui_runtime",

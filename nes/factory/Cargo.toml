@@ -15,6 +15,7 @@ nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_device.workspace = true
 nerust_render_base.workspace = true
+clap.workspace = true
 rmp-serde.workspace = true
 
 [dev-dependencies]
