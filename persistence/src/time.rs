@@ -1,8 +1,12 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use jiff::{Timestamp, tz::TimeZone};
+use time::OffsetDateTime;
+use time::macros::format_description;
 
 use crate::{error::PersistenceError, model::StateSlotSummary};
+
+const DATE_TIME_FORMAT: &[time::format_description::FormatItem<'static>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 pub fn format_slot_saved_at(saved_at: SystemTime) -> String {
     let Ok(duration) = saved_at.duration_since(UNIX_EPOCH) else {
@@ -10,11 +14,15 @@ pub fn format_slot_saved_at(saved_at: SystemTime) -> String {
     };
 
     let epoch_seconds = duration.as_secs() as i64;
-    let Ok(ts) = Timestamp::from_second(epoch_seconds) else {
+    let Ok(dt) = OffsetDateTime::from_unix_timestamp(epoch_seconds) else {
         return epoch_seconds.to_string();
     };
-    let zoned = ts.to_zoned(TimeZone::system());
-    zoned.strftime("%Y-%m-%d %H:%M:%S").to_string()
+    let Ok(offset) = time::UtcOffset::current_local_offset() else {
+        return epoch_seconds.to_string();
+    };
+    dt.to_offset(offset)
+        .format(DATE_TIME_FORMAT)
+        .unwrap_or_else(|_| epoch_seconds.to_string())
 }
 
 pub fn latest_saved_slot_id(slots: &[StateSlotSummary]) -> Option<u64> {
