@@ -41,4 +41,5 @@ pub trait FrontendSession {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError>;
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError>;
+    fn run_command(&mut self, command: crate::session::commands::SessionCommand);
 }
