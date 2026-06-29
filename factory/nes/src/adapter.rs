@@ -8,7 +8,7 @@ use nerust_nes_controller::{
     persisted::digital_event_from_persisted_ids,
 };
 
-use crate::input_state::NesInputState;
+use nerust_nes_controller::input_state::NesInputState;
 
 #[derive(Debug)]
 pub(crate) struct NesAdapter {
