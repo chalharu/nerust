@@ -24,6 +24,7 @@ nerust_gui_runtime.workspace = true
 nerust_factory_nes.workspace = true
 nerust_gui_shell.workspace = true
 nerust_input_traits.workspace = true
+nerust_nes_controller.workspace = true
 nerust_sound_cpal.workspace = true
 android_logger.workspace = true
 winit = { workspace = true, features = ["android-native-activity"] }
