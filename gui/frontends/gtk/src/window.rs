@@ -8,7 +8,6 @@ use gtk::{
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::{
     input::{KeyboardKey, ShortcutAction},
-    language::AppLanguage,
     local::ScalingMode,
 };
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
@@ -47,7 +46,6 @@ pub(crate) struct WindowCore {
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
     delete_slot_menu: gio::Menu,
-    language: AppLanguage,
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -69,6 +67,7 @@ pub(crate) trait WindowExtend {
     fn load_path(&self, path: &Path);
     fn close(&self);
     fn update_actions(&self);
+    fn rebuild_menubar(&self);
     fn refresh_title(&self);
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
@@ -180,7 +179,6 @@ impl WindowExtend for Window {
             gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
         let settings_action = gio::SimpleAction::new("settings", None);
         let _ = Surface::bind(&window, state.clone(), factory);
-        let language = state.borrow().settings_snapshot().shared.general.language;
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
@@ -200,7 +198,6 @@ impl WindowExtend for Window {
             save_slot_menu: state_menus.save_slot_menu,
             load_slot_menu: state_menus.load_slot_menu,
             delete_slot_menu: state_menus.delete_slot_menu,
-            language,
         }));
         {
             let result = result.clone();
@@ -362,6 +359,7 @@ impl WindowExtend for Window {
                     if was_running {
                         result_for_close.state().borrow_mut().resume();
                     }
+                    result_for_close.rebuild_menubar();
                     result_for_close.update_actions();
                 });
             });
@@ -376,20 +374,7 @@ impl WindowExtend for Window {
             });
         }
 
-        {
-            let state = result.state();
-            let state = state.borrow();
-            let language = state.settings_snapshot().shared.general.language;
-            let menu_model = build_menu_model(
-                language,
-                &gio::Menu::new(),
-                &result.borrow().select_active_slot_menu,
-                &result.borrow().save_slot_menu,
-                &result.borrow().load_slot_menu,
-                &result.borrow().delete_slot_menu,
-            );
-            result.application().set_menubar(Some(&menu_model));
-        }
+        result.rebuild_menubar();
 
         result.update_actions();
         window.present();
@@ -493,20 +478,6 @@ impl WindowExtend for Window {
             .state_delete_slot_action
             .set_enabled(state.loaded() && !state.slots().is_empty());
 
-        let language = state.settings_snapshot().shared.general.language;
-        if self.borrow().language != language {
-            self.borrow_mut().language = language;
-            let menu_model = build_menu_model(
-                language,
-                &gio::Menu::new(),
-                &self.borrow().select_active_slot_menu,
-                &self.borrow().save_slot_menu,
-                &self.borrow().load_slot_menu,
-                &self.borrow().delete_slot_menu,
-            );
-            self.application().set_menubar(Some(&menu_model));
-        }
-
         rebuild_slot_menu(
             &self.borrow().select_active_slot_menu,
             state.slots(),
@@ -533,6 +504,25 @@ impl WindowExtend for Window {
         );
         drop(state);
         self.refresh_title();
+    }
+
+    fn rebuild_menubar(&self) {
+        let language = self
+            .state()
+            .borrow()
+            .settings_snapshot()
+            .shared
+            .general
+            .language;
+        let menu_model = build_menu_model(
+            language,
+            &gio::Menu::new(),
+            &self.borrow().select_active_slot_menu,
+            &self.borrow().save_slot_menu,
+            &self.borrow().load_slot_menu,
+            &self.borrow().delete_slot_menu,
+        );
+        self.application().set_menubar(Some(&menu_model));
     }
 
     fn refresh_title(&self) {
