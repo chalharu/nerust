@@ -9,6 +9,11 @@ fn system_settings_to_bytes(s: &SystemSettings) -> Vec<u8> {
     }
 }
 
+fn system_settings_from_bytes(bytes: &[u8]) -> Option<SystemSettings> {
+    let nes = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(bytes).ok()?;
+    Some(SystemSettings::Nes(nes))
+}
+
 pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
     let language = match snapshot.shared.general.language {
         nerust_gui_settings::language::AppLanguage::Japanese => Language::Japanese,
@@ -37,15 +42,8 @@ pub fn apply_settings_choice(
     let mut view = settings_view(snapshot, &system_id);
     factory.apply_settings_choice(&mut view, field, choice)?;
     // Write back system config to snapshot
-    if !view.system_config_bytes.is_empty()
-        && let Ok(nes) = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(
-            &view.system_config_bytes,
-        )
-    {
-        snapshot.shared.systems.insert(
-            system_id,
-            nerust_gui_settings::shared::SystemSettings::Nes(nes),
-        );
+    if let Some(settings) = system_settings_from_bytes(&view.system_config_bytes) {
+        snapshot.shared.systems.insert(system_id, settings);
     }
     Ok(())
 }
