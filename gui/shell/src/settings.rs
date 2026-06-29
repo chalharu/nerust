@@ -106,15 +106,15 @@ pub fn apply_settings_choice(
     let mut view = settings_view(snapshot);
     factory.apply_settings_choice(&mut view, field, choice)?;
     // Write back system config to snapshot
-    if !view.system_config_bytes.is_empty() {
-        if let Ok(nes) = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(
+    if !view.system_config_bytes.is_empty()
+        && let Ok(nes) = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(
             &view.system_config_bytes,
-        ) {
-            snapshot.shared.systems.insert(
-                nerust_core_traits::SystemId::new("nes"),
-                nerust_gui_settings::shared::SystemSettings::Nes(nes),
-            );
-        }
+        )
+    {
+        snapshot.shared.systems.insert(
+            nerust_core_traits::SystemId::new("nes"),
+            nerust_gui_settings::shared::SystemSettings::Nes(nes),
+        );
     }
     Ok(())
 }

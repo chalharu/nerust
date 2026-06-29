@@ -22,7 +22,7 @@ use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
 use nerust_gui_shell::{
-    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldKind, SystemSettingsFieldModel},
+    descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
     factory::CoreFactory,
     settings::{
         bindings::{
