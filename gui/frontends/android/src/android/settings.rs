@@ -10,12 +10,12 @@ use std::sync::{
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
+use nerust_core_traits::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
     shared::SystemSettings,
 };
-use nerust_input_traits::SystemId;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -507,6 +507,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState,
@@ -514,7 +515,6 @@ mod tests {
         nes::{NesSettings, NesVideoFilter},
         shared::{DesktopSharedSettings, SystemSettings},
     };
-    use nerust_input_traits::SystemId;
 
     use super::*;
 

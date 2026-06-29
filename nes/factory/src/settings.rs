@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use nerust_core_traits::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
@@ -14,7 +15,6 @@ use nerust_gui_shell::{
     load::{ResolvedLoadRequest, SystemLoadOptions},
     settings::i18n::{UiText, text},
 };
-use nerust_input_traits::SystemId;
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::FilterType;
 
@@ -337,7 +337,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_input_traits::SystemId::new("nes"))
+            .get_mut(&nerust_core_traits::SystemId::new("nes"))
             .unwrap();
         nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
 
@@ -353,7 +353,7 @@ mod tests {
         let mut settings = default_shared_settings();
         let SystemSettings::Nes(nes) = settings
             .systems
-            .get_mut(&nerust_input_traits::SystemId::new("nes"))
+            .get_mut(&nerust_core_traits::SystemId::new("nes"))
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
