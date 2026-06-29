@@ -372,6 +372,21 @@ impl WindowExtend for Window {
             });
         }
 
+        {
+            let state = result.state();
+            let state = state.borrow();
+            let language = state.settings_snapshot().shared.general.language;
+            let menu_model = build_menu_model(
+                language,
+                &gio::Menu::new(),
+                &result.borrow().select_active_slot_menu,
+                &result.borrow().save_slot_menu,
+                &result.borrow().load_slot_menu,
+                &result.borrow().delete_slot_menu,
+            );
+            result.application().set_menubar(Some(&menu_model));
+        }
+
         result.update_actions();
         window.present();
         result.sync_fullscreen_from_settings();
@@ -497,16 +512,6 @@ impl WindowExtend for Window {
             state.active_slot_id(),
             "win.state-delete-slot",
         );
-        let language = state.settings_snapshot().shared.general.language;
-        let menu_model = build_menu_model(
-            language,
-            &gio::Menu::new(),
-            &self.borrow().select_active_slot_menu,
-            &self.borrow().save_slot_menu,
-            &self.borrow().load_slot_menu,
-            &self.borrow().delete_slot_menu,
-        );
-        self.application().set_menubar(Some(&menu_model));
         drop(state);
         self.refresh_title();
     }
