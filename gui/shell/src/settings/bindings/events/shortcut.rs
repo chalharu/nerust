@@ -25,7 +25,7 @@ pub fn shortcut_action_for_key(
         .map(|binding| binding.action)
 }
 
-fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> {
+pub fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> {
     Some(match action {
         ShortcutAction::TogglePause => SessionCommand::TogglePause,
         ShortcutAction::Reset => SessionCommand::Reset,
