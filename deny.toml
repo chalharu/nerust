@@ -13,9 +13,7 @@ ignore = [
   "RUSTSEC-2024-0418",
   "RUSTSEC-2024-0419",
   "RUSTSEC-2024-0420",
-  # The retained OpenAL backend depends on alto, whose latest release still pulls these crates.
-  "RUSTSEC-2021-0134",
-  "RUSTSEC-2022-0040",
+  "RUSTSEC-2026-0192",
   # GTK3 macro dependencies have no patched release in the GTK3 line.
   "RUSTSEC-2024-0370",
 ]
