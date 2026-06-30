@@ -55,8 +55,16 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
 
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings = vec![
-        default_control_binding(NES_ATTACHMENT_CONTROLLER_ONE, NES_CONTROL_A, KeyboardKey::KeyZ),
-        default_control_binding(NES_ATTACHMENT_CONTROLLER_ONE, NES_CONTROL_B, KeyboardKey::KeyX),
+        default_control_binding(
+            NES_ATTACHMENT_CONTROLLER_ONE,
+            NES_CONTROL_A,
+            KeyboardKey::KeyZ,
+        ),
+        default_control_binding(
+            NES_ATTACHMENT_CONTROLLER_ONE,
+            NES_CONTROL_B,
+            KeyboardKey::KeyX,
+        ),
         default_control_binding(
             NES_ATTACHMENT_CONTROLLER_ONE,
             NES_CONTROL_SELECT,
@@ -67,7 +75,11 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
             NES_CONTROL_START,
             KeyboardKey::KeyV,
         ),
-        default_control_binding(NES_ATTACHMENT_CONTROLLER_ONE, NES_CONTROL_UP, KeyboardKey::ArrowUp),
+        default_control_binding(
+            NES_ATTACHMENT_CONTROLLER_ONE,
+            NES_CONTROL_UP,
+            KeyboardKey::ArrowUp,
+        ),
         default_control_binding(
             NES_ATTACHMENT_CONTROLLER_ONE,
             NES_CONTROL_DOWN,
@@ -88,12 +100,23 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
         .or_default();
-    settings.input.systems.insert(SystemId::new("nes"), nes_input);
+    settings
+        .input
+        .systems
+        .insert(SystemId::new("nes"), nes_input);
 
     let mut snes_input = nerust_gui_settings::input::SystemInputSettings::default();
     snes_input.implicit_keyboard_profile_mut().bindings = vec![
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_B, KeyboardKey::KeyZ),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_Y, KeyboardKey::KeyX),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_B,
+            KeyboardKey::KeyZ,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_Y,
+            KeyboardKey::KeyX,
+        ),
         default_control_binding(
             SNES_ATTACHMENT_CONTROLLER_ONE,
             SNES_CONTROL_SELECT,
@@ -104,7 +127,11 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
             SNES_CONTROL_START,
             KeyboardKey::KeyV,
         ),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_UP, KeyboardKey::ArrowUp),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_UP,
+            KeyboardKey::ArrowUp,
+        ),
         default_control_binding(
             SNES_ATTACHMENT_CONTROLLER_ONE,
             SNES_CONTROL_DOWN,
@@ -120,16 +147,35 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
             SNES_CONTROL_RIGHT,
             KeyboardKey::ArrowRight,
         ),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_A, KeyboardKey::KeyA),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_X, KeyboardKey::KeyS),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_L, KeyboardKey::KeyQ),
-        default_control_binding(SNES_ATTACHMENT_CONTROLLER_ONE, SNES_CONTROL_R, KeyboardKey::KeyW),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_A,
+            KeyboardKey::KeyA,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_X,
+            KeyboardKey::KeyS,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_L,
+            KeyboardKey::KeyQ,
+        ),
+        default_control_binding(
+            SNES_ATTACHMENT_CONTROLLER_ONE,
+            SNES_CONTROL_R,
+            KeyboardKey::KeyW,
+        ),
     ];
     let _ = snes_input
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
         .or_default();
-    settings.input.systems.insert(SystemId::new("snes"), snes_input);
+    settings
+        .input
+        .systems
+        .insert(SystemId::new("snes"), snes_input);
 
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
@@ -188,10 +234,7 @@ fn default_control_binding(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::SystemId;
-    use nerust_gui_settings::{
-        input::ShortcutAction,
-        shared::SystemSettings,
-    };
+    use nerust_gui_settings::{input::ShortcutAction, shared::SystemSettings};
 
     use crate::test_support::TEST_CTRL_MIC;
 
