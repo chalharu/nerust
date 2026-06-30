@@ -25,7 +25,7 @@ jobs:
           components: rustfmt, clippy
       - name: Restore Cargo registry cache
         id: cargo-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -44,7 +44,7 @@ jobs:
           cargo test -p nerust_timer --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -75,7 +75,7 @@ jobs:
           toolchain: 1.96.0
       - name: Restore Cargo registry cache
         id: cargo-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -86,7 +86,7 @@ jobs:
         run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -116,7 +116,7 @@ jobs:
           toolchain: 1.96.0
       - name: Restore Cargo registry cache
         id: cargo-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -127,7 +127,7 @@ jobs:
         run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -161,7 +161,7 @@ jobs:
           packaging/android/install-cargo-ndk.sh
       - name: Restore Cargo registry and build cache
         id: cargo-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -171,7 +171,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-android-
       - name: Restore Gradle cache
         id: gradle-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -187,7 +187,7 @@ jobs:
           packaging/android/package.sh
       - name: Save Cargo registry and build cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -196,7 +196,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Save Gradle cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -239,7 +239,7 @@ jobs:
           packaging/android/install-cargo-ndk.sh
       - name: Restore Cargo registry and build cache
         id: cargo-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -249,7 +249,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-android-e2e-
       - name: Restore Gradle cache
         id: gradle-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -269,7 +269,7 @@ jobs:
             packaging/android/e2e.sh
       - name: Save Cargo registry and build cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -278,7 +278,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Save Gradle cache
         if: github.event_name == 'push'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
