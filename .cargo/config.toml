@@ -1,2 +1,2 @@
-[env]
-LIBCUBEB_SYS_USE_PKG_CONFIG = "1"
+[target.'cfg(all())'.cubeb]
+rustc-env = { LIBCUBEB_SYS_USE_PKG_CONFIG = "1" }
