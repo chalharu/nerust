@@ -1,0 +1,24 @@
+[package]
+name = "nerust_gui_shell"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_core_traits.workspace = true
+nerust_emu_thread.workspace = true
+nerust_gui_settings.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_input_traits.workspace = true
+nerust_persistence.workspace = true
+nerust_render_base.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+nerust_core_traits.workspace = true

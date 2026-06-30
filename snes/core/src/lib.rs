@@ -17,7 +17,7 @@ pub use ppu1::Mode7Registers;
 
 use bus::Bus;
 use cpu::{Cpu, CpuFault};
-use nerust_sound_traits::MixerInput;
+use nerust_core_traits::audio::AudioBackend;
 use scheduler::Scheduler;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -137,7 +137,7 @@ impl Core {
             .map_err(Into::into)
     }
 
-    pub fn run_for_cycles_with_audio<M: MixerInput>(
+    pub fn run_for_cycles_with_audio<M: AudioBackend>(
         &mut self,
         cycles: u64,
         mixer: &mut M,

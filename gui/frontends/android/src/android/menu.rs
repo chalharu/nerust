@@ -1,25 +1,29 @@
+use std::{mem, sync::Mutex};
+
 use jni::objects::{JObject, JString};
-use std::mem;
-use std::sync::Mutex;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 use super::{library, settings};
 
+const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
 const ACTION_OPEN_LIBRARY: &str = "open_library";
 const ACTION_OPEN_SETTINGS: &str = "open_settings";
 const ACTION_RESET: &str = "reset";
 const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
+const ACTION_UNLOAD: &str = "unload";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
+    Exit,
     LoadState,
     OpenLibrary,
     OpenSettings,
     Reset,
     SaveState,
     TogglePause,
+    Unload,
 }
 
 static MENU_ACTIONS: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
@@ -46,12 +50,14 @@ pub(crate) fn take_actions() -> Vec<MenuAction> {
 
 fn decode_action(raw: &str) -> Option<MenuAction> {
     match raw {
+        ACTION_EXIT => Some(MenuAction::Exit),
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
         ACTION_OPEN_LIBRARY => Some(MenuAction::OpenLibrary),
         ACTION_OPEN_SETTINGS => Some(MenuAction::OpenSettings),
         ACTION_RESET => Some(MenuAction::Reset),
         ACTION_SAVE_STATE => Some(MenuAction::SaveState),
         ACTION_TOGGLE_PAUSE => Some(MenuAction::TogglePause),
+        ACTION_UNLOAD => Some(MenuAction::Unload),
         _ => None,
     }
 }
@@ -131,8 +137,10 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 
 #[cfg(test)]
 mod tests {
-    use super::{ACTION_LOAD_STATE, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, MenuAction};
-    use super::{ACTION_OPEN_LIBRARY, ACTION_OPEN_SETTINGS, ACTION_RESET, decode_action};
+    use super::{
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_LIBRARY, ACTION_OPEN_SETTINGS, ACTION_RESET,
+        ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
+    };
 
     #[test]
     fn decode_action_maps_known_ids() {
@@ -157,6 +165,8 @@ mod tests {
             Some(MenuAction::LoadState)
         );
         assert_eq!(decode_action(ACTION_RESET), Some(MenuAction::Reset));
+        assert_eq!(decode_action(ACTION_EXIT), Some(MenuAction::Exit));
+        assert_eq!(decode_action(ACTION_UNLOAD), Some(MenuAction::Unload));
     }
 
     #[test]

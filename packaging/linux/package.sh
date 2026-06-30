@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # packaging/linux/package.sh
 #
-# Build a release tarball for the Nerust Tao frontend on Linux.
+# Build a release tarball for Nerust on Linux.
 #
 # Usage:
 #   packaging/linux/package.sh <arch>
@@ -11,8 +11,8 @@
 #          "x86_64" or "aarch64".
 #
 # Environment:
-#   BINARY   Path to the compiled nerust_tao binary.
-#            Defaults to target/release/nerust_tao.
+#   BINARY   Path to the compiled nerust binary.
+#            Defaults to target/release/nerust.
 #   OUT_DIR  Directory where the tarball is written.
 #            Defaults to target/dist.
 #
@@ -20,7 +20,7 @@
 #   <OUT_DIR>/nerust-<tag>-linux-<arch>.tar.gz
 #
 # Contents of the tarball:
-#   nerust_tao   - the release binary
+#   nerust       - the release binary
 #   README.md    - project README
 #   LICENSE      - MPL-2.0 licence
 
@@ -31,7 +31,7 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps | perl -0ne 'print $1 if /"target_directory"\s*:\s*"([^"]+)"/')}"
 
 ARCH="${1:?Usage: package.sh <arch>}"
-BINARY="${BINARY:-${TARGET_DIR}/release/nerust_tao}"
+BINARY="${BINARY:-${TARGET_DIR}/release/nerust}"
 OUT_DIR="${OUT_DIR:-${TARGET_DIR}/dist}"
 TAG_NAME="${TAG_NAME:-$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")}"
 
@@ -57,12 +57,12 @@ fi
 rm -rf "${STAGE_DIR}"
 mkdir -p "${STAGE_DIR}"
 
-cp "${BINARY}"   "${STAGE_DIR}/nerust_tao"
+cp "${BINARY}"   "${STAGE_DIR}/nerust"
 cp README.md     "${STAGE_DIR}/README.md"
 cp LICENSE       "${STAGE_DIR}/LICENSE"
 
 # Ensure the binary is executable
-chmod +x "${STAGE_DIR}/nerust_tao"
+chmod +x "${STAGE_DIR}/nerust"
 
 # Create tarball (reproducible: sort entries, zero mtime)
 mkdir -p "${OUT_DIR}"

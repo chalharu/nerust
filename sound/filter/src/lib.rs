@@ -84,23 +84,3 @@ impl<F1: Filter, F2: Filter> Filter for ChaindFilter<F1, F2> {
         self.filter2.step(self.filter1.step(data))
     }
 }
-
-pub type NesFilter = ChaindFilter<ChaindFilter<IirFilter, IirFilter>, IirFilter>;
-pub type SnesFilter = ChaindFilter<IirFilter, IirFilter>;
-
-impl NesFilter {
-    pub fn new(sample_rate: f32) -> Self {
-        IirFilter::get_lowpass_filter(sample_rate, 14000.0)
-            .chain(IirFilter::get_highpass_filter(sample_rate, 90.0))
-            .chain(IirFilter::get_highpass_filter(sample_rate, 442.0))
-    }
-}
-
-impl SnesFilter {
-    pub fn new(sample_rate: f32) -> Self {
-        let lowpass_cutoff = 16000.0_f32.min(sample_rate * 0.45).max(1.0);
-        let highpass_cutoff = 20.0_f32.min(sample_rate * 0.10).max(1.0);
-        IirFilter::get_lowpass_filter(sample_rate, lowpass_cutoff)
-            .chain(IirFilter::get_highpass_filter(sample_rate, highpass_cutoff))
-    }
-}

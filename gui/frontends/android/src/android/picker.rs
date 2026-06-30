@@ -1,11 +1,17 @@
-use crate::import_metadata;
-use jni::objects::{JObject, JString, JValue};
-use jni::refs::Global;
-use jni::sys::jobject;
-use jni::{JavaVM, jni_sig, jni_str};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
+use jni::{
+    JavaVM, jni_sig, jni_str,
+    objects::{JObject, JString, JValue},
+    refs::Global,
+    sys::jobject,
+};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+
+use crate::import_metadata;
 
 const ROM_PICKER_BUFFER_CAPACITY: usize = 8 * 1024;
 

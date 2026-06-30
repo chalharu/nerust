@@ -1,12 +1,10 @@
 mod host;
-mod renderer;
 
-use self::host::{HostAction, HostState};
-use self::renderer::WgpuRenderer;
-use crate::app_menu::{UserEvent, imp::AppMenu};
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::load::LoadRequest;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use nerust_gui_shell::context::FrontendContext;
+use nerust_render_base::{GpuRenderer, RendererConfig, SurfaceSize};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -14,46 +12,66 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
+use self::host::{HostAction, HostState};
+use crate::app_menu::{UserEvent, imp::AppMenu};
+
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn GpuRenderer>>,
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(default_load_request: LoadRequest) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
             let mut event_loop = event_loop;
-            // Explicitly let macOS activate the app even when another app is currently active.
             event_loop.set_activate_ignoring_other_apps(true);
             event_loop
         };
         let proxy = event_loop.create_proxy();
+        let app_menu = AppMenu::new(proxy);
+
+        let host = HostState::new(ctx, app_menu);
 
         Self {
             event_loop: Some(event_loop),
-            host: HostState::new(AppMenu::new(proxy.clone()), proxy, default_load_request),
+            host,
             renderer: None,
         }
     }
 
-    pub(crate) fn load(&mut self, data: Vec<u8>) {
-        if self.host.load(data) {
-            self.recreate_renderer();
-        }
-    }
-
-    pub(crate) fn load_with_options(
-        &mut self,
-        rom_path: Option<PathBuf>,
-        data: Vec<u8>,
-        request: LoadRequest,
-    ) {
-        if self.host.load_with_options(rom_path, data, request) {
-            self.recreate_renderer();
-        }
+    fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
+        let size = window.inner_size();
+        let session = self.host.session();
+        let vsync = session.settings_snapshot().local.video.presentation.vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        let config = RendererConfig {
+            render_profile: session.render_profile().clone(),
+            vsync,
+        };
+        let mut renderer = self
+            .host
+            .gpu_factory()
+            .create_renderer(&config, raw_display_handle)
+            .expect("failed to create renderer");
+        renderer
+            .attach(
+                raw_window_handle,
+                raw_display_handle,
+                SurfaceSize::new(size.width, size.height),
+            )
+            .expect("failed to attach");
+        self.renderer = Some(renderer);
+        Some(())
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
@@ -80,31 +98,79 @@ impl WindowRuntime {
                 WindowEvent::CloseRequested if self.host.prepare_close() => {
                     *control_flow = ControlFlow::Exit;
                 }
-                WindowEvent::Focused(false) => self.host.clear_keys(),
+                WindowEvent::Focused(true) => {
+                    self.host.active = true;
+                    if self.host.auto_paused() {
+                        self.host.resume_session();
+                        self.host.clear_auto_paused();
+                    }
+                    self.host.request_redraw();
+                }
+                WindowEvent::Focused(false) => {
+                    self.host.active = false;
+                    if self.host.session().can_pause() {
+                        self.host.pause_session();
+                        self.host.set_auto_paused();
+                    }
+                    self.host.clear_keys();
+                }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
-                    if let Some(window_size) = self.host.window_surface_size()
-                        && let Some(renderer) = self.renderer.as_mut()
-                    {
-                        renderer.reconfigure(window_size);
-                    }
                     self.host.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
                 _ => (),
             },
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_settings_window(window_id) => {
+                let Some(handle) = self.host.settings_window.as_mut() else {
+                    return;
+                };
+                match &event {
+                    WindowEvent::Resized(size) => handle.resize(size.width, size.height),
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        handle.set_scale_factor(*scale_factor as f32);
+                    }
+                    WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
+                    WindowEvent::CloseRequested => {
+                        handle
+                            .should_close
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    _ => {}
+                }
+                handle.update_modifiers_from_tao_event(&event);
+                handle.handle_tao_event(event);
+                handle.render();
+                if handle
+                    .should_close
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    let handle = self.host.settings_window.take().unwrap();
+                    let plan = self.host.close_settings_window(handle);
+                    if plan.is_some_and(|p| p.renderer_needs_rebuild) {
+                        self.recreate_renderer();
+                    }
+                    self.host.request_redraw();
+                }
+            }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
+            Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
+                if let Some(handle) = self.host.settings_window.as_mut() {
+                    handle.render();
+                }
+            }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
             Event::UserEvent(command) => match command {
-                UserEvent::Menu(command) => match self.host.on_menu_command(command) {
-                    HostAction::None => (),
-                    HostAction::RomLoaded => self.recreate_renderer(),
-                    HostAction::Exit => *control_flow = ControlFlow::Exit,
-                },
-                UserEvent::ApplySettings { snapshot, reply } => {
-                    let _ = reply.send(self.apply_settings(snapshot));
+                UserEvent::Menu(command) => {
+                    let action = self.host.on_menu_command(command, event_loop);
+                    match action {
+                        HostAction::None => (),
+                        HostAction::RomLoaded => self.recreate_renderer(),
+                        HostAction::Exit => *control_flow = ControlFlow::Exit,
+                    }
                 }
-                UserEvent::SettingsClosed => self.host.on_settings_closed(),
             },
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
@@ -119,25 +185,21 @@ impl WindowRuntime {
             return;
         };
 
-        let result = renderer.render(self.host.session(), window_size);
+        // Keep the output sized to the current window.
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+
+        self.host.session_mut().swap_frame_buffer();
+        let result = renderer.render(self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);
     }
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        self.renderer = self
-            .host
-            .window()
-            .cloned()
-            .map(|window| WgpuRenderer::new(window, self.host.session()));
-    }
-
-    fn apply_settings(&mut self, settings: SettingsSnapshot) -> Result<(), String> {
-        let plan = self.host.apply_settings(settings)?;
-        if plan.renderer_rebuild_required {
-            self.recreate_renderer();
+        if let Some(window) = self.host.window().cloned() {
+            self.build_renderer_and_surface(&window);
         }
-        Ok(())
     }
 }
 

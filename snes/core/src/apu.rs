@@ -39,7 +39,7 @@ const SMP_FLAG_P: u8 = 0x20;
 const SMP_FLAG_V: u8 = 0x40;
 const SMP_FLAG_N: u8 = 0x80;
 
-use nerust_sound_traits::MixerInput;
+use nerust_core_traits::audio::AudioBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IplState {
@@ -271,7 +271,7 @@ impl Apu {
         }
     }
 
-    pub(crate) fn mix_audio_for_cpu_cycles<M: MixerInput + ?Sized>(
+    pub(crate) fn mix_audio_for_cpu_cycles<M: AudioBackend + ?Sized>(
         &mut self,
         cycles: u32,
         mixer: &mut M,
@@ -2072,14 +2072,18 @@ mod tests {
     use super::{
         Apu, DSP_KEY_ON, DSP_SOURCE_DIRECTORY, SMP_FLAG_C, SMP_FLAG_N, SMP_FLAG_V, SMP_FLAG_Z,
     };
-    use nerust_sound_traits::MixerInput;
+    use nerust_core_traits::audio::AudioBackend;
 
     #[derive(Default)]
     struct CapturingMixer {
         samples: Vec<f32>,
     }
 
-    impl MixerInput for CapturingMixer {
+    impl AudioBackend for CapturingMixer {
+        fn start(&mut self) {}
+
+        fn pause(&mut self) {}
+
         fn push(&mut self, data: f32) {
             self.samples.push(data);
         }

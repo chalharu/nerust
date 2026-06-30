@@ -1,5 +1,6 @@
-use crate::error::PersistenceError;
 use png::{BitDepth, ColorType, Encoder};
+
+use crate::error::PersistenceError;
 
 const THUMBNAIL_TARGET_WIDTH: u32 = 320;
 

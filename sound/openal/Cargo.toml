@@ -8,7 +8,5 @@ rust-version.workspace = true
 
 [dependencies]
 alto.workspace = true
-libc.workspace = true
 log.workspace = true
-nerust_sound_traits.workspace = true
-nerust_soundfilter.workspace = true
+nerust_core_traits.workspace = true

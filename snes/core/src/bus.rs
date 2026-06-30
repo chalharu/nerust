@@ -3,7 +3,7 @@ use crate::{
     Cartridge, PresentedBackdropLine, PresentedBg1Line, PresentedColorWindowLine,
     PresentedMainScreenLine, memory::Memory, ppu1::Ppu1, ppu2::Ppu2,
 };
-use nerust_sound_traits::MixerInput;
+use nerust_core_traits::audio::AudioBackend;
 
 const ADDRESS_MASK: u32 = 0x00FF_FFFF;
 const CPU_IO_REGISTER_COUNT: usize = 0x20;
@@ -309,7 +309,7 @@ impl Bus {
         }
     }
 
-    pub(crate) fn mix_audio_for_cpu_cycles<M: MixerInput + ?Sized>(
+    pub(crate) fn mix_audio_for_cpu_cycles<M: AudioBackend + ?Sized>(
         &mut self,
         cycles: u32,
         mixer: &mut M,
@@ -1555,7 +1555,7 @@ impl CpuBus for Bus {
 pub(crate) struct ScheduledCpuBus<'a> {
     bus: &'a mut Bus,
     pending_cycles: u32,
-    audio_mixer: Option<&'a mut dyn MixerInput>,
+    audio_mixer: Option<&'a mut dyn AudioBackend>,
 }
 
 impl<'a> ScheduledCpuBus<'a> {
@@ -1567,7 +1567,7 @@ impl<'a> ScheduledCpuBus<'a> {
         }
     }
 
-    pub(crate) fn new_with_audio<M: MixerInput + 'a>(bus: &'a mut Bus, mixer: &'a mut M) -> Self {
+    pub(crate) fn new_with_audio<M: AudioBackend + 'a>(bus: &'a mut Bus, mixer: &'a mut M) -> Self {
         Self {
             bus,
             pending_cycles: 0,

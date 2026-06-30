@@ -1,0 +1,13 @@
+[package]
+name = "nerust_emu_thread"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_core_traits.workspace = true
+nerust_timer.workspace = true
+thiserror.workspace = true

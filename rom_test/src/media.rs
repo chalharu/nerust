@@ -1,49 +1,72 @@
-use super::error::RomTestError;
-use nerust_crc64_hasher::Crc64Hasher;
-use nerust_screen_buffer::screen_buffer::ScreenBuffer;
-use nerust_screen_filter::FilterType;
-use nerust_screen_logical::LogicalSize;
-use nerust_sound_traits::MixerInput;
-use png::{BitDepth, ColorType, Encoder};
-use std::hash::{Hash, Hasher};
-use std::io::Cursor;
+use std::{
+    hash::{Hash, Hasher},
+    io::Cursor,
+};
 
-pub(crate) fn validation_screen_buffer() -> ScreenBuffer {
-    ScreenBuffer::new(
-        FilterType::None,
-        LogicalSize {
-            width: 256,
-            height: 240,
+use crc::{CRC_64_XZ, Crc, Digest};
+use nerust_core_traits::audio::AudioBackend;
+use nerust_render_base::{FilterType, FrameBuffer, LogicalSize, PixelFormat};
+use png::{BitDepth, ColorType, Encoder};
+
+use super::error::RomTestError;
+
+const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
+
+pub(crate) fn validation_screen_buffer() -> FrameBuffer {
+    let mut palette = [0u32; 256];
+    let assets = FilterType::None.palette_console_video_assets();
+    let rgba8 = assets.palette_rgba8();
+    for (i, entry) in palette.iter_mut().enumerate().take(64) {
+        let pos = i * 4;
+        *entry = u32::from(rgba8[pos]) << 24
+            | u32::from(rgba8[pos + 1]) << 16
+            | u32::from(rgba8[pos + 2]) << 8
+            | u32::from(rgba8[pos + 3]);
+    }
+    let mut fb = FrameBuffer::with_capacity(
+        256,
+        240,
+        PixelFormat::PaletteIndex {
+            palette: Box::new(palette),
         },
-    )
+    );
+    fb.resize(256, 240);
+    fb
 }
 
-pub(crate) fn screen_hash(screen_buffer: &ScreenBuffer) -> u64 {
+pub(crate) fn screen_hash(frame: &FrameBuffer) -> u64 {
     let mut hasher = Crc64Hasher::new();
-    screen_buffer.hash(&mut hasher);
+    frame.as_ref().hash(&mut hasher);
     hasher.finish()
 }
 
-pub(crate) fn encode_screenshot_png(screen_buffer: &ScreenBuffer) -> Result<Vec<u8>, RomTestError> {
-    let logical_size = screen_buffer.logical_size();
-    let mut buffer = vec![0_u8; screen_buffer.frame_len()];
-    screen_buffer.copy_display_buffer(&mut buffer);
-    let mut rgba = Vec::with_capacity(buffer.len());
+pub(crate) fn encode_screenshot_png(frame: &FrameBuffer) -> Result<Vec<u8>, RomTestError> {
+    let w = frame.width();
+    let h = frame.height();
+    let src = frame.as_ref();
+    let palette_rgba8 = match frame.palette_as_rgba8() {
+        Some(p) => p,
+        None => {
+            let assets = FilterType::None.palette_console_video_assets();
+            let src_pal = assets.palette_rgba8();
+            let mut out = [0u8; 256];
+            let n = src_pal.len().min(256);
+            out[..n].copy_from_slice(&src_pal[..n]);
+            out
+        }
+    };
+    let mut rgba = Vec::with_capacity(w * h * 4);
 
-    for pixel in buffer.chunks_exact(4) {
-        let value = u32::from_ne_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
-        rgba.push((value & 0xFF) as u8);
-        rgba.push(((value >> 8) & 0xFF) as u8);
-        rgba.push(((value >> 16) & 0xFF) as u8);
-        rgba.push(((value >> 24) & 0xFF) as u8);
+    for &index in src.iter().take(w * h) {
+        let i = usize::from(index.min(63)) * 4;
+        rgba.push(palette_rgba8[i]);
+        rgba.push(palette_rgba8[i + 1]);
+        rgba.push(palette_rgba8[i + 2]);
+        rgba.push(palette_rgba8[i + 3]);
     }
 
     let mut encoded = Cursor::new(Vec::new());
-    let mut encoder = Encoder::new(
-        &mut encoded,
-        logical_size.width as u32,
-        logical_size.height as u32,
-    );
+    let mut encoder = Encoder::new(&mut encoded, w as u32, h as u32);
     encoder.set_color(ColorType::Rgba);
     encoder.set_depth(BitDepth::Eight);
     let mut writer = encoder.write_header()?;
@@ -51,6 +74,24 @@ pub(crate) fn encode_screenshot_png(screen_buffer: &ScreenBuffer) -> Result<Vec<
     drop(writer);
 
     Ok(encoded.into_inner())
+}
+
+struct Crc64Hasher(Digest<'static, u64>);
+
+impl Crc64Hasher {
+    fn new() -> Self {
+        Self(CRC64_LEGACY_ECMA.digest())
+    }
+}
+
+impl Hasher for Crc64Hasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.clone().finalize()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +122,9 @@ impl HashingMixer {
     }
 }
 
-impl MixerInput for HashingMixer {
+impl AudioBackend for HashingMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, data: f32) {
         self.samples += 1;
         self.checksum ^= u64::from(data.to_bits());

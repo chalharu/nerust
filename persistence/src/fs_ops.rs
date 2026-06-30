@@ -1,9 +1,12 @@
+use std::{
+    fs::{self, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::error::PersistenceError;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -99,8 +102,8 @@ fn replace_path(from: &Path, to: &Path) -> Result<(), PersistenceError> {
 
 #[cfg(windows)]
 fn replace_path(from: &Path, to: &Path) -> Result<(), PersistenceError> {
-    use std::iter;
-    use std::os::windows::ffi::OsStrExt;
+    use std::{iter, os::windows::ffi::OsStrExt};
+
     use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
 
     let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(iter::once(0)).collect();

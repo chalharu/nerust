@@ -1,7 +1,8 @@
-use super::super::runtime::ValidationRuntime;
-use super::ValidationArtifacts;
-use crate::error::RomTestError;
-use crate::results::{ScreenCheck, ValidationOptions};
+use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use crate::{
+    error::RomTestError,
+    results::{ScreenCheck, ValidationOptions},
+};
 
 #[derive(Default)]
 pub(super) struct ScreenArtifacts {

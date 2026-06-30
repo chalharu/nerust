@@ -21,7 +21,7 @@
 
     <!-- Executable -->
     <key>CFBundleExecutable</key>
-    <string>nerust_tao</string>
+    <string>nerust</string>
 
     <key>CFBundlePackageType</key>
     <string>APPL</string>

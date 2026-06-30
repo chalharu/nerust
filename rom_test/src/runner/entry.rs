@@ -1,6 +1,8 @@
 use super::validation::runner::ValidationRunner;
-use crate::manifest::{RomCase, read_rom};
-use crate::results::{CaseOutcome, ValidationOptions};
+use crate::{
+    manifest::{RomCase, read_rom},
+    results::{CaseOutcome, ValidationOptions},
+};
 
 pub(super) fn validate_case(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
     match read_rom(case)

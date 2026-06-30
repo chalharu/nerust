@@ -1,8 +1,13 @@
-use crate::metadata::STATE_ARCHIVE_SCHEMA_VERSION;
-use crate::model::StateSlotSummary;
-use crate::time::{format_slot_saved_at, latest_saved_slot_id};
-use std::path::PathBuf;
-use std::time::{Duration, UNIX_EPOCH};
+use std::{
+    path::PathBuf,
+    time::{Duration, UNIX_EPOCH},
+};
+
+use crate::{
+    metadata::STATE_ARCHIVE_SCHEMA_VERSION,
+    model::StateSlotSummary,
+    time::{format_slot_saved_at, latest_saved_slot_id},
+};
 
 #[test]
 fn slot_timestamp_format_is_human_readable() {

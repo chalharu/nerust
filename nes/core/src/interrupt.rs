@@ -1,0 +1,74 @@
+bitflags::bitflags! {
+    #[derive(
+        serde::Serialize,
+        serde::Deserialize,
+        Debug,
+        Clone,
+        Copy,
+    )]
+    pub(crate) struct IrqSource: u8 {
+        const EXTERNAL = 0b0000_0001;
+        const FRAME_COUNTER = 0b0000_0010;
+        const DMC = 0b0000_0100;
+        #[allow(dead_code, reason = "FDS IRQ placeholder")]
+        const FDS_DISK = 0b0000_1000;
+        const ALL = 0xFF;
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DmcDmaKind {
+    Load,
+    Reload,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
+pub(crate) struct Interrupt {
+    pub nmi: bool,
+    pub executing: bool,
+    pub detected: bool,
+    pub irq_mask: IrqSource,
+    pub irq_flag: IrqSource,
+    pub oam_dma: Option<u8>,
+    pub dmc_dma_request: Option<DmcDmaKind>,
+}
+
+impl Interrupt {
+    pub fn new() -> Self {
+        Self {
+            nmi: false,
+            executing: false,
+            detected: false,
+            irq_mask: IrqSource::empty(),
+            irq_flag: IrqSource::empty(),
+            oam_dma: None,
+            dmc_dma_request: None,
+        }
+    }
+
+    pub fn set_irq(&mut self, source: IrqSource) {
+        self.irq_flag |= source;
+    }
+
+    pub fn get_irq(&mut self, source: IrqSource) -> bool {
+        !(self.irq_flag & source).is_empty()
+    }
+
+    pub fn clear_irq(&mut self, source: IrqSource) {
+        self.irq_flag &= !source;
+    }
+
+    pub fn reset(&mut self) {
+        self.nmi = false;
+        self.executing = false;
+        self.detected = false;
+        self.oam_dma = None;
+        self.dmc_dma_request = None;
+    }
+}
+
+impl Default for Interrupt {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -1,7 +1,10 @@
-use super::error::RomTestError;
-use super::serde_helpers::{hex_u8, hex_u16, hex_u64};
-use nerust_input_nes::frame::Buttons;
-use serde_derive::{Deserialize, Serialize};
+use nerust_nes_core::input_types::Buttons;
+use serde::{Deserialize, Serialize};
+
+use super::{
+    error::RomTestError,
+    serde_helpers::{hex_u8, hex_u16, hex_u64},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RomEvent {

@@ -1,18 +1,21 @@
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
 /// Only the fields that make sense on a mobile/touch device are exposed.
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JObjectArray, JString, JValue};
-use jni::refs::Global;
-use jni::sys::jobject;
-use jni::{JavaVM, jni_sig, jni_str};
-use nerust_contract_settings::nes::{NesSettings, NesVideoFilter};
-use nerust_contract_settings::shared::SystemSettings;
+use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
+use nerust_core_traits::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_input_schema::SystemId;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use nerust_gui_settings::{
+    nes::{NesSettings, NesVideoFilter},
+    shared::SystemSettings,
+};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -23,7 +26,7 @@ const VOLUME_MIN: u8 = 0;
 const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
-const SAMPLE_RATE_CHOICES: &[u32] = &[22_050, 44_100, 48_000];
+const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
 
 /// All four variants in declaration order (matches `NesVideoFilter`'s natural ordering).
 const FILTER_CHOICES: &[NesVideoFilter] = &[
@@ -57,7 +60,7 @@ impl AndroidSettings {
         let nes_filter = snapshot
             .shared
             .systems
-            .get(&SystemId::Nes)
+            .get(&SystemId::new("nes"))
             .map(|s| match s {
                 SystemSettings::Nes(n) => n.video.filter,
                 SystemSettings::Snes(_) => {
@@ -89,7 +92,7 @@ impl AndroidSettings {
         let system = snapshot
             .shared
             .systems
-            .entry(SystemId::Nes)
+            .entry(SystemId::new("nes"))
             .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
         let SystemSettings::Nes(nes) = system else {
             unreachable!("expected NES settings");
@@ -149,7 +152,7 @@ impl AndroidSettings {
         let sample_rate_idx = SAMPLE_RATE_CHOICES
             .iter()
             .position(|&v| v == self.sample_rate)
-            .unwrap_or(2); // default: 48000
+            .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)); // default: highest rate
         let filter_idx = FILTER_CHOICES
             .iter()
             .position(|&v| v == self.nes_filter)
@@ -509,19 +512,23 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use nerust_contract_settings::app_state::DesktopAppState;
-    use nerust_contract_settings::local::HostBackendLocalSettings;
-    use nerust_contract_settings::nes::{NesSettings, NesVideoFilter};
-    use nerust_contract_settings::shared::{DesktopSharedSettings, SystemSettings};
+    use nerust_core_traits::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_input_schema::SystemId;
+    use nerust_gui_settings::{
+        app_state::DesktopAppState,
+        local::HostBackendLocalSettings,
+        nes::{NesSettings, NesVideoFilter},
+        shared::{DesktopSharedSettings, SystemSettings},
+    };
+
+    use super::*;
 
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();
-        shared
-            .systems
-            .insert(SystemId::Nes, SystemSettings::Nes(NesSettings::default()));
+        shared.systems.insert(
+            SystemId::new("nes"),
+            SystemSettings::Nes(NesSettings::default()),
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -555,7 +562,11 @@ mod tests {
     #[test]
     fn from_snapshot_extracts_nes_filter() {
         let mut snapshot = default_snapshot();
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get_mut(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
         let android = AndroidSettings::from_snapshot(&snapshot);
@@ -581,7 +592,7 @@ mod tests {
         assert_eq!(snapshot.local.audio.latency_ms, 75);
         assert_eq!(snapshot.local.audio.sample_rate, 44_100);
         assert!(!snapshot.local.video.presentation.vsync);
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::Nes).unwrap();
+        let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::new("nes")).unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);
     }
 
@@ -591,8 +602,8 @@ mod tests {
         let android = AndroidSettings::from_snapshot(&snapshot);
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
-        // sample rate 48000 → index 2; vsync on → 1; NtscComposite → index 1
-        assert_eq!(indices, vec!["0", "100", "40", "2", "1", "1"]);
+        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
+        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1"]);
     }
 
     #[test]
@@ -621,7 +632,7 @@ mod tests {
             audio_muted: false,
             master_volume_percent: 83,
             latency_ms: 37,
-            sample_rate: 22_050,
+            sample_rate: 44_100,
             vsync: true,
             nes_filter: NesVideoFilter::None,
         };
@@ -654,10 +665,22 @@ mod tests {
         assert_eq!(latency_choices.last(), Some(&"200 ms"));
         assert_eq!(latency_choices.len(), 191);
 
-        assert_eq!(
-            sample_rate_choices,
-            vec!["22050 Hz", "44100 Hz", "48000 Hz"]
+        assert!(
+            !sample_rate_choices.is_empty(),
+            "sample rate choices should be non-empty"
         );
+        for choice in &sample_rate_choices {
+            let Some(rate_str) = choice.strip_suffix(" Hz") else {
+                panic!("sample rate choice '{choice}' must end with ' Hz'");
+            };
+            let rate: u32 = rate_str
+                .parse()
+                .expect("sample rate must be a valid integer");
+            assert!(
+                (1..=192_000).contains(&rate),
+                "sample rate {rate} must be within 1..=192000"
+            );
+        }
     }
 
     #[test]

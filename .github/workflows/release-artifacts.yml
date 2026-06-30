@@ -60,7 +60,7 @@ jobs:
       version: ${{ steps.context.outputs.version }}
       tag_name: ${{ steps.context.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -82,7 +82,7 @@ jobs:
             should_run=false
             while IFS= read -r path; do
               case "${path}" in
-                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|README.md|LICENSE|renovate.json)
+                .github/workflows/*|packaging/*|Cargo.toml|Cargo.lock|*.rs)
                   should_run=true
                   break
                   ;;
@@ -179,7 +179,7 @@ jobs:
     outputs:
       tag_name: ${{ needs.prepare-context.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
@@ -195,11 +195,12 @@ jobs:
             libgtk-3-dev \
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
-            libxdo-dev
+            libxdo-dev \
+            libasound2-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -210,8 +211,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-release-x86_64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-x86_64-
-      - name: Build nerust_tao (release)
-        run: cargo build -p nerust_tao --release
+      - name: Build nerust (release, tao + wgpu)
+        run: cargo build -p nerust --features tao,wgpu --release
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -242,7 +243,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
@@ -258,11 +259,12 @@ jobs:
             libgtk-3-dev \
             libopenal-dev \
             libwebkit2gtk-4.1-dev \
-            libxdo-dev
+            libxdo-dev \
+            libasound2-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -273,8 +275,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-aarch64-
-      - name: Build nerust_tao (release)
-        run: cargo build -p nerust_tao --release
+      - name: Build nerust (release, tao + wgpu)
+        run: cargo build -p nerust --features tao,wgpu --release
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -305,7 +307,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
@@ -317,7 +319,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: stable
+          toolchain: 1.96.0
           targets: aarch64-apple-darwin
       - name: Restore Cargo registry and build cache
         id: cargo-cache
@@ -329,11 +331,11 @@ jobs:
             target
           key: macos-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-cargo-release-aarch64-
-      - name: Build nerust_tao (release, aarch64)
-        run: cargo build -p nerust_tao --release --target aarch64-apple-darwin
+      - name: Build nerust (release, tao + wgpu, aarch64)
+        run: cargo build -p nerust --features tao,wgpu --release --target aarch64-apple-darwin
       - name: Package .app bundle
         env:
-          BINARY: target/aarch64-apple-darwin/release/nerust_tao
+          BINARY: target/aarch64-apple-darwin/release/nerust
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
           VERSION: ${{ needs.prepare-context.outputs.version }}
         run: |
@@ -363,7 +365,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
@@ -373,7 +375,7 @@ jobs:
         run: |
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
       - name: Set up JDK 17
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
         with:
           distribution: temurin
           java-version: "17"
@@ -383,7 +385,7 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           targets: aarch64-linux-android
-          toolchain: stable
+          toolchain: 1.96.0
       - name: Install cargo-ndk
         run: |
           chmod +x packaging/android/install-cargo-ndk.sh
