@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -9,7 +9,7 @@ use log::{info, warn};
 use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 pub struct CubebAudio {
-    stream: Mutex<cubeb::Stream<MonoFrame<f32>>>,
+    stream: cubeb::Stream<MonoFrame<f32>>,
     data_sender: Sender<f32>,
     playing: Arc<AtomicBool>,
     sample_rate: u32,
@@ -66,7 +66,7 @@ impl CubebAudio {
         );
 
         Ok(Self {
-            stream: Mutex::new(stream),
+            stream,
             data_sender: sender,
             playing,
             sample_rate,
@@ -76,14 +76,14 @@ impl CubebAudio {
 
 impl AudioBackend for CubebAudio {
     fn start(&mut self) {
-        if let Err(e) = self.stream.lock().unwrap().start() {
+        if let Err(e) = self.stream.start() {
             warn!("cubeb stream start failed: {e}");
         }
         self.playing.store(true, Ordering::Release);
     }
 
     fn pause(&mut self) {
-        if let Err(e) = self.stream.lock().unwrap().stop() {
+        if let Err(e) = self.stream.stop() {
             warn!("cubeb stream stop failed: {e}");
         }
         self.playing.store(false, Ordering::Release);
