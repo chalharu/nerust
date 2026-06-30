@@ -7,6 +7,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-cubeb = "=0.35.3"
+cubeb.workspace = true
+flume.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
