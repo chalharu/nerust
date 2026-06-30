@@ -76,6 +76,7 @@ impl CubebAudio {
 
 impl AudioBackend for CubebAudio {
     fn start(&mut self) {
+        // &mut selfによる排他制御があるので、start/stopの呼び出しはスレッドセーフである。
         if let Err(e) = self.stream.start() {
             warn!("cubeb stream start failed: {e}");
         }
@@ -83,6 +84,7 @@ impl AudioBackend for CubebAudio {
     }
 
     fn pause(&mut self) {
+        // &mut selfによる排他制御があるので、start/stopの呼び出しはスレッドセーフである。
         if let Err(e) = self.stream.stop() {
             warn!("cubeb stream stop failed: {e}");
         }
