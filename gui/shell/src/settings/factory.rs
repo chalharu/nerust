@@ -17,7 +17,8 @@ fn system_settings_from_bytes(system_id: &SystemId, bytes: &[u8]) -> Option<Syst
             Some(SystemSettings::Nes(nes))
         }
         id if id == SystemId::new("snes") => {
-            let snes = rmp_serde::from_slice::<nerust_gui_settings::snes::SnesSettings>(bytes).ok()?;
+            let snes =
+                rmp_serde::from_slice::<nerust_gui_settings::snes::SnesSettings>(bytes).ok()?;
             Some(SystemSettings::Snes(snes))
         }
         _ => None,
